@@ -12,8 +12,10 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -53,6 +55,14 @@ function samePullRequest(
 
 /** Startup lookups per settled thread before discovery gives up on it. */
 export const BACKFILL_ATTEMPTS = 5;
+
+/**
+ * Startup discovery only covers threads settled this recently. Use settledAt,
+ * not updatedAt: auto-settle stamps updatedAt with the settle time, so a mass
+ * auto-settle would put every old thread back in the window. Older threads
+ * were checked while active or on an earlier boot.
+ */
+export const BACKFILL_WINDOW = Duration.days(7);
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -112,9 +122,9 @@ export const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  // Settled threads get one link discovery at startup. Failed lookups retry on
-  // the periodic pass a few times, then stop until the thread changes or the
-  // server restarts, so a missing or logged-out CLI cannot loop forever.
+  // Recently settled threads get one link discovery at startup. Failed lookups
+  // retry on the periodic pass a few times, then stop until the thread changes
+  // or the server restarts, so a missing or logged-out CLI cannot loop forever.
   const pendingBackfill = new Map<ThreadId, number>();
   const finishBackfill = (threads: ReadonlyArray<{ readonly id: ThreadId }>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -138,10 +148,12 @@ export const make = Effect.gen(function* () {
         : yield* readSweepSnapshot(snapshots, request.threadId);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     if (request.backfill) {
+      const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(BACKFILL_WINDOW);
       for (const thread of snapshot.threads) {
         if (
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
-          thread.branchPullRequest == null
+          thread.branchPullRequest == null &&
+          Date.parse(thread.settledAt ?? thread.updatedAt) >= cutoff
         ) {
           pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
         }
