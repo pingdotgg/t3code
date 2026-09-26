@@ -242,6 +242,13 @@ export function buildPiRpcLaunch(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly mcpSession: McpProviderSessionConfig | undefined;
   readonly extensionPath: string | undefined;
+  /**
+   * Persisted pi session file to attach at spawn. Resuming this way avoids the
+   * post-spawn `switch_session`, which replaces the session and invalidates
+   * every extension context loaded against the default one. Ignored for
+   * ephemeral sessions, which never have a persisted file.
+   */
+  readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
@@ -259,10 +266,14 @@ export function buildPiRpcLaunch(input: {
       : input.launchArgs;
   const launchArgs =
     input.disableTools === true ? withoutToolSelectionArgs(extensionSafeArgs) : extensionSafeArgs;
+  const ephemeral = input.ephemeral === true;
   const args = [
     "--mode",
     "rpc",
-    ...(input.ephemeral === true ? ["--no-session"] : []),
+    // `--session` and `--no-session` are mutually exclusive; an ephemeral
+    // session has no persisted file to attach to.
+    ...(!ephemeral && input.sessionPath !== undefined ? ["--session", input.sessionPath] : []),
+    ...(ephemeral ? ["--no-session"] : []),
     ...launchArgs,
     // Restrictions follow user launch args so a configured --tools or
     // --extension cannot silently re-enable unattended text-generation code.

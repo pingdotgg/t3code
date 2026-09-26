@@ -88,6 +88,53 @@ describe("pi T3 MCP injection", () => {
     assert.equal(permissionOnly.env[T3_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
   });
 
+  it("attaches a persisted session file at spawn instead of switching later", () => {
+    const launch = buildPiRpcLaunch({
+      launchArgs: ["--model", "claude-sonnet"],
+      environment: {},
+      mcpSession: undefined,
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      sessionPath: "/home/user/.pi/agent/sessions/--work--/0001_abc.jsonl",
+    });
+    assert.deepEqual(launch.args, [
+      "--mode",
+      "rpc",
+      "--session",
+      "/home/user/.pi/agent/sessions/--work--/0001_abc.jsonl",
+      "--model",
+      "claude-sonnet",
+      "--extension",
+      "/tmp/cache/pi-t3-mcp-extension.ts",
+    ]);
+
+    // --session and --no-session cannot be combined.
+    const ephemeral = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: {},
+      mcpSession: undefined,
+      extensionPath: undefined,
+      sessionPath: "/home/user/.pi/agent/sessions/--work--/0001_abc.jsonl",
+      ephemeral: true,
+    });
+    assert.deepEqual(ephemeral.args, ["--mode", "rpc", "--no-session"]);
+
+    // T3 owns session identity, so the user cannot pick the session itself.
+    for (const rejected of [
+      "--session old.jsonl",
+      "--session-id abc",
+      "--no-session",
+      "--resume",
+      "--continue",
+      "--fork old.jsonl",
+    ]) {
+      assert.deepInclude(
+        resolvePiLaunchArgs(rejected),
+        { ok: false },
+        `expected '${rejected}' to be rejected`,
+      );
+    }
+  });
+
   it("falls back to Pi's first supported mode for legacy auto threads", () => {
     const launch = buildPiRpcLaunch({
       launchArgs: [],
