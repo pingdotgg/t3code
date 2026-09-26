@@ -21,8 +21,7 @@ when you want to pair each device individually instead of opening up a whole net
 2. In the section for this machine, find **Remote access via Tailcat** and turn it on.
 3. Wait for the status to read **Ready**. The card shows the machine's Tailcat address and
    which Tailcat build is in use.
-4. Click **Create connection code**. Copy the code, or scan the QR from your phone to send
-   it to yourself.
+4. Click **Create connection code** and copy the code.
 
 A connection code is single use and expires after five minutes. It carries a one-time
 pairing credential, so treat it like a pairing URL: share it with one device, then let it
@@ -35,9 +34,9 @@ Headless servers do the same from the command line:
 npx t3 serve --tailcat
 ```
 
-The server prints the Tailcat address, a connection code, and a QR code once the tunnel is
-ready. `npx t3 remote tailcat code` prints a fresh code for a server that is already
-running; `npx t3 remote tailcat status` shows the current state.
+The server prints the Tailcat address and a connection code once the tunnel is ready.
+`npx t3 remote tailcat code` prints a fresh code for a server that is already running;
+`npx t3 remote tailcat status` shows the current state.
 
 ## Connect from another machine
 

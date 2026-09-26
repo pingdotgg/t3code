@@ -802,7 +802,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "tailcat-connection-code",
     title: "Connection code",
     to: "/settings/connections",
-    searchTerms: ["tailcat create code qr pair another device single use expires"],
+    searchTerms: ["tailcat create code pair another device single use expires"],
     localBackendManagementOnly: true,
     requiresTailcatRemoteAccess: true,
   },

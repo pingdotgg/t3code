@@ -29,31 +29,17 @@ export class PairingQrPayloadEmptyError extends Schema.TaggedError<PairingQrPayl
 }
 
 /**
- * A `t3c://` connection code was entered where a pairing URL belongs. Those
- * codes are redeemed by the desktop app (which runs the Tailcat tunnel), so
- * the message points there instead of calling the input an invalid URL.
+ * Guidance for a `t3c://` connection code entered where a pairing URL belongs;
+ * null for everything else. Those codes are redeemed by the desktop app (which
+ * runs the Tailcat tunnel), so the message points there instead of calling the
+ * input an invalid URL.
  */
-export class PairingInputNotPairableError extends Schema.TaggedError<PairingInputNotPairableError>()(
-  "PairingInputNotPairableError",
-  {
-    kind: Schema.NullOr(Schema.String),
-  },
-) {
-  override get message(): string {
-    switch (this.kind) {
-      case "tailcat":
-        return "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.";
-      default:
-        return "This is a T3 connection code, not a pairing URL. Use it in the desktop app.";
-    }
-  }
-}
-
-/** Guidance for inputs that are T3 connection codes rather than pairing URLs; null for everything else. */
 export function unsupportedPairingInputMessage(input: string): string | null {
   const trimmed = input.trim();
   if (!isT3ConnectionCode(trimmed)) return null;
-  return new PairingInputNotPairableError({ kind: peekT3ConnectionCodeKind(trimmed) }).message;
+  return peekT3ConnectionCodeKind(trimmed) === "tailcat"
+    ? "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat."
+    : "This is a T3 connection code, not a pairing URL. Use it in the desktop app.";
 }
 
 export function buildPairingUrl(host: string, code: string): string {
@@ -106,10 +92,6 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
   if (!trimmed) {
     throw new PairingQrPayloadEmptyError({});
   }
-  if (isT3ConnectionCode(trimmed)) {
-    throw new PairingInputNotPairableError({ kind: peekT3ConnectionCodeKind(trimmed) });
-  }
-
   try {
     const url = new URL(trimmed);
     if (url.protocol === "t3code:") {

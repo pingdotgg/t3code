@@ -16,7 +16,7 @@ or T3 Connect. Tailcat (a small open-source point-to-point tunnel CLI) can do th
    endpoint (address + remote port); local ports are always ephemeral. Rationale: the same
    supervisor, retries, and UI as SSH, and no stale ports in saved state.
 3. **Connection codes are T3-owned.** `t3c://tailcat/…` embeds a single-use pairing token,
-   never a private key. Rationale: sharable by QR/paste with bounded blast radius.
+   never a private key. Rationale: sharable by paste with bounded blast radius.
 4. **Bundled, pinned runtime.** Version and checksums live in `native/tailcat/manifest.json`;
    binaries are fetched at build time, macOS is built from the pinned source, and the runtime
    never downloads. An override env var and a version-checked `PATH` fallback exist for

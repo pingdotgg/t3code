@@ -258,7 +258,7 @@ it.layer(NodeServices.layer)("t3 remote tailcat", (it) => {
           ]);
           assert.include(code, "Connection code (expires 2026-06-21T08:35:00.000Z, single use):");
           assert.include(code, "t3c://tailcat/remote-test-code");
-          assert.isTrue(code.includes("█") || code.includes("▀") || code.includes("▄"));
+          assert.include(code, "Paste the code in the T3 Code desktop app");
           assert.include(code, "one-time pairing credential");
 
           const revoked = yield* captureStdout([

@@ -102,8 +102,8 @@ codes are recognised and redirected to the desktop app.
 `t3c://tailcat/<base64url(json)>` with `{ v: 1, transport: "tailcat", address, port,
 environmentId, name, serverVersion, pairingToken, expiresAt }`. The only secret is the pairing
 token, which is a normal single-use, five-minute pairing link with subject
-`tailcat-connection-code`. Codes are safe to show as QR and safe to paste into a chat you trust
-for five minutes; they never contain a reusable credential or a private key. Parsing is in
+`tailcat-connection-code`. Codes are safe to paste into a chat you trust for five minutes; they
+never contain a reusable credential or a private key. Parsing is in
 `packages/shared/src/t3ConnectionCode.ts`, and `redactT3ConnectionCode` exists for logs.
 
 ## Threat model

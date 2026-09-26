@@ -6,8 +6,8 @@ import * as Schema from "effect/Schema";
 /**
  * T3-owned connection codes. A code is `t3c://<kind>/<base64url(JSON payload)>`.
  * The payload is versioned per kind; parsers reject unknown kinds and versions
- * rather than guessing. Codes are copyable text and QR content, so they are kept
- * URL-safe and free of characters that break on paste.
+ * rather than guessing. Codes travel as pasted text, so they are kept URL-safe
+ * and free of characters that break on paste.
  */
 const T3_CONNECTION_CODE_SCHEME = "t3c:";
 

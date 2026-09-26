@@ -334,7 +334,7 @@ const tailcatCodeCommand = Command.make("code", {
   ttl: codeTtlFlag,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Create a one-time Tailcat connection code and print it as a QR code."),
+  Command.withDescription("Create a one-time Tailcat connection code for another device."),
   Command.withHandler((flags) =>
     runTailcatCommand(flags, (client) =>
       Effect.gen(function* () {

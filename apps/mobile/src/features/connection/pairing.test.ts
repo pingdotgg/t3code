@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildPairingUrl,
   extractPairingUrlFromQrPayload,
-  PairingInputNotPairableError,
   PairingQrPayloadEmptyError,
   parsePairingUrl,
   unsupportedPairingInputMessage,
@@ -44,15 +43,6 @@ describe("extractPairingUrlFromQrPayload", () => {
         "t3code://pair?pairingUrl=https%3A%2F%2Fremote.example.com%2Fpair%23token%3Dpairing-token",
       ),
     ).toBe("https://remote.example.com/pair#token=pairing-token");
-  });
-
-  it("explains where a scanned Tailcat connection code belongs", () => {
-    expect(() => extractPairingUrlFromQrPayload(TAILCAT_CODE)).toThrowError(
-      PairingInputNotPairableError,
-    );
-    expect(() => extractPairingUrlFromQrPayload(TAILCAT_CODE)).toThrowError(
-      "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.",
-    );
   });
 
   it("rejects empty qr payloads", () => {
