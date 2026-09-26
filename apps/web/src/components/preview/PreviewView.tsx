@@ -72,6 +72,7 @@ import {
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -348,41 +349,34 @@ export function PreviewView({
             let pathCopied = false;
             let toastId: ReturnType<typeof toastManager.add>;
 
-            const copyPath = () => {
-              if (!navigator.clipboard?.writeText) {
-                toastManager.update(
-                  toastId,
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Unable to copy recording path",
-                    description: "Clipboard API unavailable.",
-                    actionProps: revealAction,
-                  }),
-                );
-                return;
-              }
-
-              void navigator.clipboard.writeText(artifact.path).then(
-                () => {
-                  pathCopied = true;
-                  updateRecordingToast();
-                  window.setTimeout(() => {
-                    pathCopied = false;
-                    updateRecordingToast();
-                  }, 2_000);
-                },
-                (error) => {
-                  toastManager.update(
-                    toastId,
-                    stackedThreadToast({
-                      type: "error",
-                      title: "Unable to copy recording path",
-                      description: error instanceof Error ? error.message : "An error occurred.",
-                      actionProps: revealAction,
-                    }),
-                  );
-                },
+            const reportCopyFailure = (error: unknown) => {
+              toastManager.update(
+                toastId,
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to copy recording path",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                  actionProps: revealAction,
+                }),
               );
+            };
+            const copyPath = () => {
+              if (pathCopied) {
+                pathCopied = false;
+                updateRecordingToast();
+              }
+              void writeTextToClipboard(artifact.path, "recording path").then((didCopy) => {
+                if (!didCopy) {
+                  reportCopyFailure(new Error("Clipboard write produced no result."));
+                  return;
+                }
+                pathCopied = true;
+                updateRecordingToast();
+                window.setTimeout(() => {
+                  pathCopied = false;
+                  updateRecordingToast();
+                }, 2_000);
+              }, reportCopyFailure);
             };
 
             const revealAction = {
@@ -492,17 +486,9 @@ export function PreviewView({
           };
 
           const copyPath = () => {
-            if (!navigator.clipboard?.writeText) {
-              updateScreenshotToast(
-                "error",
-                "Unable to copy screenshot path",
-                "Clipboard API unavailable.",
-              );
-              return;
-            }
-
-            void navigator.clipboard.writeText(artifact.path).then(
-              () => {
+            void writeTextToClipboard(artifact.path, "screenshot path").then(
+              (didCopy) => {
+                if (!didCopy) return;
                 pathCopied = true;
                 updateScreenshotToast();
                 window.setTimeout(() => {

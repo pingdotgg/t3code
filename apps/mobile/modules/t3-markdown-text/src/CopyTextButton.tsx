@@ -2,13 +2,20 @@ import { SymbolView } from "expo-symbols";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { memo, useEffect, useRef, useState } from "react";
-import { Pressable, type ColorValue } from "react-native";
+import { Alert, Pressable, type ColorValue } from "react-native";
 
 const COPY_FEEDBACK_DURATION_MS = 1200;
 
-function copyTextWithHaptic(value: string): void {
-  void Clipboard.setStringAsync(value);
-  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+/** Fires the tap haptic immediately; the returned promise carries the write outcome. */
+function copyTextWithHaptic(value: string): Promise<boolean> {
+  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+  return Clipboard.setStringAsync(value).then(
+    (didCopy) => didCopy,
+    () => {
+      console.error("Failed to copy text to the clipboard.");
+      return false;
+    },
+  );
 }
 
 export const CopyTextButton = memo(function CopyTextButton(props: {
@@ -24,14 +31,17 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
   const [copied, setCopied] = useState(false);
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(
-    () => () => {
+  const attemptRef = useRef(0);
+
+  useEffect(() => {
+    setCopied(false);
+    return () => {
+      attemptRef.current += 1;
       if (resetTimeoutRef.current) {
         clearTimeout(resetTimeoutRef.current);
       }
-    },
-    [],
-  );
+    };
+  }, [props.text]);
 
   return (
     <Pressable
@@ -40,15 +50,24 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       disabled={props.text.length === 0}
       hitSlop={8}
       onPress={() => {
-        copyTextWithHaptic(props.text);
-        setCopied(true);
-        if (resetTimeoutRef.current) {
-          clearTimeout(resetTimeoutRef.current);
-        }
-        resetTimeoutRef.current = setTimeout(() => {
-          setCopied(false);
-          resetTimeoutRef.current = null;
-        }, COPY_FEEDBACK_DURATION_MS);
+        const attempt = ++attemptRef.current;
+        setCopied(false);
+        if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+        void copyTextWithHaptic(props.text).then((didCopy) => {
+          if (attempt !== attemptRef.current) return;
+          if (!didCopy) {
+            Alert.alert("Could not copy", "Try again.");
+            return;
+          }
+          setCopied(true);
+          if (resetTimeoutRef.current) {
+            clearTimeout(resetTimeoutRef.current);
+          }
+          resetTimeoutRef.current = setTimeout(() => {
+            setCopied(false);
+            resetTimeoutRef.current = null;
+          }, COPY_FEEDBACK_DURATION_MS);
+        });
       }}
       style={({ pressed }) => ({
         width: props.buttonSize ?? 30,

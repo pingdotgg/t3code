@@ -18,6 +18,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import { pullRequestListLines, type PullRequestListLine } from "./pullRequestListLines";
@@ -212,7 +213,27 @@ function LinkRow({
             }
           />
           <MenuPopup align="end" side="bottom">
-            <MenuItem onClick={() => void writeTextToClipboard(link.url, "link")}>
+            <MenuItem
+              onClick={() =>
+                void writeTextToClipboard(link.url, "link").then(
+                  (didCopy) => {
+                    if (!didCopy) return;
+                    toastManager.add({
+                      type: "success",
+                      title: "Link copied",
+                      description: link.url,
+                    });
+                  },
+                  (error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not copy link",
+                      description: error instanceof Error ? error.message : "An error occurred.",
+                    });
+                  },
+                )
+              }
+            >
               <LinkIcon className="size-3.5" />
               Copy link
             </MenuItem>

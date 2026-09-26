@@ -753,28 +753,43 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
 
   const handleCopy = useCallback((format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
+    if (!table) {
       return;
     }
     const text =
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
-      });
+    // A retry must not keep showing the previous attempt's Copied state.
+    if (copiedTimerRef.current != null) {
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
+    setCopied(false);
+    const reportFailure = (cause: unknown) => {
+      reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy table",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+    };
+    void writeTextToClipboard(text, "table").then((didCopy) => {
+      if (!didCopy) {
+        reportFailure(new Error("Clipboard write produced no result."));
+        return;
+      }
+      if (copiedTimerRef.current != null) {
+        clearTimeout(copiedTimerRef.current);
+      }
+      setCopied(true);
+      copiedTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1200);
+    }, reportFailure);
   }, []);
 
   useEffect(
@@ -969,31 +984,43 @@ function MarkdownCodeBlock({
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
   const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
+    // A retry must not keep showing the previous attempt's Copied state.
+    if (copiedTimerRef.current != null) {
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
     }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure(
-          {
-            operation: "copy-code-block",
-            language,
-            ...(fenceTitle ? { fenceTitle } : {}),
-          },
-          cause,
-        );
-      });
+    setCopied(false);
+    const reportFailure = (cause: unknown) => {
+      reportMarkdownActionFailure(
+        {
+          operation: "copy-code-block",
+          language,
+          ...(fenceTitle ? { fenceTitle } : {}),
+        },
+        cause,
+      );
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy code",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+    };
+    void writeTextToClipboard(code, "code").then((didCopy) => {
+      if (!didCopy) {
+        reportFailure(new Error("Clipboard write produced no result."));
+        return;
+      }
+      if (copiedTimerRef.current != null) {
+        clearTimeout(copiedTimerRef.current);
+      }
+      setCopied(true);
+      copiedTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1200);
+    }, reportFailure);
   }, [code, fenceTitle, language]);
 
   useEffect(
@@ -2072,19 +2099,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const handleCopy = useCallback(
     (value: string, title: string) => {
-      if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: "Clipboard API unavailable.",
-          }),
-        );
-        return;
-      }
-
-      void navigator.clipboard.writeText(value).then(
-        () => {
+      void writeTextToClipboard(value, title.toLowerCase()).then(
+        (didCopy) => {
+          if (!didCopy) return;
           toastManager.add({
             type: "success",
             title: `${title} copied`,
