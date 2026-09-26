@@ -177,6 +177,7 @@ export const MobileClientOrchestrationCommand = ClientOrchestrationCommand.check
     (command) =>
       (command.type === "thread.turn.start" && command.bootstrap === undefined) ||
       command.type === "thread.turn.interrupt" ||
+      command.type === "thread.turn.steer" ||
       command.type === "thread.approval.respond" ||
       command.type === "thread.user-input.respond" ||
       command.type === "thread.checkpoint.revert" ||
@@ -187,7 +188,7 @@ export const MobileClientOrchestrationCommand = ClientOrchestrationCommand.check
       isMobileThreadTitleRegenerationCommand(command) ||
       new SchemaIssue.InvalidValue(Option.some(command.type), {
         message:
-          "mobile.v1 only supports read+chat commands: turn start without bootstrap, interrupt, approval response, user input response, checkpoint revert, session stop, pinning, and standalone title regeneration",
+          "mobile.v1 only supports read+chat commands: turn start without bootstrap, interrupt, steer, approval response, user input response, checkpoint revert, session stop, pinning, and standalone title regeneration",
       }),
     { identifier: "MobileClientOrchestrationCommand" },
   ),
@@ -199,6 +200,7 @@ export type MobileClientOrchestrationCommand =
         readonly type:
           | "thread.turn.start"
           | "thread.turn.interrupt"
+          | "thread.turn.steer"
           | "thread.approval.respond"
           | "thread.user-input.respond"
           | "thread.checkpoint.revert"

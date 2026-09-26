@@ -6,6 +6,7 @@ import type {
   OrchestrationThread,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -300,6 +301,36 @@ export function requireThreadReadyForTurnStart(input: {
           )
         : Effect.succeed(thread),
     ),
+  );
+}
+
+export function resolveActiveTurnId(thread: OrchestrationThread): TurnId | undefined {
+  return (
+    thread.session?.activeTurnId ??
+    (thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : undefined)
+  );
+}
+
+export function requireThreadWithInFlightTurn(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<
+  { readonly thread: OrchestrationThread; readonly turnId: TurnId },
+  OrchestrationCommandInvariantError
+> {
+  return requireThread(input).pipe(
+    Effect.flatMap((thread) => {
+      const turnId = resolveActiveTurnId(thread);
+      return turnId === undefined
+        ? Effect.fail(
+            invariantError(
+              input.command.type,
+              `Thread '${input.threadId}' has no active turn to steer yet. Queue the message or wait for the turn to start.`,
+            ),
+          )
+        : Effect.succeed({ thread, turnId });
+    }),
   );
 }
 

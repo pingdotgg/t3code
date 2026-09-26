@@ -22,6 +22,7 @@ import type {
   ProviderSession,
   ProviderSessionForkInput,
   ProviderSessionStartInput,
+  ProviderSteerTurnInput,
   ProviderStopSessionInput,
   RuntimeMode,
   ThreadId,
@@ -72,6 +73,15 @@ export interface ProviderServiceShape {
   readonly interruptTurn: (
     input: ProviderInterruptTurnInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Steer the active provider turn with follow-up input.
+   * Fails with a steer-not-supported error when the bound provider
+   * has no same-turn steering; the running turn is left untouched.
+   */
+  readonly steerTurn: (
+    input: ProviderSteerTurnInput,
+  ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
 
   /**
    * Respond to a provider approval request.

@@ -108,10 +108,60 @@ describe("formatPendingPrimaryActionLabel", () => {
         preserveComposerFocusOnPointerDown: true,
         onPreviousPendingQuestion: () => undefined,
         onInterrupt: () => undefined,
+        onSteer: () => undefined,
         onImplementPlanInNewThread: () => undefined,
       }),
     );
 
     expect(markup).toContain('aria-label="Send message"');
+  });
+
+  it("renders steer and queue actions while running with sendable content", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        compact: false,
+        pendingAction: null,
+        isRunning: true,
+        showPlanFollowUpPrompt: false,
+        promptHasText: true,
+        isSendBusy: false,
+        isConnecting: false,
+        isPreparingWorktree: false,
+        hasSendableContent: true,
+        preserveComposerFocusOnPointerDown: false,
+        onPreviousPendingQuestion: () => undefined,
+        onInterrupt: () => undefined,
+        onSteer: () => undefined,
+        onImplementPlanInNewThread: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain(">Steer<");
+    expect(markup).toContain(">Queue<");
+    expect(markup).toContain('aria-label="Stop generation"');
+  });
+
+  it("renders no send actions while running without sendable content", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        compact: false,
+        pendingAction: null,
+        isRunning: true,
+        showPlanFollowUpPrompt: false,
+        promptHasText: false,
+        isSendBusy: false,
+        isConnecting: false,
+        isPreparingWorktree: false,
+        hasSendableContent: false,
+        preserveComposerFocusOnPointerDown: false,
+        onPreviousPendingQuestion: () => undefined,
+        onInterrupt: () => undefined,
+        onSteer: () => undefined,
+        onImplementPlanInNewThread: () => undefined,
+      }),
+    );
+
+    expect(markup).not.toContain(">Steer<");
+    expect(markup).not.toContain(">Queue<");
   });
 });

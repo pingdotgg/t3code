@@ -2545,6 +2545,41 @@ const chatInterruptCommand = Command.make("interrupt", {
   ),
 );
 
+const chatSteerCommand = Command.make("steer", {
+  ...liveTargetFlags,
+  chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
+  prompt: Argument.string("prompt").pipe(
+    Argument.withDescription("Follow-up text to steer the running turn with."),
+  ),
+  turn: Flag.string("turn").pipe(
+    Flag.optional,
+    Flag.withDescription("Expected active turn id. Fails when it no longer matches."),
+  ),
+}).pipe(
+  Command.withDescription("Steer the running turn without interrupting it."),
+  Command.withHandler((flags) =>
+    withThreadDispatch(flags, flags.chat, ({ thread, dispatch }) =>
+      Effect.gen(function* () {
+        const turn = Option.getOrUndefined(flags.turn);
+        const result = yield* dispatch({
+          type: "thread.turn.steer",
+          commandId: CommandId.make(crypto.randomUUID()),
+          threadId: thread.id,
+          ...(turn !== undefined ? { turnId: TurnId.make(turn) } : {}),
+          message: {
+            messageId: MessageId.make(crypto.randomUUID()),
+            role: "user",
+            text: flags.prompt,
+            attachments: [],
+          },
+          createdAt: new Date().toISOString(),
+        });
+        yield* printJson(result);
+      }),
+    ),
+  ),
+);
+
 const chatStopCommand = Command.make("stop", {
   ...liveTargetFlags,
   chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
@@ -2740,6 +2775,7 @@ const chatCommand = Command.make("chat").pipe(
     chatNewCommand,
     chatStreamCommand,
     chatInterruptCommand,
+    chatSteerCommand,
     chatStopCommand,
     chatQueueCommand,
     Command.make("wait", {

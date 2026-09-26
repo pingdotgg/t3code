@@ -17,6 +17,7 @@ import type {
   ProviderSessionForkInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderSteerTurnInput,
   ThreadId,
   ProviderTurnStartResult,
   RuntimeMode,
@@ -83,6 +84,16 @@ export interface ProviderAdapterShape<TError> {
    * Interrupt an active turn.
    */
   readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
+
+  /**
+   * Steer the active turn with follow-up input without interrupting it.
+   * Optional: adapters whose provider protocol has no same-turn steering
+   * simply omit this; ProviderService fails those calls with a typed
+   * steer-not-supported error instead.
+   */
+  readonly steerTurn?: (
+    input: ProviderSteerTurnInput,
+  ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
   /**
    * Respond to an interactive approval request.

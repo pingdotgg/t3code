@@ -1569,6 +1569,35 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnSteerCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  origin: Schema.optional(MessageOrigin),
+  createdAt: IsoDateTime,
+});
+
+const ClientThreadTurnSteerCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.steer"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
+  }),
+  createdAt: IsoDateTime,
+});
+
 const ThreadApprovalRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.approval.respond"),
   commandId: CommandId,
@@ -1837,6 +1866,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadQueuedTurnDeleteCommand,
   ThreadQueuedTurnDispatchCommand,
   ThreadTurnInterruptCommand,
+  ThreadTurnSteerCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -1886,6 +1916,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadQueuedTurnDeleteCommand,
   ThreadQueuedTurnDispatchCommand,
   ThreadTurnInterruptCommand,
+  ClientThreadTurnSteerCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -2075,6 +2106,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-sent",
   "thread.review-result-set",
   "thread.turn-start-requested",
+  "thread.turn-steer-requested",
   "thread.queued-turn-created",
   "thread.queued-turn-updated",
   "thread.queued-turn-deleted",
@@ -2356,6 +2388,13 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   delegationTransition: Schema.optional(Schema.Literals(["assigned", "continued", "replaced"])),
   executionAuthority: Schema.optional(CollaborationExecutionAuthority),
   workspaceBinding: Schema.optional(WorkspaceBinding),
+  createdAt: IsoDateTime,
+});
+
+export const ThreadTurnSteerRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
   createdAt: IsoDateTime,
 });
 
@@ -2700,6 +2739,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-start-requested"),
     payload: ThreadTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-steer-requested"),
+    payload: ThreadTurnSteerRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
