@@ -13,6 +13,13 @@ android {
     minSdkVersion rootProject.ext.minSdkVersion
     targetSdkVersion rootProject.ext.targetSdkVersion
 
+    def requestedArchitectures = project.findProperty('reactNativeArchitectures')
+    if (requestedArchitectures) {
+      ndk {
+        abiFilters(*requestedArchitectures.split(','))
+      }
+    }
+
     externalNativeBuild {
       cmake {
         cppFlags '-std=c++17 -Wall -Wextra -Werror'
