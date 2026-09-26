@@ -109,6 +109,102 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer.pipe(Layer.provide(GitHubGraphQlBudget.layer)))),
   );
 
+  it.effect("probes quota using the caller's cwd, not the process cwd", () =>
+    Effect.gen(function* () {
+      const probeCwds: string[] = [];
+      const gh = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.sync(() => {
+              if (input.args[1] === "rate_limit") {
+                probeCwds.push(input.cwd);
+                return quotaOutput();
+              }
+              return processOutput("[]");
+            }),
+        }),
+      );
+      yield* gh.execute({ cwd: "/repo/project-a", args: ["pr", "list"] });
+      assert.deepStrictEqual(probeCwds, ["/repo/project-a"]);
+    }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+  );
+
+  it.effect("shares one host-scoped probe across projects on the same host", () =>
+    Effect.gen(function* () {
+      const probeCwds: string[] = [];
+      const gh = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.sync(() => {
+              if (input.args[1] === "rate_limit") {
+                probeCwds.push(input.cwd);
+                return quotaOutput();
+              }
+              return processOutput("[]");
+            }),
+        }),
+      );
+      yield* gh.execute({ cwd: "/repo/project-a", args: ["pr", "list"] });
+      yield* gh.execute({ cwd: "/repo/project-b", args: ["pr", "list"] });
+      // The budget the probe feeds is host+credential scoped, so a second project must reuse
+      // the cached probe instead of spawning its own `gh api rate_limit`.
+      assert.deepStrictEqual(probeCwds, ["/repo/project-a"]);
+    }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+  );
+
+  it.effect("does not block the read when the quota probe itself fails", () =>
+    Effect.gen(function* () {
+      const gh = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            input.args[1] === "rate_limit"
+              ? Effect.fail(
+                  new VcsProcessExitError({
+                    operation: "GitHubCli.execute",
+                    command: "gh",
+                    cwd: input.cwd,
+                    exitCode: 1,
+                    failureKind: "command-failed",
+                    detail: "Process exited with a non-zero status.",
+                  }),
+                )
+              : Effect.succeed(processOutput("[]")),
+        }),
+      );
+      const result = yield* gh.execute({ cwd: "/repo", args: ["pr", "list"] });
+      assert.strictEqual(result.stdout, "[]");
+    }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+  );
+
+  it.effect("surfaces a rate-limited probe instead of spending the read on the same 403", () =>
+    Effect.gen(function* () {
+      const commands: string[] = [];
+      const gh = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            input.args[1] === "rate_limit"
+              ? Effect.fail(
+                  new VcsProcessExitError({
+                    operation: "GitHubCli.execute",
+                    command: "gh",
+                    cwd: input.cwd,
+                    exitCode: 1,
+                    failureKind: "rate-limited",
+                    detail: "Process exited with a non-zero status.",
+                  }),
+                )
+              : Effect.sync(() => {
+                  commands.push(input.args.slice(0, 2).join(" "));
+                  return processOutput("[]");
+                }),
+        }),
+      );
+      const error = yield* gh.execute({ cwd: "/repo", args: ["pr", "list"] }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "GitHubCliRateLimitError");
+      assert.deepStrictEqual(commands, []);
+    }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+  );
+
   it.effect("keeps quota snapshots separate for verified credentials on the same host", () =>
     Effect.gen(function* () {
       let reads = 0;

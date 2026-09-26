@@ -438,11 +438,17 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // The probe's result is host+credential scoped (see `githubGraphQlBudget`), so the cache key
+  // stays host+credential scoped too and one probe serves every project on that host. The `cwd`
+  // is only needed when a refresh actually spawns `gh`, so the newest caller's one is recorded
+  // here rather than folded into the key, which would cost one probe per project per sweep.
+  const probeCwds = new Map<string, string>();
+
   const quota = yield* Cache.makeWith(
     (key: string) => {
       const host = key.split("\0")[0]!;
       return executeRaw({
-        cwd: globalThis.process.cwd(),
+        cwd: probeCwds.get(key) ?? globalThis.process.cwd(),
         args: [
           "api",
           "rate_limit",
@@ -487,7 +493,24 @@ export const make = Effect.gen(function* () {
       const guarded = Effect.gen(function* () {
         const lease = yield* limits.check(key, allowReserve ? { allowPaused: true } : undefined);
         return yield* Effect.gen(function* () {
-          yield* Cache.get(quota, `${host}\0${credential?.credentialFingerprint ?? ""}`);
+          // A quota probe is a courtesy check, not a precondition: its own transport or
+          // command failure must not block the read it is guarding. `budget.query` right
+          // after it is what actually enforces a known-exhausted budget. A rate-limited
+          // probe is the exception, since that failure is the very signal the probe exists
+          // to report: re-raise it so the `tapError` below records it against the lease
+          // instead of spending the guarded read to rediscover the same 403.
+          const quotaKey = `${host}\0${credential?.credentialFingerprint ?? ""}`;
+          probeCwds.set(quotaKey, input.cwd);
+          yield* Cache.get(quota, quotaKey).pipe(
+            Effect.catchIf(
+              (error) => error._tag !== "GitHubCliRateLimitError",
+              (error) =>
+                Effect.logWarning("GitHub API quota probe failed; proceeding without it", {
+                  host,
+                  error,
+                }),
+            ),
+          );
           yield* budget.query(host, "query {}", allowReserve ? { allowReserve: true } : undefined);
           return yield* executeRaw(input);
         }).pipe(
