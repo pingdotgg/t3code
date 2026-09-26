@@ -1,5 +1,6 @@
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
+import { activityAnnouncementTurnFields } from "@t3tools/client-runtime/activity-announcement";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   appendCodexArtifactTemplateUsePrompt,
@@ -13,7 +14,7 @@ import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
-import { useNavigation } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -71,6 +72,7 @@ import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
+import { announce } from "../../lib/accessibilityAnnouncement";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
@@ -96,6 +98,10 @@ import {
   FloatingWorkingControl,
 } from "./floating-working-control";
 import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
+import {
+  threadActivityAnnouncement,
+  type ThreadActivityAnnouncementState,
+} from "./thread-activity-announcement";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -257,6 +263,60 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
     lastStreamHapticAtRef.current = now;
     void Haptics.selectionAsync();
   }, [threadId, feed]);
+}
+
+/**
+ * Speaks turn, request, and connection changes for the viewed thread. Takes
+ * only state identities, never the feed, so streamed tokens cannot trigger it.
+ */
+function useThreadActivityAnnouncements({
+  threadKey,
+  connected,
+  environmentLabel,
+  working,
+  turnId,
+  turnState,
+  turnRequestedAt,
+  approvalRequestId,
+  userInputRequestId,
+}: ThreadActivityAnnouncementState) {
+  // A thread route stays mounted under a pushed route (tablet Files mounts a
+  // second copy) or a sheet. Only the focused copy speaks, so a change is
+  // announced once and never for a thread the user has left.
+  const isFocused = useIsFocused();
+  const previousRef = useRef<ThreadActivityAnnouncementState | null>(null);
+
+  useEffect(() => {
+    const next = {
+      threadKey,
+      connected,
+      environmentLabel,
+      working,
+      turnId,
+      turnState,
+      turnRequestedAt,
+      approvalRequestId,
+      userInputRequestId,
+    };
+    const previous = previousRef.current;
+    // Tracked while unfocused too, so returning to the thread does not replay
+    // changes that happened while the user was elsewhere.
+    previousRef.current = next;
+    if (!isFocused) return;
+    const message = threadActivityAnnouncement(previous, next);
+    if (message !== null) announce(message);
+  }, [
+    approvalRequestId,
+    connected,
+    environmentLabel,
+    isFocused,
+    threadKey,
+    turnId,
+    turnRequestedAt,
+    turnState,
+    userInputRequestId,
+    working,
+  ]);
 }
 
 const USER_INPUT_TOGGLE_TIMING = {
@@ -688,6 +748,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
+  useThreadActivityAnnouncements({
+    threadKey: selectedThreadKey,
+    connected: props.connectionStateLabel === "connected",
+    environmentLabel: props.environmentLabel,
+    working: props.activeWorkStartedAt !== null,
+    ...activityAnnouncementTurnFields(props.selectedThread.latestTurn),
+    approvalRequestId: props.activePendingApproval?.requestId ?? null,
+    userInputRequestId: props.activePendingUserInput?.requestId ?? null,
+  });
   const selectedProviderSkills = useMemo(() => {
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
