@@ -23,6 +23,11 @@ import { CustomModelEditor } from "./CustomModelEditor";
  * kind. Mirrors the prior hardcoded switch in `SettingsPanels.tsx` so the
  * UX is unchanged — only the owning component has moved.
  */
+function providerSupportsCustomModels(driverKind: ProviderDriverKind | null): boolean {
+  // Cursor CLI (cursor-agent) and Antigravity only accept their account catalogs.
+  return driverKind !== "antigravity" && driverKind !== "cursor";
+}
+
 const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
@@ -223,7 +228,7 @@ export function ProviderModelsSection({
   }, [displayModels]);
 
   const handleAdd = () => {
-    if (driverKind === "antigravity") return;
+    if (!providerSupportsCustomModels(driverKind)) return;
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
@@ -534,7 +539,7 @@ export function ProviderModelsSection({
             {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
           </span>
         </div>
-        {driverKind !== "antigravity" && !isAdding ? (
+        {providerSupportsCustomModels(driverKind) && !isAdding ? (
           <Button
             type="button"
             size="xs"
@@ -592,7 +597,7 @@ export function ProviderModelsSection({
         })}
       </div>
 
-      {driverKind === "antigravity" ? null : isAdding ? (
+      {!providerSupportsCustomModels(driverKind) ? null : isAdding ? (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <Input
             id={`provider-instance-${instanceId}-custom-model`}
@@ -627,7 +632,7 @@ export function ProviderModelsSection({
         </div>
       ) : null}
 
-      {driverKind !== "antigravity" && error ? (
+      {providerSupportsCustomModels(driverKind) && error ? (
         <p className="mt-2 text-xs text-destructive">{error}</p>
       ) : null}
     </div>

@@ -109,11 +109,17 @@ describe("applyCursorAcpModelSelection", () => {
       | { readonly type: "model"; readonly value: string }
       | { readonly type: "config"; readonly configId: string; readonly value: string | boolean }
     > = [];
-
+    let modelSet = false;
+    const preSetModelOptions = parameterizedGpt54ConfigOptions.filter(
+      (option) => option.id === "model",
+    );
     const runtime = {
-      getConfigOptions: Effect.succeed(parameterizedGpt54ConfigOptions),
+      getConfigOptions: Effect.sync(() =>
+        modelSet ? parameterizedGpt54ConfigOptions : preSetModelOptions,
+      ),
       setModel: (value: string) =>
         Effect.sync(() => {
+          modelSet = true;
           calls.push({ type: "model", value });
         }),
       setConfigOption: (configId: string, value: string | boolean) =>
@@ -144,5 +150,208 @@ describe("applyCursorAcpModelSelection", () => {
       { type: "config", configId: "context", value: "1m" },
       { type: "config", configId: "fast", value: "true" },
     ]);
+  });
+
+  it("re-reads config options after setModel before applying selections", async () => {
+    const configReads: number[] = [];
+    let modelSet = false;
+    const preSetModelOptions = parameterizedGpt54ConfigOptions.filter(
+      (option) => option.id === "model",
+    );
+    const runtime = {
+      getConfigOptions: Effect.sync(() => {
+        configReads.push(modelSet ? 1 : 0);
+        return modelSet ? parameterizedGpt54ConfigOptions : preSetModelOptions;
+      }),
+      setModel: () =>
+        Effect.sync(() => {
+          modelSet = true;
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.4-medium-fast",
+        selections: [{ id: "contextWindow", value: "1m" }],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(configReads).toEqual([0, 1]);
+  });
+
+  it("rejects OpenRouter-style ids outside the live Cursor catalog before setModel", async () => {
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed(parameterizedGpt54ConfigOptions),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    const error = await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "deepseek/deepseek-v4.1-flash",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error).toContain("Cursor CLI only runs models from your Cursor account catalog");
+    expect(error).toContain("deepseek/deepseek-v4.1-flash");
+    expect(error).toContain("OpenCode");
+    expect(calls).toEqual([]);
+  });
+
+  it("still accepts bracketed built-in models after stripping options", async () => {
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed(parameterizedGpt54ConfigOptions),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.4-medium-fast[context=1m]",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual(["gpt-5.4-medium-fast"]);
+  });
+
+  it("matches an exact parameterized catalog value and passes it to setModel", async () => {
+    const catalogValue = "gpt-5.6-sol[context=272k,reasoning=medium,fast=false]";
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: catalogValue,
+          options: [{ value: catalogValue, name: "GPT-5.6 Sol" }],
+        },
+      ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: catalogValue,
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual([catalogValue]);
+  });
+
+  it("maps a bare model id onto a parameterized catalog value", async () => {
+    const catalogValue = "gpt-5.6-sol[context=272k,reasoning=medium,fast=false]";
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: catalogValue,
+          options: [{ value: catalogValue, name: "GPT-5.6 Sol" }],
+        },
+      ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.6-sol",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual([catalogValue]);
+  });
+
+  it("rejects a parameterized request that does not match the catalog suffix", async () => {
+    const catalogValue = "gpt-5.6-sol[context=272k,reasoning=medium,fast=false]";
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: catalogValue,
+          options: [{ value: catalogValue, name: "GPT-5.6 Sol" }],
+        },
+      ] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    const error = await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "gpt-5.6-sol[context=1m]",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error).toContain("Cursor CLI only runs models from your Cursor account catalog");
+    expect(error).toContain("gpt-5.6-sol");
+    expect(calls).toEqual([]);
+  });
+
+  it("passes through when the session has no select model option", async () => {
+    const calls: string[] = [];
+    const runtime = {
+      getConfigOptions: Effect.succeed([]),
+      setModel: (value: string) =>
+        Effect.sync(() => {
+          calls.push(value);
+        }),
+      setConfigOption: () => Effect.void,
+    };
+
+    await Effect.runPromise(
+      applyCursorAcpModelSelection({
+        runtime,
+        model: "deepseek/deepseek-v4.1-flash",
+        selections: [],
+        mapError: ({ cause }) => cause.message,
+      }),
+    );
+
+    expect(calls).toEqual(["deepseek/deepseek-v4.1-flash"]);
   });
 });
