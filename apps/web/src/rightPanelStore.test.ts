@@ -17,7 +17,11 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    selectedThreadTabKey: null,
+    userActionRevisionByThreadKey: {},
+  });
 });
 
 describe("rightPanelStore", () => {
@@ -107,6 +111,28 @@ describe("rightPanelStore", () => {
     projectId: "project-a",
     repository: "pingdotgg/t3code",
     number: 42,
+  });
+
+  it("returns to the panel when a manual panel action follows Thread selection", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.selectThreadTab(refA);
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");
+
+    store.activateSurface(refA, "diff");
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
+  });
+
+  it("keeps Thread selected when an automatic panel update arrives", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.selectThreadTab(refA);
+    const revision = store.getUserActionRevision(refA);
+
+    expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(true);
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");
   });
 
   it.each([

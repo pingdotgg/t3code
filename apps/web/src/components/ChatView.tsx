@@ -2010,19 +2010,11 @@ export default function ChatView(props: ChatViewProps) {
   const activeRightPanelKind = useRightPanelStore((state) =>
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
-  const diffOpen = activeRightPanelKind === "diff";
-  const explicitDiffOpenRef = useRef<ScopedThreadRef | null>(null);
-  useLayoutEffect(() => {
-    const explicitThreadRef = explicitDiffOpenRef.current;
-    explicitDiffOpenRef.current = null;
-    // Generic openings always show the checkout, including tab fallbacks and thread changes.
-    // A timeline click instead opens the specific turn/file the user requested.
-    if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
-      useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
-    }
-  }, [activeThreadRef, diffOpen]);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
+  );
+  const threadTabSelected = useRightPanelStore((state) =>
+    activeThreadRef ? state.selectedThreadTabKey === scopedThreadKey(activeThreadRef) : false,
   );
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
@@ -2052,7 +2044,6 @@ export default function ChatView(props: ChatViewProps) {
     () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
     [activeKnownTerminalIds, panelTerminalIds],
   );
-  const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -2082,13 +2073,19 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelControlsAtRoot = rightPanelPresent && !shouldUseRightPanelSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
-  const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
-    activePreviewMiniPlayer?.source ?? null,
-    renderedRightPanelSurface,
-  );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  const maximizedThreadTabActive = rightPanelMaximized && threadTabSelected;
+  const rightPanelSurfaceVisible = rightPanelOpen && !maximizedThreadTabActive;
+  const diffOpen = activeRightPanelKind === "diff" && rightPanelSurfaceVisible;
+  const previewPanelOpen =
+    activeRightPanelKind === "preview" && rightPanelSurfaceVisible && isPreviewSupportedInRuntime();
+  const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer({
+    source: activePreviewMiniPlayer?.source ?? null,
+    renderedRightPanelSurface,
+    rightPanelSurfaceVisible,
+  });
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
 
   useEffect(() => {
@@ -3812,9 +3809,14 @@ export default function ChatView(props: ChatViewProps) {
       onDiffPanelOpen?.();
     }
     if (activeThreadRef) {
-      useRightPanelStore.getState().toggle(activeThreadRef, "diff");
+      const panels = useRightPanelStore.getState();
+      if (maximizedThreadTabActive) {
+        panels.open(activeThreadRef, "diff");
+      } else {
+        panels.toggle(activeThreadRef, "diff");
+      }
     }
-  }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
+  }, [activeThreadRef, diffOpen, isServerThread, maximizedThreadTabActive, onDiffPanelOpen]);
 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = useMemo(
@@ -4880,11 +4882,19 @@ export default function ChatView(props: ChatViewProps) {
   const closePreviewPanel = useCallback(() => {
     if (activeThreadRef) {
       // Closing the panel on a live browser or device floats it instead of dropping it.
-      if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
+      if (
+        rightPanelSurfaceVisible &&
+        activeRightPanelSurface?.kind === "preview" &&
+        activeRightPanelSurface.resourceId
+      ) {
         usePreviewMiniPlayerStore
           .getState()
           .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
-      } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
+      } else if (
+        rightPanelSurfaceVisible &&
+        activeRightPanelSurface?.kind === "device" &&
+        activeRightPanelSurface.target
+      ) {
         usePreviewMiniPlayerStore
           .getState()
           .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
@@ -4892,7 +4902,7 @@ export default function ChatView(props: ChatViewProps) {
       setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
     }
-  }, [activeRightPanelSurface, activeThreadRef]);
+  }, [activeRightPanelSurface, activeThreadRef, rightPanelSurfaceVisible]);
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
     if (previewPanelOpen) {
@@ -5054,10 +5064,13 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
-    setMaximizedRightPanelThreadKey((threadKey) =>
-      threadKey === routeThreadKey ? null : routeThreadKey,
-    );
-  }, [canMaximizeRightPanel, routeThreadKey]);
+    if (activeThreadRef) useRightPanelStore.getState().selectPanelTab(activeThreadRef);
+    if (rightPanelMaximized) {
+      setMaximizedRightPanelThreadKey(null);
+      return;
+    }
+    setMaximizedRightPanelThreadKey(routeThreadKey);
+  }, [activeThreadRef, canMaximizeRightPanel, rightPanelMaximized, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -6310,7 +6323,7 @@ export default function ChatView(props: ChatViewProps) {
     const liveCount = agentPanelModel.liveCount;
     // Hidden once the Agents surface is on screen; the link would point at nothing.
     const showViewAgents =
-      liveCount > 0 && !(rightPanelOpen && activeRightPanelSurface?.kind === "agents");
+      liveCount > 0 && !(rightPanelSurfaceVisible && activeRightPanelSurface?.kind === "agents");
     return {
       id: `background-liveness:${activeThread.id}`,
       variant: "default",
@@ -6352,7 +6365,7 @@ export default function ChatView(props: ChatViewProps) {
     agentPanelModel.liveCount,
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
-    rightPanelOpen,
+    rightPanelSurfaceVisible,
   ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
@@ -6826,7 +6839,7 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "rightPanel.close") {
         // Nothing open: leave the event alone so the shortcut keeps its
         // native meaning (close window on desktop, close tab in a browser).
-        if (!activeRightPanelSurface) return;
+        if (!activeRightPanelSurface || maximizedThreadTabActive) return;
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
@@ -6991,6 +7004,7 @@ export default function ChatView(props: ChatViewProps) {
     confirmAndUnpinThread,
     copyActiveThreadReference,
     getShortcutContext,
+    maximizedThreadTabActive,
     toggleRightPanel,
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
@@ -9443,12 +9457,11 @@ export default function ChatView(props: ChatViewProps) {
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread || !activeThreadRef) return;
-      explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
     },
-    [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen],
+    [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
   // The revert handler is read from a ref at call-time so the callback
   // reference is fully stable and never busts TimelineRowCtx identity.
@@ -9521,7 +9534,9 @@ export default function ChatView(props: ChatViewProps) {
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
       liveAgentCount={
-        rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
+        rightPanelSurfaceVisible && activeRightPanelSurface?.kind === "agents"
+          ? 0
+          : agentPanelModel.liveCount
       }
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
@@ -9564,7 +9579,7 @@ export default function ChatView(props: ChatViewProps) {
           threadRef={activeThreadRef}
           tabId={renderedRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
-          visible={rightPanelOpen}
+          visible={rightPanelSurfaceVisible}
           onSendAnnotation={(annotation, image) => {
             void onSend(undefined, "foreground", { annotation, image });
           }}
@@ -9572,7 +9587,7 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
-        visible={rightPanelOpen}
+        visible={rightPanelSurfaceVisible}
         threadRef={activeThreadRef}
         surface={renderedRightPanelSurface}
         launchContext={activeTerminalLaunchContext ?? null}
@@ -9614,7 +9629,7 @@ export default function ChatView(props: ChatViewProps) {
       <PullRequestDetailPanel
         getShortcutContext={getShortcutContext}
         shortcutsEnabled={
-          rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
+          rightPanelSurfaceVisible && activeRightPanelSurface?.id === renderedRightPanelSurface.id
         }
         key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
         environmentId={activeThread.environmentId}
@@ -9665,7 +9680,7 @@ export default function ChatView(props: ChatViewProps) {
           threadRef={activeThreadRef}
           key={renderedRightPanelSurface.id}
           surface={renderedRightPanelSurface}
-          visible={rightPanelOpen}
+          visible={rightPanelSurfaceVisible}
           onDismissSetup={() => {
             closeRightPanelSurface(renderedRightPanelSurface);
             useRightPanelStore.getState().show(activeThreadRef);
@@ -9755,16 +9770,23 @@ export default function ChatView(props: ChatViewProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          maximizedThreadTabActive
+            ? "absolute inset-0 z-10 bg-background pt-(--workspace-topbar-height)"
+            : rightPanelMaximized
+              ? "w-0 flex-none"
+              : "flex-1",
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={
+          rightPanelMaximized && !maximizedThreadTabActive ? "true" : "false"
+        }
+        inert={(rightPanelMaximized && !maximizedThreadTabActive) || undefined}
       >
         {/* Top bar */}
         <WorkspacePageHeader
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
-          className="relative bg-background"
+          className={cn("relative bg-background", maximizedThreadTabActive && "hidden")}
         >
           {isElectron && rightPanelControlsAtRoot ? (
             <span
@@ -10287,6 +10309,17 @@ export default function ChatView(props: ChatViewProps) {
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
           open={rightPanelOpen}
           maximized={rightPanelMaximized}
+          {...(rightPanelMaximized
+            ? {
+                threadTab: {
+                  label: activeThread.title,
+                  active: maximizedThreadTabActive,
+                  onActivate: () => {
+                    useRightPanelStore.getState().selectThreadTab(activeThreadRef);
+                  },
+                },
+              }
+            : {})}
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}

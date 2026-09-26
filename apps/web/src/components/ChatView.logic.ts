@@ -89,11 +89,14 @@ export function agentControlledBrowserCloseConfirmation(
 }
 
 /** The floating player hides only while the same source is rendered in the panel. */
-export function shouldRenderPreviewMiniPlayer(
-  source: PreviewMiniPlayerSource | null,
-  renderedRightPanelSurface: RightPanelSurface | null,
-): boolean {
+export function shouldRenderPreviewMiniPlayer(input: {
+  readonly source: PreviewMiniPlayerSource | null;
+  readonly renderedRightPanelSurface: RightPanelSurface | null;
+  readonly rightPanelSurfaceVisible: boolean;
+}): boolean {
+  const { renderedRightPanelSurface, rightPanelSurfaceVisible, source } = input;
   if (source === null) return false;
+  if (!rightPanelSurfaceVisible) return true;
   if (source.kind === "browser") {
     return !(
       renderedRightPanelSurface?.kind === "preview" &&

@@ -22,6 +22,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  MessageSquare,
   Plus,
   TerminalSquare,
   Volume2,
@@ -61,6 +62,7 @@ import {
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { PanelTab } from "~/components/ui/panel-tab";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
@@ -83,6 +85,12 @@ interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
+  /** A transient, non-closing tab that shares the maximized workspace with panel surfaces. */
+  threadTab?: {
+    readonly label: string;
+    readonly active: boolean;
+    readonly onActivate: () => void;
+  };
   /** Forwarded to PreviewPanelShell so this surface persists its own width. */
   widthStorageKey?: string;
   /** Forwarded to PreviewPanelShell as the initial width before a user resize. */
@@ -836,6 +844,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollLeft: false,
     canScrollRight: false,
   });
+  const threadTabActive = props.threadTab?.active === true;
 
   const updateTabScrollState = useCallback(() => {
     const viewport = tabScrollViewport(tabListRef.current);
@@ -1054,10 +1063,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   );
 
   useEffect(() => {
-    if (!props.activeSurfaceId || !tabScrollState.hasOverflow) return;
+    if ((!props.activeSurfaceId && !threadTabActive) || !tabScrollState.hasOverflow) return;
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [props.activeSurfaceId, tabScrollState.hasOverflow]);
+  }, [props.activeSurfaceId, tabScrollState.hasOverflow, threadTabActive]);
 
   useEffect(() => {
     const viewport = tabScrollViewport(tabListRef.current);
@@ -1115,6 +1124,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
+          props.mode === "inline" && props.maximized && "relative z-20",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -1128,8 +1138,24 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
+            {props.threadTab ? (
+              <PanelTab
+                active={threadTabActive}
+                className="max-w-36 shrink-0 cursor-pointer [-webkit-app-region:no-drag]"
+              >
+                <button
+                  type="button"
+                  aria-pressed={threadTabActive}
+                  className="flex min-w-0 cursor-pointer items-center gap-1"
+                  onClick={props.threadTab.onActivate}
+                >
+                  <MessageSquare className="size-3 shrink-0" />
+                  <span className="truncate">{props.threadTab.label}</span>
+                </button>
+              </PanelTab>
+            ) : null}
             {props.surfaces.map((surface) => {
-              const active = surface.id === props.activeSurfaceId;
+              const active = !threadTabActive && surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
@@ -1142,18 +1168,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 ? (props.previewRuntimeTabId?.(previewTabId) ?? null)
                 : null;
               return (
-                <div
+                <PanelTab
                   key={surface.id}
-                  data-active-tab={active}
+                  active={active}
                   onMouseDown={handleTabMouseDown}
                   onAuxClick={(event) => handleTabAuxClick(event, surface)}
                   onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                   className={cn(
-                    "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                    "max-w-36 shrink-0 cursor-pointer",
                     ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
-                    active
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
                   <PanelTabCloseButton
@@ -1255,10 +1278,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </TooltipPopup>
                     </Tooltip>
                   )}
-                </div>
+                </PanelTab>
               );
             })}
-            {props.surfaces.length > 0 ? (
+            {props.surfaces.length > 0 || props.threadTab ? (
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
                   render={
@@ -1403,7 +1426,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      <div
+        className={cn("flex min-h-0 flex-1 flex-col", threadTabActive && "invisible")}
+        data-right-panel-surface-content
+        inert={threadTabActive || undefined}
+      >
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}
