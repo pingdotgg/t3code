@@ -1,4 +1,9 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -29,6 +34,7 @@ import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { useCustomizeInterfaceStore } from "../customize/customizeInterfaceStore";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -105,17 +111,26 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  pressed,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  /** Set for toggles, so the button reads as on while its mode is open. */
+  pressed?: boolean;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={label}
+              aria-pressed={pressed}
+              isActive={pressed ?? false}
+              onClick={onClick}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
@@ -156,6 +171,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
 
+  const customizeActive = useCustomizeInterfaceStore((store) => store.active);
+  const toggleCustomize = useCustomizeInterfaceStore((store) => store.toggle);
+  const handleCustomizeClick = useCallback(() => {
+    closeMobileSidebar();
+    toggleCustomize();
+  }, [closeMobileSidebar, toggleCustomize]);
+
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -183,6 +205,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<SettingsIcon />}
             label="Settings"
             onClick={handleSettingsClick}
+          />
+          <SidebarUtilityItem
+            icon={<SlidersHorizontalIcon />}
+            label="Customize interface"
+            onClick={handleCustomizeClick}
+            pressed={customizeActive}
           />
           {pullRequestsSupported ? (
             <SidebarUtilityItem

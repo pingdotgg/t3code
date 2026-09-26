@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, EllipsisIcon } from "lucide-react";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -37,6 +38,7 @@ import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+import { useInterfaceLayout } from "~/hooks/useInterfaceLayout";
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -351,50 +353,65 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [commitRename],
   );
-  const headerActions = (
-    <>
-      {activeProjectScripts && (
-        <>
-          <ProjectScriptsControl
-            onRequestMenuClose={() => setActionsOpen(false)}
-            presentation={actionsCollapsed ? "menu" : "toolbar"}
-            scripts={activeProjectScripts}
-            fileScripts={fileScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        </>
-      )}
-      {showOpenInPicker && (
-        <>
-          {actionsCollapsed && activeProjectScripts && <MenuSeparator />}
-          <OpenInPicker
-            presentation={actionsCollapsed ? "menu" : "toolbar"}
-            environmentId={activeThreadEnvironmentId}
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
-        </>
-      )}
-      {activeProjectName && gitCwd && (
-        <>
-          {actionsCollapsed && (activeProjectScripts || showOpenInPicker) && <MenuSeparator />}
-          <GitActionsControl
-            presentation={actionsCollapsed ? "menu" : "toolbar"}
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            onOpenPullRequest={onOpenPullRequest}
-            {...(draftId ? { draftId } : {})}
-          />
-        </>
-      )}
-    </>
-  );
+  const headerLayout = useInterfaceLayout("chatHeader");
+  const headerActionItems = headerLayout.order.flatMap((id) => {
+    if (headerLayout.hidden.has(id)) return [];
+    switch (id) {
+      case "scripts":
+        return activeProjectScripts
+          ? [
+              <ProjectScriptsControl
+                key={id}
+                onRequestMenuClose={() => setActionsOpen(false)}
+                presentation={actionsCollapsed ? "menu" : "toolbar"}
+                scripts={activeProjectScripts}
+                fileScripts={fileScripts}
+                keybindings={keybindings}
+                preferredScriptId={preferredScriptId}
+                onRunScript={onRunProjectScript}
+                onAddScript={onAddProjectScript}
+                onUpdateScript={onUpdateProjectScript}
+                onDeleteScript={onDeleteProjectScript}
+              />,
+            ]
+          : [];
+      case "openIn":
+        return showOpenInPicker
+          ? [
+              <OpenInPicker
+                key={id}
+                presentation={actionsCollapsed ? "menu" : "toolbar"}
+                environmentId={activeThreadEnvironmentId}
+                keybindings={keybindings}
+                availableEditors={availableEditors}
+                openInCwd={openInCwd}
+              />,
+            ]
+          : [];
+      case "git":
+        return activeProjectName && gitCwd
+          ? [
+              <GitActionsControl
+                key={id}
+                presentation={actionsCollapsed ? "menu" : "toolbar"}
+                gitCwd={gitCwd}
+                activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+                onOpenPullRequest={onOpenPullRequest}
+                {...(draftId ? { draftId } : {})}
+              />,
+            ]
+          : [];
+      default:
+        return [];
+    }
+  });
+  // The collapsed menu separates each group; the toolbar spaces them with gaps.
+  const headerActions = headerActionItems.map((item, index) => (
+    <Fragment key={item.key}>
+      {actionsCollapsed && index > 0 ? <MenuSeparator /> : null}
+      {item}
+    </Fragment>
+  ));
   return (
     <div
       className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
@@ -500,12 +517,7 @@ export const ChatHeader = memo(function ChatHeader({
       >
         <Menu open={actionsCollapsed && actionsOpen} onOpenChange={setActionsOpen}>
           <MenuTrigger
-            className={
-              actionsCollapsed &&
-              (activeProjectScripts || showOpenInPicker || (activeProjectName && gitCwd))
-                ? undefined
-                : "hidden"
-            }
+            className={actionsCollapsed && headerActionItems.length > 0 ? undefined : "hidden"}
             render={<Button size="icon-sm" variant="ghost" aria-label="More header actions" />}
           >
             <EllipsisIcon className="size-4" />

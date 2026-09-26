@@ -59,6 +59,7 @@ import { useComposerMenuProps } from "./chat/composerEventScope";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
 import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
 import { cn } from "~/lib/utils";
+import { useInterfaceLayout } from "~/hooks/useInterfaceLayout";
 
 export interface BranchToolbarHandle {
   openBranchPicker: () => void;
@@ -91,6 +92,8 @@ interface BranchToolbarProps {
 }
 
 interface MobileRunContextSelectorProps {
+  /** Flex order slot in the context strip, from the user's context bar layout. */
+  order: number;
   forceNewWorktree: boolean;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
@@ -126,6 +129,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
+  order,
 }: MobileRunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(
@@ -197,7 +201,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   if (isLocked) {
     return (
       <span
-        className="inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
+        data-order={order}
+        className="inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs data-[order=2]:order-2 data-[order=4]:order-4 sm:h-6"
         data-composer-context-control
       >
         {triggerContent}
@@ -209,7 +214,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     <Menu>
       <MenuTrigger
         render={<ComposerControl size="xs" />}
-        className="min-w-0 max-w-[48%] flex-initial justify-start"
+        data-order={order}
+        className="min-w-0 max-w-[48%] flex-initial justify-start data-[order=2]:order-2 data-[order=4]:order-4"
         data-composer-context-control
         data-composer-shortcut={[
           showEnvironmentPicker && !envLocked ? "composer.host" : "",
@@ -503,6 +509,19 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   return overflows;
 }
 
+const CONTEXT_BAR_ORDER_CLASS_NAMES = [
+  "order-0",
+  "order-1",
+  "order-2",
+  "order-3",
+  "order-4",
+] as const;
+const CONTEXT_BAR_EMPTY_HOST_ORDER_CLASS_NAMES = {
+  1: "empty:order-1",
+  2: "empty:order-2",
+  3: "empty:order-3",
+} as const;
+
 export const BranchToolbar = memo(function BranchToolbar({
   forceNewWorktree = false,
   ref,
@@ -614,6 +633,24 @@ export const BranchToolbar = memo(function BranchToolbar({
   });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
+  const contextBarLayout = useInterfaceLayout("composerContextBar");
+  // Flex order rearranges the strip's groups without changing its markup, so
+  // the label-overflow measurement and the controls host stay untouched.
+  // Groups take even slots; the controls host, empty while the composer is
+  // expanded, drops to the odd slot between the other two so it keeps
+  // separating them exactly as it does by default.
+  const slotOf = (id: (typeof contextBarLayout.order)[number]) =>
+    contextBarLayout.order.indexOf(id) * 2;
+  const orderClassName = (id: (typeof contextBarLayout.order)[number]) =>
+    CONTEXT_BAR_ORDER_CLASS_NAMES[slotOf(id)];
+  const emptyHostOrderClassName =
+    CONTEXT_BAR_EMPTY_HOST_ORDER_CLASS_NAMES[
+      (contextBarLayout.order
+        .filter((id) => id !== "controls")
+        .reduce((sum, id) => sum + slotOf(id), 0) / 2) as 1 | 2 | 3
+    ];
+  const showWorkspaceGroup = !contextBarLayout.hidden.has("workspace");
+  const showBranchSelector = showGitControls && !contextBarLayout.hidden.has("branch");
 
   if (!hasActiveThread || !activeProject) return null;
 
@@ -629,9 +666,10 @@ export const BranchToolbar = memo(function BranchToolbar({
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >
-      {showGitControls ? (
+      {showGitControls && showWorkspaceGroup ? (
         <div className="contents @3xl/composer-surface:hidden">
           <MobileRunContextSelector
+            order={slotOf("workspace")}
             forceNewWorktree={forceNewWorktree}
             autoEnvironmentLabel={autoEnvironmentLabel}
             onAutoEnvironment={onAutoEnvironment}
@@ -651,9 +689,10 @@ export const BranchToolbar = memo(function BranchToolbar({
           />
         </div>
       ) : null}
-      {showGitControls || showEnvironmentIndicator ? (
+      {showWorkspaceGroup && (showGitControls || showEnvironmentIndicator) ? (
         <div
           className={cn(
+            orderClassName("workspace"),
             "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
             showGitControls ? "hidden @3xl/composer-surface:flex" : "flex",
             composerControlsHostRef ? "shrink" : "flex-1",
@@ -701,15 +740,22 @@ export const BranchToolbar = memo(function BranchToolbar({
           ref={composerControlsHostRef}
           data-composer-context-control
           data-chat-resting-composer-controls-host="true"
-          className="flex min-w-0 flex-1 items-center justify-start overflow-x-clip overflow-y-visible"
+          className={cn(
+            orderClassName("controls"),
+            emptyHostOrderClassName,
+            "flex min-w-0 flex-1 items-center justify-start overflow-x-clip overflow-y-visible",
+          )}
         />
       ) : null}
 
-      {showGitControls ? (
+      {showBranchSelector ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
-          className="min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto"
+          className={cn(
+            orderClassName("branch"),
+            "min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto",
+          )}
           environmentId={environmentId}
           threadId={threadId}
           {...(draftId ? { draftId } : {})}

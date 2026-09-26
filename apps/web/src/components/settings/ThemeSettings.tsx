@@ -54,7 +54,7 @@ import {
 } from "./ThemePreviewCircles";
 import { ThemeWireframe } from "./ThemeWireframe";
 
-const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
+export const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,
@@ -500,6 +500,131 @@ function CustomThemeCollectionCard({
   );
 }
 
+/**
+ * Theme selection shared by the settings library and Customize interface:
+ * the pair model where one theme owns light, one owns dark, and the global
+ * appearance mode decides which is showing.
+ */
+export function useThemeSelection({
+  theme,
+  setTheme,
+  appearanceMode,
+  setAppearanceMode,
+  themeHalves,
+  setThemeHalf,
+}: {
+  theme: string;
+  setTheme: (theme: string) => boolean;
+  appearanceMode: ThemeMode;
+  setAppearanceMode: (mode: ThemeMode) => boolean;
+  themeHalves: ThemeHalves | null;
+  setThemeHalf: (appearance: ThemeAppearance, themeId: string | null) => boolean;
+}) {
+  const notifyThemeSaveFailure = useCallback(() => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Couldn’t save theme selection",
+        description: "Try again.",
+      }),
+    );
+  }, []);
+
+  const persistTheme = useCallback(
+    (nextTheme: string) => {
+      const didSave = setTheme(nextTheme);
+      if (!didSave) notifyThemeSaveFailure();
+      return didSave;
+    },
+    [notifyThemeSaveFailure, setTheme],
+  );
+
+  // ----- Automatic-mode mixing -------------------------------------------
+  // The pair model: one theme owns light, one owns dark, and the global
+  // appearance mode (light / dark / auto) decides which is showing.
+  const baseCardId = getThemeDefinition(theme)?.id ?? null;
+  const lightOwner = themeHalves?.light ?? baseCardId;
+  const darkOwner = themeHalves?.dark ?? baseCardId;
+
+  const assignHalf = useCallback(
+    (appearance: ThemeAppearance, cardId: string | null) => {
+      const otherAppearance = appearance === "light" ? "dark" : "light";
+      // Picking the default over a themed base cannot be stored as a half:
+      // the base would still own that appearance. Convert the base into an
+      // explicit half on the other side so this side falls back to default.
+      if (cardId === null && baseCardId !== null) {
+        // Read raw, before persistTheme clears the mix: the other half may
+        // name a published theme that has not streamed in yet, and falling
+        // back to the base would silently rewrite it.
+        const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
+        if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
+        if (!setThemeHalf(otherAppearance, otherOwner)) {
+          // Best-effort rollback: restore the whole-theme selection rather
+          // than leaving the user with no theme at all.
+          setTheme(theme);
+          notifyThemeSaveFailure();
+        }
+        return;
+      }
+      if (!setThemeHalf(appearance, cardId)) {
+        notifyThemeSaveFailure();
+      }
+    },
+    [
+      appearanceMode,
+      baseCardId,
+      notifyThemeSaveFailure,
+      persistTheme,
+      setTheme,
+      setThemeHalf,
+      theme,
+    ],
+  );
+
+  const setMode = (mode: ThemeMode) => {
+    if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
+  };
+
+  const handlePairPick = (cardId: string | null) => (mode: ThemeMode) => {
+    if (mode === "system") return;
+    assignHalf(mode, cardId);
+  };
+
+  // Rings always show the effective owner of each appearance: an unpicked
+  // half belongs to the default card (a null owner), so a fresh install
+  // shows T3 Code selected instead of nothing.
+  const pickedModesFor = (cardId: string | null): ThemeMode[] => {
+    const rings: ThemeMode[] = [];
+    if (lightOwner === cardId) rings.push("light");
+    if (darkOwner === cardId) rings.push("dark");
+    return rings;
+  };
+
+  // A theme that ships one appearance takes its side of the mix instead of
+  // becoming the base for both.
+  const applyThemeDefinition = (definition: ThemeDefinition) => {
+    const modes = getThemeModes(definition);
+    if (modes.length === 1) assignHalf(modes[0]!, definition.id);
+    else persistTheme(definition.id);
+  };
+  const applyStandardTheme = () =>
+    persistTheme(appearanceMode === "system" ? "system" : appearanceMode);
+
+  return {
+    notifyThemeSaveFailure,
+    persistTheme,
+    baseCardId,
+    lightOwner,
+    darkOwner,
+    assignHalf,
+    pickedModesFor,
+    setMode,
+    handlePairPick,
+    applyThemeDefinition,
+    applyStandardTheme,
+  };
+}
+
 export function ThemeLibrary({
   theme,
   setTheme,
@@ -527,6 +652,22 @@ export function ThemeLibrary({
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const {
+    persistTheme,
+    lightOwner,
+    darkOwner,
+    assignHalf,
+    pickedModesFor,
+    setMode,
+    handlePairPick,
+  } = useThemeSelection({
+    theme,
+    setTheme,
+    appearanceMode,
+    setAppearanceMode,
+    themeHalves,
+    setThemeHalf,
+  });
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -542,16 +683,6 @@ export function ThemeLibrary({
   const removeDialogCollectionLabel =
     removeDialogTheme?.collection?.label ?? removeDialogTheme?.label;
 
-  const notifyThemeSaveFailure = useCallback(() => {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Couldn’t save theme selection",
-        description: "Try again.",
-      }),
-    );
-  }, []);
-
   const notifyThemeRemovalFailure = useCallback(() => {
     toastManager.add(
       stackedThreadToast({
@@ -561,15 +692,6 @@ export function ThemeLibrary({
       }),
     );
   }, []);
-
-  const persistTheme = useCallback(
-    (nextTheme: string) => {
-      const didSave = setTheme(nextTheme);
-      if (!didSave) notifyThemeSaveFailure();
-      return didSave;
-    },
-    [notifyThemeSaveFailure, setTheme],
-  );
 
   const handleRemoveTheme = useCallback(
     (customTheme: ThemeDefinition, collectionThemes: ReadonlyArray<ThemeDefinition>) => {
@@ -622,48 +744,6 @@ export function ThemeLibrary({
     themeRemovalTarget,
   ]);
 
-  // ----- Automatic-mode mixing -------------------------------------------
-  // The pair model: one theme owns light, one owns dark, and the global
-  // appearance mode (light / dark / auto) decides which is showing.
-  const baseCardId = getThemeDefinition(theme)?.id ?? null;
-  const lightOwner = themeHalves?.light ?? baseCardId;
-  const darkOwner = themeHalves?.dark ?? baseCardId;
-
-  const assignHalf = useCallback(
-    (appearance: ThemeAppearance, cardId: string | null) => {
-      const otherAppearance = appearance === "light" ? "dark" : "light";
-      // Picking the default over a themed base cannot be stored as a half:
-      // the base would still own that appearance. Convert the base into an
-      // explicit half on the other side so this side falls back to default.
-      if (cardId === null && baseCardId !== null) {
-        // Read raw, before persistTheme clears the mix: the other half may
-        // name a published theme that has not streamed in yet, and falling
-        // back to the base would silently rewrite it.
-        const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
-        if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
-        if (!setThemeHalf(otherAppearance, otherOwner)) {
-          // Best-effort rollback: restore the whole-theme selection rather
-          // than leaving the user with no theme at all.
-          setTheme(theme);
-          notifyThemeSaveFailure();
-        }
-        return;
-      }
-      if (!setThemeHalf(appearance, cardId)) {
-        notifyThemeSaveFailure();
-      }
-    },
-    [
-      appearanceMode,
-      baseCardId,
-      notifyThemeSaveFailure,
-      persistTheme,
-      setTheme,
-      setThemeHalf,
-      theme,
-    ],
-  );
-
   // "Create theme" starts from whatever is on screen for the appearance being
   // edited, so tuning the theme you already use never means rebuilding it.
   const activeThemeForAppearance =
@@ -678,26 +758,6 @@ export function ThemeLibrary({
   const pickColors = (id: string | null, appearance: ThemeAppearance) => {
     const card = cardDefById(id);
     return previewColorsOf(card, appearance) ?? card.previews[0]!.colors;
-  };
-
-  const setMode = (mode: ThemeMode) => {
-    if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
-  };
-
-  // ----- Wireframe tiles on top, two-ball cards below --------------------
-  const handlePairPick = (cardId: string | null) => (mode: ThemeMode) => {
-    if (mode === "system") return;
-    assignHalf(mode, cardId);
-  };
-
-  // Rings always show the effective owner of each appearance: an unpicked
-  // half belongs to the default card (a null owner), so a fresh install
-  // shows T3 Code selected instead of nothing.
-  const pickedModesFor = (cardId: string | null): ThemeMode[] => {
-    const rings: ThemeMode[] = [];
-    if (lightOwner === cardId) rings.push("light");
-    if (darkOwner === cardId) rings.push("dark");
-    return rings;
   };
 
   const wireframeColors = (appearance: ThemeAppearance) =>

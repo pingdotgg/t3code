@@ -379,9 +379,11 @@ import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayo
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { useInterfaceLayout } from "../hooks/useInterfaceLayout";
 import {
   type EnvironmentOption,
   resolveEffectiveEnvMode,
+  resolveContextBarLeadsControls,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
@@ -3772,6 +3774,7 @@ export default function ChatView(props: ChatViewProps) {
     showEnvironmentIndicator: showComposerEnvironmentIndicator,
     hostsRestingComposerControls: routeKind === "server",
   });
+  const contextBarLayout = useInterfaceLayout("composerContextBar");
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -10097,9 +10100,13 @@ export default function ChatView(props: ChatViewProps) {
                               supportsPullRequests ? activeProjectRepository : null
                             }
                             restingControlsHost={restingComposerControlsHost}
-                            restingControlsHaveLeadingContext={
-                              isGitRepo || showComposerEnvironmentIndicator
-                            }
+                            restingControlsHaveLeadingContext={resolveContextBarLeadsControls(
+                              contextBarLayout,
+                              {
+                                workspace: isGitRepo || showComposerEnvironmentIndicator,
+                                branch: isGitRepo,
+                              },
+                            )}
                             onRestingControlsVisibilityChange={setRestingComposerControlsVisible}
                             getTimelineScrollableNode={getTimelineScrollableNode}
                             isTimelineAtLogicalEnd={isTimelineAtLogicalEnd}
