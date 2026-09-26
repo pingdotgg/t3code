@@ -4725,9 +4725,20 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 });
 
 /** Allows the thread's blocked `.envrc`; the next message loads it. */
-function AllowDirenvButton({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+// The virtualized timeline remounts rows, so the outcome outlives the button.
+const allowedDirenvWarnings = new Set<string>();
+
+function AllowDirenvButton({
+  threadRef,
+  warningId,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly warningId: string;
+}) {
   const allowDirenv = useAtomCommand(threadEnvironment.allowDirenv);
-  const [state, setState] = useState<"idle" | "pending" | "allowed">("idle");
+  const [state, setState] = useState<"idle" | "pending" | "allowed">(() =>
+    allowedDirenvWarnings.has(warningId) ? "allowed" : "idle",
+  );
   const onClick = async (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     setState("pending");
@@ -4736,6 +4747,7 @@ function AllowDirenvButton({ threadRef }: { readonly threadRef: ScopedThreadRef 
       input: { threadId: threadRef.threadId },
     });
     if (result._tag === "Success" && result.value.allowed) {
+      allowedDirenvWarnings.add(warningId);
       setState("allowed");
       return;
     }
@@ -4754,11 +4766,14 @@ function AllowDirenvButton({ threadRef }: { readonly threadRef: ScopedThreadRef 
       onClick={onClick}
       onKeyDown={(event) => event.stopPropagation()}
       size="xs"
-      title={state === "allowed" ? "Loads with your next message" : undefined}
       type="button"
       variant="ghost-muted"
     >
-      {state === "allowed" ? "Allowed" : state === "pending" ? "Allowing…" : "Allow .envrc"}
+      {state === "allowed"
+        ? "Allowed · applies to your next message"
+        : state === "pending"
+          ? "Allowing…"
+          : "Allow .envrc"}
     </Button>
   );
 }
@@ -4930,7 +4945,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
           {workEntry.warningAction?.type === "direnv.allow" && threadRef ? (
-            <AllowDirenvButton threadRef={threadRef} />
+            <AllowDirenvButton threadRef={threadRef} warningId={workEntry.id} />
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span

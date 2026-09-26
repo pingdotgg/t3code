@@ -737,12 +737,18 @@ function workLogRowKey(row: ThreadFeedActivity): string {
 }
 
 /** Allows the thread's blocked `.envrc`; the next message loads it. */
+// The work log remounts rows, so the outcome outlives the button.
+const allowedDirenvWarnings = new Set<string>();
+
 function AllowDirenvButton(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly warningId: string;
 }) {
   const allowDirenv = useAtomCommand(threadEnvironment.allowDirenv, "allow direnv");
-  const [state, setState] = useState<"idle" | "pending" | "allowed">("idle");
+  const [state, setState] = useState<"idle" | "pending" | "allowed">(() =>
+    allowedDirenvWarnings.has(props.warningId) ? "allowed" : "idle",
+  );
   return (
     <Pressable
       accessibilityRole="button"
@@ -756,6 +762,7 @@ function AllowDirenvButton(props: {
           input: { threadId: props.threadId },
         });
         if (result._tag === "Success" && result.value.allowed) {
+          allowedDirenvWarnings.add(props.warningId);
           setState("allowed");
           return;
         }
@@ -767,7 +774,11 @@ function AllowDirenvButton(props: {
       className="min-h-8 justify-center px-2"
     >
       <Text className="font-t3-medium text-xs text-foreground">
-        {state === "allowed" ? "Allowed" : state === "pending" ? "Allowing…" : "Allow .envrc"}
+        {state === "allowed"
+          ? "Allowed · applies to your next message"
+          : state === "pending"
+            ? "Allowing…"
+            : "Allow .envrc"}
       </Text>
     </Pressable>
   );
@@ -890,7 +901,11 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 
           <View className="shrink-0 flex-row items-center gap-px">
             {row.workEntry.warningAction?.type === "direnv.allow" ? (
-              <AllowDirenvButton environmentId={props.environmentId} threadId={props.threadId} />
+              <AllowDirenvButton
+                environmentId={props.environmentId}
+                threadId={props.threadId}
+                warningId={row.workEntry.id}
+              />
             ) : null}
             {props.copied ? (
               <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
