@@ -124,12 +124,10 @@ import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
-import { DPOP_REPLAY_MARKER_PREFIX } from "./auth/dpop.ts";
+import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
-  CLOUD_REPLAY_MARKER_PREFIXES,
-  CLOUD_REPLAY_WINDOW_SECONDS,
   connectHttpApiLayer,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLinkIfStillDesired,
@@ -170,7 +168,6 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import { DPOP_REPLAY_WINDOW_SECONDS } from "@t3tools/shared/dpop";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -504,32 +501,9 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-// A replay marker only matters while its proof can still be accepted. Keep each
-// marker for twice the longest proof window, so a change to either window moves
-// this too. Markers stay on disk, so a restart inside the window still blocks
-// replays.
-const REPLAY_MARKER_MAX_AGE = Duration.seconds(
-  2 * Math.max(DPOP_REPLAY_WINDOW_SECONDS, CLOUD_REPLAY_WINDOW_SECONDS),
-);
-
-// Sweeps expired replay markers after activation, then every 10 minutes.
-const ReplayMarkerPruneLive = Layer.effectDiscard(
-  forkParked(
-    ServerSecretStore.pruneExpiredReplayMarkers(
-      [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKER_PREFIXES],
-      REPLAY_MARKER_MAX_AGE,
-    ).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to prune expired replay markers", { cause }),
-      ),
-      Effect.repeat(Schedule.spaced(Duration.minutes(10))),
-    ),
-  ),
-);
-
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AntigravityInstallationRefreshLive),
-  Layer.provideMerge(ReplayMarkerPruneLive),
+  Layer.provideMerge(ReplayMarkers.layer),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
