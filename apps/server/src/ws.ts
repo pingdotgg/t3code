@@ -1335,54 +1335,80 @@ const makeWsRpcLayer = (
             let worktreeBaseRef = prepareWorktree?.baseBranch ?? null;
 
             if (prepareWorktree && shouldPrepareWorktree) {
-              // "Start from origin" is a stored default; repos without the
-              // requested remote branch fall back to the local base branch.
-              const startFromOrigin =
-                prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* track(worktreeSetupTracker.stageStatus(threadId, "fetch", "running"));
-                yield* gitWorkflow.fetchRemote({
-                  cwd: prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                  refName: prepareWorktree.baseBranch,
-                });
-                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
-                  cwd: prepareWorktree.projectCwd,
-                  refName: prepareWorktree.baseBranch,
-                  remoteName: "origin",
-                });
-                if (remoteBaseExists) {
-                  const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+              // Origin preparation may fail while the local base remains usable.
+              yield* Effect.gen(function* () {
+                // "Start from origin" is a stored default; repos without the
+                // requested remote branch fall back to the local base branch.
+                const startFromOrigin =
+                  prepareWorktree.startFromOrigin === true &&
+                  (yield* gitWorkflow.remoteExists({
+                    cwd: prepareWorktree.projectCwd,
+                    remoteName: "origin",
+                  }));
+                if (startFromOrigin) {
+                  yield* track(worktreeSetupTracker.stageStatus(threadId, "fetch", "running"));
+                  yield* gitWorkflow.fetchRemote({
+                    cwd: prepareWorktree.projectCwd,
+                    remoteName: "origin",
+                    refName: prepareWorktree.baseBranch,
+                  });
+                  const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
                     cwd: prepareWorktree.projectCwd,
                     refName: prepareWorktree.baseBranch,
-                    fallbackRemoteName: "origin",
+                    remoteName: "origin",
                   });
-                  worktreeBaseRef = resolvedRemoteBase.commitSha;
-                  yield* track(
-                    worktreeSetupTracker.stageStatus(
-                      threadId,
-                      "fetch",
-                      "done",
-                      `origin/${prepareWorktree.baseBranch} at ${resolvedRemoteBase.commitSha.slice(0, 7)}`,
-                    ),
-                  );
+                  if (remoteBaseExists) {
+                    const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                      cwd: prepareWorktree.projectCwd,
+                      refName: prepareWorktree.baseBranch,
+                      fallbackRemoteName: "origin",
+                    });
+                    worktreeBaseRef = resolvedRemoteBase.commitSha;
+                    yield* track(
+                      worktreeSetupTracker.stageStatus(
+                        threadId,
+                        "fetch",
+                        "done",
+                        `origin/${prepareWorktree.baseBranch} at ${resolvedRemoteBase.commitSha.slice(0, 7)}`,
+                      ),
+                    );
+                  } else {
+                    yield* track(
+                      worktreeSetupTracker.stageStatus(
+                        threadId,
+                        "fetch",
+                        "warning",
+                        `origin/${prepareWorktree.baseBranch} not found, using local branch`,
+                      ),
+                    );
+                  }
                 } else {
-                  yield* track(
-                    worktreeSetupTracker.stageStatus(
-                      threadId,
-                      "fetch",
-                      "warning",
-                      `origin/${prepareWorktree.baseBranch} not found, using local branch`,
-                    ),
-                  );
+                  yield* track(worktreeSetupTracker.stageStatus(threadId, "fetch", "skipped"));
                 }
-              } else {
-                yield* track(worktreeSetupTracker.stageStatus(threadId, "fetch", "skipped"));
-              }
+              }).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("could not prepare worktree base from origin", {
+                    threadId: command.threadId,
+                    baseBranch: prepareWorktree.baseBranch,
+                    remoteName: "origin",
+                    operation: error.operation,
+                    exitCode: error.exitCode ?? null,
+                    stdoutLength: error.stdoutLength ?? null,
+                    stderrLength: error.stderrLength ?? null,
+                  }).pipe(
+                    Effect.andThen(
+                      track(
+                        worktreeSetupTracker.stageStatus(
+                          threadId,
+                          "fetch",
+                          "warning",
+                          "Origin unavailable, using local branch",
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
 
               const resolvedWorktreeBaseRef = worktreeBaseRef ?? prepareWorktree.baseBranch;
               shouldPrepareWorktree = yield* gitWorkflow.hasCommit({
