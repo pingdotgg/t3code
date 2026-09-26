@@ -339,6 +339,20 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    searchRepositories: (input) =>
+      github.searchRepositories(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "searchRepositories",
+              command: error.command,
+              cwd: input.cwd,
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     createRepository: (input) =>
       github.createRepository(input).pipe(
         Effect.mapError(

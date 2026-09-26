@@ -183,6 +183,7 @@ function bindProviderContext(
         ...input,
         context: input.context ?? context,
       }),
+    ...(provider.searchRepositories ? { searchRepositories: provider.searchRepositories } : {}),
     createRepository: (input) => provider.createRepository(input),
     getDefaultBranch: (input) =>
       provider.getDefaultBranch({

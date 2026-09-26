@@ -201,6 +201,19 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedError<GitHubReposi
   }
 }
 
+export class GitHubRepositorySearchDecodeError extends Schema.TaggedError<GitHubRepositorySearchDecodeError>()(
+  "GitHubRepositorySearchDecodeError",
+  gitHubCliDecodeFields,
+) {
+  get detail(): string {
+    return "GitHub CLI returned invalid repository search JSON.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in searchRepositories: ${this.detail}`;
+  }
+}
+
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
@@ -211,6 +224,7 @@ export const GitHubCliError = Schema.Union([
   GitHubChangeRequestListDecodeError,
   GitHubPullRequestDecodeError,
   GitHubRepositoryDecodeError,
+  GitHubRepositorySearchDecodeError,
 ]);
 export type GitHubCliError = typeof GitHubCliError.Type;
 
@@ -278,6 +292,11 @@ export interface GitHubRepositoryCloneUrls {
   readonly sshUrl: string;
 }
 
+export interface GitHubRepositorySearchResult {
+  readonly nameWithOwner: string;
+  readonly description: string | null;
+}
+
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
@@ -310,6 +329,12 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+
+    /** Searches the signed-in account's repositories first, then all of GitHub. */
+    readonly searchRepositories: (input: {
+      readonly cwd: string;
+      readonly query: string;
+    }) => Effect.Effect<ReadonlyArray<GitHubRepositorySearchResult>, GitHubCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
@@ -355,6 +380,33 @@ function normalizeRepositoryCloneUrls(
     url: raw.url,
     sshUrl: raw.sshUrl,
   };
+}
+
+const RawGitHubRepositorySearchSchema = Schema.Array(
+  Schema.Struct({
+    fullName: TrimmedNonEmptyString,
+    description: Schema.NullishOr(Schema.String),
+  }),
+);
+const decodeRawGitHubRepositorySearch = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitHubRepositorySearchSchema),
+);
+
+/**
+ * Merges search result lists in order, keeping the first occurrence of each repository.
+ *
+ * @example mergeRepositorySearchResults([[a], [a, b]]); // [a, b]
+ */
+function mergeRepositorySearchResults(
+  lists: ReadonlyArray<ReadonlyArray<GitHubRepositorySearchResult>>,
+): ReadonlyArray<GitHubRepositorySearchResult> {
+  const seen = new Set<string>();
+  return lists.flat().filter((repository) => {
+    const key = repository.nameWithOwner.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -612,6 +664,41 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    searchRepositories: (input) => {
+      const search = (query: string, limit: number) =>
+        execute({
+          cwd: input.cwd,
+          args: [
+            "search",
+            "repos",
+            "--limit",
+            String(limit),
+            "--json",
+            "fullName,description",
+            "--",
+            query,
+          ],
+        }).pipe(
+          Effect.flatMap((result) =>
+            decodeRawGitHubRepositorySearch(result.stdout.trim()).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitHubRepositorySearchDecodeError({ command: "gh", cwd: input.cwd, cause }),
+              ),
+            ),
+          ),
+          Effect.map((repositories) =>
+            repositories.map((repository) => ({
+              nameWithOwner: repository.fullName,
+              description: repository.description ?? null,
+            })),
+          ),
+        );
+
+      return Effect.all([search(`${input.query} user:@me`, 5), search(input.query, 20)], {
+        concurrency: "unbounded",
+      }).pipe(Effect.map(mergeRepositorySearchResults));
+    },
     createRepository: (input) =>
       execute({
         cwd: input.cwd,

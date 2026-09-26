@@ -55,6 +55,7 @@ import { cn } from "../../lib/cn";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
+import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
@@ -720,50 +721,65 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const lookupRepository = useCallback(async () => {
-    if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
-    setError(null);
-    setIsSubmitting(true);
-    const provider = addProjectRemoteSourceProvider(source);
-    if (!provider) {
-      const remoteUrl = normalizePastedCloneUrl(repositoryInput);
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
+  const githubSearchQuery = useDebouncedValue(
+    source === "github" ? repositoryInput.trim() : "",
+    500,
+  );
+  const githubSearch = useEnvironmentQuery(
+    environment && githubSearchQuery.length >= 3
+      ? sourceControlEnvironment.searchRepositories({
           environmentId: environment.environmentId,
-          source,
-          remoteUrl,
-          repositoryTitle: remoteUrl,
-          repositoryName: getCloneDirectoryName(remoteUrl),
-        }),
-      );
+          input: { provider: "github", query: githubSearchQuery },
+        })
+      : null,
+  );
+
+  const lookupRepository = useCallback(
+    async (repositoryName: string) => {
+      if (!environment || repositoryName.length === 0 || isSubmitting) return;
+      setError(null);
+      setIsSubmitting(true);
+      const provider = addProjectRemoteSourceProvider(source);
+      if (!provider) {
+        const remoteUrl = normalizePastedCloneUrl(repositoryName);
+        navigation.dispatch(
+          StackActions.push("AddProjectDestination", {
+            environmentId: environment.environmentId,
+            source,
+            remoteUrl,
+            repositoryTitle: remoteUrl,
+            repositoryName: getCloneDirectoryName(remoteUrl),
+          }),
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      const result = await lookupRepositoryQuery({
+        environmentId: environment.environmentId,
+        input: {
+          provider,
+          repository: repositoryName,
+        },
+      });
+      if (AsyncResult.isFailure(result)) {
+        setError(errorMessage(Cause.squash(result.cause)));
+      } else {
+        const repository = result.value;
+        navigation.dispatch(
+          StackActions.push("AddProjectDestination", {
+            environmentId: environment.environmentId,
+            source,
+            remoteUrl: getDefaultCloneUrl(repository),
+            repositoryTitle: repository.nameWithOwner,
+            repositoryName: getCloneDirectoryName(repository.nameWithOwner),
+          }),
+        );
+      }
       setIsSubmitting(false);
-      return;
-    }
-
-    const result = await lookupRepositoryQuery({
-      environmentId: environment.environmentId,
-      input: {
-        provider,
-        repository: repositoryInput.trim(),
-      },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setError(errorMessage(Cause.squash(result.cause)));
-    } else {
-      const repository = result.value;
-      navigation.dispatch(
-        StackActions.push("AddProjectDestination", {
-          environmentId: environment.environmentId,
-          source,
-          remoteUrl: getDefaultCloneUrl(repository),
-          repositoryTitle: repository.nameWithOwner,
-          repositoryName: getCloneDirectoryName(repository.nameWithOwner),
-        }),
-      );
-    }
-    setIsSubmitting(false);
-  }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
+    },
+    [environment, isSubmitting, lookupRepositoryQuery, navigation, source],
+  );
 
   return (
     <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
@@ -779,17 +795,50 @@ export function AddProjectRepositoryScreen(props: {
             placeholder={
               source === "url"
                 ? "https://github.com/org/repo.git"
-                : addProjectRemoteSourcePathHint(source)
+                : source === "github"
+                  ? "Search or enter owner/repo"
+                  : addProjectRemoteSourcePathHint(source)
             }
             returnKeyType="next"
-            onSubmitEditing={() => void lookupRepository()}
+            onSubmitEditing={() => void lookupRepository(repositoryInput.trim())}
           />
           <PrimaryActionButton
             label={source === "url" ? "Continue" : "Lookup repository"}
             disabled={isSubmitting || repositoryInput.trim().length === 0}
-            onPress={() => void lookupRepository()}
+            onPress={() => void lookupRepository(repositoryInput.trim())}
             loading={isSubmitting}
           />
+          {source === "github" && githubSearchQuery.length >= 3 ? (
+            <>
+              <SectionTitle>Repositories</SectionTitle>
+              {githubSearch.error ? <ErrorBanner message={githubSearch.error} /> : null}
+              <ListSection>
+                {githubSearch.isPending && githubSearch.data === null ? (
+                  <View className="items-center py-5">
+                    <ActivityIndicator colorClassName="accent-icon-muted" />
+                  </View>
+                ) : null}
+                {(githubSearch.data ?? []).map((repository, index) => (
+                  <ListRow
+                    key={repository.nameWithOwner}
+                    title={repository.nameWithOwner}
+                    subtitle={repository.description}
+                    icon={
+                      <SourceControlIcon
+                        kind="github"
+                        size={Platform.OS === "android" ? 24 : 18}
+                        colorClassName="accent-icon-muted"
+                      />
+                    }
+                    isFirst={index === 0}
+                    right={null}
+                    disabled={isSubmitting}
+                    onPress={() => void lookupRepository(repository.nameWithOwner)}
+                  />
+                ))}
+              </ListSection>
+            </>
+          ) : null}
         </>
       ) : (
         <EmptyEnvironmentState />
