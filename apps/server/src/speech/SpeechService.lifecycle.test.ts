@@ -825,3 +825,25 @@ it.effect(
     }),
   { timeout: 1000 },
 );
+
+it.effect("a failed stream begin does not poison the next stream", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    native.begin.mockRejectedValueOnce(new Error("native stream creation failed"));
+    const result = yield* speech.startStream.pipe(Effect.scoped, Effect.result);
+    expect(Result.isFailure(result)).toBe(true);
+    expect(native.dispose).toHaveBeenCalledOnce();
+    yield* speech.startStream.pipe(Effect.scoped);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("failed CPU fallback is disposed", () =>
+  Effect.gen(function* () {
+    native.transcribe.mockRejectedValueOnce(new Error("GPU failed"));
+    native.transcribe.mockRejectedValueOnce(new Error("CPU failed"));
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.transcribe(pcm()).pipe(Effect.result);
+    expect(native.dispose).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);

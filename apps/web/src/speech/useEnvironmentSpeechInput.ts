@@ -183,6 +183,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       },
     });
     controllerRef.current = controller;
+    setControllerState({ prepared, value: INITIAL_STATE });
+    setPreview(null);
+    setLevel(0);
     return () => {
       disposed = true;
       startRequestRef.current += 1;

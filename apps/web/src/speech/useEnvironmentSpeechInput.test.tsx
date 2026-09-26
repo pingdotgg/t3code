@@ -9,6 +9,7 @@ import { DEFAULT_CLIENT_SETTINGS, type EnvironmentId } from "@t3tools/contracts"
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 const mocks = vi.hoisted(() => ({
+  postProcessingEnabled: false,
   busy: false,
   microphoneFailure: true,
   missingModel: false,
@@ -37,7 +38,7 @@ vi.mock("../hooks/useSettings", () => ({
       ...DEFAULT_CLIENT_SETTINGS,
       voiceTranscriptionEnvironmentId: mocks.transcriptionEnvironmentId,
     }),
-  useEnvironmentSettings: () => false,
+  useEnvironmentSettings: () => mocks.postProcessingEnabled,
 }));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
 vi.mock("../localApi", () => ({ ensureLocalApi: () => ({}) }));
@@ -115,6 +116,7 @@ async function mountProbe() {
 afterEach(async () => {
   await act(() => root?.unmount());
   root = undefined;
+  mocks.postProcessingEnabled = false;
   mocks.busy = false;
   mocks.microphoneFailure = true;
   mocks.missingModel = false;
@@ -262,4 +264,16 @@ it("clears the previous connection's recording error when replacing the controll
   mocks.prepared = previousConnection;
   await act(() => root!.render(<Probe />));
   expect(voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
+});
+
+it(" replacing post-processing settings does not strand recording state", async () => {
+  mocks.microphoneFailure = false;
+  await mountProbe();
+  await act(() => voice.start());
+  expect(voice.state.phase).toBe("recording");
+  mocks.postProcessingEnabled = true;
+  await act(() => root!.render(<Probe />));
+  await act(() => voice.cancel());
+  expect(voice.state.phase).toBe("idle");
+  mocks.postProcessingEnabled = false;
 });

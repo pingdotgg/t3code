@@ -390,7 +390,7 @@ export const make = Effect.gen(function* () {
   // waiting for dangling native work to settle.
   const exclusiveEffect = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
     Effect.uninterruptibleMask((restore) =>
-      Effect.suspend(() => {
+      Effect.suspend<A, E | SpeechBusyError, never>(() => {
         if (closing || activeOperation) return Effect.fail(new SpeechBusyError({ operation }));
         const gate = Promise.withResolvers<void>();
         activeOperation = gate.promise;
@@ -635,6 +635,7 @@ export const make = Effect.gen(function* () {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, lifetime.signal]);
       let finished = false;
+      let started = false;
       let loaded: LoadedModel | undefined;
       yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
@@ -642,7 +643,7 @@ export const make = Effect.gen(function* () {
             try {
               // Reset after the current feed settles so the loaded model can be reused.
               // A stalled feed or reset falls back to stopping the isolated process.
-              if (!loaded) throw new Error("Speech stream is not loaded.");
+              if (!loaded || !started) throw new Error("Speech stream is not initialized.");
               await resetStreamOrThrow(loaded);
             } catch {
               controller.abort();
@@ -675,9 +676,11 @@ export const make = Effect.gen(function* () {
       const preparation = yield* attemptSpeech(operation, async () => {
         const startedAt = performance.now();
         const prepared = await loadModel(definition, signal, settings.speechAcceleration);
+        loaded = prepared;
         if (!prepared.supportsStreaming)
           throw new Error("The selected model does not support streaming.");
         await prepared.begin(language === "auto" ? undefined : language);
+        started = true;
         return { prepared, durationMs: performance.now() - startedAt };
       });
       let streamModel = preparation.prepared;
@@ -917,12 +920,7 @@ export const make = Effect.gen(function* () {
                         detachTranscribeModel,
                       ).pipe(
                         Effect.catch((fallbackCause) => {
-                          if (model === cpu) {
-                            model = undefined;
-                            loadedModelId = undefined;
-                            loadedAcceleration = undefined;
-                            loading = undefined;
-                          }
+                          dropCachedModel(cpu);
                           return Effect.fail(
                             new SpeechOperationError({
                               operation: "inference",
