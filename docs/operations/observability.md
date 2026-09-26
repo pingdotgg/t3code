@@ -645,9 +645,3 @@ Before you take one:
   swapping, it can make the problem worse or crash the server.
 - The file contains everything in server memory, including tokens, secrets, and thread content. Do
   not share it publicly. Delete it when you are done, because storage cleanup does not remove it.
-
-Alternative: outside the desktop app, `kill -USR1 <pid>` opens the Node inspector on
-`127.0.0.1:9229`. Open `chrome://inspect`, select the server, and take a snapshot in the Memory tab.
-This sends the snapshot through DevTools instead of writing a file, which is slow for a large heap.
-The inspector stays open until the server exits. While it is open, any local process can connect to
-it and run code in the server.

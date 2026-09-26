@@ -34,27 +34,19 @@ export const writeHeapSnapshot = Effect.fn("server.heapSnapshot", { root: true }
  * so a maintainer can see what a long-running server holds. See "Heap
  * Snapshots" in docs/operations/observability.md.
  *
- * `writeHeapSnapshot` is synchronous on the only JS thread, so two snapshots
- * never overlap: a signal sent during a write waits until it finishes. Windows
- * has no SIGUSR2, so the layer does nothing there.
+ * The write blocks the event loop, so two snapshots never overlap: a signal
+ * sent during a write waits until it finishes. Windows has no SIGUSR2, so the
+ * layer does nothing there.
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     if ((yield* HostProcessPlatform) === "win32") return;
     const { logsDir } = yield* ServerConfig.ServerConfig;
     const runFork = Effect.runForkWith(yield* Effect.context<FileSystem.FileSystem>());
-
-    const onSignal = () => {
-      runFork(writeHeapSnapshot(logsDir));
-    };
+    const onSignal = () => void runFork(writeHeapSnapshot(logsDir));
     yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        process.on("SIGUSR2", onSignal);
-      }),
-      () =>
-        Effect.sync(() => {
-          process.off("SIGUSR2", onSignal);
-        }),
+      Effect.sync(() => process.on("SIGUSR2", onSignal)),
+      () => Effect.sync(() => process.off("SIGUSR2", onSignal)),
     );
   }),
 );
