@@ -121,8 +121,8 @@ export function UsagePage() {
     selectedEnvironmentIds,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const cursorAccessEnvironments = selectedEnvironments.filter((environment) =>
-    environment.summary?.sources.some((source) => source.action === "enableCursorKeychain"),
+  const cursorAccessEnvironments = selectedEnvironments.filter(
+    (environment) => environment.needsCursorKeychainAccess,
   );
   const sourceMessages = [
     ...new Set(
