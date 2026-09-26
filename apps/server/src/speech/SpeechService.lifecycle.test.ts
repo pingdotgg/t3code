@@ -826,6 +826,32 @@ it.effect(
   { timeout: 1000 },
 );
 
+it.effect("retains warmup ownership after cancellation until its load settles", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<typeof native>();
+    loadNative.mockImplementationOnce(async () => {
+      started.resolve();
+      return pending.promise;
+    });
+    const speech = yield* SpeechService.SpeechService;
+    const warmup = yield* speech.prepareModel.pipe(Effect.forkChild);
+    yield* Effect.promise(() => started.promise);
+    yield* Fiber.interrupt(warmup).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Effect.yieldNow;
+    const selection = yield* Effect.result(speech.selectModel("fallback-model"));
+    pending.resolve(native);
+    yield* Fiber.await(warmup);
+    expect(Result.isFailure(selection) && selection.failure).toMatchObject({
+      _tag: "SpeechBusyError",
+    });
+    yield* speech.selectModel("fallback-model");
+    yield* speech.prepareModel;
+    expect(loadNative).toHaveBeenCalledTimes(2);
+    expect(native.dispose).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("a failed stream begin does not poison the next stream", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;

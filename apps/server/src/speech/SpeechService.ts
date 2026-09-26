@@ -606,6 +606,7 @@ export const make = Effect.gen(function* () {
           "model preparation",
           preemptOrphaned.pipe(
             Effect.andThen(
+              // Keep ownership until the native load settles, even if its request is cancelled.
               attemptSpeech("model preparation", async () => {
                 if (unsupportedReason)
                   throw new SpeechUnsupportedPlatformError({ platform, architecture });
@@ -614,7 +615,7 @@ export const make = Effect.gen(function* () {
                   lifetime.signal,
                   settings.speechAcceleration,
                 );
-              }),
+              }).pipe(Effect.uninterruptible),
             ),
           ),
         ),
