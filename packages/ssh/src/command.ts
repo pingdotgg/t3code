@@ -107,6 +107,14 @@ export function baseSshArgs(
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
+    // These commands never attach a real terminal, so ssh can't prompt to
+    // trust a new host key the way it would in an interactive shell. Without
+    // this, the first connection to any host absent from known_hosts fails
+    // outright with "Host key verification failed." and there is no way to
+    // proceed. accept-new trusts a host only the first time it is seen and
+    // still fails hard if an already-known host's key later changes.
+    "-o",
+    "StrictHostKeyChecking=accept-new",
     ...(target.port !== null ? ["-p", String(target.port)] : []),
   ];
 }
