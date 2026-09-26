@@ -63,7 +63,12 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       })}
     >
       <SymbolView
-        name={copied ? "checkmark" : "doc.on.doc"}
+        // A string name is an iOS SF Symbol. Android draws nothing unless `name.android` is set.
+        name={
+          copied
+            ? { ios: "checkmark", android: "check" }
+            : { ios: "doc.on.doc", android: "content_copy" }
+        }
         size={props.iconSize ?? 13}
         tintColor={copied ? (props.copiedTintColor ?? props.tintColor) : props.tintColor}
         type="monochrome"
