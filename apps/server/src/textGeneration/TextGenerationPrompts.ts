@@ -35,6 +35,8 @@ export interface CommitMessagePromptInput {
 
 export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
   const wantsBranch = input.includeBranch === true;
+  // Repository conventions outrank the house format; otherwise the format is a hard rule.
+  const infersConventions = input.policy?.inferRepositoryConventions === true;
 
   const prompt = [
     "You write concise git commit messages.",
@@ -42,8 +44,16 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
       ? "Return a JSON object with keys: subject, body, branch."
       : "Return a JSON object with keys: subject, body.",
     "Rules:",
-    "- subject must be imperative, <= 72 chars, and no trailing period",
-    "- body can be empty string or short bullet points",
+    ...(infersConventions
+      ? [
+          "- follow the repository's commit conventions given under Additional instructions; for the message format only, they take precedence over the defaults below",
+          "- by default, subject is imperative, <= 72 chars, and has no trailing period",
+          "- by default, body is empty or short bullet points",
+        ]
+      : [
+          "- subject must be imperative, <= 72 chars, and no trailing period",
+          "- body can be empty string or short bullet points",
+        ]),
     ...(wantsBranch
       ? ["- branch must be a short semantic git branch fragment for this change"]
       : []),
