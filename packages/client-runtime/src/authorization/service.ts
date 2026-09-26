@@ -508,7 +508,13 @@ export const make = Effect.gen(function* () {
         const count = previous?.accessToken === accessToken ? previous.count + 1 : 1;
         if (count < CACHED_TICKET_TIMEOUT_LIMIT) {
           cachedTicketTimeouts.set(input.expectedEnvironmentId, { accessToken, count });
-          return yield* mapDpopSocketError(cachedSocket.failure);
+          // The relay and tunnel answered for this token before, so a slow server is the
+          // likely cause. Leave out the network hint. The third timeout asks the relay again,
+          // and that attempt still shows the hint if the network is the cause.
+          return yield* new ConnectionTransientError({
+            reason: "timeout",
+            detail: `${cachedToken.label} did not respond during connection setup.`,
+          });
         }
         cachedTicketTimeouts.delete(input.expectedEnvironmentId);
       }

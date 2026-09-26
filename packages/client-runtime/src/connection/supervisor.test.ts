@@ -1459,10 +1459,16 @@ describe("EnvironmentSupervisor", () => {
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({ phase: "connecting" });
       yield* TestClock.adjust("1 second");
       const failed = yield* awaitState(supervisor.state, (state) => state.phase !== "connecting");
+      // The relay and tunnel answered for this token before, so the failure does not
+      // blame the user's network.
       expect(failed).toMatchObject({
         phase: "backoff",
         attempt: 1,
-        lastFailure: { _tag: "ConnectionTransientError", reason: "timeout" },
+        lastFailure: {
+          _tag: "ConnectionTransientError",
+          reason: "timeout",
+          detail: "Test environment did not respond during connection setup.",
+        },
       });
       expect(yield* Ref.get(relay.bootstrapCalls)).toBe(0);
 
