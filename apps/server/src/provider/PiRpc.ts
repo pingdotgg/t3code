@@ -197,9 +197,9 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 /**
  * Kill the pi process group: SIGTERM, short grace, then SIGKILL.
  *
- * `hasExited` is consulted before each signal. Once the original child is
- * gone its pid/pgid can be recycled by the OS, so escalating blindly could
- * deliver SIGKILL to an unrelated process.
+ * `hasExited` is consulted before each signal. Once the whole group is gone
+ * its pgid can be recycled by the OS, so escalating blindly could deliver
+ * SIGKILL to an unrelated process.
  */
 const terminatePiProcess = (kill: (signal: NodeJS.Signals) => boolean, hasExited: () => boolean) =>
   Effect.gen(function* () {
@@ -246,9 +246,13 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
-  /** Signal 0 probes liveness without delivering anything. */
+  /**
+   * Signal 0 probes liveness without delivering anything. On POSIX the group
+   * is probed even after pi itself exited: extension subprocesses can outlive
+   * it, and a group id is not reused while any member lives.
+   */
   const hasExited = (): boolean => {
-    if (childExited) return true;
+    if (childExited && platform === "win32") return true;
     try {
       process.kill(platform === "win32" ? Number(child.pid) : -Number(child.pid), 0);
       return false;
