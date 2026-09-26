@@ -2,7 +2,7 @@
 
 Status: proposed decision.
 
-Archiving, settling, snoozing, and pinning reorganize a thread without deleting it.
+Archiving, settling, and snoozing reorganize a thread without deleting it.
 The destination where the thread can be found should offer a visible control
 that exposes its inverse action, with a meaningful accessible name. Recovery
 must target the same thread in the same environment. A swipe or long press can provide an additional shortcut; discovering that
