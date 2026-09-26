@@ -257,10 +257,30 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
   }
 }
 
-/** Reads and merges aliases across every configured Antigravity store before date filtering. */
+interface CachedDatabase {
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly walSize: number | null;
+  readonly walMtimeMs: number | null;
+  readonly candidates: readonly UsageCandidate[];
+}
+
+/**
+ * Parsed databases keyed by canonical path. An entry is reused only while both
+ * the database and its `-wal` sidecar are unchanged, because new rows land in
+ * the WAL without touching the main file until a checkpoint.
+ */
+export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
+
+/**
+ * Reads and merges aliases across every configured Antigravity store before date
+ * filtering. With a cache, databases unchanged since the previous read are not
+ * decoded again.
+ */
 export async function readAntigravityUsage(
   conversationsDirectories: string | readonly string[],
   sinceMs: number,
+  cache?: Map<string, CachedDatabase>,
 ) {
   const roots =
     typeof conversationsDirectories === "string"
@@ -351,7 +371,27 @@ export async function readAntigravityUsage(
           if (visited.has(canonical)) continue;
           visited.add(canonical);
           const stat = await NodeFSP.stat(path);
-          const candidates = await readDatabase(path, stat.mtimeMs);
+          const wal = await NodeFSP.stat(`${path}-wal`).catch(() => null);
+          const cached = cache?.get(canonical);
+          let candidates: readonly UsageCandidate[];
+          if (
+            cached !== undefined &&
+            cached.size === stat.size &&
+            cached.mtimeMs === stat.mtimeMs &&
+            cached.walSize === (wal?.size ?? null) &&
+            cached.walMtimeMs === (wal?.mtimeMs ?? null)
+          ) {
+            candidates = cached.candidates;
+          } else {
+            candidates = await readDatabase(path, stat.mtimeMs);
+            cache?.set(canonical, {
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              walSize: wal?.size ?? null,
+              walMtimeMs: wal?.mtimeMs ?? null,
+              candidates,
+            });
+          }
           const fileIndex = files.length;
           files.push({ root, path, records: [] });
           for (const [index, candidate] of candidates.entries()) {
@@ -365,6 +405,9 @@ export async function readAntigravityUsage(
     }
   };
   for (const root of roots) await walk(root, root);
+  if (cache !== undefined) {
+    for (const key of cache.keys()) if (!visited.has(key)) cache.delete(key);
+  }
   for (const [index, group] of groups.entries()) {
     if (group.parent === index && group.record.timestampMs >= sinceMs) {
       files[group.fileIndex]!.records.push(group.record);
