@@ -32,4 +32,7 @@ still require approval.
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 
+ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
+by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions).
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.

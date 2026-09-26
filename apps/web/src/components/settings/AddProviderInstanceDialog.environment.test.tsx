@@ -28,6 +28,10 @@ vi.mock("../../hooks/useSettings", () => ({
   useUpdateEnvironmentSettings: settingsHooks.update,
 }));
 
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: () => vi.fn(),
+}));
+
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 
 const remoteEnvironmentId = EnvironmentId.make("remote-device");

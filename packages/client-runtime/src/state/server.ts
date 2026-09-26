@@ -1060,6 +1060,14 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
     }),
+    searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:acp-registry:search",
+      tag: WS_METHODS.serverSearchAcpRegistry,
+      // Each submitted search refreshes the server-side registry. Dropping an
+      // abandoned query immediately also interrupts stale in-flight requests.
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     configProjection,
     welcome,
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
@@ -1109,6 +1117,31 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverUpdateSettings,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:prepare",
+      tag: WS_METHODS.serverPrepareAcpRegistryAgent,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    uninstallAcpRegistryManagedBinary: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:uninstall-managed-binary",
+      tag: WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+      },
+    }),
+    acceptAcpRegistryUrlAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:acp-registry:accept-url-auth",
+      tag: WS_METHODS.serverAcceptAcpRegistryUrlAuth,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.instanceId}:${input.elicitationId}`,
+      },
     }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",

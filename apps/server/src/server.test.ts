@@ -136,6 +136,8 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { AcpRegistryCatalog } from "./provider/acp/AcpRegistrySupport.ts";
+import { AcpRegistryRuntimeCoordinator } from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import {
   AntigravityInstallation,
   AntigravityInstallationError,
@@ -830,6 +832,8 @@ const buildAppUnderTest = (options?: {
             managedDirectory: "unused-test-antigravity-runtime",
             ...options?.layers?.antigravityInstallation,
           }),
+          Layer.mock(AcpRegistryCatalog)({}),
+          Layer.mock(AcpRegistryRuntimeCoordinator)({}),
           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
             upsert: () => Effect.void,
             getBinding: () => Effect.succeedNone,

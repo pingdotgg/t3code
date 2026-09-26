@@ -117,6 +117,12 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import {
+  AcpRegistryCatalog,
+  AcpRegistryError,
+  toAcpRegistryOperationError,
+} from "./provider/acp/AcpRegistrySupport.ts";
+import { AcpRegistryRuntimeCoordinator } from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -575,6 +581,8 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const acpRegistryCatalog = yield* AcpRegistryCatalog;
+      const acpRegistryRuntimeCoordinator = yield* AcpRegistryRuntimeCoordinator;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -2632,6 +2640,69 @@ const makeWsRpcLayer = (
             sourceControlDiscovery.discover,
             {
               "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverSearchAcpRegistry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSearchAcpRegistry,
+            acpRegistryCatalog.search(input).pipe(Effect.mapError(toAcpRegistryOperationError)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverPrepareAcpRegistryAgent,
+            acpRegistryCatalog.prepare(input).pipe(Effect.mapError(toAcpRegistryOperationError)),
+            {
+              "rpc.aggregate": "server",
+              "acp_registry.agent_id": input.agentId,
+            },
+          ),
+        [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+            acpRegistryCatalog
+              .uninstallManagedBinary(
+                input,
+                // Read inside the catalog's install lock, from the latest
+                // settings, so two removals cannot both skip the cleanup.
+                serverSettings.getSettings.pipe(
+                  Effect.map((settings) =>
+                    Object.values(settings.providerInstances).some((instance) => {
+                      if (
+                        instance.driver !== "acpRegistry" ||
+                        instance.config === null ||
+                        typeof instance.config !== "object"
+                      ) {
+                        return false;
+                      }
+                      return (instance.config as Record<string, unknown>).agentId === input.agentId;
+                    }),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new AcpRegistryError({
+                        reason: "install_failed",
+                        detail: `Could not read provider settings while checking references for ACP Registry agent ${input.agentId}.`,
+                        cause,
+                      }),
+                  ),
+                ),
+              )
+              .pipe(Effect.mapError(toAcpRegistryOperationError)),
+            {
+              "rpc.aggregate": "server",
+              "acp_registry.agent_id": input.agentId,
+            },
+          ),
+        [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverAcceptAcpRegistryUrlAuth,
+            acpRegistryRuntimeCoordinator
+              .acceptUrlAuthentication(input)
+              .pipe(Effect.map((accepted) => ({ accepted }))),
+            {
+              "rpc.aggregate": "server",
+              "provider.instance_id": input.instanceId,
             },
           ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>

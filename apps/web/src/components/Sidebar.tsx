@@ -390,6 +390,8 @@ function SidebarThreadTooltip({
                   providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
                 }
                 accentColor={providerEntry?.accentColor}
+                acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+                acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
                 // Initials would swallow a size-3 glyph: accent dot, name in label.
                 showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
                 badgeContent="none"
@@ -1962,6 +1964,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         modelInstanceId
                       }
                       accentColor={providerEntry?.accentColor}
+                      acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+                      acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
                       showBadge={showInstanceBadge}
                       // Glyph dims, badge stays saturated; offset matches the composer trigger.
                       iconClassName="size-3.5 opacity-60"

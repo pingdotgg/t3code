@@ -8,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type AcpRegistryUrlAuthAction,
   defaultInstanceIdForDriver,
   type EnvironmentId,
   PROVIDER_DISPLAY_NAMES,
@@ -84,6 +85,7 @@ import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
+import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -136,6 +138,16 @@ const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
 function configuredBinaryPath(config: unknown): string {
   if (config === null || typeof config !== "object" || !("binaryPath" in config)) return "";
   return typeof config.binaryPath === "string" ? config.binaryPath.trim() : "";
+}
+
+/** The registry agent an ACP Registry instance runs, or null for any other driver. */
+function acpRegistryAgentId(instance: ProviderInstanceConfig): string | null {
+  const config = instance.config;
+  if (instance.driver !== "acpRegistry" || config === null || typeof config !== "object") {
+    return null;
+  }
+  const agentId = "agentId" in config ? config.agentId : undefined;
+  return typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
 }
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
@@ -598,6 +610,18 @@ export function EnvironmentProviderSettings({
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  // Removing an ACP Registry instance awaits the settings write, then asks the
+  // server to drop the agent's managed files if nothing else uses them.
+  const persistSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const uninstallAcpRegistryManagedBinary = useAtomCommand(
+    serverEnvironment.uninstallAcpRegistryManagedBinary,
+    { reportFailure: false },
+  );
+  const acceptAcpRegistryUrlAuth = useAtomCommand(serverEnvironment.acceptAcpRegistryUrlAuth, {
+    reportFailure: false,
+  });
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -836,9 +860,72 @@ export function EnvironmentProviderSettings({
     );
   };
 
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+  const deleteProviderInstance = async (row: InstanceRow) => {
+    const providerInstances = withoutProviderInstanceKey(
+      settings.providerInstances,
+      row.instanceId,
+    );
+    const agentId = acpRegistryAgentId(row.instance);
+    if (agentId === null) {
+      updateSettings({ providerInstances });
+      return;
+    }
+    const updateResult = await persistSettings({
+      environmentId,
+      input: { patch: { providerInstances } },
+    });
+    if (updateResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(updateResult)) {
+        const error = squashAtomCommandFailure(updateResult);
+        toastManager.add({
+          type: "error",
+          title: "Could not delete provider instance",
+          description: error instanceof Error ? error.message : "The settings update failed.",
+        });
+      }
+      return;
+    }
+    // The server decides from its latest settings whether this was the last
+    // instance using the agent, so two removals cannot both skip the cleanup.
+    const uninstallResult = await uninstallAcpRegistryManagedBinary({
+      environmentId,
+      input: { agentId },
+    });
+    if (uninstallResult._tag === "Failure" && !isAtomCommandInterrupted(uninstallResult)) {
+      const error = squashAtomCommandFailure(uninstallResult);
+      toastManager.add({
+        type: "warning",
+        title: "Provider deleted, but managed files remain",
+        description: error instanceof Error ? error.message : "Managed binary cleanup failed.",
+      });
+    }
+  };
+
+  const acceptUrlAuthentication = (
+    instanceId: ProviderInstanceId,
+    action: AcpRegistryUrlAuthAction,
+  ) => {
+    void acceptAcpRegistryUrlAuth({
+      environmentId,
+      input: { instanceId, elicitationId: action.elicitationId },
+    }).then((result) => {
+      if (result._tag === "Success" && !result.value.accepted) {
+        toastManager.add({
+          type: "warning",
+          title: "Authentication request expired",
+          description: "Refresh the provider and start the authentication flow again.",
+        });
+        return;
+      }
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not continue authentication",
+          description:
+            error instanceof Error ? error.message : "The authentication request expired.",
+        });
+      }
     });
   };
 
@@ -948,7 +1035,22 @@ export function EnvironmentProviderSettings({
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
             />
+          ) : mode === "editor" &&
+            !readOnly &&
+            row.driver === "acpRegistry" &&
+            liveProvider?.installed ? (
+            <ProviderAuthenticationSection
+              key={`${environmentId}:${row.instanceId}`}
+              environmentId={environmentId}
+              environmentLabel={environmentLabel}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+              readOnly={readOnly}
+            />
           ) : null
+        }
+        onAcceptUrlAuth={
+          readOnly ? undefined : (action) => acceptUrlAuthentication(row.instanceId, action)
         }
         onUpdate={(next) => {
           const wasEnabled = resolveProviderInstanceEnabled(row.instance);
@@ -966,9 +1068,7 @@ export function EnvironmentProviderSettings({
           );
         }}
         onDelete={
-          mode === "editor" && !row.isDefault
-            ? () => deleteProviderInstance(row.instanceId)
-            : undefined
+          mode === "editor" && !row.isDefault ? () => void deleteProviderInstance(row) : undefined
         }
         headerAction={
           mode === "editor" && row.isDefault && row.isDirty ? (
@@ -1205,6 +1305,7 @@ export function EnvironmentProviderSettings({
           environmentId={environmentId}
           environmentLabel={environmentLabel}
           onOpenChange={setIsAddInstanceDialogOpen}
+          onCreated={setSelectedInstanceId}
         />
       ) : null}
     </>

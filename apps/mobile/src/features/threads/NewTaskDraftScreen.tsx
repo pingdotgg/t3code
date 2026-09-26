@@ -1694,6 +1694,7 @@ export function NewTaskDraftScreen(props: {
                         emphasized
                         renderIcon={(size) => (
                           <ProviderIcon
+                            iconUrl={flow.selectedModelOption?.providerIconUrl}
                             provider={flow.selectedModelOption?.providerDriver}
                             size={size}
                           />
