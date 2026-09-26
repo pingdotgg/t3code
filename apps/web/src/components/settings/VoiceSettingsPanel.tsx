@@ -379,15 +379,11 @@ export function VoiceSettingsPanel() {
       "Selected microphone (Unavailable)")
     : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
-  const customWords = currentStatus?.supported ? (currentStatus.customWords ?? []) : [];
-  const removeFillerWords = currentStatus?.supported
-    ? (currentStatus.removeFillerWords ?? true)
-    : true;
-  const acceleration = currentStatus?.supported ? (currentStatus.acceleration ?? "auto") : "auto";
-  const modelUnloadTimeout = currentStatus?.supported
-    ? (currentStatus.modelUnloadTimeout ?? "min_15")
-    : "min_15";
-  const gpuDevices = currentStatus?.supported ? (currentStatus.gpuDevices ?? []) : [];
+  const customWords = currentStatus?.supported ? currentStatus.customWords : [];
+  const removeFillerWords = currentStatus?.supported ? currentStatus.removeFillerWords : true;
+  const acceleration = currentStatus?.supported ? currentStatus.acceleration : "auto";
+  const modelUnloadTimeout = currentStatus?.supported ? currentStatus.modelUnloadTimeout : "min_15";
+  const gpuDevices = currentStatus?.supported ? currentStatus.gpuDevices : [];
   const normalizedCustomWord = customWordDraft
     .replace(/[<>"']/g, "")
     .replace(/\s+/g, " ")

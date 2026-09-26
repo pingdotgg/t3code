@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import * as Effect from "effect/Effect";
 
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
@@ -89,15 +88,13 @@ export const EnvironmentSpeechStatus = Schema.Union([
     model: Schema.String,
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
-    language: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
-    effectiveLanguage: SpeechLanguage.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
-    acceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
-    modelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
-      Schema.withDecodingDefault(Effect.succeed("min_15")),
-    ),
-    gpuDevices: Schema.Array(SpeechGpuDevice).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-    customWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-    removeFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+    language: SpeechLanguage,
+    effectiveLanguage: SpeechLanguage,
+    acceleration: SpeechAcceleration,
+    modelUnloadTimeout: SpeechModelUnloadTimeout,
+    gpuDevices: Schema.Array(SpeechGpuDevice),
+    customWords: SpeechCustomWords,
+    removeFillerWords: Schema.Boolean,
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;

@@ -5,71 +5,56 @@ import { EnvironmentSpeechStatus, EnvironmentSpeechTranscriptionResult } from ".
 
 const decodeStatus = Schema.decodeUnknownSync(EnvironmentSpeechStatus);
 const decodeTranscription = Schema.decodeUnknownSync(EnvironmentSpeechTranscriptionResult);
+const readyStatus = {
+  supported: true,
+  state: "ready",
+  modelId: "handy-computer/moonshine-tiny-gguf",
+  model: "Moonshine Tiny",
+  size: 35_466_912,
+  supportsStreaming: false,
+  acceleration: "auto",
+  language: "auto",
+  effectiveLanguage: "auto",
+  modelUnloadTimeout: "min_15",
+  gpuDevices: [],
+  customWords: [{ term: "T3 Code", aliases: ["T3 codes"] }],
+  removeFillerWords: false,
+};
 
 describe("environment speech contracts", () => {
   it("accepts supported and unsupported statuses", () => {
-    expect(
-      decodeStatus({
-        supported: true,
-        state: "ready",
-        modelId: "handy-computer/moonshine-tiny-gguf",
-        model: "Moonshine Tiny",
-        size: 35_466_912,
-        supportsStreaming: false,
-        customWords: [{ term: "T3 Code", aliases: ["T3 codes"] }],
-        removeFillerWords: false,
-      }),
-    ).toEqual({
-      supported: true,
-      state: "ready",
-      modelId: "handy-computer/moonshine-tiny-gguf",
-      model: "Moonshine Tiny",
-      size: 35_466_912,
-      supportsStreaming: false,
-      acceleration: "auto",
-      language: "auto",
-      effectiveLanguage: "auto",
-      modelUnloadTimeout: "min_15",
-      gpuDevices: [],
-      customWords: [{ term: "T3 Code", aliases: ["T3 codes"] }],
-      removeFillerWords: false,
-    });
+    expect(decodeStatus(readyStatus)).toEqual(readyStatus);
     expect(decodeStatus({ supported: false, reason: "unsupported platform" })).toEqual({
       supported: false,
       reason: "unsupported platform",
     });
   });
 
-  it("defaults custom words and bounds vocabulary entries", () => {
-    expect(
-      decodeStatus({
-        supported: true,
-        state: "ready",
-        modelId: "model",
-        model: "Model",
-        size: 1,
-        supportsStreaming: false,
-      }),
-    ).toMatchObject({ customWords: [], removeFillerWords: true });
+  it.each([
+    "language",
+    "effectiveLanguage",
+    "acceleration",
+    "modelUnloadTimeout",
+    "gpuDevices",
+    "customWords",
+    "removeFillerWords",
+  ])("rejects a supported status missing %s", (field) => {
+    const incomplete = Object.fromEntries(
+      Object.entries(readyStatus).filter(([key]) => key !== field),
+    );
+    expect(() => decodeStatus(incomplete)).toThrow();
+  });
+
+  it("bounds vocabulary entries and rejects duplicate aliases", () => {
     expect(() =>
       decodeStatus({
-        supported: true,
-        state: "ready",
-        modelId: "model",
-        model: "Model",
-        size: 1,
-        supportsStreaming: false,
+        ...readyStatus,
         customWords: [{ term: "x".repeat(51), aliases: [] }],
       }),
     ).toThrow();
     expect(() =>
       decodeStatus({
-        supported: true,
-        state: "ready",
-        modelId: "model",
-        model: "Model",
-        size: 1,
-        supportsStreaming: false,
+        ...readyStatus,
         customWords: [
           { term: "MiniMax", aliases: ["mini max"] },
           { term: "Other", aliases: ["MINI MAX"] },
