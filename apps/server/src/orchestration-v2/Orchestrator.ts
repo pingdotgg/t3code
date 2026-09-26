@@ -1,4 +1,7 @@
-import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestRootProviderFailure,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import {
   normalizeThreadPullRequestKey,
@@ -1108,6 +1111,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.runs.some(isBlockingRun) ||
         projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
       ) {
+        return;
+      }
+
+      // The limit already stopped this thread. Starting the queue would send
+      // every waiting message and drop it from the queue as each one fails.
+      const sessionError =
+        projection.providerSessions
+          .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
+          .toSorted(
+            (left, right) =>
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          )[0]?.lastError ?? null;
+      if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
         return;
       }
 
@@ -2374,7 +2390,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "runtimeRequests", "turnItems"],
         { turnItemTypes: ["error"] },
       );
-      const run = projection.runs.at(-1) ?? null;
+      const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const resetMs = Date.parse(command.limitRecovery.resetAt);
       if (command.limitRecovery.snooze === true && resetMs <= DateTime.toEpochMillis(now)) {
@@ -2392,8 +2408,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
-        projection.runtimeRequests.some((request) => request.status === "pending") ||
-        projection.runs.some((candidate) => candidate.status === "queued")
+        projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -4013,7 +4028,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       if (command.usageLimitContinuationOfRunId !== undefined) {
-        const run = projection.runs.at(-1) ?? null;
+        const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
         const failure = latestRootProviderFailure(run, projection.turnItems);
         const recovery = projection.thread.limitRecovery;
         const now = yield* DateTime.now;
@@ -8828,14 +8843,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
         break;
       case "queue.resume": {
-        const projection = yield* mapDispatchError(command)(
-          projectionStore.getRuntimeRecoveryProjection(command.threadId),
+        const projection = yield* loadProjectionForCommand(
+          command,
+          ["runs", "turnItems", "providerSessions"],
+          { turnItemTypes: ["error"] },
         );
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: `Thread ${command.threadId} is not active.`,
+          });
+        }
+        const sessionError =
+          projection.providerSessions
+            .filter(
+              (session) => session.providerInstanceId === projection.thread.providerInstanceId,
+            )
+            .toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+            )[0]?.lastError ?? null;
+        if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Continue the limited thread before resuming its queue.",
           });
         }
         const now = yield* DateTime.now;

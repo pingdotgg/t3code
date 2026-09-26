@@ -165,6 +165,7 @@ const TestLayer = Layer.mergeAll(
   OrchestrationV2EventSinkLayerLive,
   ProjectionProjectRepositoryLive,
   effectOutboxLayer,
+  threadCommandExecutorLayer,
 ).pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
@@ -2500,6 +2501,357 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     );
   }
 
+  it.effect("preserves queued messages when a run stops for a subscription limit", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const executor = yield* ThreadCommandExecutor;
+      const threadId = ThreadId.make("runtime-layer-usage-limit-queue");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-usage-limit-queue-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-usage-limit-queue-project"),
+        title: "Limited queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [index, text] of ["Active", "First queued", "Second queued"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-usage-limit-queue-message-${index}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-usage-limit-queue-message-${index}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      }
+
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status === "starting");
+      const queuedRuns = before.runs
+        .filter((run) => run.status === "queued")
+        .toSorted((left, right) => left.ordinal - right.ordinal);
+      const firstQueuedRun = queuedRuns[0];
+      const secondQueuedRun = queuedRuns[1];
+      assert.isDefined(activeRun);
+      assert.isDefined(firstQueuedRun);
+      assert.isDefined(secondQueuedRun);
+      assert.isNotNull(activeRun.rootNodeId);
+      const rootNodeId = activeRun.rootNodeId;
+
+      const updateReady = yield* Deferred.make<void>();
+      const releaseUpdate = yield* Deferred.make<void>();
+      const handlerQueued = yield* Deferred.make<void>();
+      const queueGateFinished = yield* Deferred.make<void>();
+      const updateCommandId = CommandId.make("runtime-layer-usage-limit-queue-hold");
+      const commitCommand = eventSink.commitCommand;
+      const withLock = executor.withLock;
+      let lockCount = 0;
+      const commitSpy = vi
+        .spyOn(eventSink, "commitCommand")
+        .mockImplementation((input) =>
+          input.commandId === updateCommandId
+            ? Deferred.succeed(updateReady, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseUpdate)),
+                Effect.andThen(commitCommand(input)),
+              )
+            : commitCommand(input),
+        );
+      const observeLock: ThreadCommandExecutor["Service"]["withLock"] = (key, effect) => {
+        if (key !== threadId) return withLock(key, effect);
+        const id = ++lockCount;
+        if (id === 2) {
+          return Deferred.succeed(handlerQueued, undefined).pipe(
+            Effect.andThen(withLock(key, effect)),
+          );
+        }
+        if (id === 3) {
+          return withLock(key, effect).pipe(
+            Effect.ensuring(Deferred.succeed(queueGateFinished, undefined)),
+          );
+        }
+        return withLock(key, effect);
+      };
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+
+      yield* Effect.gen(function* () {
+        const updateFiber = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: updateCommandId,
+            threadId,
+            title: "Limited with a queue",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(updateReady),
+          Fiber.join(updateFiber).pipe(
+            Effect.andThen(Effect.die("The update completed before reaching its commit barrier.")),
+          ),
+        );
+
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("runtime-layer-usage-limit-queue-error"),
+              type: "turn-item.updated",
+              threadId,
+              runId: activeRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: activeRun.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("runtime-layer-usage-limit-queue-error"),
+                type: "error",
+                threadId,
+                runId: activeRun.id,
+                nodeId: rootNodeId,
+                providerThreadId: activeRun.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+            {
+              id: EventId.make("runtime-layer-usage-limit-queue-run"),
+              type: "run.updated",
+              threadId,
+              runId: activeRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: activeRun.providerInstanceId,
+              occurredAt: now,
+              payload: { ...activeRun, status: "failed", completedAt: now },
+            },
+          ],
+        });
+
+        yield* Effect.raceFirst(
+          Deferred.await(handlerQueued),
+          Fiber.join(updateFiber).pipe(
+            Effect.andThen(
+              Effect.die("Queued promotion ran before the usage-limit handler was queued."),
+            ),
+          ),
+        );
+        yield* Deferred.succeed(releaseUpdate, undefined);
+        yield* Fiber.join(updateFiber);
+        yield* Deferred.await(queueGateFinished);
+
+        const preserved = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(preserved.runs.find((run) => run.id === activeRun.id)?.status, "failed");
+        assert.equal(preserved.runs.find((run) => run.id === firstQueuedRun.id)?.status, "queued");
+        assert.equal(preserved.runs.find((run) => run.id === secondQueuedRun.id)?.status, "queued");
+        assert.isFalse(
+          preserved.turnItems.some(
+            (item) =>
+              item.type === "user_message" &&
+              (item.messageId === firstQueuedRun.userMessageId ||
+                item.messageId === secondQueuedRun.userMessageId),
+          ),
+        );
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        );
+        assert.equal(shell?.status, "failed");
+        assert.equal(shell?.lastErrorClass, "usage_limit");
+        assert.equal(shell?.latestRunId, activeRun.id);
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-usage-limit-queue-continue"),
+          threadId,
+          messageId: MessageId.make("runtime-layer-usage-limit-queue-continue"),
+          text: "Continue after the limit",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const continued = yield* orchestrator.getThreadProjection(threadId);
+        const continuation = continued.runs.find((run) => run.status === "starting");
+        assert.isDefined(continuation);
+        assert.notEqual(continuation.id, firstQueuedRun.id);
+        assert.equal(continued.runs.find((run) => run.id === firstQueuedRun.id)?.status, "queued");
+        assert.equal(continued.runs.find((run) => run.id === secondQueuedRun.id)?.status, "queued");
+
+        const promotedRunIds = yield* Queue.unbounded<RunId>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+              ? Queue.offer(promotedRunIds, stored.event.payload.id)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+
+        const completedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("runtime-layer-usage-limit-queue-continue-completed"),
+              type: "run.updated",
+              threadId,
+              runId: continuation.id,
+              ...(continuation.rootNodeId === null ? {} : { nodeId: continuation.rootNodeId }),
+              providerInstanceId: continuation.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...continuation, status: "completed", completedAt },
+            },
+          ],
+        });
+
+        assert.equal(yield* Queue.take(promotedRunIds), firstQueuedRun.id);
+        const afterPromotion = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          afterPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
+          "queued",
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            commitSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("still promotes the queue after a non-limit provider failure", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-provider-error-queue");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-provider-error-queue-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-provider-error-queue-project"),
+        title: "Provider error queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [index, text] of ["Active", "Queued"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-provider-error-queue-message-${index}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-provider-error-queue-message-${index}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      }
+
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs.find((run) => run.status === "starting");
+      const queuedRun = before.runs.find((run) => run.status === "queued");
+      assert.isDefined(activeRun);
+      assert.isDefined(queuedRun);
+      assert.isNotNull(activeRun.rootNodeId);
+
+      const promotedRunIds = yield* Queue.unbounded<RunId>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+            ? Queue.offer(promotedRunIds, stored.event.payload.id)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-provider-error-queue-error"),
+            type: "turn-item.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("runtime-layer-provider-error-queue-error"),
+              type: "error",
+              threadId,
+              runId: activeRun.id,
+              nodeId: activeRun.rootNodeId,
+              providerThreadId: activeRun.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Provider error",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "provider_error",
+                message: "The provider failed.",
+                code: "provider_failed",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make("runtime-layer-provider-error-queue-run"),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...activeRun, status: "failed", completedAt: now },
+          },
+        ],
+      });
+
+      assert.equal(yield* Queue.take(promotedRunIds), queuedRun.id);
+    }),
+  );
+
   for (const trigger of ["startup", "shutdown"] as const) {
     it.effect(
       `preserves and holds queued messages across ${trigger} until explicitly resumed`,
@@ -3114,6 +3466,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("shared application data plane", (
 it.layer(TestLayer)("usage-limit recovery", (it) => {
   it.effect.each([
     "resume",
+    "queued-resume",
     "cancel",
     "rearm",
     "snooze-race",
@@ -3176,6 +3529,19 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         createdBy: "user",
         creationSource: "web",
       });
+      if (scenario === "queued-resume") {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:queued:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`recovery:queued:${scenario}`),
+          text: "Run after recovery.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const run = projection.runs[0]!;
       const now = yield* DateTime.now;
@@ -3228,6 +3594,30 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
           },
         ],
       });
+      if (scenario === "queued-resume") {
+        const queuedRun = projection.runs[1]!;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:held:queued-resume"),
+              type: "run.updated",
+              threadId,
+              runId: queuedRun.id,
+              occurredAt: now,
+              payload: { ...queuedRun, queueHeld: true },
+            },
+          ],
+        });
+        const resumeHeldQueue = yield* orchestrator
+          .dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make("recovery:resume-held:queued-resume"),
+            threadId,
+          })
+          .pipe(Effect.exit);
+        assert.equal(resumeHeldQueue._tag, "Failure");
+        assert.isTrue((yield* orchestrator.getThreadProjection(threadId)).runs[1]?.queueHeld);
+      }
       const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       )!;
@@ -3390,7 +3780,10 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         createdBy: "user",
         creationSource: "server",
       });
-      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+      assert.lengthOf(
+        (yield* orchestrator.getThreadProjection(threadId)).runs,
+        scenario === "queued-resume" ? 2 : 1,
+      );
       yield* TestClock.adjust("1 minute");
       const resume = limitRecoveryCommand(
         armedShell,
@@ -3529,6 +3922,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         after.runs,
         before.runs.length +
           (scenario === "resume" ||
+          scenario === "queued-resume" ||
           scenario === "snooze-resume" ||
           scenario === "wake-preserve-resume" ||
           scenario === "independent-patches" ||
@@ -3540,6 +3934,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         after.messages,
         before.messages.length +
           (scenario === "resume" ||
+          scenario === "queued-resume" ||
           scenario === "snooze-resume" ||
           scenario === "wake-preserve-resume" ||
           scenario === "independent-patches" ||
@@ -3547,6 +3942,32 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
             ? 1
             : 0),
       );
+      if (scenario === "queued-resume") {
+        assert.equal(after.runs[1]?.status, "queued");
+        assert.isTrue(after.runs[1]?.queueHeld);
+        const continuation = after.runs[2]!;
+        const completedAt = yield* DateTime.now;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:continuation-completed:queued-resume"),
+              type: "run.updated",
+              threadId,
+              runId: continuation.id,
+              occurredAt: completedAt,
+              payload: { ...continuation, status: "completed", completedAt },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("recovery:resume-held-after-limit:queued-resume"),
+          threadId,
+        });
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(resumed.runs[1]?.status, "starting");
+        assert.isFalse(resumed.runs[1]?.queueHeld);
+      }
     }),
   );
 });

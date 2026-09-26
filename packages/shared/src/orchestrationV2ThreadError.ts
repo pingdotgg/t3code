@@ -47,3 +47,56 @@ export function threadErrorSummary(
       sessionError !== null && sessionError !== failure?.message ? null : (failure?.class ?? null),
   };
 }
+
+function latestExecutedRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): OrchestrationV2Run | null {
+  let latest: OrchestrationV2Run | null = null;
+  for (const run of runs) {
+    if (run.status === "queued") continue;
+    if (
+      run.status === "cancelled" &&
+      run.startedAt === null &&
+      !turnItems.some(
+        (item) =>
+          item.type === "user_message" &&
+          item.runId === run.id &&
+          item.inputIntent === "turn_start",
+      )
+    )
+      continue;
+    if (latest === null || run.ordinal > latest.ordinal) latest = run;
+  }
+  return latest;
+}
+
+/**
+ * The latest run that actually started, when it stopped because the
+ * subscription limit was reached. Queued messages after that run must stay
+ * queued instead of being sent into the same limit.
+ */
+export function usageLimitBlockedRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  sessionError: string | null,
+): OrchestrationV2Run | null {
+  const executed = latestExecutedRun(runs, turnItems);
+  if (executed?.status !== "failed") return null;
+  const summary = threadErrorSummary(latestRootProviderFailure(executed, turnItems), sessionError);
+  return summary.lastErrorClass === "usage_limit" ? executed : null;
+}
+
+/**
+ * That limited run, when newer runs were queued or cancelled before starting.
+ * Callers that treat the highest-ordinal run as the thread outcome would
+ * otherwise hide the limit.
+ */
+export function usageLimitRunPresentedAsLatest(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  sessionError: string | null,
+): OrchestrationV2Run | null {
+  const blocked = usageLimitBlockedRun(runs, turnItems, sessionError);
+  return blocked !== null && runs.some((run) => run.ordinal > blocked.ordinal) ? blocked : null;
+}

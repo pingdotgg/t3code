@@ -2037,7 +2037,126 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       });
       yield* applyRun("failed");
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      const queuedRunId = RunId.make("run:limit-shell:queued");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:queued"),
+        type: "run.created",
+        threadId,
+        runId: queuedRunId,
+        nodeId: NodeId.make("node:limit-shell:queued"),
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: queuedRunId,
+          ordinal: original.ordinal + 1,
+          rootNodeId: NodeId.make("node:limit-shell:queued"),
+          userMessageId: MessageId.make("message:limit-shell:queued"),
+          status: "queued",
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      const queuedProjection = yield* store.getThreadProjection(threadId);
+      const queuedMemoryShell = threadShellFromProjection(queuedProjection);
+      const queuedSqlShell = (yield* store.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      assert.equal(queuedMemoryShell.status, "failed");
+      assert.equal(queuedMemoryShell.latestRunId, original.id);
+      assert.equal(queuedSqlShell.status, "failed");
+      assert.equal(queuedSqlShell.latestRunId, original.id);
+      assert.equal(queuedProjection.runs.find((run) => run.id === queuedRunId)?.status, "queued");
+      const cancelledRunId = RunId.make("run:limit-shell:cancelled-queued");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:cancelled-queued"),
+        type: "run.created",
+        threadId,
+        runId: cancelledRunId,
+        nodeId: NodeId.make("node:limit-shell:cancelled-queued"),
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: cancelledRunId,
+          ordinal: original.ordinal + 2,
+          rootNodeId: NodeId.make("node:limit-shell:cancelled-queued"),
+          userMessageId: MessageId.make("message:limit-shell:cancelled-queued"),
+          status: "cancelled",
+          startedAt: null,
+          completedAt: now,
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
       const sql = yield* SqlClient.SqlClient;
+      const cancelledStartedMessageId = TurnItemId.make("limit-shell:cancelled-started-message");
+      const cancelledMessage = {
+        id: cancelledStartedMessageId,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        threadId,
+        runId: cancelledRunId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 3,
+        type: "user_message" as const,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        messageId: MessageId.make("message:limit-shell:cancelled-queued"),
+        inputIntent: "queued_turn" as const,
+        text: "Continue manually",
+        attachments: [],
+      };
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:cancelled-started-message"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: cancelledMessage,
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:cancelled-started-message-updated"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...cancelledMessage, inputIntent: "turn_start" },
+      });
+      yield* assertSummary(null, null);
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${cancelledStartedMessageId}`;
+      const replacementError = {
+        ...limitItem,
+        id: TurnItemId.make("limit-shell:later-error"),
+        ordinal: limitItem.ordinal + 1,
+        updatedAt: DateTime.add(now, { seconds: 1 }),
+        failure: {
+          ...limitItem.failure,
+          class: "provider_error" as const,
+          message: "Provider failed.",
+        },
+      };
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:later-error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: replacementError.updatedAt,
+        payload: replacementError,
+      });
+      yield* assertSummary(null, null);
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${replacementError.id}`;
+      // The rest of this case treats the failed run as the latest run.
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${cancelledRunId}`;
       const [originalRow] = yield* sql<{
         payload_json: string;
       }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
