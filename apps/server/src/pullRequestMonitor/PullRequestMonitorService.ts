@@ -50,6 +50,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { automaticPrFeedbackBlockReason } from "@t3tools/shared/automaticPrFeedback";
 import {
   formatPullRequestMonitorCanonicalKey,
+  normalizeRepositoryIdentity,
   repositoryFromPullRequestUrl,
 } from "./canonicalKey.ts";
 import { diffPullRequestMonitorSnapshot, emptyCursor } from "./monitorDiff.ts";
@@ -124,15 +125,19 @@ export function associatedOwnerCandidates(
   }>,
   reference: PullRequestRef,
 ): ReadonlyArray<PullRequestMonitorOwnerCandidate> {
+  const referenceRepository = normalizeRepositoryIdentity(reference.repository);
   return threads
-    .filter(
-      (thread) =>
+    .filter((thread) => {
+      const repository = repositoryFromPullRequestUrl(thread.pullRequest?.url);
+      return (
         thread.projectId === reference.projectId &&
         thread.archivedAt === null &&
         thread.deletedAt === null &&
         thread.pullRequest?.number === reference.number &&
-        repositoryFromPullRequestUrl(thread.pullRequest.url) === reference.repository,
-    )
+        repository !== null &&
+        normalizeRepositoryIdentity(repository) === referenceRepository
+      );
+    })
     .map((thread) => ({ threadId: thread.id, title: thread.title }));
 }
 

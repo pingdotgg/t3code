@@ -107,6 +107,8 @@ function sampleSnapshot(
   };
 }
 
+let pullRequestDetailCalls = 0;
+
 const fakePullRequests = PullRequestService.PullRequestService.of({
   list: () => Effect.die("unused"),
   listStats: () => Effect.die("unused"),
@@ -159,7 +161,13 @@ const fakePullRequests = PullRequestService.PullRequestService.of({
       labels: [],
       checks: [],
       mergeCapabilities: { merge: true, squash: true, rebase: true },
-    }),
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          pullRequestDetailCalls += 1;
+        }),
+      ),
+    ),
   activity: () => Effect.die("unused"),
   diff: () => Effect.die("unused"),
   runAction: () => Effect.die("unused"),
@@ -611,10 +619,11 @@ layer("PullRequestMonitorService", (it) => {
       assert.strictEqual(terminal.monitor.status, "terminal");
       assert.isFalse(terminal.monitor.enabled);
 
-      const before = monitorSnapshotCalls;
+      const detailCallsBeforeEnsure = pullRequestDetailCalls;
+      const snapshotCallsBeforeEnsure = monitorSnapshotCalls;
       const ensured = yield* service.start({
         projectId,
-        repository: "acme/app",
+        repository: " ACME/app ",
         number: 1045,
         ownerThreadId: owner,
         requireAssociatedOwner: true,
@@ -622,7 +631,8 @@ layer("PullRequestMonitorService", (it) => {
 
       assert.strictEqual(ensured.monitor.status, "terminal");
       assert.isFalse(ensured.monitor.enabled);
-      assert.strictEqual(monitorSnapshotCalls, before);
+      assert.strictEqual(pullRequestDetailCalls, detailCallsBeforeEnsure);
+      assert.strictEqual(monitorSnapshotCalls, snapshotCallsBeforeEnsure);
       currentSnapshot = originalSnapshot;
     }),
   );

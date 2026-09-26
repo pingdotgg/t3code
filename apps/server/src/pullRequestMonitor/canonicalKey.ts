@@ -5,6 +5,10 @@ export function formatPullRequestMonitorCanonicalKey(key: PullRequestMonitorCano
   return `${key.provider}:${key.host}:${key.repository}#${key.number}`;
 }
 
+export function normalizeRepositoryIdentity(repository: string): string {
+  return repository.trim().toLowerCase();
+}
+
 /** `https://host/owner/name/pull/123` -> `owner/name`. */
 export function repositoryFromPullRequestUrl(url: string | null | undefined): string | null {
   if (typeof url !== "string" || url.length === 0) return null;
