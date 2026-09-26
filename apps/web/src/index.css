@@ -1994,6 +1994,19 @@ code {
   --diff-deletion-foreground: light-dark(var(--color-red-600), var(--color-red-400));
 }
 
+/* Chat timeline and composer column width, set from the Chat width setting. */
+:root {
+  --chat-max-width: 48rem;
+}
+
+:root[data-chat-width="wide"] {
+  --chat-max-width: 72rem;
+}
+
+:root[data-chat-width="full"] {
+  --chat-max-width: 100%;
+}
+
 :root[data-diff-color-scheme="blue-orange"] {
   --diff-addition: light-dark(var(--color-blue-600), var(--color-blue-400));
   --diff-deletion: light-dark(var(--color-orange-600), var(--color-orange-400));
