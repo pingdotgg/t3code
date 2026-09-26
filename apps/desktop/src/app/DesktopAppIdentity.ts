@@ -15,6 +15,7 @@ const COMMIT_HASH_DISPLAY_LENGTH = 12;
 
 const AppPackageMetadata = Schema.Struct({
   t3codeCommitHash: Schema.optional(Schema.String),
+  t3codeWebAuthnKeychainAccessGroup: Schema.optional(Schema.String),
 });
 const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPackageMetadata));
 
@@ -35,6 +36,8 @@ export class DesktopAppIdentity extends Context.Service<
   {
     readonly resolveUserDataPath: Effect.Effect<string, DesktopUserDataPathResolutionError>;
     readonly configure: Effect.Effect<void>;
+    /** Enables Touch ID passkeys in web content. Call once the app is ready. */
+    readonly configureWebAuthn: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
 
@@ -74,20 +77,17 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const commitHashCache = yield* Ref.make<Option.Option<Option.Option<string>>>(Option.none());
 
-  const resolveEmbeddedCommitHash = Effect.gen(function* () {
-    const packageJsonPath = environment.path.join(environment.appRoot, "package.json");
-    const raw = yield* fileSystem.readFileString(packageJsonPath).pipe(Effect.option);
-    return yield* Option.match(raw, {
-      onNone: () => Effect.succeed(Option.none<string>()),
-      onSome: (value) =>
-        decodeAppPackageMetadata(value).pipe(
-          Effect.map((parsed) =>
-            Option.fromNullishOr(parsed.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
-          ),
-          Effect.orElseSucceed(() => Option.none<string>()),
-        ),
-    });
-  });
+  const readEmbeddedPackageMetadata = fileSystem
+    .readFileString(environment.path.join(environment.appRoot, "package.json"))
+    .pipe(Effect.flatMap(decodeAppPackageMetadata), Effect.option);
+
+  const resolveEmbeddedCommitHash = readEmbeddedPackageMetadata.pipe(
+    Effect.map(
+      Option.flatMap((metadata) =>
+        Option.fromNullishOr(metadata.t3codeCommitHash).pipe(Option.flatMap(normalizeCommitHash)),
+      ),
+    ),
+  );
 
   const resolveAboutCommitHash = Effect.gen(function* () {
     const cached = yield* Ref.get(commitHashCache);
@@ -143,9 +143,21 @@ export const make = Effect.gen(function* () {
     }
   }).pipe(Effect.withSpan("desktop.appIdentity.configure"));
 
+  // Only signed macOS packaging writes the keychain group into package.json, so
+  // other builds skip this; Chromium also reports no platform authenticator if
+  // the running binary lacks the matching entitlement.
+  const configureWebAuthn = Effect.gen(function* () {
+    if (environment.platform !== "darwin" || !environment.isPackaged) return;
+    const metadata = yield* readEmbeddedPackageMetadata;
+    const keychainAccessGroup = Option.getOrUndefined(metadata)?.t3codeWebAuthnKeychainAccessGroup;
+    if (!keychainAccessGroup) return;
+    yield* electronApp.configureWebAuthn({ touchID: { keychainAccessGroup } });
+  }).pipe(Effect.withSpan("desktop.appIdentity.configureWebAuthn"));
+
   return DesktopAppIdentity.of({
     resolveUserDataPath: userDataPath,
     configure,
+    configureWebAuthn,
   });
 });
 

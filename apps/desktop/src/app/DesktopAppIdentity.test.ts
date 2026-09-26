@@ -32,6 +32,7 @@ type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInp
 };
 
 interface ElectronAppCalls {
+  readonly configureWebAuthn: Array<Electron.ConfigureWebAuthnOptions>;
   readonly setAboutPanelOptions: Array<Electron.AboutPanelOptionsOptions>;
   readonly setDockIcon: string[];
   readonly setName: string[];
@@ -62,6 +63,10 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
     setDockIcon: (iconPath) =>
       Effect.sync(() => {
         calls.setDockIcon.push(iconPath);
+      }),
+    configureWebAuthn: (options) =>
+      Effect.sync(() => {
+        calls.configureWebAuthn.push(options);
       }),
     appendCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
@@ -116,6 +121,7 @@ const withIdentity = <A, E, R>(
   } = {},
 ) => {
   const calls: ElectronAppCalls = input.calls ?? {
+    configureWebAuthn: [],
     setAboutPanelOptions: [],
     setDockIcon: [],
     setName: [],
@@ -186,6 +192,7 @@ describe("DesktopAppIdentity", () => {
 
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {
+      configureWebAuthn: [],
       setAboutPanelOptions: [],
       setDockIcon: [],
       setName: [],
@@ -218,6 +225,7 @@ describe("DesktopAppIdentity", () => {
 
   it.effect("sets the dock icon only when running unpackaged", () => {
     const calls: ElectronAppCalls = {
+      configureWebAuthn: [],
       setAboutPanelOptions: [],
       setDockIcon: [],
       setName: [],
@@ -237,6 +245,75 @@ describe("DesktopAppIdentity", () => {
         environment: { isPackaged: false },
         pngIconPath: Option.some("/icon.png"),
       },
+    );
+  });
+
+  describe("configureWebAuthn", () => {
+    const signedPackageJson = JSON.stringify({
+      t3codeCommitHash: "abcdef1234567890",
+      t3codeWebAuthnKeychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn",
+    });
+
+    const configuredWebAuthn = (input: {
+      readonly environment?: TestEnvironmentInput;
+      readonly packageJson?: string;
+    }) => {
+      const calls: ElectronAppCalls = {
+        configureWebAuthn: [],
+        setAboutPanelOptions: [],
+        setDockIcon: [],
+        setName: [],
+      };
+      return withIdentity(
+        Effect.gen(function* () {
+          const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+          yield* identity.configureWebAuthn;
+          return calls.configureWebAuthn;
+        }),
+        { ...input, calls },
+      );
+    };
+
+    it.effect("enables Touch ID with the group the signed macOS build embedded", () =>
+      Effect.gen(function* () {
+        const configured = yield* configuredWebAuthn({ packageJson: signedPackageJson });
+
+        assert.deepEqual(configured, [
+          { touchID: { keychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn" } },
+        ]);
+      }),
+    );
+
+    it.effect("skips builds that were not signed with a keychain access group", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* configuredWebAuthn({ packageJson: '{"t3codeCommitHash":"abcdef1234567890"}' }),
+          [],
+        );
+        assert.deepEqual(yield* configuredWebAuthn({ packageJson: "not json" }), []);
+      }),
+    );
+
+    it.effect("skips unpackaged runs and other platforms", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* configuredWebAuthn({
+            environment: { isPackaged: false },
+            packageJson: signedPackageJson,
+          }),
+          [],
+        );
+        for (const platform of ["win32", "linux"] as const) {
+          assert.deepEqual(
+            yield* configuredWebAuthn({
+              environment: { platform },
+              packageJson: signedPackageJson,
+            }),
+            [],
+            platform,
+          );
+        }
+      }),
     );
   });
 });

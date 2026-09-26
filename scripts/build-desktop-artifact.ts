@@ -926,6 +926,7 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly t3codeWebAuthnKeychainAccessGroup?: string;
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
@@ -1094,6 +1095,11 @@ export interface MacPasskeySigningConfiguration {
   readonly appId: string;
   readonly teamId: string;
   readonly rpDomains: readonly string[];
+  /**
+   * Keychain group that holds preview-browser Touch ID passkeys. The packaged
+   * app reads it from package.json, so both copies come from this one value.
+   */
+  readonly webAuthnKeychainAccessGroup: string;
   readonly provisioningProfilePath: string;
 }
 
@@ -1264,6 +1270,7 @@ export function resolveMacPasskeySigningConfiguration(
     appId: DESKTOP_APP_ID,
     teamId,
     rpDomains: uniqueRpDomains,
+    webAuthnKeychainAccessGroup: `${teamId}.${DESKTOP_APP_ID}.webauthn`,
     provisioningProfilePath,
   };
 }
@@ -1295,6 +1302,10 @@ export function renderMacPasskeyEntitlements(
     <key>com.apple.developer.associated-domains</key>
     <array>
 ${associatedDomains}
+    </array>
+    <key>keychain-access-groups</key>
+    <array>
+      <string>${escapeXml(configuration.webAuthnKeychainAccessGroup)}</string>
     </array>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
@@ -3664,6 +3675,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    ...(macPasskeySigning
+      ? { t3codeWebAuthnKeychainAccessGroup: macPasskeySigning.webAuthnKeychainAccessGroup }
+      : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",

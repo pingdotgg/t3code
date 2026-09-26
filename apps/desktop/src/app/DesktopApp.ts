@@ -323,6 +323,7 @@ const startup = Effect.gen(function* () {
     });
   }
   yield* appIdentity.configure;
+  yield* appIdentity.configureWebAuthn;
   yield* applicationMenu.configure;
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;

@@ -4,7 +4,10 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
+
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
   fromPartition: vi.fn(),
@@ -14,6 +17,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
       readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
+      readonly on: ReturnType<typeof vi.fn>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
@@ -29,17 +33,41 @@ vi.mock("electron", () => ({
 
 import * as BrowserSession from "./BrowserSession.ts";
 
-const layer = BrowserSession.layer.pipe(Layer.provide(NodeServices.layer));
+const messageBoxes: Array<Electron.MessageBoxOptions> = [];
+let answerMessageBox: (
+  options: Electron.MessageBoxOptions,
+) => Effect.Effect<
+  Electron.MessageBoxReturnValue,
+  ElectronDialog.ElectronDialogShowMessageBoxError
+> = () => Effect.die("unexpected message box");
+
+const dialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
+  pickFolder: () => Effect.die("unexpected folder picker"),
+  pickFiles: () => Effect.die("unexpected file picker"),
+  showMessageBox: (options) => {
+    messageBoxes.push(options);
+    return answerMessageBox(options);
+  },
+  showErrorBox: () => Effect.die("unexpected error box"),
+} satisfies ElectronDialog.ElectronDialog["Service"]);
+
+const layer = BrowserSession.layer.pipe(
+  Layer.provide(NodeServices.layer),
+  Layer.provide(dialogLayer),
+);
 
 describe("BrowserSession", () => {
   beforeEach(() => {
     sessions.clear();
+    messageBoxes.length = 0;
+    answerMessageBox = () => Effect.die("unexpected message box");
     fromPartition.mockReset();
     fromPartition.mockImplementation((partition: string) => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
+        on: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
@@ -120,6 +148,7 @@ describe("BrowserSession", () => {
           clearCache: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
           getUserAgent: vi.fn(() => userAgent),
+          on: vi.fn(),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
           setUserAgent: vi.fn((next: string) => {
@@ -189,6 +218,85 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  const passkeyAccounts: ReadonlyArray<Electron.WebAuthnAccount> = [
+    { credentialId: "cred-alice", name: "alice@example.com", displayName: "Alice" },
+    { credentialId: "cred-bob", name: "bob@example.com" },
+    { credentialId: "cred-anonymous" },
+  ];
+
+  /** Fires the session's `select-webauthn-account` event and waits for its answer. */
+  const selectPasskey = Effect.fn("selectPasskey")(function* () {
+    const browserSessions = yield* BrowserSession.BrowserSession;
+    const partition = yield* browserSessions.getPartition("scope-a");
+    yield* browserSessions.getSession("scope-a");
+    const listener = sessions
+      .get(partition)
+      ?.on.mock.calls.find(([eventName]) => eventName === "select-webauthn-account")?.[1];
+    assert.isFunction(listener);
+
+    const answers: Array<string | null | undefined> = [];
+    yield* Effect.promise(
+      () =>
+        new Promise<void>((resolve) => {
+          listener(
+            {},
+            { relyingPartyId: "example.com", accounts: passkeyAccounts, frame: null },
+            (credentialId?: string | null) => {
+              answers.push(credentialId);
+              resolve();
+            },
+          );
+        }),
+    );
+    return answers;
+  });
+
+  it.effect("answers a multi-passkey sign-in with the account the user picks", () =>
+    Effect.gen(function* () {
+      answerMessageBox = () => Effect.succeed({ response: 1, checkboxChecked: false });
+
+      const answers = yield* selectPasskey();
+
+      assert.deepEqual(answers, ["cred-bob"]);
+      assert.strictEqual(messageBoxes.length, 1);
+      assert.equal(messageBoxes[0]?.message, "Choose a passkey for example.com");
+      assert.deepEqual(messageBoxes[0]?.buttons, [
+        "Alice (alice@example.com)",
+        "bob@example.com",
+        "Passkey 3",
+        "Cancel",
+      ]);
+      assert.strictEqual(messageBoxes[0]?.cancelId, 3);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("cancels a multi-passkey sign-in when the user dismisses the chooser", () =>
+    Effect.gen(function* () {
+      answerMessageBox = (options) =>
+        Effect.succeed({ response: options.cancelId ?? -1, checkboxChecked: false });
+
+      assert.deepEqual(yield* selectPasskey(), [null]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("cancels a multi-passkey sign-in when the chooser cannot open", () =>
+    Effect.gen(function* () {
+      answerMessageBox = (options) =>
+        Effect.fail(
+          new ElectronDialog.ElectronDialogShowMessageBoxError({
+            type: options.type ?? null,
+            titleLength: null,
+            messageLength: options.message.length,
+            detailLength: null,
+            buttonCount: options.buttons?.length ?? 0,
+            cause: new Error("no window server"),
+          }),
+        );
+
+      assert.deepEqual(yield* selectPasskey(), [null]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves partition scope and the platform failure chain", () => {
     const nativeCause = new Error("native digest failed");
     const platformCause = PlatformError.systemError({
@@ -218,7 +326,11 @@ describe("BrowserSession", () => {
         "Failed to derive a desktop preview browser partition for scope environment-a.",
       );
       assert.notInclude(error.message, nativeCause.message);
-    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(failingCryptoLayer))));
+    }).pipe(
+      Effect.provide(
+        BrowserSession.layer.pipe(Layer.provide(failingCryptoLayer), Layer.provide(dialogLayer)),
+      ),
+    );
   });
 
   it.effect("preserves session scope, partition, and the Electron failure", () =>

@@ -468,7 +468,9 @@ Checklist:
    - `APPLE_API_ISSUER`: Issuer ID
 10. Complete the Clerk Native API and AASA setup in [T3 Connect setup](./connect-setup.md#desktop-passkeys).
 11. Re-run a tag release and confirm macOS artifacts are signed/notarized and contain the expected
-    `com.apple.developer.associated-domains` entitlement.
+    `com.apple.developer.associated-domains` and `keychain-access-groups` entitlements. The
+    keychain group (`<team>.com.t3tools.t3code.webauthn`) holds preview-browser passkeys, and the
+    provisioning profile's `keychain-access-groups` must cover it (a `<team>.*` entry does).
 
 Notes:
 
