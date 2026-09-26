@@ -625,12 +625,13 @@ To see what a long-running server holds in memory, send it `SIGUSR2`. The server
 snapshot to its logs dir and logs the path. This works for desktop, `npx t3`, and service installs
 on macOS and Linux. Windows has no `SIGUSR2`.
 
-Send the signal to the server pid in `server-runtime.json`, which sits next to the `logs` dir. Do
-not send it to the desktop app or the service launcher: a process without the handler exits on
-`SIGUSR2`.
+Send the signal to the server pid in `server-runtime.json`, which sits in the server's state dir
+next to the `logs` dir. For a dev server or a `--home-dir` launch, use that server's state dir from
+[Traces](#traces). Do not send it to the desktop app or the service launcher: a process without the
+handler exits on `SIGUSR2`.
 
 ```bash
-kill -USR2 "$(jq .pid ~/.t3/userdata/server-runtime.json)"
+kill -USR2 "$(jq .pid "${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json")"
 ```
 
 The file is `<logsDir>/server-<pid>-<timestamp>.heapsnapshot`, next to `server.trace.ndjson`. To
