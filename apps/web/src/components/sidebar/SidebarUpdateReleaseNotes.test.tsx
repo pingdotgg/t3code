@@ -10,7 +10,10 @@ vi.mock("../ui/toast", () => ({
   toastManager: { add: testState.addToast },
 }));
 
-import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
+import {
+  groupSidebarUpdateReleaseNotes,
+  SidebarUpdateReleaseNotes,
+} from "./SidebarUpdateReleaseNotes";
 
 type AnchorElement = ReactElement<{
   readonly children?: ReactNode;
@@ -72,6 +75,40 @@ function renderNotes(state: DesktopUpdateState, openExternal = vi.fn().mockResol
 describe("SidebarUpdateReleaseNotes", () => {
   beforeEach(() => {
     testState.addToast.mockReset();
+  });
+
+  it("groups features and fixes while omitting chores", () => {
+    expect(
+      groupSidebarUpdateReleaseNotes([
+        "fix(web): prevent a crash",
+        "chore(deps): update dependencies",
+        "feat!: add release note groups",
+        "refactor: simplify updates",
+      ]),
+    ).toEqual([
+      { title: "Features", items: ["feat!: add release note groups"] },
+      { title: "Fixes", items: ["fix(web): prevent a crash"] },
+      { title: "Other", items: ["refactor: simplify updates"] },
+    ]);
+  });
+
+  it("counts omitted chores in the GitHub link", () => {
+    const state = {
+      ...baseState,
+      releaseNotes: [
+        {
+          version: "0.0.36-nightly.3",
+          items: ["feat(web): add release note groups", "chore(deps): update dependencies"],
+          totalItems: 2,
+        },
+      ],
+    };
+    const notes = renderNotes(state);
+    const [anchor] = collectAnchors(notes);
+
+    expect(textContent(notes)).toContain("Featuresfeat(web): add release note groups");
+    expect(textContent(notes)).not.toContain("update dependencies");
+    expect(textContent(anchor?.props.children)).toBe("1 more change on GitHub");
   });
 
   it("links each preview to its exact release and labels hidden changes", () => {
