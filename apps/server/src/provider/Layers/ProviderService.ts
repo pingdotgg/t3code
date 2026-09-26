@@ -1028,7 +1028,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const result = yield* direnv.value.load(cwd);
     yield* Effect.annotateCurrentSpan({ "provider.direnv.result": result._tag });
     recordDirenvResult(threadId, cwd, result, false);
-    return result._tag === "Failed" ? result : undefined;
+    if (result._tag !== "Failed") return undefined;
+    // Sessions restart for many reasons; the thread already shows this failure.
+    const repeated = current?.status === "failed" && current.message === result.message;
+    return repeated ? undefined : result;
   });
 
   const refreshProjectEnvironment: ProviderServiceMethod<"refreshProjectEnvironment"> = Effect.fn(

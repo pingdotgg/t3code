@@ -3656,6 +3656,43 @@ describe("deriveMessagesTimelineRows", () => {
   );
 });
 
+describe("actionable warnings", () => {
+  it("keeps a warning with a button visible instead of folding it into a group", () => {
+    const entry = (index: number, extra: Omit<WorkLogEntry, "id" | "createdAt">) => {
+      const createdAt = `2026-01-01T00:00:0${index}Z`;
+      return {
+        id: `work-entry-${index}`,
+        kind: "work" as const,
+        createdAt,
+        entry: { id: `work-${index}`, createdAt, ...extra },
+      };
+    };
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        entry(0, {
+          label: "The project's .envrc is blocked.",
+          tone: "info" as const,
+          sourceActivityKind: "runtime.warning" as const,
+          warningAction: { type: "direnv.allow" as const },
+        }),
+        entry(1, { label: "Status updated", tone: "info" as const }),
+        entry(2, { label: "Status updated", tone: "info" as const }),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows[0]).toMatchObject({
+      kind: "work",
+      groupedEntries: [{ warningAction: { type: "direnv.allow" } }],
+    });
+    expect(rows[1]).toMatchObject({ kind: "work-toggle", hiddenCount: 2 });
+  });
+});
+
 describe("computeStableMessagesTimelineRows", () => {
   it("replaces a cached work toggle when its icon presentation changes", () => {
     const initialRow: MessagesTimelineRow = {

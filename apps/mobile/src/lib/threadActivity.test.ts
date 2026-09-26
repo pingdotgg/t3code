@@ -3748,3 +3748,54 @@ it("keeps attachment-only question answers expandable outside mobile work groups
   expect(running[1]).toBe(group);
   expect(running[2]?.type).toBe("work-toggle");
 });
+
+it("keeps a warning with a button visible beside the tools around it", () => {
+  const turnId = TurnId.make("turn-direnv");
+  const thread = makeThread({
+    id: ThreadId.make("thread-direnv"),
+    projectId: ProjectId.make("project-direnv"),
+    title: "Blocked .envrc",
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: "2026-09-08T00:00:00.000Z",
+      startedAt: "2026-09-08T00:00:00.000Z",
+      completedAt: "2026-09-08T00:00:04.000Z",
+      assistantMessageId: null,
+    },
+    activities: [
+      makeActivity({
+        id: EventId.make("direnv-warning"),
+        createdAt: "2026-09-08T00:00:01.000Z",
+        kind: "runtime.warning",
+        summary: "The project's .envrc is blocked.",
+        turnId,
+        payload: {
+          message: "The project's .envrc is blocked.",
+          action: { type: "direnv.allow" },
+        },
+      }),
+      makeActivity({
+        id: EventId.make("tool-after-warning"),
+        createdAt: "2026-09-08T00:00:02.000Z",
+        kind: "tool.completed",
+        tone: "tool",
+        summary: "Read files",
+        turnId,
+        payload: { itemType: "command_execution", status: "completed" },
+      }),
+    ],
+  });
+
+  const feed = buildThreadFeed(thread);
+  const warning = feed.find(
+    (entry) =>
+      entry.type === "activity-group" &&
+      entry.activities.some((activity) => activity.workEntry.warningAction !== undefined),
+  );
+  expect(warning).toMatchObject({
+    activities: [{ workEntry: { warningAction: { type: "direnv.allow" } } }],
+  });
+  const presented = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+  expect(presented).toContain(warning);
+});

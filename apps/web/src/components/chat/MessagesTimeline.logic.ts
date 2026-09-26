@@ -1221,7 +1221,9 @@ export function deriveMessagesTimelineRows(input: {
       if (
         timelineEntry.entry.agentSpawn !== undefined ||
         timelineEntry.entry.questionAnswer !== undefined ||
-        timelineEntry.entry.tone === "error"
+        timelineEntry.entry.tone === "error" ||
+        // A warning with a button must stay visible, not fold into a group.
+        timelineEntry.entry.warningAction !== undefined
       ) {
         const spawn = timelineEntry.entry.agentSpawn;
         if (spawn && entryBelongsToActiveTurn(timelineEntry, index)) {
@@ -1249,6 +1251,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.questionAnswer !== undefined ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
+          nextEntry.entry.warningAction !== undefined ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)

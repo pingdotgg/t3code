@@ -5401,6 +5401,24 @@ describe("ProviderService direnv environment", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not repeat the warning when a blocked session restarts", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-direnv-restart-blocked");
+
+      const { value } = yield* withProviderService([blocked, blocked], (provider) =>
+        Effect.gen(function* () {
+          yield* start(provider, threadId);
+          const warning = yield* nextWarning(provider, threadId);
+          yield* start(provider, threadId);
+          yield* Fiber.interrupt(warning);
+          return warning.pollUnsafe();
+        }),
+      );
+
+      assert.equal(value?._tag === "Success" && Option.isSome(value.value), false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("does not repeat the warning while the .envrc stays blocked", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-direnv-still-blocked");

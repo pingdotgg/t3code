@@ -283,8 +283,16 @@ export function isContextCompactionActivityGroup(
   );
 }
 
-function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
-  return entry.activities.some((activity) => activity.workEntry.questionAnswer !== undefined);
+/**
+ * Groups that render as their own rows instead of folding behind a toggle:
+ * answered questions, and warnings offering a button the user needs to see.
+ */
+function isInlineActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return entry.activities.some(
+    (activity) =>
+      activity.workEntry.questionAnswer !== undefined ||
+      activity.workEntry.warningAction !== undefined,
+  );
 }
 
 function normalizeDraftAnswer(value: string | undefined): string | null {
@@ -1590,7 +1598,8 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
 
     const isStandalone =
       entry.activity.workEntry.sourceActivityKind === "context-compaction" ||
-      entry.activity.workEntry.questionAnswer !== undefined;
+      entry.activity.workEntry.questionAnswer !== undefined ||
+      entry.activity.workEntry.warningAction !== undefined;
     if (isStandalone || firstActivityEntry?.turnId !== entry.turnId) {
       flushGroup();
     }
@@ -1717,7 +1726,7 @@ function deriveThreadFeedTurnFolds(
           (entry) =>
             entry.id !== firstAssistantMessageId &&
             entry.id !== terminalAssistantMessageId &&
-            !(entry.type === "activity-group" && isUserInputActivityGroup(entry)),
+            !(entry.type === "activity-group" && isInlineActivityGroup(entry)),
         )
         .map((entry) => entry.id),
     );
@@ -1908,7 +1917,7 @@ function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
   if (
     entry.type === "activity-group" &&
     !isContextCompactionActivityGroup(entry) &&
-    !isUserInputActivityGroup(entry) &&
+    !isInlineActivityGroup(entry) &&
     entry.activities.every(
       (activity) => !activity.workEntry.agentSpawn && activity.workEntry.tone !== "error",
     )
@@ -2075,7 +2084,7 @@ function appendPresentedFeedEntry(
     result.push(entry);
     return;
   }
-  if (isContextCompactionActivityGroup(entry) || isUserInputActivityGroup(entry)) {
+  if (isContextCompactionActivityGroup(entry) || isInlineActivityGroup(entry)) {
     result.push(entry);
     return;
   }
