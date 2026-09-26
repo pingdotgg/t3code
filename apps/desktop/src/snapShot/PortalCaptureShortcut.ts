@@ -67,8 +67,10 @@ export class PortalCaptureShortcut {
     shortcutPending: true,
     shortcutMessage: "Waiting for shortcut permission. Approve the desktop prompt if one appears.",
   };
-  readonly ready: Promise<void>;
+  ready: Promise<void>;
   private closed = false;
+  private generation = 0;
+  private reconnecting = false;
   private owner = "";
   private namespace = "";
   private session = "";
@@ -76,12 +78,14 @@ export class PortalCaptureShortcut {
   private version = 0;
   private pending: { path: string; resolve: (body: unknown) => void } | undefined;
   private responses = new Map<string, unknown>();
-  private readonly stopped: Promise<never>;
+  private stopped: Promise<never>;
   private rejectStopped!: (reason: Error) => void;
   private readonly onCapture: () => void;
   private readonly onStateChanged: () => void;
   private readonly bus: MessageBus;
   private readonly managedByHyprland: boolean;
+  private readonly appId: string;
+  private readonly shortcut: SnapShotKeyChord;
 
   constructor(
     appId: string,
@@ -95,6 +99,8 @@ export class PortalCaptureShortcut {
     this.onStateChanged = onStateChanged;
     this.bus = bus;
     this.managedByHyprland = managedByHyprland;
+    this.appId = appId;
+    this.shortcut = shortcut;
     if (managedByHyprland)
       this.state = {
         shortcutRegistered: false,
@@ -107,7 +113,41 @@ export class PortalCaptureShortcut {
     void this.stopped.catch(() => undefined);
     bus.on("error", this.failed);
     bus.on("message", this.message);
-    this.ready = this.initialize(appId, shortcut).catch(this.failed);
+    this.ready = this.subscribe();
+    this.register();
+  }
+
+  private async subscribe() {
+    for (const rule of [
+      `type='signal',sender='${PORTAL}',path_namespace='${PATH}'`,
+      `type='signal',sender='org.freedesktop.DBus',interface='${DBUS}',member='NameOwnerChanged',arg0='${PORTAL}'`,
+    ])
+      await this.call({
+        destination: DBUS,
+        path: "/org/freedesktop/DBus",
+        interface: DBUS,
+        member: "AddMatch",
+        signature: "s",
+        body: [rule],
+      });
+  }
+
+  private register() {
+    const generation = this.generation;
+    // Drain the interrupted registration before starting another on this connection.
+    this.ready = this.ready
+      .then(async () => {
+        if (this.closed || generation !== this.generation) return;
+        this.stopped = new Promise((_, reject) => {
+          this.rejectStopped = reject;
+        });
+        void this.stopped.catch(() => undefined);
+        await this.initialize(this.appId, this.shortcut);
+        if (generation === this.generation) this.reconnecting = false;
+      })
+      .catch((error) => {
+        if (generation === this.generation) this.failed(error);
+      });
   }
 
   close = () => {
@@ -173,9 +213,10 @@ export class PortalCaptureShortcut {
   };
 
   private async wait<T>(promise: Promise<T>, timeoutMs = 5_000): Promise<T> {
+    const generation = this.generation;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await Promise.race([
+      const result = await Promise.race([
         promise,
         this.stopped,
         new Promise<never>((_, reject) => {
@@ -185,6 +226,9 @@ export class PortalCaptureShortcut {
           );
         }),
       ]);
+      if (generation !== this.generation)
+        throw new Error("The desktop shortcut service restarted.");
+      return result;
     } finally {
       clearTimeout(timer);
     }
@@ -215,10 +259,35 @@ export class PortalCaptureShortcut {
       message.sender === "org.freedesktop.DBus" &&
       message.interface === DBUS &&
       message.member === "NameOwnerChanged" &&
+      message.signature === "sss" &&
       message.body[0] === PORTAL &&
-      message.body[1] === this.owner
+      message.body[1] === this.owner &&
+      (this.owner || this.reconnecting)
     ) {
-      this.failed(new Error("The desktop shortcut service restarted. Retry the shortcut request."));
+      if (
+        !this.reconnecting &&
+        !this.state.shortcutRegistered &&
+        !this.state.shortcutActionRegistered
+      ) {
+        this.failed(
+          new Error("The desktop shortcut service restarted. Retry the shortcut request."),
+        );
+        return;
+      }
+      this.generation++;
+      this.reconnecting = true;
+      this.rejectStopped(new Error("The desktop shortcut service restarted."));
+      this.owner = string(message.body[2]);
+      this.session = "";
+      this.pending = undefined;
+      this.responses.clear();
+      this.update({
+        shortcutRegistered: false,
+        shortcutPending: true,
+        shortcutCanRetry: false,
+        shortcutMessage: "Reconnecting to the desktop shortcut service…",
+      });
+      if (this.owner) this.register();
       return;
     }
     if (!this.owner || message.sender !== this.owner) return;
@@ -272,11 +341,22 @@ export class PortalCaptureShortcut {
   ) {
     const token = `t3_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
     const expectedPath = this.namespace + token;
-    let resolve!: (body: unknown) => void;
-    const response = new Promise<unknown>((done) => {
-      resolve = done;
-    });
-    this.pending = { path: expectedPath, resolve };
+    const response = Promise.withResolvers<ReturnType<typeof decodeResponse>>();
+    void response.promise.catch(() => undefined);
+    const pending = {
+      path: expectedPath,
+      resolve: (body: unknown) => {
+        try {
+          const result = decodeResponse(body);
+          // A refusal must take effect before a queued owner-change signal can retry it.
+          if (member === "BindShortcuts" && result[0] !== 0) this.reconnecting = false;
+          response.resolve(result);
+        } catch (error) {
+          response.reject(error);
+        }
+      },
+    };
+    this.pending = pending;
     this.responses.clear();
     let completed = false;
     try {
@@ -290,10 +370,11 @@ export class PortalCaptureShortcut {
       });
       const handle = string(reply.body[0]);
       if (!handle.startsWith(this.namespace)) throw new Error("Invalid shortcut request handle.");
-      this.pending.path = handle;
-      if (this.responses.has(handle)) resolve(this.responses.get(handle));
-      const [status, results] = decodeResponse(
-        await this.wait(response, member === "BindShortcuts" ? 120_000 : 5_000),
+      pending.path = handle;
+      if (this.responses.has(handle)) pending.resolve(this.responses.get(handle));
+      const [status, results] = await this.wait(
+        response.promise,
+        member === "BindShortcuts" ? 120_000 : 5_000,
       );
       completed = true;
       if (status !== 0) {
@@ -312,7 +393,8 @@ export class PortalCaptureShortcut {
       }
       return results;
     } finally {
-      if (!completed && !this.closed && this.pending) this.closeObject(this.pending.path, REQUEST);
+      if (!completed && !this.closed && this.pending === pending)
+        this.closeObject(pending.path, REQUEST);
       this.pending = undefined;
       this.responses.clear();
     }
@@ -385,18 +467,6 @@ export class PortalCaptureShortcut {
       body: [SHORTCUTS, "version"],
     });
     this.version = decodeVersion(version.body[0]).value;
-    for (const rule of [
-      `type='signal',sender='${this.owner}',path_namespace='${PATH}'`,
-      `type='signal',sender='org.freedesktop.DBus',interface='${DBUS}',member='NameOwnerChanged',arg0='${PORTAL}'`,
-    ])
-      await this.call({
-        destination: DBUS,
-        path: "/org/freedesktop/DBus",
-        interface: DBUS,
-        member: "AddMatch",
-        signature: "s",
-        body: [rule],
-      });
     const created = await this.request("CreateSession", "", [], {
       session_handle_token: new Variant(
         "s",
