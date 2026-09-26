@@ -1205,8 +1205,6 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
           issue: "The selected model belongs to another provider instance.",
         });
       }
-      const model = input.modelSelection?.model ?? context.session.model;
-      const prompt = yield* buildPrompt(context, input, model);
       let intent: TurnIntent | undefined;
       // The caller holds promptLock while it changes or settles the active turn.
       const finishTurn = (turn: TurnIntent, payload: TurnCompletedPayload) =>
@@ -1238,6 +1236,10 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
         const launch = yield* context.promptLock.withPermit(
           Effect.gen(function* () {
             yield* requireSession(input.threadId);
+            // Read the model under the lock, so a turn queued behind a model
+            // change reports and records the model the agent runs.
+            const model = input.modelSelection?.model ?? context.session.model;
+            const prompt = yield* buildPrompt(context, input, model);
             const turnId = context.activeTurnId ?? TurnId.make(yield* randomId);
             const steering = context.activeTurnId !== undefined;
             const turn: TurnIntent = { turnId, generation: ++context.generation, settled: false };
