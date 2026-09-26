@@ -748,7 +748,7 @@ describe("instance-scoped model selection", () => {
     ).toEqual(saved);
   });
 
-  it("keeps a custom-instance draft model while dropping unsupported options", () => {
+  it.each([false, true])("keeps custom draft models (server: %s)", (isServerThread) => {
     const instanceId = ProviderInstanceId.make("claude_openrouter");
     const driver = ProviderDriverKind.make("claudeAgent");
     const providers = [
@@ -764,13 +764,14 @@ describe("instance-scoped model selection", () => {
     const state = deriveEffectiveComposerModelState({
       draft: {
         activeProvider: instanceId,
+        modelSelectionExplicit: isServerThread,
         modelSelectionByProvider: { [instanceId]: draftSelection },
       },
       providers,
       selectedProvider: driver,
       selectedInstanceId: instanceId,
-      threadModelSelection: threadSelection,
-      projectModelSelection: null,
+      threadModelSelection: isServerThread ? threadSelection : null,
+      projectModelSelection: isServerThread ? null : threadSelection,
       settings: settingsWithProviderInstances(),
     });
     const dispatch = getComposerProviderState({
