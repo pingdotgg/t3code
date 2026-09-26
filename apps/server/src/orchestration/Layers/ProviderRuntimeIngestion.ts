@@ -200,6 +200,43 @@ function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
 }
 
+/**
+ * Text still safe to persist when an assistant item completes.
+ *
+ * `detail` is a full snapshot. When it strictly extends text already
+ * accumulated (projected plus still buffered), return only the part not yet
+ * projected. Equal, empty, and divergent snapshots keep the streamed text:
+ * buffered text if any remains, otherwise the snapshot only when nothing
+ * has been projected yet.
+ *
+ * @param input.projectedText - Assistant text already written to the message.
+ * @param input.bufferedText - Assistant text held back from projection.
+ * @param input.detail - Completion snapshot, when the provider sent one.
+ * @returns The suffix to append, or `""` when streamed text should stand.
+ */
+function assistantCompletionDelta(input: {
+  readonly projectedText: string;
+  readonly bufferedText: string;
+  readonly detail: string | undefined;
+}): string {
+  const accumulated = `${input.projectedText}${input.bufferedText}`;
+  const detail = input.detail;
+  if (
+    detail !== undefined &&
+    detail.startsWith(accumulated) &&
+    detail.length > accumulated.length
+  ) {
+    return detail.slice(input.projectedText.length);
+  }
+  if (input.bufferedText.length > 0) {
+    return input.bufferedText;
+  }
+  if (input.projectedText.length === 0 && (detail?.trim().length ?? 0) > 0) {
+    return detail;
+  }
+  return "";
+}
+
 // An opening fence may sit at any indentation, since fences inside list
 // items are indented past the marker. A closing fence may be indented at most
 // three spaces more than its opener. Deeper lines are content in the block.
@@ -1493,7 +1530,28 @@ const make = Effect.gen(function* () {
       return flushedMessageIds;
     });
 
-  const finalizeAssistantMessage = (input: {
+  /**
+   * Flush one assistant or reasoning message and mark it complete.
+   *
+   * Persists only the suffix from {@link assistantCompletionDelta}, so a
+   * completion snapshot that extends projected or buffered text does not
+   * rewrite the stream. Skips the complete event when the message was never
+   * projected and the suffix has no renderable text.
+   *
+   * @param input - Finalization context for one assistant or reasoning message.
+   * @param input.event - Provider runtime event being finalized.
+   * @param input.threadId - Thread that owns the message.
+   * @param input.messageId - Assistant or reasoning message to complete.
+   * @param input.turnId - Turn the message belongs to, when one is known.
+   * @param input.createdAt - Timestamp applied to the completion commands.
+   * @param input.commandTag - Command id tag for the complete event.
+   * @param input.finalDeltaCommandTag - Command id tag for the final text delta.
+   * @param input.fallbackText - Completion snapshot used as `detail`.
+   * @param input.projectedText - Text already on the projected message.
+   * @param input.hasProjectedMessage - Whether a message row already exists.
+   * @returns Effect that flushes the missing suffix and marks the message complete.
+   */
+  function finalizeAssistantMessage(input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
     messageId: MessageId;
@@ -1502,23 +1560,25 @@ const make = Effect.gen(function* () {
     commandTag: string;
     finalDeltaCommandTag: string;
     fallbackText?: string;
+    projectedText?: string;
     hasProjectedMessage?: boolean;
-  }) =>
-    Effect.gen(function* () {
+  }) {
+    return Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
-      const text =
-        bufferedText.length > 0
-          ? bufferedText
-          : (input.fallbackText?.trim().length ?? 0) > 0
-            ? input.fallbackText!
-            : "";
+      const text = assistantCompletionDelta({
+        projectedText: input.projectedText ?? "",
+        bufferedText,
+        detail: input.fallbackText,
+      });
       const hasRenderableText = hasRenderableAssistantText(text);
 
       const isReasoning = messageStreamRoleOf(input.messageId) === "reasoning";
 
       if (hasRenderableText) {
         yield* orchestrationEngine.dispatch({
-          type: isReasoning ? "thread.message.reasoning.delta" : "thread.message.assistant.delta",
+          type: isReasoning
+            ? "thread.message.reasoning.delta"
+            : "thread.message.assistant.delta",
           commandId: yield* providerCommandId(input.event, input.finalDeltaCommandTag),
           threadId: input.threadId,
           messageId: input.messageId,
@@ -1544,6 +1604,7 @@ const make = Effect.gen(function* () {
       }
       yield* clearAssistantMessageState(input.messageId);
     });
+  }
 
   const finalizeActiveSegmentForTurn = (input: {
     event: ProviderRuntimeEvent;
@@ -1778,7 +1839,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
+  const processRuntimeEvent = /**
+   * Project one provider runtime event. When an assistant item completes,
+   * the snapshot is reconciled with projected and buffered text before the
+   * message is finalized.
+   *
+   * @param event - Provider runtime event to project into orchestration commands.
+   * @returns Effect that ingests the event, including assistant completion text.
+   */ (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       if (
         event.type === "content.delta" &&
@@ -2297,9 +2365,6 @@ const make = Effect.gen(function* () {
                 streamingOnly: false,
               }),
         ]);
-        const shouldApplyFallbackCompletionText =
-          !existingAssistantMessage || existingAssistantMessage.text.length === 0;
-
         const shouldSkipRedundantCompletion =
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
@@ -2320,7 +2385,10 @@ const make = Effect.gen(function* () {
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
             hasProjectedMessage: existingAssistantMessage !== undefined,
-            ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
+            ...(existingAssistantMessage !== undefined
+              ? { projectedText: existingAssistantMessage.text }
+              : {}),
+            ...(assistantCompletion.fallbackText !== undefined
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
           });

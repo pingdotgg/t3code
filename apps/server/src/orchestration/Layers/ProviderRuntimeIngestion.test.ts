@@ -1797,6 +1797,151 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  /**
+   * A completion snapshot that extends text still sitting in the buffer
+   * appends only the missing suffix, once, when the message is finalized.
+   *
+   * @returns Promise that settles when the finalized message has been asserted.
+   */
+  async function appendsMissingSuffixWhenCompletionExtendsBufferedPrefix() {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const full = "Hi! I'm Codex, ready to help.";
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-buffered-prefix");
+    const itemId = asItemId("item-buffered-prefix");
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-buffered-prefix-started"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+      },
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-buffered-prefix-delta"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta: "Hi! I" },
+      },
+    ]);
+    expect(
+      (await harness.readModel()).threads
+        .find((thread) => thread.id === threadId)
+        ?.messages.find((message) => message.id === `assistant:${itemId}`),
+    ).toBeUndefined();
+
+    await harness.emitAndDrain([
+      {
+        type: "item.completed",
+        eventId: asEventId("evt-buffered-prefix-completed"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { itemType: "assistant_message", status: "completed", detail: full },
+      },
+    ]);
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === `assistant:${itemId}` && !message.streaming,
+      ),
+    );
+    const matches = thread.messages.filter(
+      (message: ProviderRuntimeTestMessage) => message.id === `assistant:${itemId}`,
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.text).toBe(full);
+  }
+
+  it(
+    "appends the missing suffix when assistant completion extends a buffered prefix",
+    appendsMissingSuffixWhenCompletionExtendsBufferedPrefix,
+  );
+
+  /**
+   * A completion snapshot that extends an already projected prefix appends
+   * only the missing suffix and leaves a single finalized message.
+   *
+   * @returns Promise that settles when the finalized message has been asserted.
+   */
+  async function appendsMissingSuffixWhenCompletionExtendsProjectedPrefix() {
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
+    const now = "2026-01-01T00:00:00.000Z";
+    const full = "Hi! I'm Codex, ready to help.";
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-projected-prefix");
+    const itemId = asItemId("item-projected-prefix");
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-projected-prefix-started"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+      },
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-projected-prefix-delta"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta: "Hi! I" },
+      },
+    ]);
+    await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === `assistant:${itemId}` && message.streaming && message.text === "Hi! I",
+      ),
+    );
+
+    await harness.emitAndDrain([
+      {
+        type: "item.completed",
+        eventId: asEventId("evt-projected-prefix-completed"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { itemType: "assistant_message", status: "completed", detail: full },
+      },
+    ]);
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === `assistant:${itemId}` && !message.streaming && message.text === full,
+      ),
+    );
+    const matches = thread.messages.filter(
+      (message: ProviderRuntimeTestMessage) => message.id === `assistant:${itemId}`,
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.text).toBe(full);
+  }
+
+  it(
+    "appends the missing suffix when assistant completion extends an already projected prefix",
+    appendsMissingSuffixWhenCompletionExtendsProjectedPrefix,
+  );
+
   it("preserves completed tool metadata on projected tool activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
