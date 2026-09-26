@@ -1483,6 +1483,29 @@ struct NativePassiveThreadRefreshTests {
         await fixture.client.disconnect()
     }
 
+    @Test("A peer that rejects its pairing is not probed for its catalogue", .timeLimit(.minutes(1)))
+    func rejectedPeerSkipsCatalogueProbes() async throws {
+        let catalogueClock = ControllableAggregateRefreshSleep()
+        let failureInterval = NativeFeatureClient.defaultAggregateFailureRefreshInterval
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            aggregatePeerRefreshSleep: { id, interval in
+                // Only the catalogue loop waits the failure interval for this peer.
+                guard id == "three", interval == failureInterval else { return try await Task.sleep(for: .seconds(3_600)) }
+                try await catalogueClock.sleep(for: interval)
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.rejectCredential(host: "three.example")
+        _ = try await fixture.client.initialSnapshot()
+        for count in 1...3 {
+            _ = await catalogueClock.waitUntilRequested(count: count)
+            #expect(await fixture.transport.ticketCount(host: "three.example") == 0)
+            await catalogueClock.resume()
+        }
+        await fixture.client.disconnect()
+    }
+
     @Test("Healthy rows publish twice while a peer shell and optional catalogue remain held", .timeLimit(.minutes(1)))
     func healthyRowsPublishTwiceWhilePeerAndCatalogueAreHeld() async throws {
         let healthyClock = ControllableAggregateRefreshSleep()
@@ -1904,6 +1927,11 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
     private var diffRequests: [(host: String, input: JSONValue)] = []
+    private var rejectedHosts = Set<String>()
+    private var ticketCounts: [String: Int] = [:]
+
+    func rejectCredential(host: String) { rejectedHosts.insert(host) }
+    func ticketCount(host: String) -> Int { ticketCounts[host, default: 0] }
 
     func pullRequestDiffRequests() -> [(host: String, input: JSONValue)] { diffRequests }
     private var nextShellGates: [String: PassiveRequestGate] = [:]
@@ -1965,6 +1993,13 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         let path = request.url?.path ?? ""
+        if path == "/api/auth/websocket-ticket" { ticketCounts[host, default: 0] += 1 }
+        if rejectedHosts.contains(host) {
+            return (
+                Data(#"{"error":"Unauthorized"}"#.utf8),
+                HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            )
+        }
         if path == "/api/orchestration/shell" {
             shellReadCounts[host, default: 0] += 1
             if let gate = nextShellGates.removeValue(forKey: host), let data = shellData[host] {

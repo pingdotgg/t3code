@@ -4175,6 +4175,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         func refreshCatalogue(_ environment: Environment) async {
             while isCurrent && owner?.serverConfigsByEnvironmentID[environment.id] == nil {
+                // Each probe mints a WebSocket ticket, and a rejected pairing only
+                // surfaces through the shell refresh. Wait for a re-pair instead.
+                if owner?.environmentConnectionStates[environment.id] == .needsPairing {
+                    do { try await peerSleep(environment.id, failureInterval) } catch { return }
+                    continue
+                }
                 do {
                     guard try await currentEnvironments(for: environment) != nil else { return }
                     // Never disconnect the shared client if this peer becomes selected.
@@ -4989,7 +4995,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             environmentConnectionStates[load.environment.id] = .disconnected
             environmentConnectionDetails[load.environment.id] =
-                "That server is currently unreachable."
+                load.failureDetail ?? "That server is currently unreachable."
         }
     }
 
