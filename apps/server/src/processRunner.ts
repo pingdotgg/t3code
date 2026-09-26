@@ -285,102 +285,14 @@ function finalizeRunProcess<R>(
   );
 }
 
-// Git global options that take the next argument as their value, as in `git -C <path> status`.
-const GIT_OPTIONS_WITH_VALUE = new Set([
-  "-C",
-  "-c",
-  "--git-dir",
-  "--work-tree",
-  "--namespace",
-  "--config-env",
-  "--shallow-file",
-  "--attr-source",
-]);
-
-// Git subcommands T3 runs, plus common ones. Only these are recorded, so a misread path,
-// option value, or unknown word never reaches the span.
-const GIT_SUBCOMMANDS = new Set([
-  "add",
-  "apply",
-  "branch",
-  "cat-file",
-  "check-ignore",
-  "checkout",
-  "cherry-pick",
-  "clean",
-  "clone",
-  "commit",
-  "commit-tree",
-  "config",
-  "diff",
-  "fetch",
-  "for-each-ref",
-  "hash-object",
-  "init",
-  "log",
-  "ls-files",
-  "ls-remote",
-  "ls-tree",
-  "merge",
-  "merge-base",
-  "pull",
-  "push",
-  "read-tree",
-  "rebase",
-  "remote",
-  "reset",
-  "restore",
-  "rev-list",
-  "rev-parse",
-  "show",
-  "show-ref",
-  "sparse-checkout",
-  "stash",
-  "status",
-  "submodule",
-  "switch",
-  "symbolic-ref",
-  "tag",
-  "update-index",
-  "update-ref",
-  "version",
-  "worktree",
-  "write-tree",
-]);
-
-function gitSubcommand(args: ReadonlyArray<string>): string | undefined {
-  let skipNext = false;
-  for (const arg of args) {
-    if (skipNext) {
-      skipNext = false;
-    } else if (arg.startsWith("-")) {
-      skipNext = GIT_OPTIONS_WITH_VALUE.has(arg);
-    } else {
-      return GIT_SUBCOMMANDS.has(arg) ? arg : undefined;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Span attributes that name a spawned command without user data: the executable
- * name without its directory, plus the subcommand for git. Other arguments are
- * never recorded.
- */
-export function processSpanAttributes(command: string, args: ReadonlyArray<string>) {
-  const name = command.replace(/^.*[\\/]/, "");
-  const subcommand = /^git(\.exe)?$/i.test(name) ? gitSubcommand(args) : undefined;
-  return {
-    "process.command": name,
-    ...(subcommand !== undefined ? { "process.subcommand": subcommand } : {}),
-  };
-}
+/** The executable name without its directory, recorded as `process.command` on process spans. */
+export const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   input: ProcessRunInput,
 ): Effect.fn.Return<ProcessRunOutput, ProcessRunError, Scope.Scope> {
-  yield* Effect.annotateCurrentSpan(processSpanAttributes(input.command, input.args));
+  yield* Effect.annotateCurrentSpan("process.command", commandName(input.command));
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";

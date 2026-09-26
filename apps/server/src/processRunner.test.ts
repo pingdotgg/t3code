@@ -413,45 +413,10 @@ describe("isWindowsCommandNotFound", () => {
   );
 });
 
-describe("processSpanAttributes", () => {
-  it("keeps only the executable name from POSIX and Windows paths", () => {
-    expect(ProcessRunner.processSpanAttributes("/Users/me/.local/bin/claude", ["--print"])).toEqual(
-      { "process.command": "claude" },
-    );
-    expect(
-      ProcessRunner.processSpanAttributes("C:\\Program Files\\nodejs\\npx.cmd", ["tsx"]),
-    ).toEqual({ "process.command": "npx.cmd" });
-  });
-
-  it("finds the git subcommand after global options", () => {
-    expect(
-      ProcessRunner.processSpanAttributes("git", [
-        "-C",
-        "/Users/me/project",
-        "-c",
-        "core.fsmonitor=false",
-        "--literal-pathspecs",
-        "rev-parse",
-        "--show-toplevel",
-      ]),
-    ).toEqual({ "process.command": "git", "process.subcommand": "rev-parse" });
-    expect(
-      ProcessRunner.processSpanAttributes("git", ["--git-dir", "/repo/.git", "fetch"]),
-    ).toEqual({ "process.command": "git", "process.subcommand": "fetch" });
-    expect(
-      ProcessRunner.processSpanAttributes("git", ["--namespace", "customer-a", "status"]),
-    ).toEqual({ "process.command": "git", "process.subcommand": "status" });
-  });
-
-  it("records only known git subcommands", () => {
-    expect(ProcessRunner.processSpanAttributes("git", ["--unknown", "/Users/me/secret"])).toEqual({
-      "process.command": "git",
-    });
-    expect(ProcessRunner.processSpanAttributes("git", ["--unknown", "private-repo"])).toEqual({
-      "process.command": "git",
-    });
-    expect(ProcessRunner.processSpanAttributes("git", ["customer-secret"])).toEqual({
-      "process.command": "git",
-    });
+describe("commandName", () => {
+  it("drops the directory from POSIX and Windows paths", () => {
+    expect(ProcessRunner.commandName("/Users/me/.local/bin/claude")).toBe("claude");
+    expect(ProcessRunner.commandName("C:\\Program Files\\nodejs\\npx.cmd")).toBe("npx.cmd");
+    expect(ProcessRunner.commandName("git")).toBe("git");
   });
 });
