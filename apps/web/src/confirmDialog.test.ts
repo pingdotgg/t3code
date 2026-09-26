@@ -34,16 +34,20 @@ describe("confirm dialog coordinator", () => {
 
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
+      id: "confirm-1",
       message: "Delete this thread?",
       variant: "destructive",
+      checkbox: undefined,
     });
 
     respondToConfirmDialog(true);
     await expect(confirmation).resolves.toBe(true);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
+      id: "confirm-1",
       message: "Delete this thread?",
       variant: "destructive",
+      checkbox: undefined,
     });
 
     completeConfirmDialogClose();
@@ -60,21 +64,57 @@ describe("confirm dialog coordinator", () => {
     await expect(first).resolves.toBe(false);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
+      id: "confirm-1",
       message: "Delete the project?",
       variant: "default",
+      checkbox: undefined,
     });
 
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
+      id: "confirm-2",
       message: "Delete the worktree too?",
       variant: "default",
+      checkbox: undefined,
     });
 
     respondToConfirmDialog(true);
     await expect(second).resolves.toBe(true);
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
+  it("assigns distinct IDs to successive confirmations with identical messages", async () => {
+    const unregister = registerConfirmDialogHost();
+    const first = requireConfirmation(requestConfirmDialog("Same message?"));
+    const second = requireConfirmation(requestConfirmDialog("Same message?"));
+
+    const firstState = readConfirmDialogState();
+    expect(firstState).toMatchObject({
+      status: "confirming",
+      id: "confirm-1",
+      message: "Same message?",
+    });
+
+    respondToConfirmDialog(true);
+    await expect(first).resolves.toBe(true);
+    completeConfirmDialogClose();
+
+    const secondState = readConfirmDialogState();
+    expect(secondState).toMatchObject({
+      status: "confirming",
+      id: "confirm-2",
+      message: "Same message?",
+    });
+    expect(secondState.status === "confirming" ? secondState.id : null).not.toBe(
+      firstState.status === "confirming" ? firstState.id : null,
+    );
+
+    respondToConfirmDialog(true);
+    await expect(second).resolves.toBe(true);
+    completeConfirmDialogClose();
     unregister();
   });
 
@@ -114,6 +154,7 @@ describe("confirm dialog coordinator", () => {
 
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
+      id: "confirm-1",
       message: "Close terminal?",
       variant: "destructive",
       checkbox: { label: "Don't ask again", checked: false, onCheckedChange },

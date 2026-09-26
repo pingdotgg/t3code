@@ -191,6 +191,15 @@ describe("surface shortcuts", () => {
     ).toBeNull();
   });
 
+  it("does not activate shortcuts on dead key events", () => {
+    expect(
+      surfaceShortcutActionForKey(actions, {
+        ...shortcutEvent("Dead"),
+        code: "KeyB",
+      }),
+    ).toBeNull();
+  });
+
   it("does not activate unavailable surfaces", () => {
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
   });

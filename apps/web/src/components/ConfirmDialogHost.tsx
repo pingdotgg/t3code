@@ -31,6 +31,9 @@ type ConfirmationCopy = {
   readonly description: string | null;
 };
 
+/**
+ * Splits a multiline confirmation message into a concise title and description.
+ */
 function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
   const normalizedMessage = message.trim();
   const lines = normalizedMessage.split("\n");
@@ -66,6 +69,9 @@ type ConfirmDialogBodyProps = {
   readonly onConfirm: () => void;
 };
 
+/**
+ * Dialog content body with its own local checkbox state and keyboard arrow navigation.
+ */
 function ConfirmDialogBody({ message, variant, checkbox, onConfirm }: ConfirmDialogBodyProps) {
   const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -146,6 +152,9 @@ function ConfirmDialogBody({ message, variant, checkbox, onConfirm }: ConfirmDia
   );
 }
 
+/**
+ * Top-level host for imperative confirmation dialogs across the application.
+ */
 export function ConfirmDialogHost() {
   const state = useSyncExternalStore(
     subscribeConfirmDialog,
@@ -172,7 +181,7 @@ export function ConfirmDialogHost() {
     >
       {isMounted ? (
         <ConfirmDialogBody
-          key={state.message}
+          key={state.id}
           message={state.message}
           variant={state.variant}
           checkbox={state.checkbox}

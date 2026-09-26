@@ -48,7 +48,7 @@ export async function confirmTerminalClose(
       },
     );
     if (confirmed && dontAskAgain) {
-      void persistClientSettingsPatch({ confirmTerminalClose: false });
+      await persistClientSettingsPatch({ confirmTerminalClose: false });
     }
     return confirmed;
   } catch {

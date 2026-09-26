@@ -248,6 +248,10 @@ type SurfaceShortcutEvent = Pick<
   "altKey" | "ctrlKey" | "defaultPrevented" | "isComposing" | "key" | "metaKey"
 > & { readonly code?: string };
 
+/**
+ * Resolves the surface shortcut action matching a keyboard event, checking both
+ * the active keyboard layout character and physical key code fallbacks for non-Latin layouts.
+ */
 export function surfaceShortcutActionForKey<
   const Action extends { available: boolean; shortcut: string },
 >(actions: readonly Action[], event: SurfaceShortcutEvent): Action | null {
@@ -260,7 +264,13 @@ export function surfaceShortcutActionForKey<
       if (!action.available) return false;
       const targetShortcut = action.shortcut.toLowerCase();
       if (targetShortcut === layoutKey) return true;
-      if (letterCode && !/^[a-z]$/.test(layoutKey) && targetShortcut === letterCode) return true;
+      if (
+        letterCode &&
+        layoutKey.length === 1 &&
+        !/^[a-z]$/.test(layoutKey) &&
+        targetShortcut === letterCode
+      )
+        return true;
       return false;
     }) ?? null
   );
@@ -320,6 +330,9 @@ function SurfaceMenuItem(props: {
  * outside a typing context, and arrows plus Enter work while the launcher is
  * focused. The highlight only appears on hover or arrow use. Unavailable
  * surfaces stay visible with a one-line reason.
+ */
+/**
+ * Empty launcher state rendered inside the right panel when no surface is active.
  */
 function RightPanelEmptyState(props: {
   open?: boolean | undefined;
@@ -434,21 +447,17 @@ function RightPanelEmptyState(props: {
   // typing contexts and already-handled events are left alone.
   const isPanelOpen = props.open !== false;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const shortcutActionsRef = useRef(availableActions);
+
+  useEffect(() => {
+    shortcutActionsRef.current = availableActions;
+  });
 
   useEffect(() => {
     if (isPanelOpen) {
       containerRef.current?.focus();
     }
-  }, [isPanelOpen, shortcutActionsRef]);
-
-  // Letter shortcuts work while the launcher is visible, not only while it
-  // is focused; focus moves around too easily (stray clicks) to carry them.
-  // Capture phase so app-level key handlers cannot swallow the event first;
-  // typing contexts and already-handled events are left alone.
-  const shortcutActionsRef = useRef(availableActions);
-  useEffect(() => {
-    shortcutActionsRef.current = availableActions;
-  });
+  }, [isPanelOpen]);
   useEffect(() => {
     if (!isPanelOpen) return;
     const handler = (event: KeyboardEvent) => {
