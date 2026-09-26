@@ -530,9 +530,15 @@ importers:
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5)
+      jpeg-js:
+        specifier: ^0.4.4
+        version: 0.4.4
       node-pty:
         specifier: ^1.2.0-beta.15
         version: 1.2.0-beta.15
+      pngjs:
+        specifier: ^7.0.0
+        version: 7.0.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
@@ -567,6 +573,9 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+      '@types/pngjs':
+        specifier: 6.0.5
+        version: 6.0.5
       '@types/yauzl':
         specifier: ^3.4.0
         version: 3.4.0
@@ -8202,6 +8211,9 @@ packages:
 
   jose@6.2.3:
     resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
+
+  jpeg-js@0.4.4:
+    resolution: {integrity: sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==}
 
   js-base64@3.7.8:
     resolution: {integrity: sha512-hNngCeKxIUQiEUN3GPJOkz4wF/YvdUdbNL9hsBcMQTkKzboD7T/q3OYOuuPZLUE6dBxSGpwhk5mwuDud7JVAow==}
@@ -18879,6 +18891,8 @@ snapshots:
   jose@6.2.2: {}
 
   jose@6.2.3: {}
+
+  jpeg-js@0.4.4: {}
 
   js-base64@3.7.8: {}
 
