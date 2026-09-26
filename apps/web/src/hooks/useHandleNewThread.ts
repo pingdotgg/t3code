@@ -32,8 +32,8 @@ import {
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { useProjectOrder } from "./useProjectOrder";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -435,7 +435,7 @@ export function useNewThreadHandler() {
 }
 
 export function useHandleNewThread() {
-  const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectOrder = useProjectOrder();
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -457,10 +457,6 @@ export function useHandleNewThread() {
       items: projects,
       preferredIds: projectOrder,
       getId: getProjectOrderKey,
-      getPreferenceIds: (project) => [
-        getProjectOrderKey(project),
-        legacyProjectCwdPreferenceKey(project.workspaceRoot),
-      ],
     });
   }, [projectOrder, projects]);
   const handleNewThread = useNewThreadHandler();

@@ -174,10 +174,7 @@ vi.mock("../state/server", () => ({
   primaryServerSettingsAtom: "primary-settings",
 }));
 vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
-vi.mock("../uiStateStore", () => ({
-  legacyProjectCwdPreferenceKey: () => "remote-project",
-  useUiStateStore: () => [],
-}));
+vi.mock("./useProjectOrder", () => ({ useProjectOrder: () => [] }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 
 import { useNewThreadHandler } from "./useHandleNewThread";

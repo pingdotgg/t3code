@@ -30,6 +30,7 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -299,6 +300,28 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": null } });
         const restored = yield* readPersisted;
         assert.deepStrictEqual(restored.usagePriceOverrides, {});
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists, broadcasts, and clears manual project order", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* service.subscribeChanges;
+        const order = ["remote:/b", "local:/a", "remote:/a"];
+        const next = yield* service.updateSettings({ sidebarProjectOrder: order });
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        const readPersisted = fs
+          .readFileString(config.settingsPath)
+          .pipe(Effect.flatMap(decodeServerSettingsJson));
+        assert.deepStrictEqual(next.sidebarProjectOrder, order);
+        assert.deepStrictEqual(change?.sidebarProjectOrder, order);
+        assert.deepStrictEqual((yield* readPersisted).sidebarProjectOrder, order);
+        yield* service.updateSettings({ sidebarProjectOrder: [] });
+        assert.deepStrictEqual((yield* readPersisted).sidebarProjectOrder, []);
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );

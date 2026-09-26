@@ -6,6 +6,7 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import * as Schema from "effect/Schema";
 import {
   DndContext,
+  PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -13,7 +14,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -77,8 +78,10 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ComponentProps,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { useParams, useRouter } from "@tanstack/react-router";
 
@@ -117,13 +120,14 @@ import {
   projectGroupsSpanEnvironments,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
 } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useProjectOrder, useReorderProjects } from "../hooks/useProjectOrder";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -182,7 +186,6 @@ import {
   resolveWorkingStartedAt,
   sidebarListItemId,
   sidebarMarkerId,
-  sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
   useRetainedValue,
@@ -498,6 +501,45 @@ function SnoozeMenuButton(props: {
         </MenuItem>
       </MenuPopup>
     </Menu>
+  );
+}
+
+// A project row in the scope picker that drags to reorder. The distance
+// constraint keeps plain clicks selecting; the click that ends a drag skips
+// Base UI's selection. Base UI prevents default on pointerdown to keep focus in
+// the search input, and dnd-kit ignores prevented events, so the drag starts
+// from the capture handler, which runs before Base UI's.
+function SortableProjectScopeItem({
+  id,
+  disabled,
+  draggedRef,
+  ...props
+}: ComponentProps<typeof ComboboxItem> & {
+  id: string;
+  disabled: boolean;
+  draggedRef: RefObject<boolean>;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+  });
+  return (
+    <ComboboxItem
+      {...props}
+      ref={setNodeRef}
+      data-dragging={isDragging || undefined}
+      className="data-dragging:relative data-dragging:z-10"
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      onPointerDownCapture={(event) => {
+        draggedRef.current = false;
+        listeners?.onPointerDown?.(event);
+      }}
+      onClick={(event) => {
+        if (draggedRef.current) {
+          (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        }
+      }}
+    />
   );
 }
 
@@ -2145,14 +2187,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 
 export default function Sidebar() {
   const projects = useProjects();
-  const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectOrder = useProjectOrder();
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
-  const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -2292,33 +2333,19 @@ export default function Sidebar() {
         items: projects,
         preferredIds: projectOrder,
         getId: getProjectOrderKey,
-        getPreferenceIds: (project) => [
-          getProjectOrderKey(project),
-          legacyProjectCwdPreferenceKey(project.workspaceRoot),
-        ],
       }),
     [projectOrder, projects],
   );
-  const unsortedProjectGroups = useMemo(
+  // This sidebar always shows the manual order; new projects append to the end.
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        projects: orderedProjects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
-    [
-      environmentLabelById,
-      orderedProjects,
-      primaryEnvironmentId,
-      projectGroupingSettings,
-      projects,
-      sidebarProjectSortOrder,
-    ],
-  );
-  const projectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    [environmentLabelById, orderedProjects, primaryEnvironmentId, projectGroupingSettings],
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
@@ -2390,6 +2417,29 @@ export default function Sidebar() {
   const projectGroupByScopeKey = useMemo(
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
     [projectGroups],
+  );
+  const reorderProjects = useReorderProjects();
+  const projectScopeSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const projectScopeDraggedRef = useRef(false);
+  const handleProjectScopeDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const active = projectGroupByScopeKey.get(String(event.active.id));
+      const over = event.over ? projectGroupByScopeKey.get(String(event.over.id)) : undefined;
+      // The click that ends this drag fires right after; clear the flag once it
+      // has, so a drop without a click cannot block the next keyboard selection.
+      setTimeout(() => {
+        projectScopeDraggedRef.current = false;
+      });
+      if (!active || !over || active === over) return;
+      void reorderProjects(
+        orderedProjects.map(getProjectOrderKey),
+        active.memberProjects.map((member) => member.physicalProjectKey),
+        over.memberProjects.map((member) => member.physicalProjectKey),
+      );
+    },
+    [orderedProjects, projectGroupByScopeKey, reorderProjects],
   );
   const selectedProjectScopeItem = useMemo(
     () =>
@@ -4504,51 +4554,83 @@ export default function Sidebar() {
                       }
                     />
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
-                    <ComboboxList>
-                      {(item: (typeof projectScopeItems)[number]) => {
-                        const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        return (
-                          <ComboboxItem
-                            key={item.value}
-                            hideIndicator
-                            value={item}
-                            onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
-                            }}
-                          >
-                            {project ? (
-                              <ProjectFavicon project={project} className="size-4 shrink-0" />
-                            ) : (
-                              <FolderIcon className="size-4 shrink-0" />
-                            )}
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
-                            {project ? (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                  void handleProjectSettings(event, project);
-                                }}
-                              >
-                                <SettingsIcon className="size-3.5" />
-                              </Button>
-                            ) : null}
-                          </ComboboxItem>
-                        );
+                    <DndContext
+                      sensors={projectScopeSensors}
+                      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                      onDragStart={() => {
+                        projectScopeDraggedRef.current = true;
                       }}
-                    </ComboboxList>
+                      onDragEnd={handleProjectScopeDragEnd}
+                      onDragCancel={() => {
+                        projectScopeDraggedRef.current = false;
+                      }}
+                    >
+                      <SortableContext
+                        items={projectGroups.map((project) => project.projectKey)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <ComboboxList>
+                          {(item: (typeof projectScopeItems)[number]) => {
+                            const project = projectGroupByScopeKey.get(item.value) ?? null;
+                            const content = (
+                              <>
+                                {project ? (
+                                  <ProjectFavicon project={project} className="size-4 shrink-0" />
+                                ) : (
+                                  <FolderIcon className="size-4 shrink-0" />
+                                )}
+                                <span className="min-w-0 flex-1 truncate text-sm">
+                                  {item.label}
+                                </span>
+                                {project && showProjectEnvironments ? (
+                                  <ProjectEnvironmentBadge
+                                    group={project}
+                                    primaryEnvironmentId={primaryEnvironmentId}
+                                    machineByEnvironmentId={environmentMachineById}
+                                  />
+                                ) : null}
+                                {project ? (
+                                  <Button
+                                    size="icon-xs"
+                                    variant="ghost-muted"
+                                    tabIndex={-1}
+                                    aria-hidden="true"
+                                    title={`Project settings for ${project.displayName}`}
+                                    className="ml-auto"
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      void handleProjectSettings(event, project);
+                                    }}
+                                  >
+                                    <SettingsIcon className="size-3.5" />
+                                  </Button>
+                                ) : null}
+                              </>
+                            );
+                            if (!project) {
+                              return (
+                                <ComboboxItem key={item.value} hideIndicator value={item}>
+                                  {content}
+                                </ComboboxItem>
+                              );
+                            }
+                            return (
+                              <SortableProjectScopeItem
+                                key={item.value}
+                                id={item.value}
+                                disabled={projectScopeMenuState.query !== ""}
+                                draggedRef={projectScopeDraggedRef}
+                                hideIndicator
+                                value={item}
+                                onContextMenu={(event) => handleProjectSettings(event, project)}
+                              >
+                                {content}
+                              </SortableProjectScopeItem>
+                            );
+                          }}
+                        </ComboboxList>
+                      </SortableContext>
+                    </DndContext>
                   </ComboboxPopup>
                 </Combobox>
               }
