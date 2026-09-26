@@ -1443,6 +1443,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        let reusePersistedState = persistedBinding?.providerInstanceId === resolvedInstanceId;
         if (
           persistedBinding?.provider === resolvedProvider &&
           persistedBinding.providerInstanceId !== resolvedInstanceId &&
@@ -1462,32 +1463,29 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               `Thread '${threadId}' cannot switch from instance '${previousInstanceId}' to '${resolvedInstanceId}' because their provider resume state is incompatible.`,
             );
           }
+          // Instances that share resume state (e.g. Codex auth overlays over one
+          // home) continue the same provider thread, so a stopped session keeps
+          // its conversation when the thread moves between them.
+          reusePersistedState = true;
         }
         const effectiveResumeCursor =
-          input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
+          input.resumeCursor ?? (reusePersistedState ? persistedBinding?.resumeCursor : undefined);
         const effectiveCwd =
           input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? readPersistedCwd(persistedBinding.runtimePayload)
-            : undefined);
+          (reusePersistedState ? readPersistedCwd(persistedBinding?.runtimePayload) : undefined);
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
             input.resumeCursor !== undefined
               ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveResumeCursor !== undefined && reusePersistedState
                 ? "persisted"
                 : "none",
           "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
           "provider.cwd.source":
             input.cwd !== undefined
               ? "request"
-              : effectiveCwd !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveCwd !== undefined && reusePersistedState
                 ? "persisted"
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
