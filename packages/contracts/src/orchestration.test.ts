@@ -24,6 +24,7 @@ import {
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
+  ThreadTurnSteerCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
@@ -42,6 +43,7 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadTurnSteerCommand = Schema.decodeUnknownEffect(ThreadTurnSteerCommand);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeInternalOrchestrationCommand = Schema.decodeUnknownEffect(InternalOrchestrationCommand);
 const decodeMessageOrigin = Schema.decodeUnknownEffect(MessageOrigin);
@@ -359,6 +361,88 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes thread.turn.steer with optional turn targeting", () =>
+  Effect.gen(function* () {
+    const withoutTurn = yield* decodeThreadTurnSteerCommand({
+      type: "thread.turn.steer",
+      commandId: "cmd-steer-1",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-steer-1",
+        role: "user",
+        text: "steer now",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(withoutTurn.type, "thread.turn.steer");
+    assert.strictEqual(withoutTurn.turnId, undefined);
+
+    const withTurn = yield* decodeThreadTurnSteerCommand({
+      type: "thread.turn.steer",
+      commandId: "cmd-steer-2",
+      threadId: "thread-1",
+      turnId: "turn-active",
+      message: {
+        messageId: "msg-steer-2",
+        role: "user",
+        text: "steer this turn",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(withTurn.turnId, "turn-active");
+
+    const viaUnion = yield* decodeOrchestrationCommand({
+      type: "thread.turn.steer",
+      commandId: "cmd-steer-3",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-steer-3",
+        role: "user",
+        text: "steer via union",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(viaUnion.type, "thread.turn.steer");
+
+    const viaClientUnion = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.steer",
+      commandId: "cmd-steer-4",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-steer-4",
+        role: "user",
+        text: "steer via client union",
+        attachments: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(viaClientUnion.type, "thread.turn.steer");
+
+    const steerEvent = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-turn-steer-requested",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.turn-steer-requested",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-steer-1",
+      causationEventId: "event-message-sent",
+      correlationId: "cmd-steer-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        messageId: "msg-steer-1",
+        turnId: "turn-active",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(steerEvent.type, "thread.turn-steer-requested");
   }),
 );
 

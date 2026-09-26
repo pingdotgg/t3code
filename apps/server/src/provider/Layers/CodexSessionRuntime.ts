@@ -137,11 +137,23 @@ export interface CodexThreadSnapshot {
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
 }
 
+export interface CodexSessionRuntimeSteerTurnInput {
+  readonly expectedTurnId: TurnId;
+  readonly input?: string;
+  readonly attachments?: ReadonlyArray<{
+    readonly type: "image";
+    readonly url: string;
+  }>;
+}
+
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
   readonly getSession: Effect.Effect<ProviderSession>;
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
+  ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
+  readonly steerTurn: (
+    input: CodexSessionRuntimeSteerTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -1348,6 +1360,29 @@ export const makeCodexSessionRuntime = (
             ...(resumedProviderThreadId
               ? { resumeCursor: { threadId: resumedProviderThreadId } }
               : {}),
+          } satisfies ProviderTurnStartResult;
+        }),
+      steerTurn: (input) =>
+        Effect.gen(function* () {
+          const providerThreadId = yield* readProviderThreadId;
+          const steerInput: Array<
+            | { readonly type: "text"; readonly text: string }
+            | { readonly type: "image"; readonly url: string }
+          > = [];
+          if (input.input !== undefined) {
+            steerInput.push({ type: "text", text: input.input });
+          }
+          for (const attachment of input.attachments ?? []) {
+            steerInput.push({ type: "image", url: attachment.url });
+          }
+          const response = yield* client.request("turn/steer", {
+            threadId: providerThreadId,
+            expectedTurnId: input.expectedTurnId,
+            input: steerInput,
+          });
+          return {
+            threadId: options.threadId,
+            turnId: TurnId.make(response.turnId),
           } satisfies ProviderTurnStartResult;
         }),
       interruptTurn: (turnId) =>

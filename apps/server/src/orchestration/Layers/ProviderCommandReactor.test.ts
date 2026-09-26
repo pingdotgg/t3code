@@ -272,6 +272,12 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const interruptTurn = vi.fn<ProviderServiceShape["interruptTurn"]>(() => Effect.void);
+    const steerTurn = vi.fn<ProviderServiceShape["steerTurn"]>((input) =>
+      Effect.succeed({
+        threadId: input.threadId,
+        turnId: input.turnId,
+      }),
+    );
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
     const stopSession = vi.fn<ProviderServiceShape["stopSession"]>((input) =>
@@ -363,6 +369,7 @@ describe("ProviderCommandReactor", () => {
       forkSession: unsupported as ProviderServiceShape["forkSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
+      steerTurn: steerTurn as ProviderServiceShape["steerTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
@@ -523,6 +530,7 @@ describe("ProviderCommandReactor", () => {
       startSession,
       sendTurn,
       interruptTurn,
+      steerTurn,
       respondToRequest,
       respondToUserInput,
       stopSession,
@@ -2584,6 +2592,191 @@ describe("ProviderCommandReactor", () => {
     expect(
       thread?.activities.some((activity) => activity.kind === "provider.turn.interrupt.failed"),
     ).toBe(true);
+  });
+
+  it("steers the running turn without touching session state", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-steer"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.make("cmd-turn-steer"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-steer"),
+          role: "user",
+          text: "actually use tabs",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.steerTurn.mock.calls.length === 1);
+    expect(harness.steerTurn.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      input: "actually use tabs",
+    });
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(asTurnId("turn-1"));
+    expect(
+      thread?.activities.some((activity) => activity.kind === "provider.turn.steer.failed"),
+    ).toBe(false);
+  });
+
+  it("fails a steer for a turn that is no longer active without calling the provider", async () => {
+    const harness = await createHarness({ manualProviderEvents: true });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-steer-stale"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.make("cmd-turn-steer-stale"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-steer-stale"),
+          role: "user",
+          text: "late steer",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.steerTurn.mock.calls.length === 1);
+
+    // A steer admitted for a previous turn arrives late: the reactor must
+    // reject it without touching the provider, so it cannot cross turns.
+    await harness.publishProviderEvent!({
+      sequence: 20_000,
+      eventId: EventId.make("manual-provider-steer-stale"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-1"),
+      occurredAt: now,
+      commandId: CommandId.make("manual-provider-steer-stale"),
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "thread.turn-steer-requested",
+      payload: {
+        threadId: ThreadId.make("thread-1"),
+        messageId: asMessageId("user-message-steer-stale"),
+        turnId: asTurnId("turn-99"),
+        createdAt: now,
+      },
+    } as OrchestrationEvent);
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.steer.failed") ??
+        false
+      );
+    });
+    // Only the current-turn steer reached the provider; the stale one failed safely.
+    expect(harness.steerTurn.mock.calls.length).toBe(1);
+  });
+
+  it("keeps the running turn alive when provider steer fails", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.steerTurn.mockReturnValueOnce(
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: "codex",
+          method: "turn/steer",
+          detail: "Turn cannot accept same-turn steering right now.",
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-steer-failure"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.steer",
+        commandId: CommandId.make("cmd-turn-steer-failure"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-steer-failure"),
+          role: "user",
+          text: "steer into review",
+          attachments: [],
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.steerTurn.mock.calls.length === 1);
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.steer.failed") ??
+        false
+      );
+    });
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(asTurnId("turn-1"));
+    expect(thread?.session?.lastError).toBeNull();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {
