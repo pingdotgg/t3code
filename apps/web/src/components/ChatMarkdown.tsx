@@ -703,6 +703,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyAttemptRef = useRef(0);
   const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
@@ -739,6 +740,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
         : serializeTableElementToCsv(table);
+    const attempt = ++copyAttemptRef.current;
     // A retry must not keep showing the previous attempt's Copied state.
     if (copiedTimerRef.current != null) {
       clearTimeout(copiedTimerRef.current);
@@ -746,6 +748,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     }
     setCopied(false);
     const reportFailure = (cause: unknown) => {
+      if (attempt !== copyAttemptRef.current) return;
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
       toastManager.add(
         stackedThreadToast({
@@ -756,6 +759,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       );
     };
     void writeTextToClipboard(text, "table").then((didCopy) => {
+      if (attempt !== copyAttemptRef.current) return;
       if (!didCopy) {
         reportFailure(new Error("Clipboard write produced no result."));
         return;
@@ -765,6 +769,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       }
       setCopied(true);
       copiedTimerRef.current = setTimeout(() => {
+        if (attempt !== copyAttemptRef.current) return;
         setCopied(false);
         copiedTimerRef.current = null;
       }, 1200);
@@ -773,6 +778,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
 
   useEffect(
     () => () => {
+      copyAttemptRef.current += 1;
       if (copiedTimerRef.current != null) {
         clearTimeout(copiedTimerRef.current);
         copiedTimerRef.current = null;
@@ -945,10 +951,12 @@ function MarkdownCodeBlock({
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyAttemptRef = useRef(0);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
 
   const handleCopy = useCallback(() => {
+    const attempt = ++copyAttemptRef.current;
     // A retry must not keep showing the previous attempt's Copied state.
     if (copiedTimerRef.current != null) {
       clearTimeout(copiedTimerRef.current);
@@ -956,6 +964,7 @@ function MarkdownCodeBlock({
     }
     setCopied(false);
     const reportFailure = (cause: unknown) => {
+      if (attempt !== copyAttemptRef.current) return;
       reportMarkdownActionFailure(
         {
           operation: "copy-code-block",
@@ -973,6 +982,7 @@ function MarkdownCodeBlock({
       );
     };
     void writeTextToClipboard(code, "code").then((didCopy) => {
+      if (attempt !== copyAttemptRef.current) return;
       if (!didCopy) {
         reportFailure(new Error("Clipboard write produced no result."));
         return;
@@ -982,6 +992,7 @@ function MarkdownCodeBlock({
       }
       setCopied(true);
       copiedTimerRef.current = setTimeout(() => {
+        if (attempt !== copyAttemptRef.current) return;
         setCopied(false);
         copiedTimerRef.current = null;
       }, 1200);
@@ -990,6 +1001,7 @@ function MarkdownCodeBlock({
 
   useEffect(
     () => () => {
+      copyAttemptRef.current += 1;
       if (copiedTimerRef.current != null) {
         clearTimeout(copiedTimerRef.current);
         copiedTimerRef.current = null;

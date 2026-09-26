@@ -73,6 +73,53 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe("Markdown copy attempt order", () => {
+  it("ignores an older write that completes after the newest feedback expires", async () => {
+    let finishFirst!: () => void;
+    const writeText = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishFirst = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={"```text\nhello\n```"} />);
+      });
+      const copy = () =>
+        codeButton(renderer!, "Copy code").onClick?.(
+          {} as Parameters<NonNullable<ReturnType<typeof codeButton>["onClick"]>>[0],
+        );
+      await act(async () => {
+        copy();
+      });
+      await act(async () => {
+        copy();
+      });
+      expect(codeButton(renderer!, "Copied")).toBeDefined();
+      await act(async () => {
+        vi.advanceTimersByTime(1200);
+      });
+      await act(async () => {
+        finishFirst();
+      });
+      expect(codeButton(renderer!, "Copy code")).toBeDefined();
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+});
+
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

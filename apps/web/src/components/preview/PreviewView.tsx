@@ -347,6 +347,7 @@ export function PreviewView({
           (artifact) => {
             if (!artifact) return;
             let pathCopied = false;
+            let copyAttempt = 0;
             let toastId: ReturnType<typeof toastManager.add>;
 
             const reportCopyFailure = (error: unknown) => {
@@ -361,22 +362,31 @@ export function PreviewView({
               );
             };
             const copyPath = () => {
+              const attempt = ++copyAttempt;
               if (pathCopied) {
                 pathCopied = false;
                 updateRecordingToast();
               }
-              void writeTextToClipboard(artifact.path, "recording path").then((didCopy) => {
-                if (!didCopy) {
-                  reportCopyFailure(new Error("Clipboard write produced no result."));
-                  return;
-                }
-                pathCopied = true;
-                updateRecordingToast();
-                window.setTimeout(() => {
-                  pathCopied = false;
+              void writeTextToClipboard(artifact.path, "recording path").then(
+                (didCopy) => {
+                  if (attempt !== copyAttempt || !isMountedRef.current) return;
+                  if (!didCopy) {
+                    reportCopyFailure(new Error("Clipboard write produced no result."));
+                    return;
+                  }
+                  pathCopied = true;
                   updateRecordingToast();
-                }, 2_000);
-              }, reportCopyFailure);
+                  window.setTimeout(() => {
+                    if (attempt !== copyAttempt || !isMountedRef.current) return;
+                    pathCopied = false;
+                    updateRecordingToast();
+                  }, 2_000);
+                },
+                (error) => {
+                  if (attempt !== copyAttempt || !isMountedRef.current) return;
+                  reportCopyFailure(error);
+                },
+              );
             };
 
             const revealAction = {
