@@ -38,7 +38,8 @@ guidance informs this proposal; the exact feedback channel is a product choice.
 - A rejected write produces visible failure and no success state.
 - Retrying after failure copies the unchanged source content.
 - Supported plain HTTP copying continues to work across equivalent web controls.
-- Immediate acknowledgment haptics still occur on press, on success and failure.
+- Immediate acknowledgment haptics occur on press, regardless of whether the
+  clipboard write succeeds or fails.
 
 This contract defines desired behavior, not a claim that every current copy path
 already meets it. Native presentations can differ while preserving the same outcome.
