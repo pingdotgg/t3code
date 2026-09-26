@@ -524,6 +524,7 @@ import {
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
   serverUpdateGuidance,
+  shouldSuppressUnavailableBanner,
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
@@ -2652,6 +2653,8 @@ export default function ChatView(props: ChatViewProps) {
     [automaticEnvironment, logicalProjectEnvironments, environmentById],
   );
   const autoBalanceUpdateBanner = useAutoBalanceUpdateBanner(autoUpdateEnvironments);
+  // Wait for persisted settings so an opted-out client never flashes update notices on reload.
+  const showServerUpdateBanners = clientSettingsHydrated && !settings.hideServerUpdateBanners;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2712,13 +2715,20 @@ export default function ChatView(props: ChatViewProps) {
     // "versions differ". A failed update never folds: its error and retry
     // action must stay visible.
     const reconnectingThroughVersionSkew =
-      serverUpdateState.status === "idle" && environmentReconnecting && versionMismatch !== null;
+      showServerUpdateBanners &&
+      serverUpdateState.status === "idle" &&
+      environmentReconnecting &&
+      versionMismatch !== null;
     // While an update runs, transient connect blips are expected (the server
     // restarts) and the update banner already shows progress. Hard failure
     // phases still surface so the Reconnect action stays reachable.
-    const suppressUnavailableBanner =
-      environmentReconnecting &&
-      (updateRunning || (!reconnectingThroughVersionSkew && !reconnectWarningGraceElapsed));
+    const suppressUnavailableBanner = shouldSuppressUnavailableBanner({
+      environmentReconnecting,
+      updateRunning,
+      showServerUpdateBanners,
+      reconnectingThroughVersionSkew,
+      reconnectWarningGraceElapsed,
+    });
     if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
       if (reconnectingThroughVersionSkew) {
         items.push({
@@ -2764,6 +2774,7 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
     if (
+      showServerUpdateBanners &&
       !automaticEnvironment &&
       serverUpdateEnvironmentId &&
       !reconnectingThroughVersionSkew &&
@@ -2843,7 +2854,7 @@ export default function ChatView(props: ChatViewProps) {
             }),
       });
     }
-    if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
+    if (showServerUpdateBanners && autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
     return items;
   }, [
     automaticEnvironment,
@@ -2856,6 +2867,7 @@ export default function ChatView(props: ChatViewProps) {
     handleDisconnectActiveEnvironment,
     setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
+    showServerUpdateBanners,
     serverUpdateFailureDismissed,
     serverUpdateState,
     versionMismatch,

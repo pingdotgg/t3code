@@ -6,6 +6,20 @@ import * as Schema from "effect/Schema";
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
+export function shouldSuppressUnavailableBanner(options: {
+  environmentReconnecting: boolean;
+  updateRunning: boolean;
+  showServerUpdateBanners: boolean;
+  reconnectingThroughVersionSkew: boolean;
+  reconnectWarningGraceElapsed: boolean;
+}): boolean {
+  return (
+    options.environmentReconnecting &&
+    ((options.showServerUpdateBanners && options.updateRunning) ||
+      (!options.reconnectingThroughVersionSkew && !options.reconnectWarningGraceElapsed))
+  );
+}
+
 export interface VersionMismatch {
   readonly clientVersion: string;
   readonly serverVersion: string;

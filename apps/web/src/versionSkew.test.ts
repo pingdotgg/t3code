@@ -18,11 +18,68 @@ import {
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
   serverUpdateGuidance,
+  shouldSuppressUnavailableBanner,
   supportsDesktopAppUpdate,
 } from "./versionSkew";
 
 const MISMATCH_HINT =
   "Version mismatch. Try syncing the client and server to the same T3 Code version.";
+
+describe("connection warnings during server updates", () => {
+  it.each([false, true])(
+    "retains the warning after grace when banners are hidden, updating=%s",
+    (updateRunning) => {
+      expect(
+        shouldSuppressUnavailableBanner({
+          environmentReconnecting: true,
+          updateRunning,
+          showServerUpdateBanners: false,
+          reconnectingThroughVersionSkew: false,
+          reconnectWarningGraceElapsed: true,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("suppresses reconnect warnings while visible update progress replaces them", () => {
+    expect(
+      shouldSuppressUnavailableBanner({
+        environmentReconnecting: true,
+        updateRunning: true,
+        showServerUpdateBanners: true,
+        reconnectingThroughVersionSkew: false,
+        reconnectWarningGraceElapsed: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the ordinary reconnect grace period when updates are hidden", () => {
+    expect(
+      shouldSuppressUnavailableBanner({
+        environmentReconnecting: true,
+        updateRunning: true,
+        showServerUpdateBanners: false,
+        reconnectingThroughVersionSkew: false,
+        reconnectWarningGraceElapsed: false,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([false, true])(
+    "never suppresses hard connection failures, update banners=%s",
+    (showServerUpdateBanners) => {
+      expect(
+        shouldSuppressUnavailableBanner({
+          environmentReconnecting: false,
+          updateRunning: true,
+          showServerUpdateBanners,
+          reconnectingThroughVersionSkew: false,
+          reconnectWarningGraceElapsed: false,
+        }),
+      ).toBe(false);
+    },
+  );
+});
 
 describe("versionSkew", () => {
   beforeEach(() => {

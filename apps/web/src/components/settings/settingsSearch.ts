@@ -366,6 +366,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
+    id: "hide-server-update-banners",
+    title: "Hide server update banners",
+    to: "/settings/general",
+    searchTerms: [
+      "composer server update banner notice notification hide disable version mismatch progress failure",
+    ],
+  },
+  {
     id: "send-shortcut",
     title: "Send shortcut",
     to: "/settings/general",

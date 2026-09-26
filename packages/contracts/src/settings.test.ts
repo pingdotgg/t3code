@@ -64,6 +64,18 @@ describe("storage cleanup settings", () => {
   });
 });
 
+describe("ClientSettings server update banners", () => {
+  it("keeps banners enabled unless explicitly hidden", () => {
+    expect(decodeClientSettings({}).hideServerUpdateBanners).toBe(false);
+  });
+
+  it.each([true, false])("persists the hide preference %s", (hideServerUpdateBanners) => {
+    const preference = { hideServerUpdateBanners };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+});
+
 describe("ClientSettings rich text composer", () => {
   it("enables rich text for new and existing settings without a saved preference", () => {
     expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);

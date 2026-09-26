@@ -588,6 +588,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
         ? ["Collapse composer on scroll"]
         : []),
+      ...(settings.hideServerUpdateBanners !== DEFAULT_UNIFIED_SETTINGS.hideServerUpdateBanners
+        ? ["Hide server update banners"]
+        : []),
       ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
         ? ["Rich text composer"]
         : []),
@@ -656,6 +659,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
       settings.composerCollapseOnScroll,
+      settings.hideServerUpdateBanners,
       settings.composerRichTextEnabled,
       settings.sendShortcut,
       settings.followUpBehavior,
@@ -772,6 +776,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+      hideServerUpdateBanners: DEFAULT_UNIFIED_SETTINGS.hideServerUpdateBanners,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -2656,6 +2661,32 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("hide-server-update-banners")}
+          description="Never show server update notices, progress, or failures above the composer. You can still manage updates in Connections."
+          resetAction={
+            settings.hideServerUpdateBanners !==
+            DEFAULT_UNIFIED_SETTINGS.hideServerUpdateBanners ? (
+              <SettingResetButton
+                label="hide server update banners"
+                onClick={() =>
+                  updateSettings({
+                    hideServerUpdateBanners: DEFAULT_UNIFIED_SETTINGS.hideServerUpdateBanners,
+                  })
+                }
+              />
+            ) : undefined
+          }
+          control={
+            <Switch
+              checked={settings.hideServerUpdateBanners}
+              onCheckedChange={(checked) =>
+                updateSettings({ hideServerUpdateBanners: Boolean(checked) })
+              }
+              aria-label="Hide server update banners"
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("composer-collapse")}
           description="Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again."
