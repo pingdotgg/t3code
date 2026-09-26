@@ -306,6 +306,7 @@ function CodexArtifactTemplateCard(props: {
       data-artifact-kind={props.template.artifactKind}
       data-markdown-copy={`${props.template.displayName} (${presentationLabel})\n\n`}
       data-skill-name={props.template.skillName}
+      dir="auto"
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
@@ -792,6 +793,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       ref={containerRef}
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
+      dir="ltr"
     >
       <ScrollArea radius="none" chainVerticalScroll scrollFade className="w-full max-w-full">
         <table ref={tableRef} {...props}>
@@ -871,7 +873,7 @@ function MarkdownDetails({
         data-markdown-details-open={isOpen ? "true" : "false"}
       >
         <CollapsibleTrigger
-          className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
+          className="flex w-full items-center gap-2 py-2 text-start text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
           data-markdown-details-summary=""
         >
           <ChevronRightIcon
@@ -1011,6 +1013,7 @@ function MarkdownCodeBlock({
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      dir="ltr"
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
@@ -2215,6 +2218,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             <ContextChip
               kind="mention"
               render={<a href={href} />}
+              dir="ltr"
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -2238,6 +2242,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             <ContextChip
               kind="mention"
               render={<button type="button" />}
+              dir="ltr"
               aria-label={`File options for ${label}`}
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
@@ -2814,10 +2819,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
     // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
     // text under a colored title — which is how the host renders it.
     return (
-      <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+      <div role="note" className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}>
         <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
-          {alert.label}
+          <bdi>{alert.label}</bdi>
         </p>
         {children}
       </div>
@@ -3125,7 +3130,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
     }
     return (
-      <code {...props} className={className}>
+      <code {...props} className={className} dir="ltr">
         {children}
       </code>
     );
@@ -3262,6 +3267,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
   },
+  th: function MarkdownTh({ node: _node, ...props }) {
+    return <th {...props} dir="auto" />;
+  },
+  td: function MarkdownTd({ node: _node, ...props }) {
+    return <td {...props} dir="auto" />;
+  },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
@@ -3271,7 +3282,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
-      return <pre {...props}>{children}</pre>;
+      return (
+        <pre {...props} dir="ltr">
+          {children}
+        </pre>
+      );
     }
 
     const language = extractFenceLanguage(codeBlock.className);
@@ -3291,13 +3306,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
       >
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
+          fallback={
+            <pre {...props} dir="ltr">
+              {children}
+            </pre>
+          }
         >
           {/* Reserve the block's height but stay hidden until Shiki has colored
               it, so plain text never flashes before the highlighted version. */}
           <Suspense
             fallback={
-              <pre {...props} className="invisible" aria-hidden>
+              <pre {...props} className="invisible" aria-hidden dir="ltr">
                 {children}
               </pre>
             }
@@ -3354,6 +3373,7 @@ function ChatMarkdown({
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)] [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
+      dir="auto"
       // Gates the fade-in for blocks that arrive while the response streams.
       data-streaming={componentState.isStreaming ? "" : undefined}
       onCopy={handleCopy}

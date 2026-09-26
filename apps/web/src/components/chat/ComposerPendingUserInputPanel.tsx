@@ -1,4 +1,5 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
+import { resolveTextDirection } from "@t3tools/shared/textDirection";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -187,11 +188,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Icon />
         <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
+          <span
+            dir={resolveTextDirection(activeQuestion.header)}
+            className="shrink-0 font-medium text-muted-foreground"
+          >
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
+            <span
+              dir={resolveTextDirection(activeQuestion.question)}
+              className="min-w-0 flex-1 truncate text-secondary-label"
+            >
               {activeQuestion.question}
             </span>
           ) : null}
@@ -230,7 +237,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
-            <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
+            <p
+              dir={resolveTextDirection(activeQuestion.question)}
+              className="text-sm text-foreground/85"
+            >
+              {activeQuestion.question}
+            </p>
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
@@ -245,7 +257,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
                 const shortcutKey = index < 9 ? index + 1 : null;
                 const className = cn(
-                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
+                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-start outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
                   isSelected
                     ? "bg-muted/55 text-foreground"
                     : "bg-transparent text-foreground/85 hover:bg-muted/30",
@@ -255,9 +267,19 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const content = (
                   <>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
+                      <span
+                        dir={resolveTextDirection(option.label)}
+                        className="text-sm font-medium"
+                      >
+                        {option.label}
+                      </span>
                       {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                        <span
+                          dir={resolveTextDirection(option.description)}
+                          className="text-secondary-label text-2xs"
+                        >
+                          {option.description}
+                        </span>
                       ) : null}
                     </div>
                     {isSelected ? (
