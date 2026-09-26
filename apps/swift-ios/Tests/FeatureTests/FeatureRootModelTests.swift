@@ -1922,7 +1922,7 @@ struct FeatureRootModelTests {
         let model = FeatureRootModel(client: client, outboxStore: store)
         await model.reload()
         _ = await model.detail(for: thread.id)
-        let send = Task { await model.sendMessage(threadID: thread.id, text: "Queued response", selection: nil) }
+        let send = Task { await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "Queued response", selection: nil)) }
         var requests = started.stream.makeAsyncIterator()
         await requests.next()
         #expect(model.details[thread.id]?.messages.last?.state == .queued)
@@ -2027,7 +2027,7 @@ struct FeatureRootModelTests {
         )
         client.beforeSendMessage = nil
         client.sendMessageError = URLError(.notConnectedToInternet)
-        #expect(await model.sendMessage(threadID: thread.id, text: "Retry boundary", selection: nil))
+        #expect(await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "Retry boundary", selection: nil)))
         client.sendMessageError = nil
         let retryEntered = AsyncStream<Void>.makeStream()
         var retryResponse: CheckedContinuation<Void, any Error>?
