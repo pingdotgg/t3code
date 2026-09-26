@@ -14,7 +14,7 @@ import {
   readComposerDraftSelection,
   setComposerDraftContext,
 } from "../../state/use-composer-drafts";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { USAGE_LIMITS_COMMAND, withUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -95,7 +95,10 @@ export function buildComposerSlashCommandItems(input: {
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
-  for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+  for (const command of withUsageLimitsCommand(
+    input.selectedProviderStatus?.slashCommands ?? [],
+    input.offersUsageLimits === true,
+  )) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     // T3's own limits command is answered by the thread composer; New Task has

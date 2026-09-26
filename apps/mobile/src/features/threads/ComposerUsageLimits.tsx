@@ -71,7 +71,7 @@ export function ComposerUsageLimits({
                 resetCreditInput && account.limits.resetCredits ? (
                   <ResetCredits
                     dense
-                    environmentId={environmentId}
+                    environmentId={account.resetCreditEnvironmentId ?? environmentId}
                     input={resetCreditInput}
                     credits={account.limits.resetCredits}
                     now={now}

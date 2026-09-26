@@ -84,8 +84,9 @@ If a window still looks stale, refresh Limits to re-check every provider and hub
 
 Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
 current model's limits without leaving the conversation. The result opens above the composer and
-closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
-anything. The command is offered only for providers that appear under **Usage → Limits**.
+closes when you dismiss it or send your next message. It includes accounts and hubs across connected environments, filtered to the current model’s provider.
+It uses the same account selection and freshest snapshots as **Usage → Limits**, so it does not run
+the agent or refresh anything. The command is offered only for providers that appear under **Usage → Limits**.
 
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials

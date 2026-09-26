@@ -1,9 +1,9 @@
+import { environmentPresentations } from "../state/presentation";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
-  hasProviderUsageLimits,
+  hasPooledProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -536,7 +536,6 @@ import {
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_QUEUED_MESSAGES: QueuedComposerMessage[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
-const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(
@@ -1546,6 +1545,7 @@ export default function ChatView(props: ChatViewProps) {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
+  const limitPresentations = useAtomValue(environmentPresentations.presentationsAtom);
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
@@ -3131,27 +3131,20 @@ export default function ChatView(props: ChatViewProps) {
   ) {
     setUsageLimitsPanel(null);
   }
-  const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
+
   const usageLimitsReport = useMemo(
     () =>
       usageLimitsPanel !== null &&
       usageLimitsKey !== null &&
       usageLimitsPanel.key === usageLimitsKey &&
-      activeProviderInstanceId !== null
+      activeProviderStatus !== null
         ? collectProviderUsageLimits(
-            activeProviderInstanceId,
-            providerStatuses,
-            usageLimitSources,
+            activeProviderStatus.driver,
+            limitPresentations,
             usageLimitsPanel.now,
           )
         : null,
-    [
-      activeProviderInstanceId,
-      providerStatuses,
-      usageLimitSources,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
+    [activeProviderStatus, limitPresentations, usageLimitsKey, usageLimitsPanel],
   );
   const usageLimitsBanner = useMemo(
     () =>
@@ -3168,20 +3161,18 @@ export default function ChatView(props: ChatViewProps) {
   );
   // T3 owns /usage-limits only where Limits has data for the selected provider;
   // elsewhere the name stays the provider's own and is sent through untouched.
-  const usageLimitsOffered =
-    activeProviderStatus !== null &&
-    hasProviderUsageLimits(activeProviderStatus.driver, providerStatuses, usageLimitSources);
+  const usageLimitsOffered = useMemo(
+    () =>
+      activeProviderStatus !== null &&
+      hasPooledProviderUsageLimits(activeProviderStatus.driver, limitPresentations),
+    [activeProviderStatus, limitPresentations],
+  );
   // Answered locally from the last Limits snapshot; the agent never sees it.
   const openUsageLimits = useCallback(() => {
     const now = Date.now();
     const report =
-      activeProviderInstanceId !== null && usageLimitsKey !== null
-        ? collectProviderUsageLimits(
-            activeProviderInstanceId,
-            providerStatuses,
-            usageLimitSources,
-            now,
-          )
+      activeProviderStatus !== null && usageLimitsKey !== null
+        ? collectProviderUsageLimits(activeProviderStatus.driver, limitPresentations, now)
         : null;
     if (report && usageLimitsKey !== null) {
       setUsageLimitsPanel({ key: usageLimitsKey, threadKey: routeThreadKey, now });
@@ -3190,13 +3181,7 @@ export default function ChatView(props: ChatViewProps) {
     setUsageLimitsPanel(null);
     toastManager.add({ type: "info", title: "Usage limits are unavailable for this provider" });
     return false;
-  }, [
-    activeProviderInstanceId,
-    providerStatuses,
-    routeThreadKey,
-    usageLimitSources,
-    usageLimitsKey,
-  ]);
+  }, [activeProviderStatus, routeThreadKey, limitPresentations, usageLimitsKey]);
   // Responses can resolve after navigating away; only the originating thread's panel clears.
   const clearUsageLimitsFor = useCallback(
     (threadKey: string) =>

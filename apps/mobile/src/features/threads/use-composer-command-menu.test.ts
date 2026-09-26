@@ -101,3 +101,17 @@ describe("mobile slash commands", () => {
     ).toEqual({ text: "/plan ", cursor: 6, interactionMode: null });
   });
 });
+
+describe("remote-host limits command", () => {
+  it.each([true, false])("offers the local action only inside a thread: %s", (hasThread) => {
+    const items = buildComposerSlashCommandItems({
+      query: "usage",
+      atMessageStart: true,
+      hasThread,
+      allowInteractionMode: false,
+      offersUsageLimits: true,
+      selectedProviderStatus: { driver: ProviderDriverKind.make("claudeAgent"), slashCommands: [] },
+    });
+    expect(items.map((item) => item.label)).toEqual(hasThread ? ["/usage-limits"] : []);
+  });
+});

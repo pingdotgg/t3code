@@ -1,3 +1,4 @@
+import { environmentPresentations } from "../../state/presentation";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
@@ -17,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
-  hasProviderUsageLimits,
+  hasPooledProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -330,6 +331,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const limitPresentations = useAtomValue(environmentPresentations.presentationsAtom);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
@@ -346,27 +348,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
   // T3 owns /usage-limits only where Limits has data for the selected provider;
   // elsewhere the name stays the provider's own and is sent through untouched.
-  const usageLimitsOffered =
-    selectedProviderStatus !== null &&
-    hasProviderUsageLimits(
-      selectedProviderStatus.driver,
-      props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
-    );
+  const usageLimitsOffered = useMemo(
+    () =>
+      selectedProviderStatus !== null &&
+      hasPooledProviderUsageLimits(selectedProviderStatus.driver, limitPresentations),
+    [selectedProviderStatus, limitPresentations],
+  );
   // Answered locally from the last Limits snapshot; the agent never sees it.
   const openUsageLimits = useCallback(() => {
-    const report = collectProviderUsageLimits(
-      currentModelSelection.instanceId,
-      props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
-      Date.now(),
-    );
+    const report = selectedProviderStatus
+      ? collectProviderUsageLimits(selectedProviderStatus.driver, limitPresentations, Date.now())
+      : null;
     onShowUsageLimits(report);
     if (!report) {
       Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
     }
     return report !== null;
-  }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
+  }, [selectedProviderStatus, onShowUsageLimits, limitPresentations]);
 
   const composerMenu = useComposerCommandMenu({
     draftMessage: props.draftMessage,

@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { environmentPresentations } from "../../state/presentation";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -463,22 +465,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
     setUsageLimitsPanel(null);
   }
+  const limitPresentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const limitsDriver = props.serverConfig?.providers.find(
+    (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+  )?.driver;
   const usageLimitsReport = useMemo(
     () =>
-      usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
-        ? collectProviderUsageLimits(
-            props.selectedThread.modelSelection.instanceId,
-            props.serverConfig?.providers ?? [],
-            props.serverConfig?.usageLimitSources ?? [],
-            usageLimitsPanel.now,
-          )
+      usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey && limitsDriver
+        ? collectProviderUsageLimits(limitsDriver, limitPresentations, usageLimitsPanel.now)
         : null,
-    [
-      props.selectedThread.modelSelection.instanceId,
-      props.serverConfig,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
+    [limitsDriver, limitPresentations, usageLimitsKey, usageLimitsPanel],
   );
   const showUsageLimits = useCallback(
     (report: UsageLimitsReport | null) =>

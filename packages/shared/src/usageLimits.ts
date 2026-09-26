@@ -8,7 +8,6 @@
 import {
   type EnvironmentId,
   type UsageLimitsReport,
-  type ProviderInstanceId,
   type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
@@ -71,6 +70,7 @@ export function providersWithLimits(
 export type LimitPresentations = ReadonlyMap<
   EnvironmentId,
   {
+    readonly connection: { readonly phase: string };
     readonly entry: { readonly target: { readonly label: string } };
     readonly serverConfig: {
       readonly providers?: readonly ServerProvider[] | undefined;
@@ -182,6 +182,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     });
   };
   for (const [environmentId, presentation] of presentations) {
+    if (presentation.connection.phase !== "connected") continue;
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
@@ -208,6 +209,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   // keeps the redeem target consistent with whichever snapshot wins.
   const labelEnvironment = presentations.size > 1;
   for (const [environmentId, presentation] of presentations) {
+    if (presentation.connection.phase !== "connected") continue;
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       const sourceLabel = labelEnvironment
         ? `${presentation.entry.target.label} · ${source.label}`
@@ -252,6 +254,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices: string[] = [];
   for (const presentation of presentations.values()) {
+    if (presentation.connection.phase !== "connected") continue;
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       // An account that can never report (API key) is left out; one that
@@ -513,13 +516,16 @@ export function isUsageLimitsCommand(prompt: string): boolean {
  * read keeps no accounts, so its error counts for every driver rather than
  * disappearing until the next successful refresh.
  */
-export function hasProviderUsageLimits(
+function hasProviderUsageLimits(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
 ): boolean {
   return (
-    providersWithLimits(providers).some((provider) => provider.driver === driver) ||
+    providersWithLimits(providers).some(
+      (provider) =>
+        provider.driver === driver && provider.usageLimits?.unavailable?.reason !== "unsupported",
+    ) ||
     sources.some(
       (source) =>
         source.accounts.some((account) => account.driver === driver) ||
@@ -576,109 +582,78 @@ export function withUsageLimitsCommands(
   });
 }
 
-/** A point-in-time report; never refreshes or guesses which pooled account serves a turn. */
+/** The same pooled accounts as Limits, scoped only to the chat's provider driver. */
 export function collectProviderUsageLimits(
-  instanceId: ProviderInstanceId,
-  providers: readonly ServerProvider[],
-  sources: UsageLimitSourceSnapshots,
+  driver: ServerProvider["driver"],
+  presentations: LimitPresentations,
   now: number,
 ): UsageLimitsReport | null {
-  const selected = providers.find((provider) => provider.instanceId === instanceId);
-  if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const native = providersWithLimits(providers).filter(
-    (provider) => provider.driver === selected.driver,
-  );
-  const nativeAccounts = new Set(
-    native.flatMap((provider) => {
-      const key = accountKey(provider.driver, provider.auth.email);
-      return key && provider.usageLimits?.windows.length && !provider.usageLimits.unavailable
-        ? [key]
-        : [];
-    }),
-  );
-  const accounts: Array<UsageLimitsReport["accounts"][number]> = [];
-  const notices: string[] = [];
-  for (const provider of native) {
-    if (!provider.usageLimits) continue;
-    const key = accountKey(provider.driver, provider.auth.email);
-    const hubCredits = sources
-      .flatMap((source) => source.accounts.map((account) => ({ source, account })))
-      .filter(
-        ({ account }) =>
-          key !== null &&
-          accountKey(account.driver, account.email) === key &&
-          account.usageLimits.resetCredits &&
-          !limitsNotice(account.usageLimits),
-      )
-      .sort(
-        (a, b) =>
-          Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
-      )[0];
-    // Two independent decisions. Which balance to *display* follows whichever
-    // snapshot is fresher. Which path to *redeem through* always prefers the
-    // hub, because only the hub path clears the routing cooldown it holds for
-    // that account; redeeming natively against the same account resets the
-    // subscription upstream but leaves the hub refusing to route to it until
-    // its own cooldown expires. A hub credit id that a fresher native redeem
-    // already spent comes back as `alreadyRedeemed`, which still clears the
-    // cooldown, so preferring it is safe even when the hub snapshot is stale.
-    const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
-    const showHubCredits =
-      hubCredits &&
-      (!provider.usageLimits.resetCredits ||
-        Date.parse(hubCredits.account.usageLimits.checkedAt) >
-          Date.parse(provider.usageLimits.checkedAt));
-    accounts.push({
-      id: provider.instanceId,
-      driver: provider.driver,
-      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
-      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
-      instanceId: provider.instanceId,
-      resetCreditInput:
-        hubCreditId && hubCredits
+  const scoped: LimitPresentations = new Map(
+    [...presentations].map(([id, presentation]) => [
+      id,
+      {
+        ...presentation,
+        serverConfig: presentation.serverConfig
           ? {
-              sourceId: hubCredits.source.id,
-              accountId: hubCredits.account.id,
-              creditId: hubCreditId,
+              providers: presentation.serverConfig.providers?.filter(
+                (provider) => provider.driver === driver,
+              ),
+              usageLimitSources: presentation.serverConfig.usageLimitSources?.flatMap((source) => {
+                const accounts = source.accounts.filter((account) => account.driver === driver);
+                return accounts.length > 0 || (source.error && source.accounts.length === 0)
+                  ? [{ ...source, accounts }]
+                  : [];
+              }),
             }
-          : { instanceId: provider.instanceId },
-      ...(provider.displayName ? { displayName: provider.displayName } : {}),
-      ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
-      ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: showHubCredits
-        ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
-        : provider.usageLimits,
-    });
-  }
-  for (const source of sources) {
-    const matching = source.accounts.filter((account) => account.driver === selected.driver);
-    for (const account of matching) {
-      const key = accountKey(account.driver, account.email);
-      if (key && nativeAccounts.has(key)) continue;
-      accounts.push({
-        id: `${source.id}:${account.id}`,
-        driver: account.driver,
-        label: `${source.label} · ${account.id}`,
-        sourceLabel: "CLI Proxy",
-        ...(account.usageLimits.resetCredits?.nextCreditId
-          ? {
-              resetCreditInput: {
-                sourceId: source.id,
-                accountId: account.id,
-                creditId: account.usageLimits.resetCredits.nextCreditId,
-              },
-            }
-          : {}),
-        ...(account.plan ? { plan: account.plan } : {}),
-        ...(account.email ? { email: account.email } : {}),
-        limits: account.usageLimits,
-      });
-    }
-    // A source that failed to read has no accounts left to match on, so its
-    // error is reported to every provider rather than silently dropped.
-    if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
-      notices.push(`${source.label}: ${source.error}`);
-    }
-  }
-  return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+          : null,
+      },
+    ]),
+  );
+  const pooled = collectLimitAccounts(scoped);
+  const notices = collectLimitNotices(scoped);
+  if (pooled.length === 0 && notices.length === 0) return null;
+  return {
+    createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    accounts: pooled.map((account) => ({
+      id: account.key,
+      driver: account.driver,
+      label: [account.sourceLabel, account.displayName ?? account.email ?? String(driver)]
+        .filter(Boolean)
+        .join(" · "),
+      ...(account.plan ? { plan: account.plan } : {}),
+      ...(account.email ? { email: account.email } : {}),
+      ...(account.displayName ? { displayName: account.displayName } : {}),
+      ...(account.accentColor ? { accentColor: account.accentColor } : {}),
+      ...(account.sourceLabel ? { sourceLabel: account.sourceLabel } : {}),
+      ...(account.redeem
+        ? {
+            resetCreditEnvironmentId: account.redeem.environmentId,
+            resetCreditInput: account.redeem.input,
+          }
+        : {}),
+      limits: account.limits,
+    })),
+    notices,
+  };
+}
+
+/** Client-side coverage includes sources on other connected hosts. */
+export function hasPooledProviderUsageLimits(
+  driver: ServerProvider["driver"],
+  presentations: LimitPresentations,
+): boolean {
+  return collectProviderUsageLimits(driver, presentations, 0) !== null;
+}
+
+/** Add the local action even when the thread's server has no limits source. */
+export function withUsageLimitsCommand(
+  commands: readonly ServerProviderSlashCommand[],
+  offered: boolean,
+): readonly ServerProviderSlashCommand[] {
+  return offered
+    ? [
+        ...commands.filter((command) => command.name !== USAGE_LIMITS_COMMAND.name),
+        USAGE_LIMITS_COMMAND,
+      ]
+    : commands;
 }

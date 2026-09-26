@@ -51,7 +51,7 @@ import {
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { USAGE_LIMITS_COMMAND, withUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   memo,
   type ComponentProps,
@@ -2387,7 +2387,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         settings.showSkillsInSlashMenu,
       );
       const providerSlashCommandItems = getProviderSlashCommandsForSlashMenu(
-        selectedProviderSlashCommands,
+        withUsageLimitsCommand(selectedProviderSlashCommands, Boolean(props.onUsageLimitsCommand)),
         slashMenuSkills,
       ).map((command) => ({
         id: `provider-slash-command:${selectedProvider}:${command.name}`,
@@ -2495,6 +2495,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
+    props.onUsageLimitsCommand,
     selectedProviderStatus,
     settings.showSkillsInSlashMenu,
     workspaceEntries.entries,
