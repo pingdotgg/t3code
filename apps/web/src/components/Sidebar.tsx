@@ -1213,6 +1213,38 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // that is every thread, which is the point: the glyph is what tells rows on
   // different machines apart.
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
+  const projectIcon = isRemote ? (
+    <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+      {props.project ? (
+        <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+      ) : null}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              aria-label={props.environmentLabel ?? "Remote environment"}
+              className={cn(
+                "flex items-center justify-center text-sidebar-muted-foreground",
+                props.project
+                  ? "absolute right-0 bottom-0 z-10 size-2.5 translate-x-1/4 translate-y-1/4 rounded-full bg-sidebar ring-[1.5px] ring-sidebar"
+                  : "size-4",
+              )}
+            />
+          }
+        >
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={props.environmentMachine}
+            className={props.project ? "size-2.5" : "size-4"}
+          />
+        </TooltipTrigger>
+        <TooltipPopup side="right">{props.environmentLabel ?? "Remote environment"}</TooltipPopup>
+      </Tooltip>
+    </span>
+  ) : props.project ? (
+    <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+  ) : null;
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -1636,7 +1668,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {projectIcon}
             </span>
             {draftIndicator}
             {title}
@@ -1786,9 +1818,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-              ) : null}
+              {projectIcon}
               {props.projectDisplayName ? (
                 <span
                   className={cn(
@@ -1972,15 +2002,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-hidden
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
-                {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={props.environmentMachine}
-                      className="size-3.5"
-                    />
-                  </span>
-                ) : null}
                 {driverKind ? (
                   <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
