@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { LEGACY_ENVIRONMENT_MACHINE_KINDS } from "./environment.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -18,6 +19,7 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("storage cleanup settings", () => {
@@ -979,21 +981,162 @@ describe("ServerSettings environment icon", () => {
     expect(decodeServerSettings({}).environmentIcon).toBeNull();
   });
 
-  it("keeps a kind this build knows", () => {
-    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
-    expect(decodeServerSettings({ environmentIcon: "linux" }).environmentIcon).toBe("linux");
+  it("lifts the bare machine kind an older server stored into the icon variant", () => {
+    expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toEqual({
+      kind: "icon",
+      name: "mac-mini",
+    });
   });
 
-  it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
+  it("round-trips every variant", () => {
+    for (const environmentIcon of [
+      { kind: "icon", name: "cpu", color: "violet" },
+      { kind: "emoji", emoji: "🚀" },
+      { kind: "monogram", text: "K8", color: "teal" },
+      { kind: "image", dataUrl: "data:image/png;base64,iVBORw0KGgo=" },
+    ] as const) {
+      const settings = decodeServerSettings({ environmentIcon });
+      expect(settings.environmentIcon).toEqual(environmentIcon);
+      expect(encodeServerSettings(settings).environmentIcon).toEqual(environmentIcon);
+    }
+  });
+
+  it("encodes a plain pick of a legacy kind as the string older peers accept", () => {
+    const plain = decodeServerSettings({ environmentIcon: { kind: "icon", name: "laptop" } });
+    expect(encodeServerSettings(plain).environmentIcon).toBe("laptop");
+
+    // A color is more than the string form can carry, so it stays an object.
+    const colored = decodeServerSettings({
+      environmentIcon: { kind: "icon", name: "laptop", color: "red" },
+    });
+    expect(encodeServerSettings(colored).environmentIcon).toEqual({
+      kind: "icon",
+      name: "laptop",
+      color: "red",
+    });
+  });
+
+  it("decodes an icon from a newer server as null instead of failing the snapshot", () => {
     expect(decodeServerSettings({ environmentIcon: "toaster" }).environmentIcon).toBeNull();
+    expect(
+      decodeServerSettings({ environmentIcon: { kind: "hologram", frames: 3 } }).environmentIcon,
+    ).toBeNull();
+
+    // One bad field drops the whole icon; every other setting survives.
+    const settings = decodeServerSettings({
+      environmentIcon: { kind: "image", dataUrl: "data:image/svg+xml;base64,PHN2Zz4=" },
+      addProjectBaseDirectory: "~/Development",
+    });
+    expect(settings.environmentIcon).toBeNull();
+    expect(settings.addProjectBaseDirectory).toBe("~/Development");
+
+    // Any raster type but PNG lands here too, so widening the format later is a
+    // contract change rather than something a client can do on its own.
+    expect(
+      decodeServerSettings({
+        environmentIcon: { kind: "image", dataUrl: "data:image/webp;base64,UklGRg==" },
+      }).environmentIcon,
+    ).toBeNull();
   });
 
-  it("round-trips through encode", () => {
-    const settings = decodeServerSettings({ environmentIcon: "laptop" });
-    expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+  it("holds a monogram to two characters at the write boundary", () => {
+    // The count drops the combining marks and joiners MonogramText admits, so
+    // each of these is two characters rather than three or four.
+    for (const text of ["e\u0301K", "A\u200dB", "A\u200cB", "AB"]) {
+      expect(
+        decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text } }).environmentIcon,
+      ).toEqual({ kind: "monogram", text });
+    }
+    expect(() =>
+      decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
+    ).toThrow();
+  });
 
-    const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
-    expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
+  it("refuses an inline image that is not whole base64 holding a PNG", () => {
+    // A truncated upload usually stops mid-quartet, and a mislabelled one
+    // decodes cleanly to something that is not a PNG. Neither reaches a
+    // decoder that would tell the user, so they die here.
+    for (const dataUrl of [
+      "data:image/png;base64,iVBORw0KGgo",
+      "data:image/png;base64,iVBORw0KGgoAA",
+      "data:image/png;base64,",
+      // Whole base64, right declared type, and the bytes spell "Hello".
+      "data:image/png;base64,SGVsbG8=",
+      // Stops four bytes into the eight byte signature.
+      "data:image/png;base64,iVBORw==",
+    ]) {
+      expect(() =>
+        decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl } }),
+      ).toThrow();
+    }
+
+    const whole = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+    expect(
+      decodeServerSettingsPatch({ environmentIcon: { kind: "image", dataUrl: whole } })
+        .environmentIcon,
+    ).toEqual({ kind: "image", dataUrl: whole });
+  });
+
+  it("rejects a patch carrying a variant this build does not know", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ environmentIcon: { kind: "hologram", frames: 3 } }),
+    ).toThrow();
+    expect(decodeServerSettingsPatch({ environmentIcon: null }).environmentIcon).toBeNull();
+    expect(decodeServerSettingsPatch({ environmentIcon: "linux" }).environmentIcon).toEqual({
+      kind: "icon",
+      name: "linux",
+    });
+  });
+
+  it("accepts a stored monogram the write boundary would reject", () => {
+    // A peer writing outside the picker can store a longer monogram. Only the
+    // write boundary counts; a snapshot decodes as stored, or that client
+    // would draw the detected glyph instead.
+    expect(
+      decodeServerSettings({ environmentIcon: { kind: "monogram", text: "ABC" } }).environmentIcon,
+    ).toEqual({ kind: "monogram", text: "ABC" });
+    expect(() =>
+      decodeServerSettingsPatch({ environmentIcon: { kind: "monogram", text: "ABC" } }),
+    ).toThrow();
+  });
+
+  it("writes a plain pick of a legacy kind as the string an older server accepts", () => {
+    // The list is written out rather than read from the contract. These are
+    // the kinds an older server accepts, so it is frozen and must not follow a
+    // later build that detects something new. Asserting it exactly is what fails if
+    // someone grows it alongside the detected kinds.
+    const legacyKinds = [
+      "server",
+      "cloud",
+      "linux",
+      "desktop",
+      "laptop",
+      "mac-mini",
+      "mac-studio",
+    ] as const;
+    expect(LEGACY_ENVIRONMENT_MACHINE_KINDS).toEqual(legacyKinds);
+
+    for (const kind of legacyKinds) {
+      expect(encodeServerSettingsPatch({ environmentIcon: { kind: "icon", name: kind } })).toEqual({
+        environmentIcon: kind,
+      });
+    }
+
+    // Anything an older server would reject stays an object for the capability to gate.
+    expect(
+      encodeServerSettingsPatch({
+        environmentIcon: { kind: "icon", name: "laptop", color: "red" },
+      }),
+    ).toEqual({ environmentIcon: { kind: "icon", name: "laptop", color: "red" } });
+    expect(encodeServerSettingsPatch({ environmentIcon: { kind: "icon", name: "cpu" } })).toEqual({
+      environmentIcon: { kind: "icon", name: "cpu" },
+    });
+    expect(
+      encodeServerSettingsPatch({ environmentIcon: { kind: "emoji", emoji: "\u{1f680}" } }),
+    ).toEqual({
+      environmentIcon: { kind: "emoji", emoji: "\u{1f680}" },
+    });
+    expect(encodeServerSettingsPatch({ environmentIcon: null })).toEqual({ environmentIcon: null });
   });
 });
 

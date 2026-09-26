@@ -500,6 +500,29 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces the environment icon so a new variant carries no keys of the old one", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      environmentIcon: { kind: "icon" as const, name: "laptop", color: "red" as const },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        environmentIcon: { kind: "emoji", emoji: "🚀" },
+      }).environmentIcon,
+    ).toEqual({ kind: "emoji", emoji: "🚀" });
+  });
+
+  it("clears the environment icon with null", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      environmentIcon: { kind: "emoji" as const, emoji: "🚀" },
+    };
+
+    expect(applyServerSettingsPatch(current, { environmentIcon: null }).environmentIcon).toBeNull();
+    expect(applyServerSettingsPatch(current, {}).environmentIcon).toEqual(current.environmentIcon);
+  });
+
   it("upserts and removes usageLimitSources per entry so concurrent edits cannot clobber", () => {
     const hubA = UsageLimitSourceId.make("cliproxy-a");
     const hubB = UsageLimitSourceId.make("cliproxy-b");

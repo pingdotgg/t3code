@@ -112,7 +112,11 @@ export function EnvironmentIconMenu({
           value={resolved}
           onValueChange={(next) => {
             if (lock !== null || !isEnvironmentMachineKind(next)) return;
-            updateSettings({ environmentIcon: next === detected ? null : next });
+            // A plain machine kind encodes to the bare string on the wire, so a
+            // server that predates the object form accepts this unchanged.
+            updateSettings({
+              environmentIcon: next === detected ? null : { kind: "icon", name: next },
+            });
           }}
         >
           {ENVIRONMENT_MACHINE_KINDS.map((kind) => (

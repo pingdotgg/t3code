@@ -12,7 +12,12 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
+import {
+  EnvironmentIconOverride,
+  EnvironmentIconOverrideWrite,
+  ThreadEnvMode,
+  WorktreeSubmodules,
+} from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   CustomModelSetting,
@@ -1199,10 +1204,11 @@ export const ServerSettings = Schema.Struct({
    * The icon clients draw for this environment. Null means "use what the
    * server detected" (`environment.platform.machine`), falling back to a
    * generic server. Lives on the server, not the client, so every device
-   * sees the same machine. A kind picked on a newer server decodes as null
+   * sees the same machine. An icon picked on a newer server decodes as null
    * here rather than failing the whole settings snapshot for an older client.
+   * The legacy bare machine kind still decodes; see `EnvironmentIconOverride`.
    */
-  environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
+  environmentIcon: ForwardCompatibleNullable(EnvironmentIconOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /**
@@ -1516,7 +1522,7 @@ export const ServerSettingsPatch = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
-  environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
+  environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentIconOverrideWrite)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),

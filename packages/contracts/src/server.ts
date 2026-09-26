@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   type EnvironmentMachineKind,
   ExecutionEnvironmentDescriptor,
+  isEnvironmentMachineKind,
   ServerSelfUpdateMethod,
 } from "./environment.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
@@ -634,7 +635,11 @@ export function resolveEnvironmentMachineKind(
     readonly settings?: Pick<ServerSettings, "environmentIcon">;
   } | null,
 ): EnvironmentMachineKind {
-  return config?.settings?.environmentIcon ?? config?.environment.platform.machine ?? "server";
+  const picked = config?.settings?.environmentIcon;
+  if (picked?.kind === "icon" && isEnvironmentMachineKind(picked.name)) {
+    return picked.name;
+  }
+  return config?.environment.platform.machine ?? "server";
 }
 
 const ServerUpsertKeybindingReplaceTarget = Schema.Struct({

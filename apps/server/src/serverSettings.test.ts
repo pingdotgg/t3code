@@ -30,6 +30,10 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+// The settings file as written, before any defaults or lifting apply.
+const decodeRawSettingsJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -299,6 +303,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": null } });
         const restored = yield* readPersisted;
         assert.deepStrictEqual(restored.usagePriceOverrides, {});
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists an environment icon whole and swaps variants without leftovers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        // Inspect the raw file. A partial object or a stale key from the
+        // previous variant would only be visible before schema decoding.
+        const readPersistedIcon = fileSystem.readFileString(serverConfig.settingsPath).pipe(
+          Effect.flatMap(decodeRawSettingsJson),
+          Effect.map((raw) => raw.environmentIcon),
+        );
+
+        yield* serverSettings.updateSettings({
+          environmentIcon: { kind: "icon", name: "laptop", color: "red" },
+        });
+        assert.deepEqual(yield* readPersistedIcon, { kind: "icon", name: "laptop", color: "red" });
+
+        yield* serverSettings.updateSettings({ environmentIcon: { kind: "emoji", emoji: "🚀" } });
+        assert.deepEqual(yield* readPersistedIcon, { kind: "emoji", emoji: "🚀" });
+        assert.deepEqual((yield* serverSettings.getSettings).environmentIcon, {
+          kind: "emoji",
+          emoji: "🚀",
+        });
+
+        // A plain legacy kind lands on disk as the string an older server reads.
+        yield* serverSettings.updateSettings({ environmentIcon: { kind: "icon", name: "laptop" } });
+        assert.strictEqual(yield* readPersistedIcon, "laptop");
+
+        yield* serverSettings.updateSettings({ environmentIcon: null });
+        assert.isUndefined(yield* readPersistedIcon);
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );

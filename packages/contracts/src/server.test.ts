@@ -224,6 +224,15 @@ describe("resolveEnvironmentMachineKind", () => {
     ).toBe("mac-mini");
   });
 
+  it("uses detection when the pick is not a machine kind", () => {
+    expect(
+      resolveEnvironmentMachineKind({
+        environment: descriptor({ machine: "mac-mini" }),
+        settings: decodeSettings({ environmentIcon: { kind: "emoji", emoji: "🚀" } }),
+      }),
+    ).toBe("mac-mini");
+  });
+
   it("uses detection from a bare descriptor before connecting", () => {
     expect(resolveEnvironmentMachineKind({ environment: descriptor({ machine: "laptop" }) })).toBe(
       "laptop",

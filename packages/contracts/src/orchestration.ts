@@ -6,6 +6,7 @@ import * as Struct from "effect/Struct";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
+import { IconColor, IconEmoji, LucideIconName, MonogramText } from "./icon.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -451,40 +452,15 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
-export const ProjectIconColor = Schema.Literals([
-  "gray",
-  "red",
-  "orange",
-  "amber",
-  "yellow",
-  "lime",
-  "green",
-  "emerald",
-  "teal",
-  "cyan",
-  "sky",
-  "blue",
-  "indigo",
-  "violet",
-  "purple",
-  "fuchsia",
-  "pink",
-  "rose",
-]);
-export type ProjectIconColor = typeof ProjectIconColor.Type;
+// One definition of a color and a monogram, shared with environment icons.
+export const ProjectIconColor = IconColor;
+export type ProjectIconColor = IconColor;
 
-const ProjectLucideIconName = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(64),
-  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-);
+const ProjectLucideIconName = LucideIconName;
 
-const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
+const ProjectEmoji = IconEmoji;
 
-// Grapheme-count validation belongs to the server command boundary, not snapshot decoding.
-export const ProjectMonogramText = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(32),
-  Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-);
+export const ProjectMonogramText = MonogramText;
 
 const ProjectLucideIcon = Schema.Struct({
   kind: Schema.Literal("lucide"),

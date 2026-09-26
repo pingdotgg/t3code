@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   EnvironmentId,
@@ -8,6 +9,14 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import {
+  IconColor,
+  IconEmoji,
+  IconImageDataUrl,
+  isMonogramLength,
+  LucideIconName,
+  MonogramText,
+} from "./icon.ts";
 
 /** Wire version for orchestration snapshots, streams, commands, and RPC payloads. */
 export const ORCHESTRATION_PROTOCOL_VERSION = 1;
@@ -25,11 +34,20 @@ export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64",
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
 /**
- * The curated set of machine shapes and OS identities an environment can wear as its icon.
- * Servers detect one from the hardware they run on (`platform.machine`), and
- * the `environmentIcon` server setting lets a user pick one instead.
+ * The kinds a released server accepts as a bare string. Only these have that
+ * wire form. A server without `environmentIconOverride` takes them and
+ * nothing else, and an older client decodes them from a snapshot. A kind
+ * added later travels as the object, because an older peer decodes a string
+ * it does not know as null and loses the icon. The list is frozen.
+ *
+ * `linux` has one gap. The `environmentIcon` capability shipped on
+ * 2026-09-02 and `linux` joined the set on 2026-09-06, so 25 nightly builds
+ * in between advertise the capability and reject the string, and picking the
+ * Linux glyph against one of those fails the whole settings patch. No stable
+ * release sits in that window. Dropping `linux` here would instead lock the
+ * glyph on every stable server shipping today, which is the larger loss.
  */
-export const ENVIRONMENT_MACHINE_KINDS = [
+export const LEGACY_ENVIRONMENT_MACHINE_KINDS = [
   "server",
   "cloud",
   "linux",
@@ -38,9 +56,106 @@ export const ENVIRONMENT_MACHINE_KINDS = [
   "mac-mini",
   "mac-studio",
 ] as const;
+export const isLegacyEnvironmentMachineKind = Schema.is(
+  Schema.Literals(LEGACY_ENVIRONMENT_MACHINE_KINDS),
+);
+
+/**
+ * The curated set of machine shapes and OS identities an environment can wear as its icon.
+ * Servers detect one from the hardware they run on (`platform.machine`), and
+ * the `environmentIcon` server setting lets a user pick one instead. This list
+ * grows as detection improves, which is why the wire form above does not.
+ */
+export const ENVIRONMENT_MACHINE_KINDS = [...LEGACY_ENVIRONMENT_MACHINE_KINDS] as const;
 export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
+
+/**
+ * A named glyph: one of the curated ids above, an id the clients add on top
+ * of them, or a Lucide id. One field rather than one variant per source,
+ * because renderers resolve the curated map first and fall through, so the
+ * name alone says which map answers.
+ */
+export const EnvironmentIconName = LucideIconName;
+export type EnvironmentIconName = typeof EnvironmentIconName.Type;
+
+const EnvironmentNamedIcon = Schema.Struct({
+  kind: Schema.Literal("icon"),
+  name: EnvironmentIconName,
+  color: Schema.optionalKey(IconColor),
+});
+const EnvironmentEmojiIcon = Schema.Struct({
+  kind: Schema.Literal("emoji"),
+  emoji: IconEmoji,
+});
+const EnvironmentMonogramIcon = Schema.Struct({
+  kind: Schema.Literal("monogram"),
+  text: MonogramText,
+  color: Schema.optionalKey(IconColor),
+});
+/**
+ * The only setting that holds bytes. It lives in one environment's own
+ * `settings.json`, never a map across environments, and the settings stream
+ * sends the whole object to every client on change, so one icon per payload
+ * is the entire exposure. `IconImageDataUrl` caps the size.
+ */
+const EnvironmentImageIcon = Schema.Struct({
+  kind: Schema.Literal("image"),
+  dataUrl: IconImageDataUrl,
+});
+
+const EnvironmentIcon = Schema.Union([
+  EnvironmentNamedIcon,
+  EnvironmentEmojiIcon,
+  EnvironmentMonogramIcon,
+  EnvironmentImageIcon,
+]);
+export type EnvironmentIcon = typeof EnvironmentIcon.Type;
+
+/**
+ * What a user picked for an environment's icon. Servers that predate the
+ * override stored a bare machine kind, and that string form stays on the
+ * wire and on disk for a plain pick of one of the seven kinds. That string is
+ * what an older server accepts in a patch and what an older client can decode
+ * from a snapshot, so the picks that always existed keep working across
+ * versions.
+ * Anything richer (a color, a name outside the seven, another variant)
+ * encodes as the object, which older peers drop to null through
+ * `ForwardCompatibleNullable`; the `environmentIconOverride` capability keeps
+ * clients from sending an object to a server that would reject it.
+ */
+export const EnvironmentIconOverride = Schema.Union([EnvironmentMachineKind, EnvironmentIcon]).pipe(
+  Schema.decodeTo(
+    EnvironmentIcon,
+    SchemaTransformation.transform({
+      decode: (icon): EnvironmentIcon =>
+        typeof icon === "string" ? { kind: "icon", name: icon } : icon,
+      encode: (icon) =>
+        icon.kind === "icon" &&
+        icon.color === undefined &&
+        isLegacyEnvironmentMachineKind(icon.name)
+          ? icon.name
+          : icon,
+    }),
+  ),
+);
+export type EnvironmentIconOverride = typeof EnvironmentIconOverride.Type;
+
+/**
+ * What a client may write. Projects check the two-character monogram bound in
+ * their decider; a settings patch has no such boundary, so it lives here.
+ *
+ * It stays off `EnvironmentIconOverride` because that schema also decodes
+ * snapshots. A peer writing outside the picker, or a later build that widens
+ * the bound, can store a longer monogram, and checking it during decode would
+ * send that icon through `ForwardCompatibleNullable` to null. The user would
+ * get the detected glyph with nothing saying why. Only the write boundary
+ * counts, so a snapshot draws what is stored.
+ */
+export const EnvironmentIconOverrideWrite = EnvironmentIconOverride.check(
+  Schema.makeFilter((icon) => icon.kind !== "monogram" || isMonogramLength(icon.text)),
+);
 
 export const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
@@ -180,6 +295,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
   environmentIcon: Schema.optionalKey(Schema.Boolean),
+  /** Server stores `environmentIcon` as an `EnvironmentIconOverride` object.
+      `environmentIcon` alone means the server only knows the bare machine
+      kind: it would reject an object patch, so clients that see only the
+      older flag keep writing the string form and offer only the seven
+      legacy kinds. */
+  environmentIconOverride: Schema.optionalKey(Schema.Boolean),
   /** The desktop app supervising this server can be driven over RPC:
       server.updateServer runs its check -> download -> relaunch. Absent on
       desktop servers whose app predates the remote trigger, where clients
