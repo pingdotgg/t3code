@@ -2,8 +2,10 @@
  * One server-wide cache for the Claude capabilities probe. Claude instances
  * whose probe inputs match (same binary, home, cwd and instance env vars)
  * read the same account, so they share one cached result instead of each
- * starting its own SDK session. A small gate limits how many SDK probes run
- * at once across all instances.
+ * starting its own SDK session. Concurrent reads of one input join one probe,
+ * so a full refresh runs one probe per distinct input. There is no global
+ * limit on purpose: a probe takes seconds, so a queue would delay the status
+ * of every input past the limit.
  *
  * @module provider/Drivers/ClaudeProbeCache
  */
@@ -14,7 +16,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
 
 import { type ClaudeCapabilitiesProbe, probeClaudeCapabilities } from "../Layers/ClaudeProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
@@ -33,7 +34,6 @@ const PROBE_TTL = Duration.minutes(5);
 // A failed probe or usage read leaves every instance with that input unverified
 // or without limits, so retry soon.
 const FAILED_PROBE_TTL = Duration.seconds(30);
-const MAX_CONCURRENT_PROBES = 3;
 // Keep this far above any real instance count. The cache evicts the least
 // recently used key, and every refresh reads the keys in the same order, so a
 // cap below the live key count makes each refresh re-probe every instance.
@@ -54,17 +54,12 @@ export class ClaudeProbeCache extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const gate = yield* Semaphore.make(MAX_CONCURRENT_PROBES);
-  // The probe keeps its own timeout inside the gate, so time spent waiting
-  // for a permit cannot turn into a false failure.
   const cache = yield* Cache.makeWith(
     (input: ClaudeProbeInput) =>
-      gate.withPermits(1)(
-        probeClaudeCapabilities(
-          input,
-          mergeProviderInstanceEnvironment(input.environment),
-          input.cwd,
-        ),
+      probeClaudeCapabilities(
+        input,
+        mergeProviderInstanceEnvironment(input.environment),
+        input.cwd,
       ),
     {
       capacity: MAX_CACHED_PROBES,

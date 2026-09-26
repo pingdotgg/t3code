@@ -2,7 +2,6 @@ import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
@@ -37,19 +36,16 @@ const failedUsageQuery = () =>
   }) as ReturnType<typeof ClaudeSdk.query>;
 
 // Stands in for the SDK. Each probe reports the Claude home it was started
-// with as the account email. Probes finish once `ready` resolves.
-const mockSdk = (ready: Promise<void> = Promise.resolve()) =>
+// with as the account email.
+const mockSdk = () =>
   Effect.gen(function* () {
     const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
       ({ options }) =>
         ({
-          initializationResult: async () => {
-            await ready;
-            return {
-              account: { email: options?.env?.CLAUDE_CONFIG_DIR ?? "" },
-              commands: [{ name: "review", description: "Review changes", argumentHint: "" }],
-            };
-          },
+          initializationResult: async () => ({
+            account: { email: options?.env?.CLAUDE_CONFIG_DIR ?? "" },
+            commands: [{ name: "review", description: "Review changes", argumentHint: "" }],
+          }),
           usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
             rate_limits_available: false,
             rate_limits: null,
@@ -69,12 +65,15 @@ it.effect("instances with the same probe input share one probe", () =>
       [cache.capabilities(input("/homes/work")), cache.capabilities(input("/homes/work"))],
       { concurrency: "unbounded" },
     );
+    yield* TestClock.adjust("2 minutes");
     const later = yield* cache.capabilities(input("/homes/work"));
 
     assert.equal(query.mock.calls.length, 1);
     assert.match(first?.email ?? "", /work$/);
     assert.deepEqual(second, first);
+    // A later reader sees the probe's own time, not its read time.
     assert.deepEqual(later, first);
+    assert.equal(later?.checkedAt, "1970-01-01T00:00:00.000Z");
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
@@ -164,25 +163,5 @@ it.effect("keeps every input cached across refreshes when there are many instanc
     yield* refresh;
 
     assert.equal(query.mock.calls.length, homes.length);
-  }).pipe(Effect.scoped, Effect.provide(testLayer)),
-);
-
-it.effect("runs at most 3 SDK probes at once", () =>
-  Effect.gen(function* () {
-    const { promise: released, resolve: release } = Promise.withResolvers<void>();
-    const query = yield* mockSdk(released);
-    const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
-    const homes = ["a", "b", "c", "d", "e"].map((name) => `/homes/${name}`);
-
-    const probes = yield* Effect.forEach(homes, (home) => cache.capabilities(input(home)), {
-      concurrency: "unbounded",
-    }).pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    assert.equal(query.mock.calls.length, 3);
-
-    release();
-    const results = yield* Fiber.join(probes);
-    assert.equal(query.mock.calls.length, 5);
-    assert.isTrue(results.every((result) => result !== undefined));
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

@@ -121,13 +121,26 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
  * per-window epoch bookkeeping needed to reconcile the two was more code
  * than the sub-second regression it prevented. The next runtime event
  * corrects it.
+ *
+ * Limits stamped before the check started came from a cache (Claude
+ * instances share one probe), so they can be minutes old. Those do not
+ * replace newer published limits, such as a turn's update.
  */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;
+  /** Epoch millis when the status check that produced `probed` started. */
+  readonly checkStartedAt: number;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
+    return published;
+  }
+  if (
+    published &&
+    probed &&
+    Date.parse(probed.checkedAt) < Math.min(input.checkStartedAt, Date.parse(published.checkedAt))
+  ) {
     return published;
   }
   return probed;

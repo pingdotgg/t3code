@@ -242,6 +242,11 @@ export type ClaudeCapabilitiesProbe = {
    * otherwise successful response mean the account has none (API key).
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  /**
+   * When the probe read usage. Instances share cached probes, so usage
+   * limits carry this time, not the time of the status check that read it.
+   */
+  readonly checkedAt: string;
 };
 
 function parseClaudeInitializationCommands(
@@ -373,6 +378,7 @@ const probeClaudeCapabilities = (
               rate_limits: usageResult.success.rate_limits,
             }
           : undefined;
+        const checkedAt = DateTime.formatIso(yield* DateTime.now);
         const account = init.account as
           | {
               readonly email?: string;
@@ -388,6 +394,7 @@ const probeClaudeCapabilities = (
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
           ...(usage ? { usage } : {}),
+          checkedAt,
         } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
@@ -563,14 +570,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const usageCheckedAt = capabilities.checkedAt;
   const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+    ? makeUnavailableUsageLimits({ checkedAt: usageCheckedAt, reason: "probeFailed" })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
-          checkedAt,
+          checkedAt: usageCheckedAt,
         })
-      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt: usageCheckedAt })
+          .limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&

@@ -1,3 +1,4 @@
+import type { ServerProviderUsageLimits } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
@@ -79,11 +80,34 @@ describe("applyUsageLimitsUpdate", () => {
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  const checkStartedAt = Date.parse(checkedAt);
+
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
-    expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
-    expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
-    expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+    expect(resolveUsageLimitsAfterProbe({ published, probed: failed, checkStartedAt })).toBe(
+      published,
+    );
+    expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported, checkStartedAt })).toBe(
+      unsupported,
+    );
+    expect(
+      resolveUsageLimitsAfterProbe({ published: undefined, probed: failed, checkStartedAt }),
+    ).toBe(failed);
+  });
+
+  it("keeps a turn update over an older cached read, not over a fresh probe", () => {
+    const startedAt = Date.parse("2026-09-03T12:05:00.000Z");
+    const turnUpdate = { checkedAt: "2026-09-03T12:04:00.000Z", windows: [session] };
+    // Claude instances share cached probes, so a read can predate the check.
+    const cached = { checkedAt: "2026-09-03T12:01:00.000Z", windows: [session, weekly] };
+    // Codex dates its read at the check start, and a turn can update mid-probe.
+    const fresh = { checkedAt: "2026-09-03T12:05:00.000Z", windows: [session, weekly] };
+    const midProbeUpdate = { checkedAt: "2026-09-03T12:05:02.000Z", windows: [session] };
+    const resolve = (current: ServerProviderUsageLimits, probed: ServerProviderUsageLimits) =>
+      resolveUsageLimitsAfterProbe({ published: current, probed, checkStartedAt: startedAt });
+    expect(resolve(turnUpdate, cached)).toBe(turnUpdate);
+    expect(resolve(midProbeUpdate, fresh)).toBe(fresh);
+    expect(resolve(published, cached)).toBe(cached);
   });
 });
