@@ -129,6 +129,19 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/home/theo/code/my%20repo");
   });
 
+  it("marks a remote file as a file for VS Code's protocol handler", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "sol.tail1234.ts.net",
+        absolutePath: "/home/theo/code/my repo/README",
+        file: true,
+      }),
+    ).toBe(
+      "vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/home/theo/code/my%20repo/README%3A1",
+    );
+  });
+
   it("uses the fork's scheme", () => {
     expect(buildRemoteOpenUrl({ editor: "cursor", host: "sol", absolutePath: "/tmp/x" })).toBe(
       "cursor://vscode-remote/ssh-remote+sol/tmp/x",
@@ -149,6 +162,17 @@ describe("buildRemoteOpenUrl", () => {
         absolutePath: "/home/theo/code/my repo",
       }),
     ).toBe("zed://ssh/sol.tail1234.ts.net/home/theo/code/my%20repo");
+  });
+
+  it("keeps Zed file links as plain paths", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "zed",
+        host: "sol",
+        absolutePath: "/home/theo/code/README",
+        file: true,
+      }),
+    ).toBe("zed://ssh/sol/home/theo/code/README");
   });
 
   it("drops the Windows drive letter for Zed", () => {

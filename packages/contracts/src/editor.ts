@@ -91,6 +91,7 @@ export type FileManagerRevealKind = typeof FileManagerRevealKind.Type;
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   editor: EditorId,
+  filePath: Schema.optional(TrimmedNonEmptyString),
   /** Reveal (select) `cwd` in the file manager instead of opening it. Only
       honored by the "file-manager" editor; clients must check the server's
       `shellRevealInFileManager` config flag before sending this. */
@@ -114,19 +115,22 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
  * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
  * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
  * local editor over SSH. Returns undefined for editors without remote
- * deep-link support.
+ * deep-link support. Set `file` to make VS Code-style links target a file.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
+  readonly file?: boolean;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
     return undefined;
   }
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
-  const posixPath = input.absolutePath.replaceAll("\\", "/");
+  const targetPath =
+    input.file && input.editor !== "zed" ? `${input.absolutePath}:1` : input.absolutePath;
+  const posixPath = targetPath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
   const encodedHost = encodeURIComponent(input.host);
   if (input.editor === "zed") {

@@ -4,7 +4,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -192,11 +192,13 @@ function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
+/** Opens a workspace in a local or remote editor and optionally focuses a file. */
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
   availableEditors,
   openInCwd,
+  filePath,
   presentation = "toolbar",
   compact = false,
   enableShortcut = true,
@@ -205,6 +207,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  filePath?: string;
   presentation?: "toolbar" | "menu";
   compact?: boolean;
   enableShortcut?: boolean;
@@ -218,6 +221,22 @@ export const OpenInPicker = memo(function OpenInPicker({
   // the viewing machine, which only the desktop app can probe.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
+  const [pendingRemoteFile, setPendingRemoteFile] = useState<{
+    environmentId: EnvironmentId;
+    cwd: string;
+    filePath: string;
+    host: string;
+    editor: EditorId;
+  } | null>(null);
+  const pendingFileEditor =
+    remote.mode === "remote-links" &&
+    window.desktopBridge === undefined &&
+    pendingRemoteFile?.environmentId === environmentId &&
+    pendingRemoteFile.cwd === openInCwd &&
+    pendingRemoteFile.filePath === filePath &&
+    pendingRemoteFile.host === remote.host.host
+      ? pendingRemoteFile.editor
+      : null;
   const options = useMemo(
     () => resolveOpenInOptions(navigator.platform, effectiveEditors),
     [effectiveEditors],
@@ -231,16 +250,39 @@ export const OpenInPicker = memo(function OpenInPicker({
       if (!editor) return;
       if (remote.mode === "remote-unavailable") return;
       if (remote.mode === "remote-links") {
+        const openFile = filePath !== undefined && pendingFileEditor === editor;
         const url = buildRemoteOpenUrl({
           editor,
           host: remote.host.host,
-          absolutePath: openInCwd,
+          absolutePath: openFile ? filePath : openInCwd,
+          file: openFile,
         });
         if (url === undefined) return;
         // Only record hint-seen/preferred when the shell actually accepted
         // the URL (an older desktop build can refuse the editor scheme).
-        void openRemoteEditorUrl(url).then((opened) => {
+        void openRemoteEditorUrl(url).then(async (opened) => {
           if (!opened) return;
+          if (filePath && editor !== "file-manager" && window.desktopBridge !== undefined) {
+            const fileUrl = buildRemoteOpenUrl({
+              editor,
+              host: remote.host.host,
+              absolutePath: filePath,
+              file: true,
+            });
+            if (fileUrl === undefined || !(await openRemoteEditorUrl(fileUrl))) return;
+          } else if (filePath && editor !== "file-manager") {
+            setPendingRemoteFile(
+              openFile
+                ? null
+                : {
+                    environmentId,
+                    cwd: openInCwd,
+                    filePath,
+                    host: remote.host.host,
+                    editor,
+                  },
+            );
+          }
           markRemoteHintSeen();
           setPreferredEditor(editor);
         });
@@ -251,6 +293,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         input: {
           cwd: openInCwd,
           editor,
+          ...(filePath && editor !== "file-manager" ? { filePath } : {}),
         },
       });
       setPreferredEditor(editor);
@@ -258,9 +301,11 @@ export const OpenInPicker = memo(function OpenInPicker({
     },
     [
       environmentId,
+      filePath,
       markRemoteHintSeen,
       openInCwd,
       openInEditorMutation,
+      pendingFileEditor,
       preferredEditor,
       remote,
       setPreferredEditor,
@@ -306,7 +351,9 @@ export const OpenInPicker = memo(function OpenInPicker({
               onClick={() => openInEditor(value)}
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
-              <MenuItemLabel>{label}</MenuItemLabel>
+              <MenuItemLabel>
+                {value === pendingFileEditor ? `Open file in ${label}` : label}
+              </MenuItemLabel>
               {value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
@@ -332,7 +379,11 @@ export const OpenInPicker = memo(function OpenInPicker({
             onClick={() => openInEditor(preferredEditor)}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
-            <MenuItemLabel>Open in {primaryOption.label}</MenuItemLabel>
+            <MenuItemLabel>
+              {preferredEditor === pendingFileEditor
+                ? `Open file in ${primaryOption.label}`
+                : `Open in ${primaryOption.label}`}
+            </MenuItemLabel>
             {openFavoriteEditorShortcutLabel && (
               <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
             )}
@@ -352,7 +403,13 @@ export const OpenInPicker = memo(function OpenInPicker({
   return (
     <Group aria-label="Open in editor">
       <Button
-        aria-label={compact ? "Open file in preferred editor" : undefined}
+        aria-label={
+          compact
+            ? preferredEditor === pendingFileEditor
+              ? "Open file in preferred editor"
+              : "Open project in preferred editor"
+            : undefined
+        }
         size="xs"
         variant="outline"
         disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
@@ -366,12 +423,14 @@ export const OpenInPicker = memo(function OpenInPicker({
         )}
         <span
           className={
-            compact
+            compact && preferredEditor !== pendingFileEditor
               ? "sr-only"
-              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+              : compact
+                ? "ml-0.5"
+                : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
           }
         >
-          Open
+          {preferredEditor === pendingFileEditor ? "Open file" : "Open"}
         </span>
       </Button>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />

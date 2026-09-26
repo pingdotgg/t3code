@@ -159,6 +159,44 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)("opens a project and its selected file in one VS Code launch", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const codePath = path.join(binDir, "code");
+    yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(codePath, 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "vscode",
+        cwd: "/workspace with spaces",
+        filePath: "/workspace with spaces/src/index.ts",
+      });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "code");
+    assert.deepEqual(spawned.args, [
+      "/workspace with spaces",
+      "/workspace with spaces/src/index.ts",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 for (const platform of ["darwin", "linux"] as const) {
   it.effect.skipIf(windowsHost)(`launches Cursor in classic IDE mode on ${platform}`, () =>
     Effect.gen(function* () {

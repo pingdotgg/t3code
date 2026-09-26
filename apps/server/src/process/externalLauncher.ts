@@ -509,6 +509,7 @@ export class ExternalLauncher extends Context.Service<
 // Implementations
 // ==============================
 
+/** Builds one editor launch for a workspace and an optional file to focus. */
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
 ): Effect.fn.Return<
@@ -540,7 +541,11 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [
+        ...baseArgs,
+        ...resolveCommandEditorArgs(editorDef, input.cwd),
+        ...(input.filePath ? resolveCommandEditorArgs(editorDef, input.filePath) : []),
+      ],
     };
   }
 
