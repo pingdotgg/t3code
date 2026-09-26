@@ -606,6 +606,8 @@ export function applyToProjection(
   };
 
   switch (event.type) {
+    case "subagent.interrupt-requested":
+      return projection;
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
@@ -1591,6 +1593,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
+          case "subagent.interrupt-requested":
+            break;
           case "thread.created":
           case "thread.archived":
           case "thread.unarchived":

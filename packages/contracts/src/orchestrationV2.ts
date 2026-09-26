@@ -1390,6 +1390,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("subagent.interrupt-requested"),
+    payload: NodeId,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literals(["provider-session.attached", "provider-session.updated"]),
     payload: OrchestrationV2ProviderSession,
   }),
@@ -2172,6 +2177,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("subagent.interrupt-requested"),
+    payload: NodeId,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literals(["provider-session.attached", "provider-session.updated"]),
     payload: OrchestrationV2ProviderSessionJson,
   }),
@@ -2533,6 +2543,12 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("subagent.interrupt"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    subagentId: NodeId,
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),

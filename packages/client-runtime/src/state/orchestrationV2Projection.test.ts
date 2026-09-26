@@ -105,6 +105,19 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("leaves subagent state unchanged when a stop is requested", () => {
+    const event = {
+      id: "event-subagent-stop",
+      type: "subagent.interrupt-requested",
+      threadId,
+      nodeId: NodeId.make("subagent-stop"),
+      occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+      payload: NodeId.make("subagent-stop"),
+    } as OrchestrationV2DomainEvent;
+
+    expect(applyOrchestrationV2ProjectionEvent(emptyProjection, event)).toBe(emptyProjection);
+  });
+
   it("keeps live token usage when the terminal provider turn omits it", () => {
     const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
     const running = {

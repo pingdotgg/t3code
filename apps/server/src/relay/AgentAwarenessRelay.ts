@@ -105,6 +105,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "run-attempt.updated":
     case "node.updated":
     case "subagent.updated":
+    case "subagent.interrupt-requested":
     case "provider-session.attached":
     case "provider-session.updated":
     case "provider-session.detached":

@@ -25,6 +25,7 @@ import {
   type DeleteThreadInput,
   type EditQueuedRunInput,
   type InterruptThreadTurnInput,
+  type InterruptSubagentInput,
   type MarkThreadUnreadInput,
   type ForkThreadFromRunInput,
   type MergeThreadBackInput,
@@ -58,6 +59,7 @@ import {
   deleteThread,
   editQueuedRun,
   interruptThreadTurn,
+  interruptSubagent,
   forkThreadFromRun,
   markThreadUnread,
   mergeThreadBack,
@@ -275,6 +277,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
       execute: (input: InterruptThreadTurnInput) => interruptThreadTurn(input),
+      scheduler,
+      concurrency,
+    }),
+    interruptSubagent: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:interrupt-subagent",
+      execute: (input: InterruptSubagentInput) => interruptSubagent(input),
       scheduler,
       concurrency,
     }),

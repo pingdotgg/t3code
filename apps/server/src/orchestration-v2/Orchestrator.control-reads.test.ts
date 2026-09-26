@@ -8,6 +8,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -18,7 +20,8 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
+import { OrchestratorDispatchError, OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -37,11 +40,162 @@ const database = SqlitePersistenceMemory;
 const testLayer = Layer.mergeAll(
   database,
   projectionLayer.pipe(Layer.provide(database)),
+  effectOutboxLayer.pipe(Layer.provide(database)),
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.makeLayer([adapter]),
     { databaseLayer: database, runEffectWorker: false },
   ),
+);
+
+it.effect("interrupts only the selected running native Codex subagent", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const outbox = yield* EffectOutboxV2;
+    const parentThreadId = ThreadId.make("parent:stop-subagent");
+    const childThreadId = ThreadId.make("child:stop-subagent");
+    const subagentId = NodeId.make("subagent:stop-subagent");
+    const providerThreadId = ProviderThreadId.make("provider-thread:stop-subagent");
+    const providerTurnId = ProviderTurnId.make("provider-turn:stop-subagent");
+    const providerSessionId = ProviderSessionId.make("session:stop-subagent");
+    const now = yield* DateTime.now;
+    for (const threadId of [parentThreadId, childThreadId]) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:stop-subagent"),
+        title: "Agent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    const subagent = {
+      id: subagentId,
+      threadId: parentThreadId,
+      runId: null,
+      parentNodeId: NodeId.make("root:stop-subagent"),
+      origin: "provider_native" as const,
+      createdBy: "agent" as const,
+      driver: adapter.driver,
+      providerInstanceId: instanceId,
+      providerThreadId: null,
+      childThreadId,
+      nativeTaskRef: null,
+      prompt: "Check this",
+      title: "Worker",
+      model: "gpt-5.1-codex",
+      status: "running" as const,
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+    yield* projections.apply({
+      id: EventId.make("subagent:stop-subagent"),
+      type: "subagent.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: subagent,
+    });
+    yield* projections.apply({
+      id: EventId.make("provider-thread:stop-subagent"),
+      type: "provider-thread.updated",
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: {
+        id: providerThreadId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        providerSessionId,
+        appThreadId: childThreadId,
+        ownerNodeId: subagentId,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("provider-turn:stop-subagent"),
+      type: "provider-turn.updated",
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId,
+        nodeId: NodeId.make("root:child-stop-subagent"),
+        runAttemptId: null,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    const commandId = CommandId.make("interrupt:stop-subagent");
+    const accepted = yield* orchestrator.dispatch({
+      type: "subagent.interrupt",
+      commandId,
+      threadId: parentThreadId,
+      subagentId,
+    });
+    assert.deepEqual(
+      accepted.storedEvents.map((event) => event.event.type),
+      ["subagent.interrupt-requested"],
+    );
+    assert.equal(
+      (yield* projections.getThreadProjection(parentThreadId)).subagents[0]?.status,
+      "running",
+    );
+    assert.deepEqual(
+      (yield* outbox.listByCommandId(commandId)).map(({ threadId, request }) => ({
+        threadId,
+        request,
+      })),
+      [
+        {
+          threadId: childThreadId,
+          request: {
+            type: "provider-turn.interrupt",
+            providerSessionId,
+            providerThreadId,
+            providerTurnId,
+          },
+        },
+      ],
+    );
+    yield* projections.apply({
+      id: EventId.make("subagent:stop-subagent:completed"),
+      type: "subagent.updated",
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: { ...subagent, status: "completed", completedAt: now },
+    });
+    const settledCommandId = CommandId.make("interrupt:stop-subagent:settled");
+    const rejected = yield* orchestrator
+      .dispatch({
+        type: "subagent.interrupt",
+        commandId: settledCommandId,
+        threadId: parentThreadId,
+        subagentId,
+      })
+      .pipe(Effect.flip);
+    assert.instanceOf(rejected, OrchestratorDispatchError);
+    assert.equal(rejected.cause, undefined);
+    assert.deepEqual(yield* outbox.listByCommandId(settledCommandId), []);
+  }).pipe(Effect.provide(testLayer)),
 );
 
 it.effect(
