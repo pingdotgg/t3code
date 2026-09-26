@@ -539,18 +539,20 @@ export const make = Effect.gen(function* () {
       withRelayClientTracing,
     );
 
+  // Publishes the active threads once. Returns why it did not, so the retry
+  // knows whether it is waiting on a link or on the publish setting.
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
+    const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
+    if (!relayConfig) {
+      yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
+      return "unlinked" as const;
+    }
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
     );
     if (!publishAgentActivity) {
       yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
-      return false;
-    }
-    const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-    if (!relayConfig) {
-      yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
-      return false;
+      return "disabled" as const;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const snapshot = yield* snapshotQuery.getShellSnapshot();
@@ -562,26 +564,29 @@ export const make = Effect.gen(function* () {
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
-      return true;
+      return "published" as const;
     }
     yield* Effect.logInfo("publishing active agent activity snapshot", {
       count: activeThreadIds.length,
     });
     yield* Effect.forEach(activeThreadIds, publishThread, { concurrency: 4, discard: true });
-    return true;
+    return "published" as const;
   });
 
   // Publishes the catch-up snapshot of active threads once the environment is
-  // linked and publishing is enabled. Many environments never link, so the
-  // retry backs off from 5 s to 60 s. It polls because `t3 connect` can write
-  // the secrets from another process. Links and preference changes made by
-  // this process call `requestCatchUp`, which ends the wait early.
+  // linked and publishing is enabled. Many environments never link, so while
+  // unlinked the retry backs off from 5 s to 60 s. Only this process writes
+  // the link, and it calls `requestCatchUp`, which ends the wait early. A
+  // linked environment keeps the 5 s retry, because `t3 connect publish` can
+  // turn publishing on from another process.
   const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
     Effect.gen(function* () {
-      let retryDelayMs = 5_000;
+      let unlinkedRetryDelayMs = 5_000;
       while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
-        const published = yield* publishActiveThreadsUnsafe.pipe(Effect.orElseSucceed(() => false));
-        if (published) {
+        const result = yield* publishActiveThreadsUnsafe.pipe(
+          Effect.orElseSucceed(() => "failed" as const),
+        );
+        if (result === "published") {
           yield* Ref.set(activeSnapshotPublishedRef, true);
           if (logEnabledWhenReady) {
             const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
@@ -591,8 +596,11 @@ export const make = Effect.gen(function* () {
           }
           return;
         }
+        const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
         yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
-        retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
+        if (result === "unlinked") {
+          unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
+        }
       }
     });
 

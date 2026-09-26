@@ -978,9 +978,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
 });
 
 describe.sequential("startup catch-up", () => {
-  // An unlinked relay. `link` writes the secrets a link and opt-in store.
-  // Counts link checks (publish setting reads) and catch-up publishes (shell
-  // snapshot reads).
+  // An unlinked relay with publishing off. `link` writes the link secrets and
+  // `enablePublishing` the opt-in. Counts link checks (relay URL reads) and
+  // catch-up publishes (shell snapshot reads).
   function makeUnlinkedRelay() {
     const secrets = makeMemorySecretStore();
     const counts = { linkChecks: 0, catchUpPublishes: 0 };
@@ -988,7 +988,7 @@ describe.sequential("startup catch-up", () => {
       ...secrets.store,
       get: (name: string) =>
         Effect.suspend(() => {
-          if (name === PUBLISH_AGENT_ACTIVITY_SECRET) counts.linkChecks += 1;
+          if (name === RELAY_URL_SECRET) counts.linkChecks += 1;
           return secrets.store.get(name);
         }),
     } satisfies ServerSecretStore.ServerSecretStore["Service"];
@@ -1024,17 +1024,18 @@ describe.sequential("startup catch-up", () => {
       [
         secrets.setString(RELAY_URL_SECRET, "https://relay.example.test"),
         secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential"),
-        secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true"),
       ],
       { discard: true },
     );
-    return { counts, layer, link };
+    const enablePublishing = secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
+    return { counts, layer, link, enablePublishing };
   }
 
   it.effect("checks an unlinked environment once a minute and still catches up once linked", () => {
-    const { counts, layer, link } = makeUnlinkedRelay();
+    const { counts, layer, link, enablePublishing } = makeUnlinkedRelay();
     return Effect.gen(function* () {
       const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+      yield* enablePublishing;
       yield* relay.start();
 
       // Get past the backoff ramp, then count checks in a steady window.
@@ -1051,9 +1052,10 @@ describe.sequential("startup catch-up", () => {
   });
 
   it.effect("publishes at once when this process links while the check is backed off", () => {
-    const { counts, layer, link } = makeUnlinkedRelay();
+    const { counts, layer, link, enablePublishing } = makeUnlinkedRelay();
     return Effect.gen(function* () {
       const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+      yield* enablePublishing;
       yield* relay.start();
 
       // Backed off to 60 s: the next check is still seconds away.
@@ -1064,6 +1066,23 @@ describe.sequential("startup catch-up", () => {
 
       yield* relay.requestCatchUp();
       yield* TestClock.adjust("1 second");
+      expect(counts.catchUpPublishes).toBe(1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("catches up within 5 s when another process enables publishing on a link", () => {
+    const { counts, layer, link, enablePublishing } = makeUnlinkedRelay();
+    return Effect.gen(function* () {
+      const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+      yield* link;
+      yield* relay.start();
+
+      yield* TestClock.adjust("10 minutes");
+      expect(counts.catchUpPublishes).toBe(0);
+
+      // `t3 connect publish` writes the opt-in without waking this process.
+      yield* enablePublishing;
+      yield* TestClock.adjust("5 seconds");
       expect(counts.catchUpPublishes).toBe(1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
