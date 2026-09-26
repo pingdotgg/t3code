@@ -11,9 +11,37 @@ import {
   buildSshAskpassHelperDescriptor,
   buildSshChildEnvironment,
   isSshAuthFailure,
+  isSshPasswordRetryable,
 } from "./auth.ts";
 
 describe("ssh auth", () => {
+  it("does not offer a password retry when a key-only host's agent fails", () => {
+    const error = new Error(
+      [
+        'sign_and_send_pubkey: signing failed for ED25519 "key.pub" from agent: communication with agent failed',
+        "dev@10.13.37.3: Permission denied (publickey).",
+      ].join("\n"),
+    );
+    assert.isTrue(isSshAuthFailure(error));
+    assert.isFalse(isSshPasswordRetryable(error));
+  });
+
+  it.each([
+    ["Permission denied (publickey).", false],
+    ["Permission denied (hostbased,gssapi-with-mic).", false],
+    ["Permission denied (password).", true],
+    ["Permission denied (keyboard-interactive).", true],
+    ["Permission denied (publickey,password,keyboard-interactive).", true],
+    ["Permission denied (PASSWORD, publickey).", true],
+    ["Permission denied (publickey,password-expired).", false],
+    ["Authentication failed", false],
+    ["Too many authentication failures", false],
+    ["Connection timed out", false],
+  ])("checks the offered methods in %s", (message, expected) => {
+    assert.equal(isSshPasswordRetryable(new Error(message)), expected);
+    assert.equal(isSshPasswordRetryable(message), expected);
+  });
+
   it.effect("detects ssh auth failures from common permission denied messages", () =>
     Effect.sync(() => {
       assert.equal(
