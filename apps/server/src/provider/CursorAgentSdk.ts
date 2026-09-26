@@ -15,7 +15,7 @@ import type * as Scope from "effect/Scope";
 
 import { loadCursorSdk } from "./cursorSdk.ts";
 import type { EventNdjsonLogger } from "./Layers/EventNdjsonLogger.ts";
-import { ProviderEventLoggers } from "./Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "./Layers/ProviderEventLoggers.ts";
 
 const CURSOR_AGENT_SDK_PROTOCOL = "cursor-agent-sdk.local" as const;
 const CURSOR_PROVIDER = ProviderDriverKind.make("cursor");
@@ -521,11 +521,11 @@ function makeCursorAgentSdkRunner(
 export const cursorAgentSdkRunnerLiveLayer: Layer.Layer<
   CursorAgentSdkRunner,
   never,
-  ProviderEventLoggers
+  ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   CursorAgentSdkRunner,
   Effect.gen(function* () {
-    const { native: nativeEventLogger } = yield* ProviderEventLoggers;
+    const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     return makeCursorAgentSdkRunner((input) =>
       makeCursorAgentSdkProtocolLogger({
         nativeEventLogger,

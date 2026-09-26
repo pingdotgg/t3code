@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - the SDK must load from disk through createRequire,
+// and its helper paths are set synchronously before any Effect runtime uses it.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";

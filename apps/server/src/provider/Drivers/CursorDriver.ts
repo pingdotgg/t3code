@@ -25,7 +25,7 @@ import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "../Layers/CursorProvider.ts";
-import { CursorSdkCatalogLive } from "../Layers/CursorSdkCatalog.ts";
+import * as CursorSdkCatalog from "../Layers/CursorSdkCatalog.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -213,7 +213,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
-        Effect.provide(CursorSdkCatalogLive),
+        Effect.provide(CursorSdkCatalog.CursorSdkCatalogLive),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
