@@ -137,13 +137,11 @@ export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
   }) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     return yield* sshEnvironment.ensureEnvironment(target, options).pipe(
-      Effect.catch((error) =>
-        DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(error)
-          ? Effect.succeed({
-              type: DesktopSshPasswordPromptCancelledType,
-              message: error.message,
-            })
-          : Effect.fail(error),
+      Effect.catchIf(DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation, (error) =>
+        Effect.succeed({
+          type: DesktopSshPasswordPromptCancelledType,
+          message: error.message,
+        }),
       ),
     );
   }),

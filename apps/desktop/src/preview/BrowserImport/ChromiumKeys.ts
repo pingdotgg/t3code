@@ -315,8 +315,9 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
           // v10 remains importable when Secret Service is absent or does not
           // contain a key. An explicit denial/lock/cancel remains a consent
           // failure rather than being silently downgraded.
-          Effect.catch((error) =>
-            error.reason === "needsKeychainApproval" ? Effect.fail(error) : Effect.succeed(error),
+          Effect.catchIf(
+            (error) => error.reason !== "needsKeychainApproval",
+            (error) => Effect.succeed(error),
           ),
         )
       : undefined;
