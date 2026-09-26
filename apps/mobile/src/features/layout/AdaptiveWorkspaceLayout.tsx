@@ -82,6 +82,8 @@ interface AdaptiveWorkspaceContextValue {
   readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
+  /** Show the thread sidebar, closing a suppressing inspector if needed. */
+  readonly revealPrimarySidebar: () => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }
 
@@ -108,6 +110,7 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   showAuxiliaryPane: () => undefined,
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
+  revealPrimarySidebar: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
 });
 
@@ -201,6 +204,7 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
   );
 }
 
+/** Workspace shell that keeps Home’s thread sidebar visible after a Terminal maximize. */
 export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
@@ -224,6 +228,7 @@ export function AdaptiveWorkspaceLayout(props: {
   );
 }
 
+/** Owns sidebar preference and pane layout for the split or compact workspace. */
 function AdaptiveWorkspaceLayoutContent(
   props: {
     readonly children: ReactNode;
@@ -239,6 +244,11 @@ function AdaptiveWorkspaceLayoutContent(
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
+  // Home always shows the list; persist that so opening a thread does not
+  // immediately hide it again after a Terminal maximize.
+  if (pathname === "/" && !primarySidebarPreferredVisible) {
+    setPrimarySidebarPreferredVisible(true);
+  }
   const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
   const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
@@ -361,6 +371,7 @@ function AdaptiveWorkspaceLayoutContent(
     }
     setPrimarySidebarPreferredVisible((current) => !current);
   }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible, pathname]);
+  /** Force the thread sidebar visible after fullscreen Terminal hid it. */
   const revealPrimarySidebar = useCallback(() => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
@@ -547,6 +558,7 @@ function AdaptiveWorkspaceLayoutContent(
       showAuxiliaryPane,
       toggleAuxiliaryPane,
       togglePrimarySidebar,
+      revealPrimarySidebar,
       setAuxiliaryPaneWidth,
     }),
     [
@@ -557,6 +569,7 @@ function AdaptiveWorkspaceLayoutContent(
       panes,
       primarySidebarSearchQuery,
       registerWorkspaceInspector,
+      revealPrimarySidebar,
       showAuxiliaryPane,
       setPrimarySidebarSearchQuery,
       setAuxiliaryPaneWidth,

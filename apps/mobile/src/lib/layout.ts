@@ -254,3 +254,17 @@ export function deriveCenteredContentHorizontalPadding(input: {
 
   return minimumPadding + Math.max(0, (viewportWidth - input.maxContentWidth) / 2);
 }
+
+/**
+ * Whether a detail pane has to offer the sidebar back itself.
+ *
+ * True only when the sidebar is hidden AND this surface's header has no toggle
+ * of its own — Android's split-view Home draws no header toggle, so without
+ * this the sidebar can be hidden there and never recovered.
+ */
+export function shouldOfferSidebarReveal(input: {
+  readonly primarySidebarVisible: boolean;
+  readonly hasHeaderSidebarToggle: boolean;
+}): boolean {
+  return !input.primarySidebarVisible && !input.hasHeaderSidebarToggle;
+}

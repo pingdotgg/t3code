@@ -2,14 +2,21 @@ import { SymbolView } from "../../components/AppSymbol";
 import { Platform, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialNewThreadButton } from "../../components/MaterialNewThreadButton";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import { EmptyState } from "../../components/EmptyState";
 
+/** Empty split-view detail with optional Show threads and new-task actions. */
 export function WorkspaceEmptyDetail(props: {
+  readonly onShowThreads?: () => void;
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
 }) {
+  const newTaskNoun = Platform.OS === "android" ? "thread" : "task";
+  const emptyDetail = props.onShowThreads
+    ? `Select an existing thread or start a new ${newTaskNoun}.`
+    : `Choose a thread from the sidebar or start a new ${newTaskNoun}.`;
   return (
     <View
       className={
@@ -44,11 +51,10 @@ export function WorkspaceEmptyDetail(props: {
             type="hierarchical"
           />
           <Text className="text-center text-xl font-t3-bold">Select a thread</Text>
-          <Text className="text-center text-base text-foreground-muted">
-            {Platform.OS === "android"
-              ? "Choose a thread from the sidebar or start a new thread."
-              : "Choose a thread from the sidebar or start a new task."}
-          </Text>
+          <Text className="text-center text-base text-foreground-muted">{emptyDetail}</Text>
+          {props.onShowThreads ? (
+            <MaterialButton label="Show threads" tone="secondary" onPress={props.onShowThreads} />
+          ) : null}
           {props.onStartNewTask ? (
             Platform.OS === "android" ? (
               <MaterialNewThreadButton extended className="mt-2" onPress={props.onStartNewTask} />

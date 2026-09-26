@@ -8,6 +8,7 @@ import {
   deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
+  shouldOfferSidebarReveal,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
@@ -382,5 +383,26 @@ describe("deriveWorkspacePaneLayout", () => {
       auxiliaryPaneVisible: false,
       auxiliaryPaneWidth: null,
     });
+  });
+});
+
+/** Hidden-sidebar reveal is offered only when the header has no toggle. */
+describe("shouldOfferSidebarReveal", () => {
+  it("offers the sidebar back when it is hidden and the header has no toggle", () => {
+    expect(
+      shouldOfferSidebarReveal({ primarySidebarVisible: false, hasHeaderSidebarToggle: false }),
+    ).toBe(true);
+  });
+
+  it("stays quiet while the sidebar is on screen", () => {
+    expect(
+      shouldOfferSidebarReveal({ primarySidebarVisible: true, hasHeaderSidebarToggle: false }),
+    ).toBe(false);
+  });
+
+  it("defers to a header that already carries the toggle", () => {
+    expect(
+      shouldOfferSidebarReveal({ primarySidebarVisible: false, hasHeaderSidebarToggle: true }),
+    ).toBe(false);
   });
 });

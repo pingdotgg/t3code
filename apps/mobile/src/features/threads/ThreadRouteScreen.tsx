@@ -92,6 +92,7 @@ import {
 } from "./thread-inspector-content-stack";
 import { threadRouteIsHydrating } from "./thread-route-hydration";
 
+/** Thread chrome that restores a hidden Android split-view sidebar. */
 function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
     readonly hasThreadCwd: boolean;
@@ -104,7 +105,7 @@ function ThreadHeader(
   },
 ) {
   const navigation = useNavigation();
-  const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, toggleAuxiliaryPane, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
@@ -114,6 +115,13 @@ function ThreadHeader(
         accessibilityLabel: "Return to chat",
         icon: "chevron.left",
         onPress: props.onReturnToThread,
+      });
+    }
+    if (layout.usesSplitView && !panes.primarySidebarVisible) {
+      actions.push({
+        accessibilityLabel: "Show threads",
+        icon: "sidebar.left",
+        onPress: togglePrimarySidebar,
       });
     }
     if (props.hasThreadCwd) {
@@ -139,12 +147,15 @@ function ThreadHeader(
     });
     return actions;
   }, [
-    props.inspectorMode,
+    layout.usesSplitView,
+    panes.primarySidebarVisible,
     panes.auxiliaryPaneVisible,
+    props.inspectorMode,
     props.onOpenFilesInspector,
     onOpenTerminal,
     props.onOpenGitInspector,
     toggleAuxiliaryPane,
+    togglePrimarySidebar,
     props.onReturnToThread,
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
@@ -155,7 +166,7 @@ function ThreadHeader(
       <ScreenHeader
         title={props.title}
         subtitle={props.subtitle}
-        sidebar={native.sidebar}
+        sidebar={Boolean(native.sidebar && panes.primarySidebarVisible)}
         options={native.options}
         optionsVersion={props.gitControls.projectScripts}
         trailing={
