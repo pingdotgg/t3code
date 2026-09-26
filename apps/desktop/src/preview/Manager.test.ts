@@ -2223,6 +2223,92 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps the main window painting while a screenshot is captured", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setBackgroundThrottling = vi.fn<(enabled: boolean) => void>();
+        const image = {
+          toPNG: () => Buffer.from("png"),
+          toJPEG: () => Buffer.from("jpeg"),
+          getSize: () => ({ width: 1, height: 1 }),
+        };
+        const pending = Promise.withResolvers<typeof image>();
+        const capturePage = vi.fn(() => pending.promise);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling },
+        } as never);
+
+        const capture = yield* manager
+          .captureScreenshot("tab_1")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(0);
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
+
+        pending.resolve(image);
+        yield* Fiber.join(capture);
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("leaves the main window painting when a recording stops mid-capture", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setBackgroundThrottling = vi.fn<(enabled: boolean) => void>();
+        const image = {
+          toPNG: () => Buffer.from("png"),
+          toJPEG: () => Buffer.from("jpeg"),
+          getSize: () => ({ width: 1, height: 1 }),
+        };
+        const pending = Promise.withResolvers<typeof image>();
+        const host = makeTestHostWebContents();
+        const snapshotWebContents = makeTestPreviewWebContents(() => pending.promise, 41, host);
+        const recordedWebContents = makeTestPreviewWebContents(
+          async () => ({
+            toJPEG: () => Buffer.from("recording-frame"),
+            getSize: () => ({ width: 1280, height: 720 }),
+          }),
+          42,
+          host,
+        );
+        const webContentsById = new Map([
+          [41, snapshotWebContents],
+          [42, recordedWebContents],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
+        yield* manager.createTab("tab_snapshot");
+        yield* manager.createTab("tab_recording");
+        yield* manager.registerWebview("tab_snapshot", 41);
+        yield* manager.registerWebview("tab_recording", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling },
+        } as never);
+
+        const capture = yield* manager
+          .captureScreenshot("tab_snapshot")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(0);
+        yield* manager.startRecording("tab_recording");
+        yield* manager.stopRecording("tab_recording");
+        expect(setBackgroundThrottling.mock.calls).not.toContainEqual([true]);
+
+        pending.resolve(image);
+        yield* Fiber.join(capture);
+        expect(setBackgroundThrottling.mock.calls.at(-1)).toEqual([true]);
+      }),
+    ),
+  );
+
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {

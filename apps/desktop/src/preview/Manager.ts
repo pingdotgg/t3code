@@ -674,6 +674,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const frameCaptureSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, FrameCaptureSession>
   >(new Map());
+  // capturePage calls in flight. Like frame capture sessions, each keeps the main window unthrottled.
+  const paintingCapturesRef = yield* Ref.make(0);
   const pictureInPictureSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<string, PictureInPictureSession>
   >(new Map());
@@ -735,12 +737,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* requireCurrentGuest;
       return image;
     });
-    return yield* capture.pipe(
-      Effect.retry({
-        times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
-        schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
-        while: isPreviewOperationError,
-      }),
+    // capturePage waits for a window frame that contains the guest. A throttled main window
+    // that is covered, minimized, or on another Space draws none, so the capture never settles.
+    return yield* Effect.acquireUseRelease(
+      holdMainWindowPainting,
+      () =>
+        capture.pipe(
+          Effect.retry({
+            times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+            schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+            while: isPreviewOperationError,
+          }),
+        ),
+      () => releaseMainWindowPainting,
     );
   });
   const currentIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -795,6 +804,41 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (Option.isNone(mainWindow)) return;
     yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
   });
+  /** Re-throttles the main window once no frame capture session or capturePage call needs frames. */
+  const throttleMainWindowWhenIdle = Effect.fnUntraced(function* (remainingSessions: number) {
+    if (remainingSessions > 0 || (yield* Ref.get(paintingCapturesRef)) > 0) return;
+    yield* setFrameCaptureBackgroundThrottling(true).pipe(
+      Effect.retry({ times: 2 }),
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to restore preview frame capture throttling.", { error }),
+      ),
+    );
+  });
+  // Both run under the frame capture lock so a session that starts or stops mid-capture sees the count.
+  const holdMainWindowPainting = SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+    Effect.gen(function* () {
+      const held = yield* Ref.getAndUpdate(paintingCapturesRef, (count) => count + 1);
+      if (held === 0 && sessions.size === 0) {
+        // Best effort: a visible window still paints while throttled.
+        yield* setFrameCaptureBackgroundThrottling(false).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Failed to unthrottle the main window for a preview capture.", {
+              error,
+            }),
+          ),
+        );
+      }
+      return [undefined, sessions] as const;
+    }),
+  );
+  const releaseMainWindowPainting = SynchronizedRef.modifyEffect(
+    frameCaptureSessionsRef,
+    (sessions) =>
+      Ref.update(paintingCapturesRef, (count) => count - 1).pipe(
+        Effect.andThen(throttleMainWindowWhenIdle(sessions.size)),
+        Effect.as([undefined, sessions] as const),
+      ),
+  );
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
     enabled: boolean,
@@ -909,14 +953,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* restoreFrameCaptureWebContentsBackgroundThrottling(
           current.unthrottledWebContentsIds,
         );
-        if (remainingSessions.size === 0) {
-          yield* setFrameCaptureBackgroundThrottling(true).pipe(
-            Effect.retry({ times: 2 }),
-            Effect.catch((error) =>
-              Effect.logWarning("Failed to restore preview frame capture throttling.", { error }),
-            ),
-          );
-        }
+        yield* throttleMainWindowWhenIdle(remainingSessions.size);
         return [current.scope, remainingSessions] as const;
       }),
     ).pipe(
@@ -2079,7 +2116,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
-        if (sessions.size > 0) {
+        if (sessions.size > 0 || (yield* Ref.get(paintingCapturesRef)) > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
         yield* Ref.set(mainWindowRef, Option.some(window));
@@ -3090,11 +3127,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             yield* setFrameCaptureBackgroundThrottling(false);
           }
           yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
-            Effect.onError(() =>
-              sessions.size === 0
-                ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
-                : Effect.void,
-            ),
+            Effect.onError(() => throttleMainWindowWhenIdle(sessions.size)),
           );
           const scope =
             consumer === "picture-in-picture" ? yield* Scope.fork(parentScope, "sequential") : null;
