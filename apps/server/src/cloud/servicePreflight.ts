@@ -24,8 +24,14 @@ export function runServicePreflight(input: {
     return {
       status: "blocked",
       version,
-      reason:
-        "This release requires a newer T3 Code service launcher. Update it on the server machine.",
+      // Hosts still on the old launcher only ever see this string (it comes from the staged
+      // release), so it has to carry the whole recovery path on its own.
+      reason: [
+        `t3@${version} needs service launcher protocol ${SERVICE_LAUNCHER_PROTOCOL}, but the service on the server machine offered protocol ${input.launcherProtocol}.`,
+        `On that machine, install this exact version with \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`, then run \`t3 service install\`.`,
+        "`t3 service update`, `npx t3@latest`, and `t3 update` without a version keep whichever `t3` is first on PATH, and upgrading the desktop app does not replace it.",
+        `If \`t3 --version\` does not print ${version}, check \`which -a t3\`.`,
+      ].join(" "),
     };
   }
 
