@@ -83,6 +83,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -453,6 +454,13 @@ interface ClaudeSessionContext {
   lastThreadStartedId: string | undefined;
   /** Limits already announced for the running turn, keyed `window:resetsAt`. */
   announcedUsageLimits: { turnId: string; keys: Set<string> } | undefined;
+  /**
+   * Runs sends one at a time. A send decides between a new turn and a steer by
+   * reading `turnState`, then awaits the SDK before claiming it; two sends that
+   * overlap there would each start a turn, and orchestration would track one
+   * that never completes.
+   */
+  readonly sendTurnLock: Semaphore.Semaphore;
   stopped: boolean;
 }
 
@@ -5045,6 +5053,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         announcedUsageLimits: undefined,
+        sendTurnLock: Semaphore.makeUnsafe(1),
         stopped: false,
       };
       yield* Ref.set(contextRef, context);
@@ -5124,8 +5133,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
-  const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-    const context = yield* requireSession(input.threadId);
+  const sendTurnToSession = Effect.fn("sendTurnToSession")(function* (
+    context: ClaudeSessionContext,
+    input: ProviderSendTurnInput,
+  ) {
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId
@@ -5271,6 +5282,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? { resumeCursor: context.session.resumeCursor }
         : {}),
     };
+  });
+
+  const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    const context = yield* requireSession(input.threadId);
+    return yield* context.sendTurnLock.withPermit(sendTurnToSession(context, input));
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(

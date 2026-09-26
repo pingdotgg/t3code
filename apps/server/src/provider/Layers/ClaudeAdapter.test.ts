@@ -1622,6 +1622,69 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("starts one turn when two sends overlap before either claims it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // Messages queued while a session starts are sent together. Each send
+      // awaits setPermissionMode before it records a turn.
+      const [first, second] = yield* Effect.all(
+        [
+          adapter.sendTurn({
+            threadId: session.threadId,
+            input: "fix the sign-up list",
+            attachments: [],
+            interactionMode: "default",
+          }),
+          adapter.sendTurn({
+            threadId: session.threadId,
+            input: "also condense the payment rows",
+            attachments: [],
+            interactionMode: "default",
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      assert.equal(String(second.turnId), String(first.turnId));
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-overlap",
+        uuid: "result-overlap-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.deepEqual(
+        turnStartedEvents.map((event) => String(event.turnId)),
+        [String(first.turnId)],
+      );
+      assert.deepEqual(
+        turnCompletedEvents.map((event) => String(event.turnId)),
+        [String(first.turnId)],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("maps Claude reasoning deltas, streamed tool inputs, and tool results", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
