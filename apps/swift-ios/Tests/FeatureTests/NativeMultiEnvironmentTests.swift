@@ -1560,6 +1560,46 @@ struct NativePassiveThreadRefreshTests {
         await fixture.client.disconnect()
     }
 
+    @Test("Failed environment writes preserve the passive worker", arguments: [false, true])
+    func failedEnvironmentWritePreservesWorker(removal: Bool) async throws {
+        let clock = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            aggregatePeerRefreshSleep: { _, interval in try await clock.sleep(for: interval) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        _ = await clock.waitUntilRequested(count: 1)
+        let worker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
+        let catalog = fixture.directory.appendingPathComponent("environments.json")
+        let data = try Data(contentsOf: catalog)
+        try FileManager.default.removeItem(at: catalog)
+        try FileManager.default.createDirectory(at: catalog, withIntermediateDirectories: false)
+        do {
+            if removal { try await fixture.client.removeEnvironment(id: "two") }
+            else { try await fixture.client.setEnvironmentEnabled(id: "two", enabled: false) }
+            Issue.record("The blocked catalog write unexpectedly succeeded")
+        } catch {
+            #expect(!worker.isCancelled)
+            #expect(fixture.client.aggregateRefreshWorkers["two"] != nil)
+        }
+        try FileManager.default.removeItem(at: catalog)
+        try data.write(to: catalog)
+        #expect(try await fixture.runtime.environments().contains { $0.id == "two" && $0.isEnabled })
+        let probe = ThreadTitleEventProbe(
+            events: fixture.client.events(),
+            threadID: FeatureScopedID.thread(environmentID: "two", wireID: "thread-two"),
+            title: "Still updating"
+        )
+        probe.start()
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Still updating", snapshotSequence: 2
+        ), host: "two.example")
+        await clock.resume()
+        await probe.waitUntilObserved()
+        #expect(probe.didObserveTitle())
+        await fixture.client.disconnect()
+    }
+
     @Test("Removal cancels a held peer and its late response never returns a row", .timeLimit(.minutes(1)))
     func removedPeerCannotPublishLateResponse() async throws {
         let removedClock = ControllableAggregateRefreshSleep()
@@ -2803,7 +2843,9 @@ struct NativePassiveLiveShellTests {
         let nextWorker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
         try await fixture.client.removeEnvironment(id: "two")
         await nextWorker.value
-        await server.waitForInterrupts(host: "two.example", count: 2)
+        // Successful removal closes the transport before cancelling the worker.
+        // There is no live socket on which to deliver another Interrupt frame.
+        #expect(await server.latestConnectionIsClosed(host: "two.example"))
         #expect(nextWorker.isCancelled)
         #expect(fixture.client.aggregateRefreshWorkers["two"] == nil)
         let snapshot = try await fixture.client.backgroundSnapshot()
@@ -3168,10 +3210,15 @@ private actor PassiveLiveServer: WebSocketConnecting {
 
     func subscriptionCount(host: String) -> Int { subscriptions[host, default: []].count }
 
+    func latestConnectionIsClosed(host: String) async -> Bool {
+        await subscriptions[host]?.last?.connection.isClosed ?? false
+    }
+
     func closeLatest(host: String) async { await subscriptions[host]?.last?.connection.close() }
 }
 
 private actor PassiveLiveConnection: WebSocketConnection {
+    var isClosed: Bool { closed }
     private let host: String
     private let server: PassiveLiveServer
     private var responses: [Data] = []
@@ -3208,6 +3255,31 @@ private actor PassiveLiveConnection: WebSocketConnection {
 @Suite("Native incremental bootstrap")
 @MainActor
 struct NativeIncrementalBootstrapTests {
+    @Test("Environment-store failures remain visible to the root model")
+    func environmentStoreFailureIsNotCancellation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let catalog = directory.appendingPathComponent("environments.json")
+        try Data("invalid catalog".utf8).write(to: catalog)
+        let runtime = EnvironmentRuntime(environmentStore: EnvironmentStore(fileURL: catalog),
+                                         credentialStore: InMemoryCredentialStore())
+        let client = NativeFeatureClient(runtime: runtime)
+        do {
+            _ = try await client.initialSnapshot()
+            Issue.record("The invalid catalog unexpectedly loaded")
+        } catch {
+            #expect(error is DecodingError)
+            #expect(!(error is CancellationError))
+        }
+        let model = FeatureRootModel(client: client,
+            outboxStore: FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json")),
+            draftStore: FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json")))
+        await model.reload()
+        #expect(model.errorMessage?.isEmpty == false)
+        await model.disconnect()
+    }
+
     @Test("Pairing resets the previous environment's hydration and archive lifetime", .timeLimit(.minutes(1)), arguments: [false, true])
     func pairingReplacesHydrationLifetime(previousHydrated: Bool) async throws {
         let server = PassiveLiveServer()
