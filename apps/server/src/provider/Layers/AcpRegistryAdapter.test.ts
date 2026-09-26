@@ -353,6 +353,35 @@ function acpRegistryAdapterTests(
     }).pipe(Effect.scoped, TestClock.withLive),
   );
 
+  it.effect("cancels a pending URL sign-in when the turn is interrupted", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("acp-registry-url-cancel");
+      const { adapter } = yield* makeHarness({
+        wire,
+        env: { T3_ACP_EMIT_URL_ELICITATION: "1" },
+      });
+      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const opened = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<void>();
+      yield* coordinator
+        .watchUrlAuthAction(instanceId, (action) =>
+          Deferred.succeed(action === null ? closed : opened, undefined),
+        )
+        .pipe(Effect.forkScoped);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const turn = yield* adapter
+        .sendTurn({ threadId, input: "Sign in first" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(opened);
+      yield* adapter.interruptTurn(threadId);
+      yield* Fiber.join(turn);
+      // The session is still open, so only the cancel can clear the sign-in.
+      yield* Deferred.await(closed);
+      assert.isTrue(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId)));
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped, TestClock.withLive),
+  );
+
   it.effect("approves by policy in full access without asking", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("acp-registry-full-access");

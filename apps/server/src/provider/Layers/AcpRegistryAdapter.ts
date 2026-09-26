@@ -143,6 +143,8 @@ interface SessionContext {
   readonly stopLock: Semaphore.Semaphore;
   readonly approvals: Map<ApprovalRequestId, PendingApproval>;
   readonly questions: Map<ApprovalRequestId, PendingQuestion>;
+  /** URL sign-ins waiting on the provider card. Completing one answers the agent with cancel. */
+  readonly urlAuthentications: Set<Deferred.Deferred<void>>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   readonly grants: ReturnType<typeof makeAcpClientPolicyGrants>;
   session: ProviderSession;
@@ -401,6 +403,9 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
     for (const pending of context.questions.values()) {
       yield* Deferred.succeed(pending.response, undefined);
     }
+    for (const cancelled of context.urlAuthentications) {
+      yield* Deferred.succeed(cancelled, undefined);
+    }
   });
 
   const stopContext = (context: SessionContext) =>
@@ -562,12 +567,23 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
       if (url === undefined || !elicitationId || Option.isNone(coordinator)) {
         return { action: "decline" };
       }
-      const accepted = yield* coordinator.value.requestUrlAuthentication(instanceId, {
-        elicitationId: elicitationId.slice(0, 256),
-        url,
-        message: request.message.trim().slice(0, 1_024),
-      });
-      return accepted ? { action: "accept" } : { action: "decline" };
+      // ACP expects cancel for requests still open when the turn is cancelled.
+      const cancelled = yield* Deferred.make<void>();
+      context.urlAuthentications.add(cancelled);
+      return yield* Effect.raceFirst(
+        coordinator.value
+          .requestUrlAuthentication(instanceId, {
+            elicitationId: elicitationId.slice(0, 256),
+            url,
+            message: request.message.trim().slice(0, 1_024),
+          })
+          .pipe(
+            Effect.map((accepted): NativeElicitationResponse => ({
+              action: accepted ? "accept" : "decline",
+            })),
+          ),
+        Deferred.await(cancelled).pipe(Effect.as<NativeElicitationResponse>({ action: "cancel" })),
+      ).pipe(Effect.ensuring(Effect.sync(() => context.urlAuthentications.delete(cancelled))));
     }
     // Modes beyond form and url decline rather than guess at their meaning.
     if (request.mode !== "form" || !("requestedSchema" in request)) return { action: "decline" };
@@ -1054,6 +1070,7 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
           stopLock: yield* Semaphore.make(1),
           approvals: new Map(),
           questions: new Map(),
+          urlAuthentications: new Set(),
           turns: [],
           grants,
           session,
