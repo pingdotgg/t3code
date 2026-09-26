@@ -497,20 +497,18 @@ export const make = Effect.gen(function* () {
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
-      // If the retry also times out, keep the token and fail as transient so the supervisor
-      // tries again. The relay returns the same hostname for an environment, so a new
-      // credential would only add an auth session on that slow server. At the timeout limit,
-      // drop the token and ask the relay again in case the endpoint changed. The mint runs in
-      // the service scope, so it still lands if the setup deadline ends this attempt.
+      // When the retry also times out, keep the token and fail as transient. The relay returns
+      // the same hostname for an environment, so a new credential would only add an auth
+      // session on that slow server. Leave out the network hint: the relay and tunnel answered
+      // for this token before. At the limit, drop the token and ask the relay again in case
+      // the endpoint moved. That mint runs in the service scope, so it lands even if this
+      // attempt times out.
       if (cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError") {
         const accessToken = cachedToken.accessToken;
         const previous = cachedTicketTimeouts.get(input.expectedEnvironmentId);
         const count = previous?.accessToken === accessToken ? previous.count + 1 : 1;
         if (count < CACHED_TICKET_TIMEOUT_LIMIT) {
           cachedTicketTimeouts.set(input.expectedEnvironmentId, { accessToken, count });
-          // The relay and tunnel answered for this token before, so a slow server is the
-          // likely cause. Leave out the network hint. The third timeout asks the relay again,
-          // and that attempt still shows the hint if the network is the cause.
           return yield* new ConnectionTransientError({
             reason: "timeout",
             detail: `${cachedToken.label} did not respond during connection setup.`,
