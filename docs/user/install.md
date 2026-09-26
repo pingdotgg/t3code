@@ -33,6 +33,15 @@ line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 | Move to the newest release                       | `t3 update`                                               |
 | Remove it again                                  | `t3 uninstall`                                            |
 
+Set `T3CODE_ENVIRONMENT_LABEL` in the server process environment to override the environment name
+shown to connected clients:
+
+```sh
+T3CODE_ENVIRONMENT_LABEL="Development VM" t3 serve
+```
+
+Empty or whitespace-only values use the normal automatically detected label.
+
 Run `t3 --help` for the full reference.
 
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
