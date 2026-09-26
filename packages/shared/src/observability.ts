@@ -371,6 +371,8 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   });
 
   let buffer: Array<string> = [];
+  // Records lost to failed writes since the last flush reported them.
+  let droppedCount = 0;
   let pendingFlushStats: TraceSinkFlushStats = {
     logicalWriteBytes: 0,
     count: 0,
@@ -407,7 +409,10 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       try {
         sink.write(chunk);
       } catch {
-        buffer.unshift(...records.slice(persistedCount));
+        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
+        // Retrying it would grow the backlog, and every later push would
+        // retry all of it.
+        droppedCount += records.length - persistedCount;
         return;
       }
       pendingFlushStats = {
@@ -419,21 +424,26 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
-  const flush = Effect.sync(() => {
+  const flush = Effect.gen(function* () {
     flushUnsafe();
     const stats = pendingFlushStats;
+    const dropped = droppedCount;
     pendingFlushStats = {
       logicalWriteBytes: 0,
       count: 0,
       durationMs: 0,
     };
-    return stats;
-  }).pipe(
-    Effect.flatMap((stats) =>
-      stats.count > 0 && options.onFlush ? options.onFlush(stats).pipe(Effect.ignore) : Effect.void,
-    ),
-    Effect.withTracerEnabled(false),
-  );
+    droppedCount = 0;
+    if (stats.count > 0 && options.onFlush) {
+      yield* options.onFlush(stats).pipe(Effect.ignore);
+    }
+    if (dropped > 0) {
+      yield* Effect.logWarning("Dropped trace records after a failed write", {
+        filePath: options.filePath,
+        droppedCount: dropped,
+      });
+    }
+  }).pipe(Effect.withTracerEnabled(false));
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(

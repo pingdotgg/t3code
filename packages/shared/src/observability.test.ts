@@ -12,7 +12,9 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import { vi } from "vite-plus/test";
 
+import { RotatingFileSink } from "./logging.ts";
 import {
   causeErrorTag,
   compactTraceAttributes,
@@ -423,6 +425,60 @@ describe("observability", () => {
         }),
       ),
     );
+
+    it.effect("drops records after a failed write instead of retrying them on every push", () => {
+      const warnings: Array<unknown> = [];
+      const captureWarnings = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        // A directory at the trace path fails every append, like a full disk.
+        yield* fileSystem.makeDirectory(tracePath);
+        const write = vi.spyOn(RotatingFileSink.prototype, "write");
+        yield* Effect.addFinalizer(() => Effect.sync(() => write.mockRestore()));
+
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024 * 1024,
+          maxFiles: 2,
+          batchWindowMs: 10_000,
+        });
+
+        for (let index = 0; index < 1_024; index += 1) {
+          sink.push(makeRecord("lost", String(index)));
+        }
+        yield* sink.flush;
+
+        // One write per full batch of 256, never a growing backlog.
+        assert.deepStrictEqual(
+          write.mock.calls.map(([chunk]) => String(chunk).split("\n").length - 1),
+          [256, 256, 256, 256],
+        );
+        expect(warnings).toEqual([
+          [expect.any(String), { filePath: tracePath, droppedCount: 1_024 }],
+        ]);
+
+        // Once the disk recovers, new records are written again.
+        yield* fileSystem.remove(tracePath, { recursive: true });
+        sink.push(makeRecord("recovered"));
+        yield* sink.flush;
+
+        const records = yield* readTraceRecords(tracePath);
+        assert.deepStrictEqual(
+          records.map((record) => record.name),
+          ["recovered"],
+        );
+        assert.equal(warnings.length, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Logger.layer([captureWarnings], { mergeWithExisting: false })),
+      );
+    });
 
     it.effect("writes nested spans to disk and captures log messages as span events", () =>
       Effect.scoped(

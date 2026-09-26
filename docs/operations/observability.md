@@ -584,7 +584,7 @@ Local trace file:
 - `T3CODE_TRACE_FILE`: override trace file path
 - `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
 - `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
-- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `1000`
 - `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
 - `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
