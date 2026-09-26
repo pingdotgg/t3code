@@ -674,10 +674,10 @@ it.effect("ProviderServiceLive shutdown leaves settled session rows untouched", 
         Effect.map((bindings) => new Map(bindings.map((binding) => [binding.threadId, binding]))),
       );
     const settledId = asThreadId("shutdown-settled");
-    const liveId = asThreadId("shutdown-live");
+    const runningId = asThreadId("shutdown-running");
     const stoppedWithTurnId = asThreadId("shutdown-stopped-with-turn");
     yield* seed(settledId, "stopped", null);
-    yield* seed(liveId, "running", asTurnId("live-turn"));
+    yield* seed(runningId, "running", asTurnId("running-turn"));
     yield* seed(stoppedWithTurnId, "stopped", asTurnId("stale-turn"));
     const settledBefore = (yield* readBindings).get(settledId);
     assert(settledBefore !== undefined);
@@ -709,7 +709,7 @@ it.effect("ProviderServiceLive shutdown leaves settled session rows untouched", 
 
     const byThread = yield* readBindings;
     assert.deepStrictEqual(byThread.get(settledId), settledBefore);
-    for (const threadId of [liveId, stoppedWithTurnId]) {
+    for (const threadId of [runningId, stoppedWithTurnId]) {
       const binding = byThread.get(threadId);
       assert.equal(binding?.status, "stopped");
       assert.propertyVal(binding?.runtimePayload, "activeTurnId", null);
