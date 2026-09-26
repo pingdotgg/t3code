@@ -8,9 +8,16 @@ import { describe } from "vite-plus/test";
 
 import { checkCodexConnection } from "./codexConnection.ts";
 
+// Codex 0.157.1 config/read emits this URL even for a pristine home.
+const nativeConfig = {
+  model_provider: null,
+  model_providers: {},
+  chatgpt_base_url: "https://chatgpt.com/backend-api/",
+} satisfies CodexSchema.V2ConfigReadResponse__Config;
+
 const clientFor = (
   account: CodexSchema.V2GetAccountResponse__Account | null,
-  config: CodexSchema.V2ConfigReadResponse__Config = {},
+  config: CodexSchema.V2ConfigReadResponse__Config = nativeConfig,
 ): Parameters<typeof checkCodexConnection>[0] => ({
   request: <M extends CodexRpc.ClientRequestMethod>(method: M) => {
     const response =
@@ -25,39 +32,50 @@ const clientFor = (
 });
 
 describe("Codex connection recovery probe", () => {
-  for (const [account, endpoint] of [
-    [{ type: "apiKey" }, "https://api.openai.com/v1/responses"],
+  for (const [account, endpoint, baseUrl] of [
+    [{ type: "apiKey" }, "https://api.openai.com/v1/responses", "https://chatgpt.com/backend-api/"],
     [
       { type: "chatgpt", email: null, planType: "free" },
       "https://chatgpt.com/backend-api/codex/responses",
+      "https://chatgpt.com/backend-api/",
+    ],
+    [
+      { type: "chatgpt", email: null, planType: "free" },
+      "https://chatgpt.com/backend-api/codex/responses",
+      "https://chatgpt.com/backend-api",
     ],
   ] as const) {
-    it.effect(`checks the ${account.type} model endpoint without starting work`, () =>
-      Effect.gen(function* () {
-        let requested = false;
-        const reachable = yield* checkCodexConnection(clientFor(account), {
-          cwd: "/project",
-          environment: {},
-        }).pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.provideService(
-            FetchHttpClient.Fetch,
-            Object.assign(
-              async (url: string | URL | Request, init?: RequestInit) => {
-                requested = true;
-                NodeAssert.equal(String(url), endpoint);
-                NodeAssert.equal(init?.method, "HEAD");
-                NodeAssert.equal(init?.redirect, "manual");
-                NodeAssert.equal(new Headers(init?.headers).get("authorization"), null);
-                return new Response(null, { status: 401 });
-              },
-              { preconnect: () => undefined },
+    it.effect(
+      `checks the ${account.type} model endpoint with base ${baseUrl} without starting work`,
+      () =>
+        Effect.gen(function* () {
+          let requested = false;
+          const reachable = yield* checkCodexConnection(
+            clientFor(account, { ...nativeConfig, chatgpt_base_url: baseUrl }),
+            {
+              cwd: "/project",
+              environment: {},
+            },
+          ).pipe(
+            Effect.provide(FetchHttpClient.layer),
+            Effect.provideService(
+              FetchHttpClient.Fetch,
+              Object.assign(
+                async (url: string | URL | Request, init?: RequestInit) => {
+                  requested = true;
+                  NodeAssert.equal(String(url), endpoint);
+                  NodeAssert.equal(init?.method, "HEAD");
+                  NodeAssert.equal(init?.redirect, "manual");
+                  NodeAssert.equal(new Headers(init?.headers).get("authorization"), null);
+                  return new Response(null, { status: 401 });
+                },
+                { preconnect: () => undefined },
+              ),
             ),
-          ),
-        );
-        NodeAssert.equal(requested, true);
-        NodeAssert.equal(reachable, true);
-      }),
+          );
+          NodeAssert.equal(requested, true);
+          NodeAssert.equal(reachable, true);
+        }),
     );
   }
 
@@ -88,6 +106,24 @@ describe("Codex connection recovery probe", () => {
   for (const [name, config, environment, launchArgs] of [
     ["custom provider", { model_provider: "custom" }, {}, ""],
     ["configured base URL", { chatgpt_base_url: "https://proxy.example" }, {}, ""],
+    [
+      "native host custom path",
+      { chatgpt_base_url: "https://chatgpt.com/backend-api/custom" },
+      {},
+      "",
+    ],
+    [
+      "native URL query override",
+      { chatgpt_base_url: "https://chatgpt.com/backend-api/?route=custom" },
+      {},
+      "",
+    ],
+    [
+      "native-looking alternate host",
+      { chatgpt_base_url: "https://chatgpt.com.example/backend-api/" },
+      {},
+      "",
+    ],
     [
       "provider override",
       { model_providers: { openai: { base_url: "https://proxy.example" } } },

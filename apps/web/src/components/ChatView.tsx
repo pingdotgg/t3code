@@ -2700,6 +2700,8 @@ export default function ChatView(props: ChatViewProps) {
       recoveryNoticeClock,
     ],
   );
+  const displayedThreadError =
+    recoveryNotice !== null && localServerError === null ? null : visibleThreadError;
   const recoveryNoticeExpiresAt = recoveryNotice?.expiresAt ?? null;
   useEffect(() => {
     if (recoveryNoticeExpiresAt === null) return;
@@ -3833,7 +3835,7 @@ export default function ChatView(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner = Boolean(displayedThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -9992,7 +9994,7 @@ export default function ChatView(props: ChatViewProps) {
                 onOpenProviderSetup={openProviderSetup}
               />
               <ThreadErrorBanner
-                error={visibleThreadError}
+                error={displayedThreadError}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

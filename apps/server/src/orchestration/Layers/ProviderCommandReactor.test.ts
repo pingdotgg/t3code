@@ -1285,6 +1285,7 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
     const thread = (await harness.readModel()).threads[0];
     expect(thread?.session?.status).not.toBe("starting");
+    expect(thread?.session?.lastError).toBe("Connection lost");
     expect(
       thread?.activities.some((activity) => activity.kind === "connection.recovery.resumed"),
     ).toBe(false);
@@ -1512,6 +1513,7 @@ describe("ProviderCommandReactor", () => {
       await harness.emitRuntimeEvent({ ...resumedEvent, type: "turn.started", payload: {} });
       await harness.drain();
       const beforeProgress = (await harness.readModel()).threads[0];
+      expect(beforeProgress?.session).toMatchObject({ status: "starting", lastError: null });
       expect(
         beforeProgress?.activities.some(
           (activity) => activity.kind === "connection.recovery.resumed",

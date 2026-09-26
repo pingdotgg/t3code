@@ -301,6 +301,7 @@ export const makeConnectionLossRecovery = Effect.fnUntraced(function* (
                 ...thread.session,
                 status: "starting",
                 activeTurnId: null,
+                lastError: null,
                 updatedAt: now,
               },
               recoveryAdmission: {

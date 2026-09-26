@@ -34,7 +34,9 @@ export const checkCodexConnection = Effect.fn("checkCodexConnection")(function* 
   if (
     (config.model_provider != null && config.model_provider !== "openai") ||
     (config.model_providers != null && !isEmptyProviderConfig(config.model_providers)) ||
-    config.chatgpt_base_url != null ||
+    (config.chatgpt_base_url != null &&
+      (typeof config.chatgpt_base_url !== "string" ||
+        config.chatgpt_base_url.replace(/\/+$/, "") !== "https://chatgpt.com/backend-api")) ||
     config.openai_base_url != null ||
     config.profile != null
   ) {
