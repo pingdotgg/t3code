@@ -35,6 +35,11 @@ describe("Usage page preferences", () => {
     }
   });
 
+  it("round-trips Today", () => {
+    saveUsagePagePreferences({ metric: "tokens", windowDays: "today" });
+    expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: "today" });
+  });
+
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',

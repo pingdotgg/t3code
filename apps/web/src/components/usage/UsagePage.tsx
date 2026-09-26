@@ -38,6 +38,7 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeTodayWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
@@ -86,25 +87,31 @@ function isUsageMetric(value: string | null | undefined): value is UsageMetric {
 }
 
 const WINDOW_OPTIONS = [
+  { days: "today", label: "Today" },
   { days: 1, label: "Past 24h" },
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
 ] as const;
 
-function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
+/** Narrows stored menu values to supported usage-window choices. */
+function isUsageWindowDays(value: string | number): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
+/** Renders usage history and live subscription limits for web. */
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
-    window: makeWindow(
-      preferences.windowDays,
-      undefined,
-      preferences.windowDays === 1 ? "hour" : "day",
-    ),
+    window:
+      preferences.windowDays === "today"
+        ? makeTodayWindow()
+        : makeWindow(
+            preferences.windowDays,
+            undefined,
+            preferences.windowDays === 1 ? "hour" : "day",
+          ),
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
@@ -115,7 +122,7 @@ export function UsagePage() {
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const isPast24Hours = windowDays === 1 || windowDays === "today";
   const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
@@ -182,14 +189,15 @@ export function UsagePage() {
   );
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
-  const selectWindow = (days: number) => {
+  const selectWindow = (days: string | number) => {
     if (!isUsageWindowDays(days)) return;
     const nextPreferences = { metric, windowDays: days };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
     setWindowSelection({
       days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      window:
+        days === "today" ? makeTodayWindow() : makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
@@ -229,7 +237,10 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow =
+      windowDays === "today"
+        ? makeTodayWindow()
+        : makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
@@ -316,7 +327,7 @@ export function UsagePage() {
           disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
-            if (value) selectWindow(Number(value));
+            if (value) selectWindow(value === "today" ? value : Number(value));
           }}
         >
           {WINDOW_OPTIONS.map((option) => (
@@ -364,7 +375,7 @@ export function UsagePage() {
         <Select
           value={String(windowDays)}
           disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
+          onValueChange={(value) => selectWindow(value === "today" ? value : Number(value))}
         >
           <SelectTrigger
             aria-label="Usage period"
