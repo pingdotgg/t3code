@@ -36,6 +36,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
+import { repairMarkdownImageDestinations } from "@t3tools/client-runtime/markdown-links";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexFileCitationsAsMarkdown,
@@ -788,7 +789,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const segments = useMemo(
-    () => splitCodexArtifactTemplateMarkdown(props.markdown),
+    () => splitCodexArtifactTemplateMarkdown(repairMarkdownImageDestinations(props.markdown)),
     [props.markdown],
   );
 
@@ -1515,7 +1516,9 @@ function renderFeedEntry(
       );
     }
     const isUser = message.role === "user";
-    const renderedText = renderAssistantCitationsAsText(message.text);
+    const renderedText = renderAssistantCitationsAsText(
+      repairMarkdownImageDestinations(message.text),
+    );
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];

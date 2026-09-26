@@ -78,7 +78,12 @@ function renderFilePreview(cwd: string, relativePath: string): string {
 }
 
 function copiedMarkdownFrom(html: string): string {
-  const copy = /data-markdown-copy="([^"]*)"/.exec(html)?.[1]?.replaceAll("&quot;", '"');
+  const copy = /data-markdown-copy="([^"]*)"/
+    .exec(html)?.[1]
+    ?.replaceAll("&quot;", '"')
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
   expect(copy).toBeDefined();
   return copy ?? "";
 }
@@ -170,6 +175,41 @@ describe("ChatMarkdown workspace images", () => {
       { _tag: "media-file", threadId: threadRef.threadId, path: "/tmp/embed-test/5.png" },
     ]);
     expect(html).not.toContain("Image unavailable");
+  });
+
+  it("loads a workspace path with spaces an agent wrote unquoted", () => {
+    const html = render(String.raw`![Settings → General](D:\my projects\demo shots\cmp.png)`);
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "media-file",
+        threadId: threadRef.threadId,
+        path: String.raw`D:\my projects\demo shots\cmp.png`,
+      },
+    ]);
+    expect(html).toContain("https://signed.test/workspace-image.svg");
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("keeps a repaired path's separators through the parser's own escapes", () => {
+    const html = render(String.raw`![cache](D:\my projects\.cache\a b.png)`);
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "media-file",
+        threadId: threadRef.threadId,
+        path: String.raw`D:\my projects\.cache\a b.png`,
+      },
+    ]);
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("copies a spaced destination in a form another Markdown reader can parse", () => {
+    const html = render(String.raw`<img src="D:\my projects\demo shots\cmp.png" alt="shot">`);
+
+    expect(copiedMarkdownFrom(html)).toBe(
+      String.raw`![shot](<D:\\my projects\\demo shots\\cmp.png>)`,
+    );
   });
 
   it("normalizes a drive-absolute src in raw image HTML", () => {

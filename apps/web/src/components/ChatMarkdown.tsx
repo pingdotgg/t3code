@@ -50,7 +50,11 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import {
+  inlineCodeFilePathCandidate,
+  markdownImageDestination,
+  repairMarkdownImageDestinations,
+} from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -1349,7 +1353,10 @@ function markdownImageCopy(alt: string, src: string, title: string | undefined):
   const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
   const titleSuffix =
     title === undefined ? "" : ` "${title.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  return `![${escapedAlt}](${src}${titleSuffix})`;
+  // ReactMarkdown hands back the parsed source, so a path with a space
+  // arrives here unquoted and would paste as text that no other Markdown
+  // reader renders as an image.
+  return `![${escapedAlt}](${markdownImageDestination(src)}${titleSuffix})`;
 }
 
 /**
@@ -3323,6 +3330,7 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  const repairedText = useMemo(() => repairMarkdownImageDestinations(text), [text]);
   const {
     componentState,
     handleCopy,
@@ -3330,11 +3338,11 @@ function ChatMarkdown({
     markdownUrlTransform,
     localMediaPreview,
     setLocalMediaPreview,
-  } = useChatMarkdownState({ text, ...props });
+  } = useChatMarkdownState({ text: repairedText, ...props });
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
-    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(repairedText);
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
@@ -3366,7 +3374,7 @@ function ChatMarkdown({
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {repairedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
