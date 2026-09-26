@@ -433,7 +433,7 @@ describe("mergeUsage", () => {
     const merged = mergeUsage([environment("env-a", decoded)], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(10);
     expect(merged.totalTokens).toBe(1160);
-    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.contractMismatches).toEqual([]);
   });
 
   it("normalizes model names during decoding before grouping usage", () => {
@@ -479,7 +479,13 @@ describe("mergeUsage", () => {
     );
     const merged = mergeUsage([environment("env-a", decoded)], USAGE_CONTRACT_VERSION);
     expect(merged.costUsd).toBe(0);
-    expect(merged.staleEnvironments).toEqual(["env-a"]);
+    expect(merged.contractMismatches).toEqual([
+      {
+        environmentId: "env-a",
+        direction: "clientBehind",
+        contractVersion: USAGE_CONTRACT_VERSION + 1,
+      },
+    ]);
   });
 
   it("derives provider shares and cost quality", () => {
