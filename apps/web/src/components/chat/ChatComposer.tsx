@@ -399,6 +399,7 @@ const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
+const COMPOSER_RESTING_CONTROLS_FADE_MS = 150;
 
 function useComposerRestingTransition(
   isCollapsed: boolean,
@@ -417,9 +418,10 @@ function useComposerRestingTransition(
     promptFromTop: number | null;
     promptHeight: number | null;
     actionFromBottom: number | null;
-  }>({ promptFromTop: null, promptHeight: null, actionFromBottom: null });
+    actionFromRight: number | null;
+  }>({ promptFromTop: null, promptHeight: null, actionFromBottom: null, actionFromRight: null });
   const animationRef = useRef<Animation | null>(null);
-  const animationTargetHeightRef = useRef<number | null>(null);
+  const animationFromHeightRef = useRef<number | null>(null);
   const contentAnimationsRef = useRef<Animation[]>([]);
   const stateChangeAnimationsRef = useRef<Animation[]>([]);
   const pinnedOverlayRef = useRef<HTMLElement | null>(null);
@@ -478,18 +480,18 @@ function useComposerRestingTransition(
       const interruptedPromptTop = interruptedAnimation
         ? (prompt?.getBoundingClientRect().top ?? null)
         : null;
-      const interruptedActionTop = interruptedAnimation
-        ? (action?.getBoundingClientRect().top ?? null)
+      const interruptedActionRect = interruptedAnimation
+        ? (action?.getBoundingClientRect() ?? null)
         : null;
       const interruptedHeight = interruptedAnimation
         ? element.getBoundingClientRect().height
         : null;
-      const interruptedTargetHeight = animationTargetHeightRef.current;
       const interruptedCurrentTime =
         typeof interruptedAnimation?.currentTime === "number"
           ? interruptedAnimation.currentTime
           : null;
       const interruptedDuration = interruptedAnimation?.effect?.getComputedTiming().duration;
+      const interruptedStartTime = interruptedAnimation?.startTime ?? null;
       if (transitionCleanupTimeoutRef.current !== null) {
         window.clearTimeout(transitionCleanupTimeoutRef.current);
         transitionCleanupTimeoutRef.current = null;
@@ -521,10 +523,25 @@ function useComposerRestingTransition(
       }
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
       const nextPromptTop = nextPromptRect?.top ?? null;
-      const nextActionTop = action?.getBoundingClientRect().top ?? null;
-      const previousHeight = interruptedHeight ?? previousHeightRef.current;
-      const targetChanged =
-        interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
+      const nextActionRect = action?.getBoundingClientRect() ?? null;
+      // The footer is pinned below for the tween; pinning it at its natural
+      // destination height keeps the actions from snapping when the pin lifts.
+      const nextFooterHeight = footer?.getBoundingClientRect().height ?? 0;
+      // A retarget mid-flight (the body resizing during the tween, which a
+      // rewrapping draft or placeholder does on every frame) keeps the original
+      // start height and clock. Restarting instead leaves each new animation
+      // pending on its first keyframe, so the card freezes and then snaps.
+      // Only a reversed state change starts a fresh tween.
+      const continuing =
+        interruptedAnimation !== null &&
+        !stateChanged &&
+        typeof interruptedStartTime === "number" &&
+        typeof interruptedDuration === "number" &&
+        interruptedCurrentTime !== null &&
+        animationFromHeightRef.current !== null;
+      const previousHeight = continuing
+        ? animationFromHeightRef.current
+        : (interruptedHeight ?? previousHeightRef.current);
       const shouldAnimate = shouldAnimateComposerRestingTransition({
         hasCompletedInitialLayout: hasCompletedInitialLayoutRef.current,
         stateChanged,
@@ -537,12 +554,9 @@ function useComposerRestingTransition(
         previousHeight !== null &&
         Math.abs(previousHeight - nextHeight) >= 0.5
       ) {
-        const remainingDuration =
-          typeof interruptedDuration === "number" && interruptedCurrentTime !== null
-            ? Math.max(1, interruptedDuration - interruptedCurrentTime)
-            : animationDurationMs;
-        const duration =
-          interruptedHeight !== null && !targetChanged ? remainingDuration : animationDurationMs;
+        const duration = continuing ? interruptedDuration : animationDurationMs;
+        const elapsed = continuing ? interruptedCurrentTime : 0;
+        const remainingDuration = Math.max(1, duration - elapsed);
         element.style.overflow = "clip";
         surface.style.height = "100%";
 
@@ -567,7 +581,7 @@ function useComposerRestingTransition(
           footer.style.position = "absolute";
           footer.style.top = "auto";
           footer.style.bottom = "1px";
-          footer.style.height = "3rem";
+          footer.style.height = `${String(nextFooterHeight)}px`;
           if (nextIsCollapsed) {
             footer.style.left = "auto";
             footer.style.right = "1px";
@@ -584,8 +598,9 @@ function useComposerRestingTransition(
             easing: COMPOSER_RESTING_TRANSITION_EASING,
           },
         );
+        if (continuing) animation.startTime = interruptedStartTime;
         animationRef.current = animation;
-        animationTargetHeightRef.current = nextHeight;
+        animationFromHeightRef.current = previousHeight;
 
         const animatedRect = element.getBoundingClientRect();
         const previousPromptTop =
@@ -594,30 +609,44 @@ function useComposerRestingTransition(
             ? null
             : animatedRect.top + previousContentOffsetsRef.current.promptFromTop);
         const previousActionTop =
-          interruptedActionTop ??
+          interruptedActionRect?.top ??
           (previousContentOffsetsRef.current.actionFromBottom === null
             ? null
             : animatedRect.bottom - previousContentOffsetsRef.current.actionFromBottom);
+        const previousActionRight =
+          interruptedActionRect?.right ??
+          (previousContentOffsetsRef.current.actionFromRight === null
+            ? null
+            : animatedRect.right - previousContentOffsetsRef.current.actionFromRight);
         const contentAnimations: Animation[] = [];
         const animateContentPosition = (
           content: HTMLElement | null,
           previousTop: number | null,
+          previousRight: number | null = null,
         ) => {
           if (!content || previousTop === null) return;
-          const offset = previousTop - content.getBoundingClientRect().top;
-          if (Math.abs(offset) < 0.5) return;
-          contentAnimations.push(
-            content.animate(
-              [{ transform: `translateY(${String(offset)}px)` }, { transform: "none" }],
-              {
-                duration,
-                easing: COMPOSER_RESTING_TRANSITION_EASING,
-              },
-            ),
+          const rect = content.getBoundingClientRect();
+          const offsetY = previousTop - rect.top;
+          // Resting and expanded footers use different end padding.
+          const offsetX = previousRight === null ? 0 : previousRight - rect.right;
+          if (Math.abs(offsetY) < 0.5 && Math.abs(offsetX) < 0.5) return;
+          const contentAnimation = content.animate(
+            [
+              { transform: `translate(${String(offsetX)}px, ${String(offsetY)}px)` },
+              { transform: "none" },
+            ],
+            {
+              duration: remainingDuration,
+              easing: COMPOSER_RESTING_TRANSITION_EASING,
+            },
           );
+          // Retargets recreate these from the current position every frame;
+          // starting them now instead of pending lets them actually advance.
+          if (continuing) contentAnimation.startTime = document.timeline.currentTime;
+          contentAnimations.push(contentAnimation);
         };
         animateContentPosition(prompt, previousPromptTop);
-        animateContentPosition(action, previousActionTop);
+        animateContentPosition(action, previousActionTop, previousActionRight);
         contentAnimationsRef.current = contentAnimations;
 
         if (stateChanged) {
@@ -651,13 +680,9 @@ function useComposerRestingTransition(
           }
 
           // The footer controls teleport between the composer footer and the
-          // context strip below it in a single commit. Fading the arriving
-          // cluster in along its direction of travel reads as one continuous
-          // move instead of a pop. Collapsing controls land in empty strip
-          // space and can appear immediately, but expanding controls return
-          // to the bottom row the prompt still occupies while the surface is
-          // short, so they stay hidden through the first half of the tween
-          // and fade in once the geometry has mostly settled.
+          // context strip below it in a single commit. A short fade along the
+          // direction of travel, started right away, reads as a quick swap
+          // instead of a pop or a lingering gap.
           const arrivingControls = nextIsCollapsed
             ? restingControlsRef.current
             : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
@@ -672,9 +697,7 @@ function useComposerRestingTransition(
                   { opacity: 1, transform: "none" },
                 ],
                 {
-                  duration: nextIsCollapsed ? duration : duration / 2,
-                  delay: nextIsCollapsed ? 0 : duration / 2,
-                  fill: "backwards",
+                  duration: Math.min(duration, COMPOSER_RESTING_CONTROLS_FADE_MS),
                   easing: COMPOSER_RESTING_TRANSITION_EASING,
                 },
               ),
@@ -691,9 +714,7 @@ function useComposerRestingTransition(
           for (const imagePreview of arrivingImagePreviews) {
             stateChangeAnimations.push(
               imagePreview.animate([{ opacity: 0 }, { opacity: 1 }], {
-                duration: nextIsCollapsed ? duration : duration / 2,
-                delay: nextIsCollapsed ? 0 : duration / 2,
-                fill: "backwards",
+                duration: Math.min(duration, COMPOSER_RESTING_CONTROLS_FADE_MS),
                 easing: COMPOSER_RESTING_TRANSITION_EASING,
               }),
             );
@@ -717,7 +738,7 @@ function useComposerRestingTransition(
             }
           }
           animationRef.current = null;
-          animationTargetHeightRef.current = null;
+          animationFromHeightRef.current = null;
           contentAnimationsRef.current = [];
           stateChangeAnimationsRef.current = [];
           clearTransitionStyles();
@@ -728,10 +749,8 @@ function useComposerRestingTransition(
         // the natural layout the eventual source of truth in that case.
         transitionCleanupTimeoutRef.current = window.setTimeout(
           () => finishTransition(true),
-          duration + COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS,
+          remainingDuration + COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS,
         );
-      } else {
-        animationTargetHeightRef.current = null;
       }
 
       previousCollapsedRef.current = nextIsCollapsed;
@@ -739,7 +758,8 @@ function useComposerRestingTransition(
       previousContentOffsetsRef.current = {
         promptFromTop: nextPromptTop === null ? null : nextPromptTop - nextRect.top,
         promptHeight: nextPromptRect?.height ?? null,
-        actionFromBottom: nextActionTop === null ? null : nextRect.bottom - nextActionTop,
+        actionFromBottom: nextActionRect === null ? null : nextRect.bottom - nextActionRect.top,
+        actionFromRight: nextActionRect === null ? null : nextRect.right - nextActionRect.right,
       };
     },
     [
@@ -801,14 +821,15 @@ function useComposerRestingTransition(
       const promptRect = visibleTransitionElement(
         '[data-testid="composer-editor"], [data-chat-composer-transition-prompt="true"]',
       )?.getBoundingClientRect();
-      const actionTop = visibleTransitionElement(
+      const actionRect = visibleTransitionElement(
         '[data-chat-composer-transition-actions="true"]',
-      )?.getBoundingClientRect().top;
+      )?.getBoundingClientRect();
       previousHeightRef.current = elementRect.height;
       previousContentOffsetsRef.current = {
         promptFromTop: promptRect === undefined ? null : promptRect.top - elementRect.top,
         promptHeight: promptRect?.height ?? null,
-        actionFromBottom: actionTop === undefined ? null : elementRect.bottom - actionTop,
+        actionFromBottom: actionRect === undefined ? null : elementRect.bottom - actionRect.top,
+        actionFromRight: actionRect === undefined ? null : elementRect.right - actionRect.right,
       };
     });
     observer.observe(element);
@@ -828,7 +849,6 @@ function useComposerRestingTransition(
       }
       animationRef.current?.cancel();
       animationRef.current = null;
-      animationTargetHeightRef.current = null;
       for (const animation of contentAnimationsRef.current) animation.cancel();
       contentAnimationsRef.current = [];
       for (const animation of stateChangeAnimationsRef.current) animation.cancel();
@@ -997,6 +1017,30 @@ const extendReplacementRangeForTrailingSpace = (
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
 
+/**
+ * Width the context strip's labels are still giving up (or taking back) in
+ * their compact-mode width tween. The controls host shares the strip with
+ * them, so measuring mid-tween resolves a different layout every frame, and
+ * each change re-renders the whole composer during the resting transition.
+ */
+function settlingContextLabelWidth(host: HTMLElement): number {
+  const strip = host.closest<HTMLElement>('[data-slot="composer-context-strip"]');
+  if (!strip) return 0;
+  let width = 0;
+  for (const label of strip.querySelectorAll<HTMLElement>("[data-composer-label]")) {
+    if (host.contains(label)) continue;
+    for (const animation of label.getAnimations()) {
+      if (animation.playState !== "running" || !(animation.effect instanceof KeyframeEffect)) {
+        continue;
+      }
+      const target = animation.effect.getKeyframes().at(-1)?.width;
+      if (typeof target !== "string") continue;
+      width += label.getBoundingClientRect().width - Number.parseFloat(target);
+    }
+  }
+  return width;
+}
+
 function useRestingComposerControlsLayout(host: HTMLDivElement | null, useControlsAsHost = false) {
   const [controls, setControls] = useState<HTMLDivElement | null>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
@@ -1022,7 +1066,8 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
     const hostWidth =
       currentHost.clientWidth -
       (Number.parseFloat(style.paddingInlineStart) || 0) -
-      (Number.parseFloat(style.paddingInlineEnd) || 0);
+      (Number.parseFloat(style.paddingInlineEnd) || 0) +
+      settlingContextLabelWidth(currentHost);
 
     setLayout((current) => {
       const next = resolveRestingComposerControlsLayout({
