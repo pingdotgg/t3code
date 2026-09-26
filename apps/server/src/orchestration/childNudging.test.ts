@@ -26,4 +26,20 @@ describe("child nudge prompt", () => {
     expect(prompt).toContain(update.decision!.question);
     expect(prompt).toContain(update.decision!.recommendation);
   });
+
+  it("keeps the prompt byte cap when wait progress is also present", () => {
+    const update: ChildNudgeUpdate = {
+      id: "report-a",
+      childThreadId: ThreadId.make("child-a"),
+      childTitle: "Child A",
+      assignmentId: MessageId.make("assignment-a"),
+      kind: "blocked",
+      summary: "界".repeat(4_000),
+    };
+
+    const prompt = childNudgePrompt([update], `Wait: ${"界".repeat(8_000)}`);
+
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(24 * 1024);
+    expect(prompt).toContain("Wait:");
+  });
 });

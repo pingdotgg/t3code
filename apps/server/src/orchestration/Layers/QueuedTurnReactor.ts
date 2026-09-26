@@ -29,7 +29,11 @@ import {
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { isAutomaticChildNudgeBlocked } from "../childNudging.ts";
 import { childWaitIsSatisfied, evaluateChildFollowUp } from "@t3tools/shared/childFollowUp";
-import { settleDelegation } from "../delegationSettlement.ts";
+import {
+  delegationSettlementNotBefore,
+  delegationStallEpisode,
+  settleDelegation,
+} from "../delegationSettlement.ts";
 
 const MONITOR_REVALIDATION_RETRY_INTERVAL = Duration.seconds(20);
 const MAX_MONITOR_REVALIDATION_ATTEMPTS = 3;
@@ -547,13 +551,38 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
 
   const settleThreadIfReady = (readModel: OrchestrationReadModel, thread: OrchestrationThread) =>
     Effect.gen(function* () {
-      if (!settleDelegation(readModel, thread)) return false;
+      if (settleDelegation(readModel, thread)) {
+        const notBefore = delegationSettlementNotBefore(thread);
+        if (notBefore !== null && Date.parse(notBefore) > Date.now()) {
+          yield* scheduleDelegationSettlementWake(thread.id, notBefore);
+          return true;
+        }
+        yield* orchestrationEngine.dispatch({
+          type: "thread.delegation.settle",
+          commandId: serverCommandId("delegation.settle"),
+          threadId: thread.id,
+        });
+        return true;
+      }
+      const stall = delegationStallEpisode(readModel, thread);
+      if (!stall) return false;
+      const settings = yield* serverSettings.getSettings;
+      const dueAt = new Date(
+        Date.parse(stall.stalledSince) + settings.delegationIdleStallThresholdMs,
+      ).toISOString();
+      if (Date.parse(dueAt) > Date.now()) {
+        yield* scheduleDelegationStallWake(thread.id, dueAt, stall.id);
+        return false;
+      }
       yield* orchestrationEngine.dispatch({
-        type: "thread.delegation.settle",
-        commandId: serverCommandId("delegation.settle"),
+        type: "thread.delegation.stall",
+        commandId: CommandId.make(`server:${stall.id}`),
         threadId: thread.id,
+        stallId: stall.id,
+        summary: stall.summary,
+        createdAt: new Date().toISOString(),
       });
-      return true;
+      return false;
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("queued turn reactor failed to settle child delegation", {
@@ -563,6 +592,44 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
       ),
     );
 
+  const settleThreadById = (threadId: ThreadId): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const thread = readModel.threads.find((entry) => entry.id === threadId);
+      return thread ? yield* settleThreadIfReady(readModel, thread) : false;
+    });
+
+  const scheduleDelegationSettlementWake = (
+    threadId: ThreadId,
+    dueAt: string,
+  ): Effect.Effect<void> => {
+    const key = `delegation-settlement:${threadId}:${dueAt}`;
+    if (scheduledChildWakes.has(key)) return Effect.void;
+    scheduledChildWakes.add(key);
+    return Effect.sleep(Duration.millis(Math.max(0, Date.parse(dueAt) - Date.now()))).pipe(
+      Effect.andThen(Effect.suspend(() => settleThreadById(threadId))),
+      Effect.ensuring(Effect.sync(() => scheduledChildWakes.delete(key))),
+      Effect.forkIn(wakeScope),
+      Effect.asVoid,
+    );
+  };
+
+  const scheduleDelegationStallWake = (
+    threadId: ThreadId,
+    dueAt: string,
+    stallId: string,
+  ): Effect.Effect<void> => {
+    const key = `delegation-stall:${threadId}:${stallId}:${dueAt}`;
+    if (scheduledChildWakes.has(key)) return Effect.void;
+    scheduledChildWakes.add(key);
+    return Effect.sleep(Duration.millis(Math.max(0, Date.parse(dueAt) - Date.now()))).pipe(
+      Effect.andThen(Effect.suspend(() => settleThreadById(threadId))),
+      Effect.ensuring(Effect.sync(() => scheduledChildWakes.delete(key))),
+      Effect.forkIn(wakeScope),
+      Effect.asVoid,
+    );
+  };
+
   const reconcileUnavailableChildAssignments = (
     index: ThreadReadModelIndex,
     childThreadId: ThreadId,
@@ -571,11 +638,11 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
       const child = index.threadsById.get(childThreadId);
       const assignments = (index.waitingParentsByChildId.get(childThreadId) ?? []).filter(
         (assignment) =>
-          !child ||
-          child.archivedAt !== null ||
-          child.deletedAt !== null ||
-          child.parentThreadId !== assignment.parentThreadId ||
-          child.nudging?.delegation?.assignmentId !== assignment.assignmentId,
+          child !== undefined &&
+          (child.archivedAt !== null ||
+            child.deletedAt !== null ||
+            child.parentThreadId !== assignment.parentThreadId ||
+            child.nudging?.delegation?.assignmentId !== assignment.assignmentId),
       );
       yield* Effect.forEach(
         assignments,
@@ -601,7 +668,11 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
   const reconcileOpenDelegations = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     yield* Effect.forEach(
-      readModel.threads.filter((thread) => settleDelegation(readModel, thread) !== null),
+      readModel.threads.filter(
+        (thread) =>
+          thread.nudging?.delegation?.followUp === "automatic" &&
+          thread.nudging.delegation.completedAt === null,
+      ),
       (thread) => settleThreadIfReady(readModel, thread),
       { concurrency: 1, discard: true },
     );
@@ -669,7 +740,12 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
     );
     yield* reconcileOpenDelegations;
     yield* Effect.forkScoped(
-      Stream.runForEach(serverSettings.streamChanges, () => drainQueuedThreads),
+      Stream.runForEach(serverSettings.streamChanges, () =>
+        Effect.all([drainQueuedThreads, reconcileOpenDelegations], {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ),
     );
     // Keep this sweep: PR-monitor revalidation retries also depend on it.
     yield* Effect.forkScoped(

@@ -569,6 +569,9 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  delegationIdleStallThresholdMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(10 * 60 * 1_000)),
+  ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -752,6 +755,9 @@ export const ServerSettingsPatch = Schema.Struct({
   agentWorkflows: Schema.optionalKey(AgentWorkflowSettingsPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   delegatedThreadModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  delegationIdleStallThresholdMs: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(Schema.String),

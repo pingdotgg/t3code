@@ -14,6 +14,7 @@ type PlannedEvent = {
 
 const CHILD_NUDGE_PROMPT_MAX_BYTES = 24 * 1024;
 const CHILD_NUDGE_SUMMARY_MAX_CHARS = 1_200;
+const CHILD_NUDGE_WAIT_STATUS_MAX_CHARS = 2_000;
 
 function compactSummary(update: ChildNudgeUpdate, maxChars: number): string {
   if (update.summary.length <= maxChars) return update.summary;
@@ -69,13 +70,17 @@ export function childNudgePrompt(
   updates: ReadonlyArray<ChildNudgeUpdate>,
   waitStatus?: string,
 ): string {
+  const compactWaitStatus =
+    waitStatus && waitStatus.length > CHILD_NUDGE_WAIT_STATUS_MAX_CHARS
+      ? `${waitStatus.slice(0, CHILD_NUDGE_WAIT_STATUS_MAX_CHARS)}…`
+      : waitStatus;
   let low = 0;
   let high = CHILD_NUDGE_SUMMARY_MAX_CHARS;
-  let prompt = renderChildNudgePrompt(updates, high, waitStatus);
+  let prompt = renderChildNudgePrompt(updates, high, compactWaitStatus);
   if (Buffer.byteLength(prompt, "utf8") <= CHILD_NUDGE_PROMPT_MAX_BYTES) return prompt;
   while (low < high) {
     const candidate = Math.ceil((low + high) / 2);
-    const candidatePrompt = renderChildNudgePrompt(updates, candidate, waitStatus);
+    const candidatePrompt = renderChildNudgePrompt(updates, candidate, compactWaitStatus);
     if (Buffer.byteLength(candidatePrompt, "utf8") <= CHILD_NUDGE_PROMPT_MAX_BYTES) {
       low = candidate;
       prompt = candidatePrompt;
@@ -83,7 +88,7 @@ export function childNudgePrompt(
       high = candidate - 1;
     }
   }
-  return renderChildNudgePrompt(updates, low, waitStatus);
+  return renderChildNudgePrompt(updates, low, compactWaitStatus);
 }
 
 export function queueChildNudgeBatch(

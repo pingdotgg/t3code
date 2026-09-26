@@ -2034,6 +2034,15 @@ const ThreadDelegationSettleCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+const ThreadDelegationStallCommand = Schema.Struct({
+  type: Schema.Literal("thread.delegation.stall"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  stallId: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString.check(Schema.isMaxLength(4000)),
+  createdAt: IsoDateTime,
+});
+
 const ThreadChildAssignmentUnavailableCommand = Schema.Struct({
   type: Schema.Literal("thread.child.assignment.unavailable"),
   commandId: CommandId,
@@ -2077,6 +2086,7 @@ export const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadDelegationSettleCommand,
+  ThreadDelegationStallCommand,
   ThreadChildAssignmentUnavailableCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,

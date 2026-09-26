@@ -1755,30 +1755,26 @@ async function delegateWorkTool(
       identity?.followUp === "automatic" && !identity.dryRun ? [index] : [],
     ),
   );
-  const initialParentWait: ChildWaitCondition | null =
-    waitMode === "none"
-      ? null
-      : {
-          mode: waitMode,
-          assignments: childIdentities.flatMap((identity, index) =>
-            identity && waitableIndices.has(index)
-              ? [
-                  {
-                    childThreadId: ThreadId.make(identity.threadId),
-                    assignmentId: MessageId.make(identity.assignmentId),
-                  },
-                ]
-              : [],
-          ),
-        };
   const preparedChildren = children.map((child, index) => {
     const identity = childIdentities[index];
     if (!identity || !child || typeof child !== "object" || Array.isArray(child)) return child;
+    const parentWait: ChildWaitCondition | undefined =
+      waitMode !== "none" && waitableIndices.has(index)
+        ? {
+            mode: waitMode,
+            assignments: [
+              {
+                childThreadId: ThreadId.make(identity.threadId),
+                assignmentId: MessageId.make(identity.assignmentId),
+              },
+            ],
+          }
+        : undefined;
     return {
       ...asRecord(child),
       threadId: identity.threadId,
       assignmentId: identity.assignmentId,
-      ...(waitableIndices.has(index) ? { parentWait: initialParentWait } : {}),
+      ...(parentWait ? { parentWait } : {}),
     };
   });
   const serializedBatch = await createNestedThreadsTool(
@@ -1790,42 +1786,6 @@ async function delegateWorkTool(
     dependencyOverrides,
     DELEGATE_WORK_POLICY,
   );
-  if (waitableIndices.size === 0 || initialParentWait === null) return serializedBatch;
-
-  const batch = decodeNestedThreadBatchCreationOutcome(JSON.parse(serializedBatch) as unknown);
-  const assignmentsToRemove = batch.results.flatMap(({ index, outcome }) => {
-    const identity = childIdentities[index];
-    if (!identity || !waitableIndices.has(index)) return [];
-    if (
-      outcome.status === "created" ||
-      (outcome.status === "ambiguous" && outcome.threadId !== null)
-    ) {
-      if (outcome.threadId !== identity.threadId) {
-        throw new Error(
-          `delegate_work child ${String(index)} returned a different thread id than requested.`,
-        );
-      }
-      return [];
-    }
-    return [
-      {
-        childThreadId: ThreadId.make(identity.threadId),
-        assignmentId: MessageId.make(identity.assignmentId),
-      },
-    ];
-  });
-  if (assignmentsToRemove.length > 0) {
-    await runCommand(options.cwd, options.cliCommand, [
-      ...(options.cliArgsPrefix ?? []),
-      "--log-level",
-      "error",
-      "chat",
-      "wait-prune",
-      parentThreadId,
-      JSON.stringify(assignmentsToRemove),
-      ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
-    ]);
-  }
   return serializedBatch;
 }
 

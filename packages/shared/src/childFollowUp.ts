@@ -30,11 +30,49 @@ function childWaitAssignmentIsSettled(
   );
 }
 
+function childWaitAssignmentMatchesUpdate(
+  assignment: ChildWaitCondition["assignments"][number],
+  update: ChildNudgeUpdate,
+): boolean {
+  return (
+    assignment.childThreadId === update.childThreadId &&
+    assignment.assignmentId === update.assignmentId
+  );
+}
+
 export function childWaitIsSatisfied(wait: ChildWaitCondition): boolean {
   if (wait.mode === "decisions-only" || wait.assignments.length === 0) return false;
   return wait.mode === "all"
     ? wait.assignments.every(childWaitAssignmentIsSettled)
     : wait.assignments.some(childWaitAssignmentIsSettled);
+}
+
+export function childWaitHasUnsettledUpdate(
+  wait: ChildWaitCondition,
+  updates: ReadonlyArray<ChildNudgeUpdate>,
+): boolean {
+  return (
+    !childWaitIsSatisfied(wait) &&
+    updates.some((update) =>
+      wait.assignments.some((assignment) => childWaitAssignmentMatchesUpdate(assignment, update)),
+    )
+  );
+}
+
+export function childWaitIsSatisfiedByUpdates(
+  wait: ChildWaitCondition,
+  updates: ReadonlyArray<ChildNudgeUpdate>,
+): boolean {
+  return (
+    childWaitIsSatisfied(wait) &&
+    updates.some((update) =>
+      wait.assignments.some(
+        (assignment) =>
+          childWaitAssignmentIsSettled(assignment) &&
+          childWaitAssignmentMatchesUpdate(assignment, update),
+      ),
+    )
+  );
 }
 
 export function childWaitBlockReason(
@@ -99,7 +137,11 @@ export function evaluateChildFollowUp(
     return { updates, reason: "The parent is archived or deleted.", dueAt: null };
   }
   if (updates.some(childReportNeedsAttention)) return { updates, reason: null, dueAt: null };
-  const reason = childWaitBlockReason(parent.nudging?.wait, children, parent.id);
+  const wait = parent.nudging?.wait;
+  const reason =
+    wait && (wait.mode === "decisions-only" || childWaitHasUnsettledUpdate(wait, updates))
+      ? childWaitBlockReason(wait, children, parent.id)
+      : null;
   if (reason) return { updates, reason, dueAt: null };
   const dueAt = turn.origin.collectUntil ?? null;
   return {

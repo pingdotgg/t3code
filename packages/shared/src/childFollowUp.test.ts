@@ -1,9 +1,22 @@
-import { MessageId, ThreadId, type ChildWaitCondition } from "@t3tools/contracts";
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  MessageId,
+  QueuedTurnId,
+  ThreadId,
+  type ChildNudgeUpdate,
+  type ChildWaitCondition,
+  type OrchestrationQueuedTurn,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import type { ChildFollowUpThread } from "./childFollowUp.ts";
-import { childWaitBlockReason, childWaitIsSatisfied } from "./childFollowUp.ts";
+import {
+  childWaitBlockReason,
+  childWaitIsSatisfied,
+  evaluateChildFollowUp,
+} from "./childFollowUp.ts";
 
 const parentId = ThreadId.make("parent");
+const now = "2026-09-25T00:00:00.000Z";
 const unavailableCases: ReadonlyArray<{
   readonly description: string;
   readonly children: ReadonlyMap<ThreadId, ChildFollowUpThread>;
@@ -58,6 +71,26 @@ function child(
   };
 }
 
+function nudgeTurn(update: ChildNudgeUpdate): OrchestrationQueuedTurn {
+  return {
+    id: QueuedTurnId.make("queued-nudge"),
+    threadId: parentId,
+    message: {
+      messageId: MessageId.make("queued-nudge-message"),
+      role: "user",
+      text: "Child assignment updates",
+      attachments: [],
+    },
+    origin: { kind: "child-nudge", updates: [update] },
+    runtimeMode: "approval-required",
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    createdAt: now,
+    updatedAt: now,
+    failedAt: null,
+    failureMessage: null,
+  };
+}
+
 describe("child wait conditions", () => {
   it.each(["result-available", "failed", "blocked"] as const)(
     "treats %s as a settled assignment",
@@ -89,4 +122,68 @@ describe("child wait conditions", () => {
       );
     },
   );
+
+  it.each([
+    {
+      name: "outside the current wait",
+      waitOutcome: undefined,
+      updateChildId: "old-child",
+      updateAssignmentId: "old-assignment",
+      expectedReason: null,
+    },
+    {
+      name: "already settled in the current wait",
+      waitOutcome: "result-available" as const,
+      updateChildId: "new-child",
+      updateAssignmentId: "new-assignment",
+      expectedReason: null,
+    },
+    {
+      name: "unsettled in the current wait",
+      waitOutcome: undefined,
+      updateChildId: "new-child",
+      updateAssignmentId: "new-assignment",
+      expectedReason: "Waiting for 1 child.",
+    },
+  ])("holds a routine nudge only when its update is $name", (testCase) => {
+    const currentChild = child("new-child", "new-assignment");
+    const oldChild = child("old-child", "old-assignment");
+    const parent: ChildFollowUpThread = {
+      id: parentId,
+      parentThreadId: null,
+      archivedAt: null,
+      nudging: {
+        wait: {
+          mode: "all",
+          assignments: [
+            {
+              childThreadId: currentChild.id,
+              assignmentId: currentChild.nudging!.delegation!.assignmentId,
+              ...(testCase.waitOutcome ? { outcome: testCase.waitOutcome } : {}),
+            },
+          ],
+        },
+      },
+    };
+    const update: ChildNudgeUpdate = {
+      id: "child-result",
+      childThreadId: ThreadId.make(testCase.updateChildId),
+      childTitle: "Child",
+      assignmentId: MessageId.make(testCase.updateAssignmentId),
+      kind: "result-available",
+      summary: "Ready",
+    };
+
+    expect(
+      evaluateChildFollowUp(
+        parent,
+        nudgeTurn(update),
+        new Map([
+          [currentChild.id, currentChild],
+          [oldChild.id, oldChild],
+        ]),
+        now,
+      ).reason,
+    ).toBe(testCase.expectedReason);
+  });
 });

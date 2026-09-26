@@ -1799,7 +1799,7 @@ describe("delegate_work MCP tool", () => {
     ]);
   });
 
-  it("installs wait-all before creation can report and prunes failed assignments", async () => {
+  it("adds only successfully created children to the wait without follow-up pruning", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-delegate-wait-"));
     const callsPath = path.join(root, "cli-calls.jsonl");
     const originalCallsPath = process.env.T3_MCP_TEST_CALLS;
@@ -1825,7 +1825,7 @@ describe("delegate_work MCP tool", () => {
           message: "Nested-thread inputs are valid; no thread or workspace was created."
         }));
       } else if (command === "wait-prune") {
-        console.log(JSON.stringify({ updated: true }));
+        process.exitCode = 17;
       } else if (value("--title") === "Fail") {
         console.log(JSON.stringify({
           status: "failed",
@@ -1887,33 +1887,47 @@ describe("delegate_work MCP tool", () => {
       const parentWaitIndex = firstCreate.indexOf("--parent-wait");
       expect(parentWaitIndex).toBeGreaterThan(-1);
       const firstWait = JSON.parse(firstCreate[parentWaitIndex + 1]!);
-      const waitPrune = calls.find((args) => {
+      const failedCreate = calls.find((args) => {
         const chatIndex = args.indexOf("chat");
-        return chatIndex >= 0 && args[chatIndex + 1] === "wait-prune";
+        const titleIndex = args.indexOf("--title");
+        return (
+          chatIndex >= 0 &&
+          args[chatIndex + 1] === "new" &&
+          !args.includes("--dry-run") &&
+          titleIndex >= 0 &&
+          args[titleIndex + 1] === "Fail"
+        );
       })!;
-      const removedAssignments = JSON.parse(waitPrune[waitPrune.indexOf("wait-prune") + 2]!);
 
       expect(
         result.results.map((entry: { outcome: { status: string } }) => entry.outcome.status),
       ).toEqual(["created", "failed", "created"]);
-      expect(firstWait).toMatchObject({
+      expect(firstWait).toEqual({
         mode: "all",
-        assignments: expect.arrayContaining([
-          expect.objectContaining({
+        assignments: [
+          {
             childThreadId: firstCreate[firstCreate.indexOf("--thread-id") + 1],
-          }),
-        ]),
+            assignmentId: firstCreate[firstCreate.indexOf("--assignment-id") + 1],
+          },
+        ],
       });
-      expect(firstWait.assignments).toHaveLength(2);
-      expect(removedAssignments).toEqual([
-        {
-          childThreadId: result.results[1]!.outcome.threadId,
-          assignmentId: firstWait.assignments.find(
-            (assignment: { childThreadId: string }) =>
-              assignment.childThreadId === result.results[1]!.outcome.threadId,
-          )!.assignmentId,
-        },
-      ]);
+      const failedWaitIndex = failedCreate.indexOf("--parent-wait");
+      expect(failedWaitIndex).toBeGreaterThan(-1);
+      expect(JSON.parse(failedCreate[failedWaitIndex + 1]!)).toEqual({
+        mode: "all",
+        assignments: [
+          {
+            childThreadId: failedCreate[failedCreate.indexOf("--thread-id") + 1],
+            assignmentId: failedCreate[failedCreate.indexOf("--assignment-id") + 1],
+          },
+        ],
+      });
+      expect(
+        calls.some((args) => {
+          const chatIndex = args.indexOf("chat");
+          return chatIndex >= 0 && args[chatIndex + 1] === "wait-prune";
+        }),
+      ).toBe(false);
 
       await writeFile(callsPath, "");
       await __testing.delegateWorkTool(
@@ -1935,7 +1949,7 @@ describe("delegate_work MCP tool", () => {
           const chatIndex = args.indexOf("chat");
           return chatIndex >= 0 && args[chatIndex + 1] === "wait-prune";
         }),
-      ).toBe(true);
+      ).toBe(false);
     } finally {
       if (originalCallsPath === undefined) delete process.env.T3_MCP_TEST_CALLS;
       else process.env.T3_MCP_TEST_CALLS = originalCallsPath;
@@ -2019,7 +2033,7 @@ describe("delegate_work MCP tool", () => {
       expect(automaticWaitIndex).toBeGreaterThan(-1);
       const automaticWait = JSON.parse(automaticCreate[automaticWaitIndex + 1]!);
       expect(automaticWait).toMatchObject({ mode: "all", assignments: expect.any(Array) });
-      expect(automaticWait.assignments).toHaveLength(2);
+      expect(automaticWait.assignments).toHaveLength(1);
 
       const notifyOnlyCalls = await invoke({ followUp: "notify-only" }, [
         { title: "Notify first", prompt: "Record first." },
@@ -2071,8 +2085,6 @@ describe("delegate_work MCP tool", () => {
         expect.any(String),
         "--assignment-id",
         expect.any(String),
-        "--parent-wait",
-        "null",
         "--cross-thread-source",
         "parent-1",
         "--cross-thread-capability",

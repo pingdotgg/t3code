@@ -47,7 +47,11 @@ import {
   queueChildNudge,
   queueChildNudgeBatch,
 } from "./childNudging.ts";
-import { childWaitIsSatisfied, evaluateChildFollowUp } from "@t3tools/shared/childFollowUp";
+import {
+  childWaitIsSatisfied,
+  childWaitIsSatisfiedByUpdates,
+  evaluateChildFollowUp,
+} from "@t3tools/shared/childFollowUp";
 import {
   sameThreadPullRequest,
   sameThreadPullRequestAssociation,
@@ -61,7 +65,7 @@ import {
   transitionDelegationExecution,
   type RecordedReportOutcome,
 } from "./dispatchAuthority.ts";
-import { settleDelegation } from "./delegationSettlement.ts";
+import { delegationStallEpisode, settleDelegation } from "./delegationSettlement.ts";
 import {
   acceptValidationResult,
   claimValidationLease,
@@ -526,23 +530,28 @@ function childWaitProgressStatus(
   if (!wait) return undefined;
   const total = wait.assignments.length;
   const settled = wait.assignments.filter((assignment) => assignment.outcome !== undefined).length;
-  const outstanding = wait.assignments.find((assignment) => assignment.outcome === undefined);
+  const outstanding = wait.assignments.filter((assignment) => assignment.outcome === undefined);
+  const outstandingStatus = () => {
+    const visible = outstanding.slice(0, 8).map((assignment) => {
+      const child = threads.find((candidate) => candidate.id === assignment.childThreadId);
+      return `${child?.title ?? "Child"} (${assignment.childThreadId})`;
+    });
+    return `${visible.join(", ")}${outstanding.length > visible.length ? `, and ${outstanding.length - visible.length} more` : ""}`;
+  };
   if (wait.mode === "decisions-only") {
     if (total === 0) return "Wait (decisions-only): decisions and blockers only.";
-    if (!outstanding) {
+    if (outstanding.length === 0) {
       return `Wait (decisions-only): ${settled}/${total} settled; assignment results do not satisfy this wait; only decisions or blockers wake it.`;
     }
-    const child = threads.find((candidate) => candidate.id === outstanding.childThreadId);
-    return `Wait (decisions-only): ${settled}/${total} settled; still waiting on ${child?.title ?? "Child"} (${outstanding.childThreadId}) for a decision or blocker.`;
+    return `Wait (decisions-only): ${settled}/${total} settled; still waiting on ${outstandingStatus()} for a decision or blocker.`;
   }
   if (wait.satisfiedAt || childWaitIsSatisfied(wait)) {
     return `Wait (${wait.mode}): ${settled}/${total} settled; condition met.`;
   }
-  if (!outstanding) {
+  if (outstanding.length === 0) {
     return `Wait (${wait.mode}): ${settled}/${total} settled; at least one assignment needs attention.`;
   }
-  const child = threads.find((candidate) => candidate.id === outstanding.childThreadId);
-  return `Wait (${wait.mode}): ${settled}/${total} settled; still waiting on ${child?.title ?? "Child"} (${outstanding.childThreadId})`;
+  return `Wait (${wait.mode}): ${settled}/${total} settled; still waiting on ${outstandingStatus()}`;
 }
 
 function appendDelegationSettlement(input: {
@@ -1507,7 +1516,36 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             detail: "A creation-time wait must include the created child's assignment.",
           });
         }
-        parentWait = { mode: parentWait.mode, assignments };
+        const currentWait = parentThread.nudging?.wait;
+        const shouldMerge =
+          currentWait !== undefined &&
+          currentWait !== null &&
+          currentWait.mode === parentWait.mode &&
+          currentWait.satisfiedAt === undefined &&
+          !childWaitIsSatisfied(currentWait);
+        if (shouldMerge) {
+          const mergedAssignments = [...currentWait.assignments];
+          for (const assignment of assignments) {
+            const existingIndex = mergedAssignments.findIndex(
+              (entry) =>
+                entry.childThreadId === assignment.childThreadId &&
+                entry.assignmentId === assignment.assignmentId,
+            );
+            if (existingIndex < 0) mergedAssignments.push(assignment);
+          }
+          if (mergedAssignments.length > 32) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "A parent wait cannot contain more than 32 assignments after merging.",
+            });
+          }
+          parentWait = { ...currentWait, assignments: mergedAssignments };
+        } else {
+          // Absent/satisfied waits are replaced. An unsatisfied wait with a
+          // different mode is also replaced so callers never combine
+          // incompatible any/all semantics implicitly.
+          parentWait = { mode: parentWait.mode, assignments };
+        }
       }
       return [
         createdEvent,
@@ -3782,7 +3820,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       const waitSatisfied =
-        isNudge && nudging?.wait && !nudging.wait.satisfiedAt && childWaitIsSatisfied(nudging.wait);
+        isNudge &&
+        followUp &&
+        nudging?.wait &&
+        !nudging.wait.satisfiedAt &&
+        childWaitIsSatisfiedByUpdates(nudging.wait, followUp.updates);
       let nextNudging: ThreadNudging | null = null;
       if (execution && nudging) {
         nextNudging = { ...nudging, delegation: execution.delegation };
@@ -4572,6 +4614,54 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         settlement,
         commandId: command.commandId,
       });
+    }
+
+    case "thread.delegation.stall": {
+      const child = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const episode = delegationStallEpisode(readModel, child);
+      if (!episode || episode.id !== command.stallId || episode.summary !== command.summary) {
+        return [];
+      }
+      const delegation = child.nudging?.delegation;
+      const parent = child.parentThreadId
+        ? readModel.threads.find(
+            (thread) => thread.id === child.parentThreadId && thread.deletedAt === null,
+          )
+        : undefined;
+      if (!delegation || !parent) return [];
+      const report: ChildNudgeUpdate = {
+        id: episode.id,
+        assignmentId: delegation.assignmentId,
+        ...(delegation.dispatchId ? { dispatchId: delegation.dispatchId } : {}),
+        childThreadId: child.id,
+        childTitle: child.title,
+        kind: "blocked",
+        wakeReason: "assignment-blocked",
+        summary: command.summary,
+      };
+      const notification: PlannedOrchestrationEvent = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: parent.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.child-lifecycle-notified",
+        payload: {
+          parentThreadId: parent.id,
+          childThreadId: child.id,
+          childTitle: child.title,
+          lifecycle: "blocked",
+          dedupeKey: childLifecycleDedupeKey(child.id, "blocked", report.id),
+          createdAt: command.createdAt,
+          report,
+        },
+      };
+      return [notification, queueChildNudge(parent, report, notification)];
     }
 
     case "thread.child.assignment.unavailable": {
