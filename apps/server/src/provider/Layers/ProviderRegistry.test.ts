@@ -23,6 +23,7 @@ import {
   ProviderInstanceId,
   ServerSettings,
   type ServerProvider,
+  type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
@@ -33,7 +34,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { type ClaudeCapabilitiesProbe, checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -145,7 +146,15 @@ function booleanDescriptor(id: string, label: string) {
   };
 }
 
-function claudeCapabilities(overrides: Partial<ClaudeCapabilitiesProbe> = {}) {
+type TestClaudeCapabilities = {
+  readonly email: string | undefined;
+  readonly subscriptionType: string | undefined;
+  readonly tokenSource: string | undefined;
+  readonly apiProvider: string | undefined;
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+};
+
+function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
       email: undefined,
@@ -153,13 +162,12 @@ function claudeCapabilities(overrides: Partial<ClaudeCapabilitiesProbe> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
-      checkedAt: "2026-09-25T12:00:00.000Z",
       ...overrides,
     });
 }
 
 const noClaudeCapabilities = () =>
-  Effect.sync(() => undefined as ClaudeCapabilitiesProbe | undefined);
+  Effect.sync(() => undefined as TestClaudeCapabilities | undefined);
 
 function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -2750,13 +2758,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("reads banked resets only for subscription logins", () =>
         Effect.gen(function* () {
-          const check = (overrides: Partial<ClaudeCapabilitiesProbe>) =>
+          const check = (overrides: Partial<TestClaudeCapabilities>) =>
             checkClaudeProviderStatus(
               defaultClaudeSettings,
-              claudeCapabilities({
-                usage: { rate_limits_available: true, rate_limits: {} },
-                ...overrides,
-              }),
+              () =>
+                Effect.succeed({
+                  email: undefined,
+                  subscriptionType: undefined,
+                  tokenSource: undefined,
+                  apiProvider: undefined,
+                  slashCommands: [],
+                  usage: { rate_limits_available: true, rate_limits: {} },
+                  ...overrides,
+                }),
               undefined,
               undefined,
               undefined,
@@ -2767,32 +2781,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const bedrock = yield* check({ apiProvider: "bedrock" });
           assert.deepStrictEqual(subscription.usageLimits?.resetCredits, { availableCount: 2 });
           assert.strictEqual(bedrock.usageLimits?.resetCredits, undefined);
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
-
-      // Instances share cached probes, so the usage can be older than the check.
-      it.effect("dates usage limits by the probe, not the status check", () =>
-        Effect.gen(function* () {
-          const probedAt = "2026-09-25T12:00:00.000Z";
-          const check = (usage: ClaudeCapabilitiesProbe["usage"]) =>
-            checkClaudeProviderStatus(
-              defaultClaudeSettings,
-              claudeCapabilities({ checkedAt: probedAt, ...(usage ? { usage } : {}) }),
-            );
-          const read = yield* check({ rate_limits_available: true, rate_limits: {} });
-          const failed = yield* check(undefined);
-          assert.notStrictEqual(read.checkedAt, probedAt);
-          assert.strictEqual(read.usageLimits?.checkedAt, probedAt);
-          assert.strictEqual(failed.usageLimits?.unavailable?.reason, "probeFailed");
-          assert.strictEqual(failed.usageLimits?.checkedAt, probedAt);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

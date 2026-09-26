@@ -548,7 +548,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
   );
 
   // Instances with the same binary, home, cwd and env vars read the same
-  // account, so they share one SDK probe. A new or edited instance probes again.
+  // account, so they share one SDK probe. An explicit refresh re-probes it.
   it.live("shares one Claude probe between instances with the same probe input", () =>
     Effect.gen(function* () {
       if (yield* isHostWindows) return;
@@ -592,7 +592,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
           { name: "T3_TEST_ACCOUNT", value: "other", sensitive: false },
         ]),
       };
-      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* makeProviderInstanceRegistry({
         drivers: [ClaudeDriver],
         configMap,
       });
@@ -608,10 +608,8 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       yield* refreshAll;
       expect(probedAccounts()).toEqual(["default", "other"]);
 
-      yield* mutator.reconcile({
-        ...configMap,
-        [ProviderInstanceId.make("claude_a")]: claude("A renamed"),
-      });
+      const claudeA = yield* registry.getInstance(ProviderInstanceId.make("claude_a"));
+      yield* claudeA?.invalidateCaches ?? Effect.void;
       yield* refreshAll;
       expect(probedAccounts()).toEqual(["default", "default", "other"]);
     }).pipe(Effect.provide(testLayer)),

@@ -161,7 +161,6 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
         },
-        checkedAt: "1970-01-01T00:00:00.000Z",
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off

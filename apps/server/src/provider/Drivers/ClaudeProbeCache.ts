@@ -1,11 +1,9 @@
 /**
  * One server-wide cache for the Claude capabilities probe. Claude instances
- * whose probe inputs match (same binary, home, cwd and instance env vars)
- * read the same account, so they share one cached result instead of each
- * starting its own SDK session. Concurrent reads of one input join one probe,
- * so a full refresh runs one probe per distinct input. There is no global
- * limit on purpose: a probe takes seconds, so a queue would delay the status
- * of every input past the limit.
+ * with the same probe input read the same account, so they share one cached
+ * result, and concurrent reads of one input join one SDK probe. Each entry
+ * keeps 5 minutes, a failed probe (`undefined`) included, like the old
+ * per-instance cache.
  *
  * @module provider/Drivers/ClaudeProbeCache
  */
@@ -13,95 +11,34 @@ import type { ClaudeSettings, ProviderInstanceEnvironment } from "@t3tools/contr
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as MutableHashMap from "effect/MutableHashMap";
-import * as Option from "effect/Option";
 
 import { type ClaudeCapabilitiesProbe, probeClaudeCapabilities } from "../Layers/ClaudeProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 
 /**
  * Every instance input the probe reads, and also the cache key. The lookup
- * gets only this value, so the probe cannot depend on an input the key leaves
- * out. Keys compare structurally.
+ * gets only this value, so the probe cannot read an input the key leaves out.
+ * Keys compare structurally.
  */
 export type ClaudeProbeInput = Pick<ClaudeSettings, "binaryPath" | "homePath"> & {
   readonly cwd: string;
   readonly environment: ProviderInstanceEnvironment;
 };
 
-const PROBE_TTL = Duration.minutes(5);
-// A failed probe or usage read leaves every instance with that input unverified
-// or without limits, so the first failure retries soon. A repeat failure
-// (signed out, no usage endpoint) waits the full TTL, like a success.
-const FIRST_FAILURE_TTL = Duration.seconds(30);
-// Keep this far above any real instance count. The cache evicts the least
-// recently used key, and every refresh reads the keys in the same order, so a
-// cap below the live key count makes each refresh re-probe every instance.
-// Stale keys only come from instance edits, and entries are small.
-const MAX_CACHED_PROBES = 1024;
-
 export class ClaudeProbeCache extends Context.Service<
   ClaudeProbeCache,
-  {
-    /** Cached probe result for `input`, or `undefined` when the probe failed. */
-    readonly capabilities: (
-      input: ClaudeProbeInput,
-    ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>;
-    /**
-     * Drop the result for `input`, even one still in flight, so the next read
-     * starts a new probe.
-     */
-    readonly invalidate: (input: ClaudeProbeInput) => Effect.Effect<void>;
-    /**
-     * Drop a finished result for `input`, but keep an in-flight probe to join.
-     * A new instance calls this, so creating or editing an instance still
-     * probes fresh, while instances created together at boot share one probe.
-     */
-    readonly dropFinished: (input: ClaudeProbeInput) => Effect.Effect<void>;
-  }
+  Cache.Cache<ClaudeProbeInput, ClaudeCapabilitiesProbe | undefined>
 >()("t3/provider/Drivers/ClaudeProbeCache") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
-  // The latest probe started for each input, and whether it failed. A probe
-  // that `invalidate` replaced can finish after a newer one, so each probe
-  // writes only its own record and cannot start a failure streak late.
-  const latestRuns = MutableHashMap.empty<ClaudeProbeInput, { failed: boolean }>();
-  const cache = yield* Cache.makeWith(
-    (input: ClaudeProbeInput) =>
-      Effect.gen(function* () {
-        const previous = MutableHashMap.get(latestRuns, input);
-        const repeat = Option.isSome(previous) && previous.value.failed;
-        // Bounded like the cache. A clear costs each input one early retry.
-        if (MutableHashMap.size(latestRuns) >= MAX_CACHED_PROBES) MutableHashMap.clear(latestRuns);
-        const run = { failed: false };
-        MutableHashMap.set(latestRuns, input, run);
-        const probe = yield* probeClaudeCapabilities(
-          input,
-          mergeProviderInstanceEnvironment(input.environment),
-          input.cwd,
-        );
-        run.failed = probe?.usage === undefined;
-        return { probe, timeToLive: run.failed && !repeat ? FIRST_FAILURE_TTL : PROBE_TTL };
-      }),
-    {
-      capacity: MAX_CACHED_PROBES,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? exit.value.timeToLive : FIRST_FAILURE_TTL),
-    },
-  );
-  return {
-    capabilities: (input) => Cache.get(cache, input).pipe(Effect.map(({ probe }) => probe)),
-    invalidate: (input) => Cache.invalidate(cache, input),
-    dropFinished: (input) =>
-      Cache.getSuccess(cache, input).pipe(
-        Effect.flatMap((finished) =>
-          Option.isSome(finished) ? Cache.invalidate(cache, input) : Effect.void,
-        ),
-      ),
-  } satisfies ClaudeProbeCache["Service"];
+export const make = Cache.make({
+  // Far above any real input count. Each refresh reads keys in the same
+  // order, so a cap below the live key count would re-probe every key.
+  capacity: 256,
+  timeToLive: Duration.minutes(5),
+  lookup: (input: ClaudeProbeInput) =>
+    probeClaudeCapabilities(input, mergeProviderInstanceEnvironment(input.environment), input.cwd),
 });
 
 export const layer = Layer.effect(ClaudeProbeCache, make);

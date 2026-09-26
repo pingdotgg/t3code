@@ -14,6 +14,7 @@
  * @module provider/Drivers/ClaudeDriver
  */
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -178,9 +179,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         cwd,
         environment,
       } satisfies ClaudeProbeCache.ClaudeProbeInput;
-      // A new or edited instance starts from its own probe, not a sibling's
-      // finished one. It still joins a probe that is in flight.
-      yield* probeCache.dropFinished(probeInput);
 
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
@@ -190,7 +188,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.flatMap((manifest) =>
               checkClaudeProviderStatus(
                 effectiveConfig,
-                () => probeCache.capabilities(probeInput),
+                () => Cache.get(probeCache, probeInput),
                 processEnv,
                 cwd,
                 resolveClaudeModelCatalog(manifest),
@@ -300,7 +298,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           Effect.tap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              yield* probeCache.invalidate(probeInput);
+              yield* Cache.invalidate(probeCache, probeInput);
               const refreshed = yield* snapshot.refresh;
               const after = refreshed.usageLimits?.checkedAt;
               if (
@@ -331,7 +329,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
-        invalidateCaches: probeCache.invalidate(probeInput),
+        invalidateCaches: Cache.invalidate(probeCache, probeInput),
         snapshotForCwd,
         adapter,
         textGeneration,
