@@ -133,9 +133,9 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
                 maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                 publishSnapshot,
-                httpClient,
               }),
             ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
           ),
       }).pipe(
         Effect.mapError(
