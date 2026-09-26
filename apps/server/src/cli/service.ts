@@ -115,10 +115,7 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
   return yield* run.pipe(Effect.provide(bootServiceLayer(config)));
 });
 
-/**
- * Where the running CLI lives, so an older `t3` earlier on PATH (an nvm global,
- * say) shows up in the output instead of looking like the version you meant.
- */
+/** The running CLI's path, so a stale `t3` earlier on PATH is visible. */
 const runningCliPath = Effect.gen(function* () {
   if (yield* HostProcessIsExecutable) return yield* HostProcessExecutablePath;
   return (yield* HostProcessArguments)[1] ?? (yield* HostProcessExecutablePath);
