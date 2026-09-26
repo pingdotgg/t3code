@@ -173,6 +173,7 @@ export const parseTailscaleMagicDnsName = (
     Effect.map(normalizeMagicDnsName),
   );
 
+/** Returns true when an address is in Tailscale's IPv4 CGNAT range */
 export function isTailscaleIpv4Address(address: string): boolean {
   const parts = address.split(".");
   if (parts.length !== 4) {
@@ -214,6 +215,11 @@ export const parseTailscaleStatus = (
     }),
   );
 
+/**
+ * Reads Tailscale status through an external command for explicit operations
+ * such as pairing and Serve configuration. Passive discovery must use
+ * TailscaleIdentityDiscovery because this command can trigger macOS TCC prompts
+ */
 export const readTailscaleStatus = Effect.gen(function* () {
   const args = ["status", "--json"];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

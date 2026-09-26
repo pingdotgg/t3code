@@ -17,6 +17,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { layer as TailscaleIdentityLayer } from "@t3tools/tailscale";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
@@ -141,6 +142,7 @@ const desktopSshLayer = desktopSshEnvironmentLayer.pipe(
 
 const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(DesktopNetworkInterfaces.layer),
+  Layer.provideMerge(TailscaleIdentityLayer),
   Layer.provideMerge(desktopFoundationLayer),
 );
 

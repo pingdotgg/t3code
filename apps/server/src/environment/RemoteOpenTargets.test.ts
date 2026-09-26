@@ -1,43 +1,12 @@
 import { it } from "@effect/vitest";
 import { HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
+import { TailscaleIdentityDiscovery, type TailscaleIdentity } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect } from "vite-plus/test";
 
 import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
-
-const encoder = new TextEncoder();
-
-const TAILSCALE_STATUS_JSON = JSON.stringify({
-  Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
-});
-
-/** Spawner whose `tailscale status --json` exits with the given output. */
-const spawnerLayer = (input: { readonly exitCode: number; readonly stdout: string }) =>
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
-      Effect.succeed(
-        ChildProcessSpawner.makeHandle({
-          pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode)),
-          isRunning: Effect.succeed(false),
-          kill: () => Effect.void,
-          unref: Effect.succeed(Effect.void),
-          stdin: Sink.drain,
-          stdout: Stream.make(encoder.encode(input.stdout)),
-          stderr: Stream.empty,
-          all: Stream.empty,
-          getInputFd: () => Sink.drain,
-          getOutputFd: () => Stream.empty,
-        }),
-      ),
-    ),
-  );
 
 const netLayer = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
   Layer.succeed(NetService.NetService, {
@@ -50,27 +19,36 @@ const netLayer = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
 
 const resolveTargets = (input: {
   readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
-  readonly tailscale: { readonly exitCode: number; readonly stdout: string };
+  readonly tailscale: Effect.Effect<TailscaleIdentity>;
   readonly hostname: string;
 }) =>
   Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) => service.resolveTargets()).pipe(
     Effect.provideService(HostProcessHostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
-        Layer.provide(Layer.mergeAll(netLayer(input.sshd), spawnerLayer(input.tailscale))),
+        Layer.provide(
+          Layer.mergeAll(
+            netLayer(input.sshd),
+            Layer.succeed(TailscaleIdentityDiscovery, {
+              discover: input.tailscale,
+            }),
+          ),
+        ),
       ),
     ),
   );
 
-const TAILSCALE_UP = { exitCode: 0, stdout: TAILSCALE_STATUS_JSON };
-const TAILSCALE_DOWN = { exitCode: 1, stdout: "" };
+const TAILSCALE_UP = Effect.succeed({
+  dnsNames: ["bb-1.tail1234.ts.net"],
+} satisfies TailscaleIdentity);
+const TAILSCALE_DOWN = Effect.succeed({ dnsNames: [] } satisfies TailscaleIdentity);
 
 describe("RemoteOpenTargets", () => {
   it.effect("advertises nothing when no sshd accepts on either loopback", () =>
     Effect.gen(function* () {
       const targets = yield* resolveTargets({
         sshd: { ipv4: false, ipv6: false },
-        tailscale: TAILSCALE_UP,
+        tailscale: Effect.die("unexpected Tailscale identity discovery"),
         hostname: "bb-1",
       });
       expect(targets).toEqual([]);
