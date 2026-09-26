@@ -14,8 +14,11 @@ and retry must update the same query without clearing other environments' matche
 Cached matches remain usable but must be identified while refreshing or after a
 failed refresh.
 
-Distinguish pending, failed, disconnected and unsupported message search from a
-completed search with no matches. Local title matching remains available on older
+For a query eligible for message search, completion requires a successful response
+for the current query from every selected environment. Pending, failed, disconnected,
+unsupported or cached-only environments leave message search incomplete, even when
+other environments return matches. Distinguish these states from a completed search
+with no matches. Local title matching remains available on older
 servers. An unsupported message-search RPC is not evidence that a title search
 failed. Empty, one-character and invalid queries remain ordinary local search
 states, without connection errors or a permanently pending indicator.
