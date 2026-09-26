@@ -17,6 +17,25 @@ const rowNode = (path: string) => ({
 });
 
 describe("createFileTreeDragMentionController", () => {
+  it("anchors external-tree mentions without changing the row paths used for deselection", () => {
+    const deselected: string[] = [];
+    const controller = createFileTreeDragMentionController({
+      deselect: (path) => deselected.push(path),
+      resolvePath: (path) => `/other-project/${path}`,
+    });
+    const transfer = makeTransfer();
+    controller.handleSelectionChange(["src/app.ts", "docs/"]);
+    controller.handleDragStart({
+      dataTransfer: transfer,
+      composedPath: () => [rowNode("src/app.ts")],
+    });
+    expect(transfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toBe(
+      "[app.ts](/other-project/src/app.ts) [docs](/other-project/docs)",
+    );
+    controller.handleDragEnd();
+    expect(deselected).toEqual(["src/app.ts", "docs/"]);
+  });
+
   it("tags a row drag with the mention payload and flags the drag", () => {
     const controller = createFileTreeDragMentionController({ deselect: () => {} });
     const transfer = makeTransfer();
