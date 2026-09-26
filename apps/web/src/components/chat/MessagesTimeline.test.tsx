@@ -13,6 +13,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+import { rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -285,6 +286,140 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("restores only the remembered steering fold when returning to a thread", async () => {
+    const { deriveTimelineTurnSections } = await import("./MessagesTimeline.logic");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const turnId = TurnId.make("remembered-steering");
+    const work = (id: string, label: string) => ({
+      id,
+      kind: "work" as const,
+      createdAt: MESSAGE_CREATED_AT,
+      entry: { id, turnId, label, createdAt: MESSAGE_CREATED_AT, tone: "info" as const },
+    });
+    const entries = [
+      work("before", "Work before steering"),
+      buildUserTimelineEntry("Check the second file too."),
+      work("after", "Work after steering"),
+    ];
+    const threadKey = "environment-local:remembered-steering";
+    const foldId = deriveTimelineTurnSections(entries)[1]!.id;
+    rememberTimelinePosition(threadKey, {
+      rowId: foldId,
+      offsetWithinRow: 0,
+      scrollOffset: 0,
+      atEnd: true,
+      disclosures: {
+        folds: new Set([foldId]),
+        workGroups: new Set(),
+        spawnEntries: new Set(),
+        reasoningMessages: new Set(),
+        workGroupState: { scrollPositions: new Map(), expandedEntries: new Set() },
+      },
+    });
+    const timeline = (routeThreadKey: string, feed = entries) => (
+      <MessagesTimeline {...buildProps()} routeThreadKey={routeThreadKey} timelineEntries={feed} />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    const content = () => JSON.stringify(renderer?.toJSON());
+    try {
+      act(() => {
+        renderer = create(timeline(threadKey));
+      });
+      expect(content()).toContain("Work after steering");
+      expect(content()).not.toContain("Work before steering");
+      const delayed = [...entries.slice(0, 2), work("delayed", "Delayed work"), entries[2]!];
+      act(() => renderer!.update(timeline(threadKey, delayed)));
+      expect(content()).toContain("Received 2 updates");
+      act(() => renderer!.update(timeline("environment-local:unvisited-steering")));
+      expect(content()).not.toContain("Work after steering");
+      act(() => renderer!.update(timeline(threadKey)));
+      expect(content()).toContain("Work after steering");
+      expect(content()).not.toContain("Work before steering");
+    } finally {
+      act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("opens late interrupted work once and respects a subsequent manual collapse", () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const turnId = TurnId.make("delayed-interrupt");
+    const entries = [
+      {
+        id: "late-work",
+        kind: "work" as const,
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "late-work",
+          turnId,
+          createdAt: MESSAGE_CREATED_AT,
+          label: "Inspected synthetic-file.ts",
+          tone: "info" as const,
+        },
+      },
+    ];
+    const beforeSteer = [
+      {
+        ...entries[0]!,
+        id: "earlier-work",
+        entry: { ...entries[0]!.entry, id: "earlier-work", label: "Earlier work" },
+      },
+      buildUserTimelineEntry("Check the second file too."),
+    ];
+    const steeredEntries = [...beforeSteer, ...entries];
+    const timeline = (state: "running" | "interrupted", feed = steeredEntries) => (
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={feed}
+        latestTurn={{
+          turnId,
+          state,
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: state === "running" ? null : MESSAGE_CREATED_AT,
+        }}
+        isWorking={state === "running"}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    const content = () => JSON.stringify(renderer?.toJSON());
+    try {
+      act(() => {
+        renderer = create(timeline("running", beforeSteer));
+      });
+      act(() => renderer!.update(timeline("interrupted", beforeSteer)));
+      act(() => renderer!.update(timeline("interrupted")));
+      expect(content()).toContain("Inspected synthetic-file.ts");
+
+      act(() => renderer!.root.findAllByProps({ "aria-expanded": true }).at(-1)!.props.onClick());
+      expect(content()).not.toContain("Inspected synthetic-file.ts");
+      const delayed = {
+        ...entries[0]!,
+        id: "delayed-earlier-work",
+        entry: { ...entries[0]!.entry, id: "delayed-earlier-work" },
+      };
+      act(() => renderer!.update(timeline("interrupted", [...beforeSteer, delayed, ...entries])));
+      expect(content()).not.toContain("Inspected synthetic-file.ts");
+      expect(
+        renderer!.root
+          .findAllByProps({ "data-timeline-row-kind": "turn-fold" })
+          .map((row) => row.findByType("button").props["aria-expanded"]),
+      ).toEqual([true, false]);
+
+      act(() => renderer!.unmount());
+      act(() => {
+        renderer = create(timeline("interrupted"));
+      });
+      expect(content()).not.toContain("Inspected synthetic-file.ts");
+    } finally {
+      act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders previous and next controls with the minimap", () => {
     const first = buildUserTimelineEntry("First turn");
     const secondBase = buildUserTimelineEntry("Second turn");

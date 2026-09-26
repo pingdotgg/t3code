@@ -18,6 +18,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  deriveThreadFeedTurnSections,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -343,7 +344,7 @@ describe("buildThreadFeed", () => {
       startedAt: "2026-04-01T00:00:03.000Z",
       completedAt: null,
     };
-    const expandedTurns = new Set([completedTurnId]);
+    const expandedTurns = new Set([`turn-fold:${completedTurnId}`]);
     const expandedGroups = new Set(["work-group:completed-tool", "work-group:active-tool"]);
     const previousFeed = buildThreadFeed(thread);
     const previousRows = deriveThreadFeedPresentation(
@@ -1417,7 +1418,7 @@ describe("buildThreadFeed", () => {
             state: "completed",
             completedAt: "2026-04-01T00:00:03.000Z",
           },
-          new Set([turnId]),
+          new Set([`turn-fold:${turnId}`]),
           new Set(),
         );
         expect(settledRows.find((entry) => entry.type === "work-toggle")).toMatchObject({
@@ -1564,7 +1565,7 @@ describe("buildThreadFeed", () => {
         deriveThreadFeedPresentation(
           buildThreadFeed(currentThread),
           currentThread.latestTurn,
-          new Set([turnId]),
+          new Set([`turn-fold:${turnId}`]),
           new Set([groupId]),
           currentThread.latestTurn?.state === "running" ? currentThread.latestTurn.startedAt : null,
         );
@@ -1771,6 +1772,123 @@ describe("buildThreadFeed", () => {
     expect(serializedToolOutputs).toBe(1);
   });
 
+  it.each(["completed", "interrupted", "running"] as const)(
+    "splits a %s turn at steering messages and expands only the selected section",
+    (state) => {
+      const turnId = TurnId.make("steered-turn");
+      const time = (seconds: number) =>
+        new Date(Date.UTC(2026, 8, 10, 0, 0, seconds)).toISOString();
+      const message = (id: string, role: "user" | "assistant" | "reasoning", second: number) => ({
+        id: MessageId.make(id),
+        role,
+        text: id,
+        turnId,
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: role === "reasoning",
+      });
+      const thread = makeThread({
+        id: ThreadId.make("steering-thread"),
+        projectId: ProjectId.make("steering-project"),
+        title: "Steering fold boundaries",
+        latestTurn: {
+          turnId,
+          state,
+          requestedAt: time(0),
+          startedAt: time(0),
+          completedAt: state === "running" ? null : time(30),
+          assistantMessageId: MessageId.make("final"),
+        },
+        messages: [
+          message("prompt", "user", 0),
+          message("intro", "assistant", 1),
+          message("thought-first", "reasoning", 2),
+          message("steer-1", "user", 10),
+          message("steer-2", "user", 11),
+          message("thought-middle", "reasoning", 11),
+          message("middle", "assistant", 12),
+          message("steer-3", "user", 20),
+          message("thought-last", "reasoning", 20),
+          message("last-work", "assistant", 21),
+          message("final", "assistant", 30),
+        ],
+        activities: [2, 13, 22].map((second) =>
+          makeActivity({
+            id: EventId.make(`tool-${second}`),
+            turnId,
+            createdAt: time(second),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Read files",
+            payload: { title: "Read files", itemType: "file_read", status: "completed" },
+          }),
+        ),
+      });
+      const feed = buildThreadFeed(thread);
+      const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+      const folds = collapsed.filter((entry) => entry.type === "turn-fold");
+      if (state === "running") {
+        expect(folds).toHaveLength(0);
+        expect(collapsed.filter((entry) => entry.type === "message")).toHaveLength(
+          thread.messages.filter((message) => message.role !== "reasoning").length,
+        );
+        const expandedFoldIds = new Set(
+          deriveThreadFeedTurnSections(feed).map((section) => section.id),
+        );
+        const interrupted = deriveThreadFeedPresentation(
+          feed,
+          { ...thread.latestTurn!, state: "interrupted", completedAt: time(30) },
+          expandedFoldIds,
+        );
+        expect(
+          interrupted.filter((entry) => entry.type === "turn-fold").map((entry) => entry.expanded),
+        ).toEqual([true, true, true]);
+        return;
+      }
+      expect(folds.map((entry) => entry.label)).toEqual([
+        "Worked for 10s",
+        "Worked for 9.0s",
+        state === "interrupted" ? "You stopped after 10s" : "Worked for 10s",
+      ]);
+      expect(
+        collapsed.map((entry) => (entry.type === "message" ? entry.message.id : entry.type)),
+      ).toEqual([
+        "prompt",
+        "intro",
+        "turn-fold",
+        "steer-1",
+        "steer-2",
+        "turn-fold",
+        "steer-3",
+        "turn-fold",
+        "final",
+      ]);
+      const expanded = deriveThreadFeedPresentation(
+        feed,
+        thread.latestTurn,
+        new Set([folds[1]!.id]),
+      );
+      expect(
+        expanded.filter((entry) => entry.type === "message").map((entry) => entry.message.id),
+      ).toEqual(["prompt", "intro", "steer-1", "steer-2", "middle", "steer-3", "final"]);
+      expect(
+        expanded.filter((entry) => entry.type === "turn-fold").map((entry) => entry.expanded),
+      ).toEqual([false, true, false]);
+      const details = deriveThreadFeedPresentation(
+        feed,
+        thread.latestTurn,
+        new Set([folds[1]!.id]),
+        new Set(["activity-run:thought-middle"]),
+      );
+      expect(
+        details
+          .filter((entry) => entry.type === "message" && entry.message.role === "reasoning")
+          .map((entry) => entry.id),
+      ).toEqual(["thought-middle"]);
+      expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set())).toEqual(collapsed);
+    },
+  );
+
   it("keeps the first and terminal assistant messages visible around settled work", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({
@@ -1835,7 +1953,11 @@ describe("buildThreadFeed", () => {
       expanded: false,
     });
 
-    const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+    const expanded = deriveThreadFeedPresentation(
+      feed,
+      thread.latestTurn,
+      new Set([`turn-fold:${turnId}`]),
+    );
     expect(expanded.map((entry) => entry.id)).toEqual([
       "assistant-first",
       "turn-fold:turn-1",
@@ -2304,7 +2426,7 @@ describe("buildThreadFeed", () => {
       const completedRows = deriveThreadFeedPresentation(
         feed,
         { ...latestTurn, state: "completed", completedAt: "2026-04-01T00:00:04.000Z" },
-        new Set([turnId]),
+        new Set([`turn-fold:${turnId}`]),
         new Set(),
         latestTurn.startedAt,
       );
@@ -2442,7 +2564,7 @@ describe("buildThreadFeed", () => {
     const reopened = deriveThreadFeedPresentation(
       feedWithWork,
       settledTurn,
-      new Set([turnId]),
+      new Set([`turn-fold:${turnId}`]),
       new Set([`activity-run:${messages[0]!.id}`]),
     );
     expect(reopened.map((entry) => entry.type)).toEqual([
@@ -2569,7 +2691,7 @@ describe("buildThreadFeed", () => {
       const rows = deriveThreadFeedPresentation(
         buildThreadFeed(thread),
         null,
-        new Set([turnId]),
+        new Set([`turn-fold:${turnId}`]),
         new Set(messages.map((message) => `activity-run:${message.id}`)),
       );
       const reasoningRows = rows.filter(
@@ -2948,7 +3070,7 @@ describe("buildThreadFeed", () => {
       ],
     });
     expect(
-      deriveThreadFeedPresentation(feed, null, new Set([turnId])).find(
+      deriveThreadFeedPresentation(feed, null, new Set([`turn-fold:${turnId}`])).find(
         (entry) => entry.type === "work-toggle",
       ),
     ).toMatchObject({
@@ -2978,7 +3100,7 @@ describe("buildThreadFeed", () => {
     const completedRows = deriveThreadFeedPresentation(
       feed,
       null,
-      new Set([turnId]),
+      new Set([`turn-fold:${turnId}`]),
       new Set([groupId]),
     );
     expect(completedRows.find((entry) => entry.type === "activity-group")).toMatchObject({
@@ -3018,7 +3140,7 @@ describe("buildThreadFeed", () => {
     const correctedRows = deriveThreadFeedPresentation(
       correctedFeed,
       null,
-      new Set([turnId]),
+      new Set([`turn-fold:${turnId}`]),
       new Set([groupId]),
     );
     expect(correctedRows.find((entry) => entry.type === "activity-group")).toMatchObject({
@@ -3240,7 +3362,9 @@ describe("quiet timeline: nested agents", () => {
     );
     expect(rows).toEqual(["agent-started"]);
     expect(
-      deriveThreadFeedPresentation(feed, null, new Set([turnId])).map((row) => row.type),
+      deriveThreadFeedPresentation(feed, null, new Set([`turn-fold:${turnId}`])).map(
+        (row) => row.type,
+      ),
     ).toEqual(["turn-fold", "agent-spawn"]);
   });
 
@@ -3729,7 +3853,11 @@ it("keeps attachment-only question answers expandable outside mobile work groups
   const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
   expect(collapsed.map((entry) => entry.type)).toEqual(["turn-fold", "activity-group"]);
   expect(collapsed[1]).toBe(group);
-  const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+  const expanded = deriveThreadFeedPresentation(
+    feed,
+    thread.latestTurn,
+    new Set([`turn-fold:${turnId}`]),
+  );
   expect(expanded.map((entry) => entry.type)).toEqual([
     "turn-fold",
     "work-toggle",

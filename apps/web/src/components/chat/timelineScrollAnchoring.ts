@@ -1,5 +1,3 @@
-import type { TurnId } from "@t3tools/contracts";
-
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
@@ -113,7 +111,7 @@ export interface RememberedTimelinePosition {
   readonly scrollOffset: number;
   readonly atEnd: boolean;
   readonly disclosures?: {
-    readonly turns: ReadonlySet<TurnId>;
+    readonly folds: ReadonlySet<string>;
     readonly workGroups: ReadonlySet<string>;
     readonly spawnEntries: ReadonlySet<string>;
     readonly reasoningMessages: ReadonlySet<string>;

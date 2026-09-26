@@ -24,6 +24,7 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  deriveTimelineTurnSections,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -43,6 +44,116 @@ import {
   type TimelineEntriesProjection,
 } from "../../session-logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
+
+describe("steering fold boundaries", () => {
+  it.each(["completed", "interrupted", "running"] as const)(
+    "keeps user messages between independently expandable sections when %s",
+    (state) => {
+      const turnId = TurnId.make("steered-turn");
+      const time = (seconds: number) =>
+        new Date(Date.UTC(2026, 8, 10, 0, 0, seconds)).toISOString();
+      const message = (id: string, role: ChatMessage["role"], second: number): ChatMessage => ({
+        id: MessageId.make(id),
+        role,
+        text: id,
+        turnId,
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: role === "reasoning",
+      });
+      const messages = [
+        message("prompt", "user", 0),
+        message("intro", "assistant", 1),
+        message("thought-first", "reasoning", 2),
+        message("steer-1", "user", 10),
+        message("steer-2", "user", 11),
+        message("thought-middle", "reasoning", 11),
+        message("middle", "assistant", 12),
+        message("steer-3", "user", 20),
+        message("thought-last", "reasoning", 20),
+        message("last-work", "assistant", 21),
+        message("final", "assistant", 30),
+      ];
+      const work: WorkLogEntry[] = [2, 13, 22].map((second) => ({
+        id: `tool-${second}`,
+        createdAt: time(second),
+        turnId,
+        label: "Read files",
+        tone: "tool",
+      }));
+      const input = {
+        timelineEntries: deriveTimelineEntries(messages, [], work),
+        latestTurn: {
+          turnId,
+          state,
+          startedAt: time(0),
+          completedAt: state === "running" ? null : time(30),
+        },
+        isWorking: state === "running",
+        activeTurnStartedAt: state === "running" ? time(0) : null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      };
+      const collapsed = deriveMessagesTimelineRows(input);
+      const folds = collapsed.filter((row) => row.kind === "turn-fold");
+      if (state === "running") {
+        expect(folds).toHaveLength(0);
+        expect(collapsed.filter((row) => row.kind === "message")).toHaveLength(
+          messages.filter((message) => message.role !== "reasoning").length,
+        );
+        const expandedFoldIds = new Set(
+          deriveTimelineTurnSections(input.timelineEntries).map((section) => section.id),
+        );
+        const interrupted = deriveMessagesTimelineRows({
+          ...input,
+          expandedFoldIds,
+          isWorking: false,
+          activeTurnStartedAt: null,
+          latestTurn: { ...input.latestTurn, state: "interrupted", completedAt: time(30) },
+        });
+        expect(
+          interrupted.filter((row) => row.kind === "turn-fold").map((row) => row.expanded),
+        ).toEqual([true, true, true]);
+        return;
+      }
+      expect(folds.map((row) => row.label)).toEqual([
+        "Worked for 10s",
+        "Worked for 9.0s",
+        state === "interrupted" ? "You stopped after 10s" : "Worked for 10s",
+      ]);
+      expect(collapsed.map((row) => (row.kind === "message" ? row.message.id : row.kind))).toEqual([
+        "prompt",
+        "turn-fold",
+        "steer-1",
+        "steer-2",
+        "turn-fold",
+        "steer-3",
+        "turn-fold",
+        "final",
+      ]);
+      const expanded = deriveMessagesTimelineRows({
+        ...input,
+        expandedFoldIds: new Set([folds[1]!.id]),
+      });
+      expect(expanded.filter((row) => row.kind === "message").map((row) => row.message.id)).toEqual(
+        ["prompt", "steer-1", "steer-2", "middle", "steer-3", "final"],
+      );
+      expect(expanded.filter((row) => row.kind === "turn-fold").map((row) => row.expanded)).toEqual(
+        [false, true, false],
+      );
+      expect(
+        expanded
+          .filter((row) => row.kind === "activity-group")
+          .flatMap((row) =>
+            row.entries
+              .filter((entry) => entry.kind === "message")
+              .map((entry) => entry.message.id),
+          ),
+      ).toEqual(["thought-middle"]);
+      expect(deriveMessagesTimelineRows(input)).toEqual(collapsed);
+    },
+  );
+});
 
 describe("streaming row projection", () => {
   function fixture(text = "") {
@@ -289,7 +400,7 @@ describe("streaming row projection", () => {
       ...initial.input,
       turnDiffSummaries: [summary],
       supportsConversationRollback: true,
-      expandedTurnIds: new Set([initial.historyTurnId]),
+      expandedFoldIds: new Set([`turn-fold:${initial.historyTurnId}`]),
       expandedWorkGroupIds: new Set<string>(),
     };
     const previous = deriveMessagesTimelineRowsWithState(input);
@@ -305,7 +416,7 @@ describe("streaming row projection", () => {
       timelineEntries: timeline.entries,
       turnDiffSummaries: [...input.turnDiffSummaries],
       latestTurn: { ...input.latestTurn },
-      expandedTurnIds: new Set(input.expandedTurnIds),
+      expandedFoldIds: new Set(input.expandedFoldIds),
       expandedWorkGroupIds: new Set(input.expandedWorkGroupIds),
     };
     checkpointLookupReads = 0;
@@ -617,7 +728,12 @@ describe("streaming row projection", () => {
         completedAt: initial.time(12),
       },
     });
-    check({ expandedTurnIds: new Set([initial.historyTurnId, initial.turnId]) });
+    check({
+      expandedFoldIds: new Set([
+        `turn-fold:${initial.historyTurnId}`,
+        `turn-fold:${initial.turnId}`,
+      ]),
+    });
     const group = projection.rows.find((row) => row.kind === "work-toggle");
     check({ expandedWorkGroupIds: new Set(group ? [group.id] : []) });
     messages = [
@@ -1401,7 +1517,7 @@ describe("deriveMessagesTimelineRows", () => {
     const derive = (
       timelineEntries: typeof direct,
       liveAgentTaskIds: ReadonlySet<string> | undefined,
-      expandedTurnIds?: ReadonlySet<TurnId>,
+      expandedFoldIds?: ReadonlySet<string>,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
@@ -1410,7 +1526,7 @@ describe("deriveMessagesTimelineRows", () => {
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         liveAgentTaskIds,
-        ...(expandedTurnIds ? { expandedTurnIds } : {}),
+        ...(expandedFoldIds ? { expandedFoldIds } : {}),
       }).map((row) => row.id);
     const unfolded = ["turn-fold:turn-1", "spawn-entry", "assistant-final-entry"];
 
@@ -1482,7 +1598,7 @@ describe("deriveMessagesTimelineRows", () => {
     // No live set is known.
     expect(derive(direct, undefined)).toEqual(unfolded);
     // Expanding the turn reveals the other work without duplicating the batch.
-    expect(derive(direct, new Set(), new Set(["turn-1" as TurnId]))).toEqual([
+    expect(derive(direct, new Set(), new Set(["turn-fold:turn-1"]))).toEqual([
       "turn-fold:turn-1",
       "assistant-first-entry",
       "spawn-entry",
@@ -1536,7 +1652,7 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
-      expandedTurnIds: new Set(["turn-1" as never]),
+      expandedFoldIds: new Set(["turn-fold:turn-1"]),
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -1749,7 +1865,7 @@ describe("deriveMessagesTimelineRows", () => {
 
     const expandedRows = deriveMessagesTimelineRows({
       timelineEntries,
-      expandedTurnIds: new Set(["turn-1" as never]),
+      expandedFoldIds: new Set(["turn-fold:turn-1"]),
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -2081,7 +2197,7 @@ describe("deriveMessagesTimelineRows", () => {
               ];
       const rows = deriveMessagesTimelineRows({
         timelineEntries: [first, ...middle, last],
-        expandedTurnIds: new Set([TurnId.make("turn-1"), TurnId.make("turn-2")]),
+        expandedFoldIds: new Set(["turn-fold:turn-1", "turn-fold:turn-2"]),
         isWorking: false,
         activeTurnStartedAt: null,
         turnDiffSummaries: [],
@@ -2237,14 +2353,14 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.kind)).toEqual(["turn-fold", "message"]);
     const expanded = deriveMessagesTimelineRows({
       ...input,
-      expandedTurnIds: new Set([TurnId.make("turn-1")]),
+      expandedFoldIds: new Set(["turn-fold:turn-1"]),
     });
     expect(expanded.filter((row) => row.kind === "activity-group")).toMatchObject([
       { entries, expanded: false, active: false },
     ]);
     const details = deriveMessagesTimelineRows({
       ...input,
-      expandedTurnIds: new Set([TurnId.make("turn-1")]),
+      expandedFoldIds: new Set(["turn-fold:turn-1"]),
       expandedWorkGroupIds: new Set(["activity-group:reasoning-entry"]),
     });
     expect(details.find((row) => row.kind === "activity-group")).toMatchObject({
@@ -2841,7 +2957,7 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
-      expandedTurnIds: new Set([turnId]),
+      expandedFoldIds: new Set([`turn-fold:${turnId}`]),
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -3234,7 +3350,7 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
-      expandedTurnIds: new Set(["turn-1" as never]),
+      expandedFoldIds: new Set(["turn-fold:turn-1"]),
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -3408,7 +3524,10 @@ describe("deriveMessagesTimelineRows", () => {
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     const collapsed = deriveMessagesTimelineRows(input);
     expect(collapsed.map((row) => row.kind)).toEqual(["turn-fold", "work"]);
-    const expanded = deriveMessagesTimelineRows({ ...input, expandedTurnIds: new Set([turnId]) });
+    const expanded = deriveMessagesTimelineRows({
+      ...input,
+      expandedFoldIds: new Set([`turn-fold:${turnId}`]),
+    });
     expect(expanded.map((row) => row.kind)).toEqual([
       "turn-fold",
       "work-toggle",
@@ -3417,7 +3536,7 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
     const expandedGroups = deriveMessagesTimelineRows({
       ...input,
-      expandedTurnIds: new Set([turnId]),
+      expandedFoldIds: new Set([`turn-fold:${turnId}`]),
       expandedWorkGroupIds: new Set(
         expanded.flatMap((row) => (row.kind === "work-toggle" ? [row.groupId] : [])),
       ),
@@ -3550,7 +3669,7 @@ describe("deriveMessagesTimelineRows", () => {
       const input = {
         timelineEntries,
         isWorking,
-        expandedTurnIds: new Set([turnId]),
+        expandedFoldIds: new Set([`turn-fold:${turnId}`]),
         runningTurnId: isWorking ? turnId : null,
         activeTurnStartedAt: isWorking ? createdAt : null,
         turnDiffSummaries: [],

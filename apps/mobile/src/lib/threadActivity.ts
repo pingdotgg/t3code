@@ -1,3 +1,4 @@
+import { groupTurnSections } from "@t3tools/client-runtime/turn-sections";
 import * as Option from "effect/Option";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Schema from "effect/Schema";
@@ -1626,10 +1627,27 @@ export function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): 
 }
 
 interface ThreadFeedTurnFold {
+  readonly id: string;
   readonly turnId: TurnId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
+}
+
+/** Includes active sections so an interrupt can preserve expansion before streaming settles. */
+export function deriveThreadFeedTurnSections(feed: ReadonlyArray<ThreadFeedEntry>) {
+  return groupTurnSections(
+    feed,
+    (entry) =>
+      entry.type === "message" && entry.message.role === "user" ? entry.message.createdAt : null,
+    (entry) =>
+      entry.type === "message" &&
+      (entry.message.role === "assistant" || entry.message.role === "reasoning")
+        ? entry.message.turnId
+        : entry.type === "activity-group"
+          ? entry.turnId
+          : null,
+  );
 }
 
 function deriveThreadFeedTurnFolds(
@@ -1647,47 +1665,12 @@ function deriveThreadFeedTurnFolds(
     }
   }
 
-  interface TurnGroup {
-    readonly entries: ThreadFeedEntry[];
-    readonly startBoundary: string | null;
-  }
-  const groupsByTurnId = new Map<TurnId, TurnGroup>();
-  let pendingUserBoundary: string | null = null;
-  for (const entry of feed) {
-    if (entry.type === "message" && entry.message.role === "user") {
-      pendingUserBoundary = entry.message.createdAt;
-      continue;
-    }
-    // Thinking is work, so it folds with the rest of it. A provider that
-    // interleaves a block with every tool call would otherwise leave dozens of
-    // "Thought" rows standing beside the "Worked for ..." summary.
-    // Nothing folds while the turn is live, which is when traces are watched.
-    const turnId =
-      entry.type === "message" &&
-      (entry.message.role === "assistant" || entry.message.role === "reasoning")
-        ? entry.message.turnId
-        : entry.type === "activity-group"
-          ? entry.turnId
-          : null;
-    if (!turnId) {
-      continue;
-    }
-    let group = groupsByTurnId.get(turnId);
-    if (!group) {
-      group = {
-        entries: [],
-        startBoundary: pendingUserBoundary,
-      };
-      pendingUserBoundary = null;
-      groupsByTurnId.set(turnId, group);
-    }
-    group.entries.push(entry);
-  }
+  const sections = deriveThreadFeedTurnSections(feed);
 
   const unsettledTurnId = deriveUnsettledTurnId(latestTurn);
   const foldsByAnchorId = new Map<string, ThreadFeedTurnFold>();
-  for (const [turnId, group] of groupsByTurnId) {
-    const { entries } = group;
+  for (const group of sections) {
+    const { entries, turnId } = group;
     if (turnId === unsettledTurnId) {
       continue;
     }
@@ -1744,18 +1727,21 @@ function deriveThreadFeedTurnFolds(
     const latestTurnMatches = latestTurn?.turnId === turnId;
     const lastEntryEnd =
       lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
-    const elapsedMs =
-      latestTurnMatches && latestTurn.startedAt && latestTurn.completedAt
-        ? computeElapsedMs(latestTurn.startedAt, latestTurn.completedAt)
-        : computeElapsedMs(
-            group.startBoundary ?? firstEntry.createdAt,
-            maxIsoTimestamp(
-              terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
-              lastEntryEnd,
-            ) ?? lastEntryEnd,
-          );
+    const latestTiming =
+      latestTurnMatches && latestTurn.startedAt && latestTurn.completedAt ? latestTurn : null;
+    const elapsedMs = computeElapsedMs(
+      (!group.isContinuation ? latestTiming?.startedAt : null) ??
+        group.startBoundary ??
+        firstEntry.createdAt,
+      (group.continues ? group.endBoundary : latestTiming?.completedAt) ??
+        maxIsoTimestamp(
+          terminalEntry?.type === "message" ? terminalEntry.message.updatedAt : null,
+          lastEntryEnd,
+        ) ??
+        lastEntryEnd,
+    );
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
-    const interrupted = latestTurnMatches && latestTurn.state === "interrupted";
+    const interrupted = !group.continues && latestTurnMatches && latestTurn.state === "interrupted";
     const label = interrupted
       ? duration
         ? `You stopped after ${duration}`
@@ -1765,6 +1751,7 @@ function deriveThreadFeedTurnFolds(
         : "Worked";
 
     foldsByAnchorId.set(firstHiddenEntry.id, {
+      id: group.id,
       turnId,
       createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
@@ -1777,7 +1764,7 @@ function deriveThreadFeedTurnFolds(
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
-  expandedTurnIds: ReadonlySet<TurnId>,
+  expandedFoldIds: ReadonlySet<string>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
@@ -1796,7 +1783,7 @@ export function deriveThreadFeedPresentation(
   const isWorking = activeWorkStartedAt !== null;
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
-    if (!expandedTurnIds.has(fold.turnId)) {
+    if (!expandedFoldIds.has(fold.id)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
@@ -1815,10 +1802,11 @@ export function deriveThreadFeedPresentation(
       entry.turnId === unsettledTurnId;
     const fold = foldsByAnchorId.get(entry.id);
     if (fold) {
-      const expanded = expandedTurnIds.has(fold.turnId);
+      const expanded = expandedFoldIds.has(fold.id);
       let row = turnFoldRowsCache.get(entry);
       if (
         !row ||
+        row.id !== fold.id ||
         row.turnId !== fold.turnId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
@@ -1826,7 +1814,7 @@ export function deriveThreadFeedPresentation(
       ) {
         row = {
           type: "turn-fold",
-          id: `turn-fold:${fold.turnId}`,
+          id: fold.id,
           createdAt: fold.createdAt,
           turnId: fold.turnId,
           label: fold.label,

@@ -177,6 +177,7 @@ import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssis
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  deriveTimelineTurnSections,
   deriveUnsettledTurnId,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
@@ -285,7 +286,7 @@ interface TimelineRowSharedState {
   onFileDownload: (attachment: ChatFileAttachment) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
-  onToggleTurnFold: (turnId: TurnId) => void;
+  onToggleTurnFold: (foldId: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
   onToggleSpawnRow: (entryId: string, expanded: boolean) => void;
@@ -531,8 +532,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => readTimelinePosition(listIdentityKey),
     [listIdentityKey],
   );
-  const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(
-    () => rememberedPosition?.disclosures?.turns ?? new Set(),
+  const [expandedFoldIds, setExpandedFoldIds] = useState<ReadonlySet<string>>(
+    () => rememberedPosition?.disclosures?.folds ?? new Set(),
   );
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
     () => rememberedPosition?.disclosures?.workGroups ?? new Set(),
@@ -550,10 +551,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
+  const interruptedSectionIdsRef = useRef<Set<string> | null>(null);
   // The list stays mounted across thread switches. Its first end pins on the
   // new thread must snap, not glide, even if that thread is mid-turn.
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
-  let paintedExpandedTurnIds = expandedTurnIds;
+  let paintedExpandedFoldIds = expandedFoldIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedSpawnEntryIds = expandedSpawnEntryIds;
   let paintedExpandedReasoningMessageIds = expandedReasoningMessageIds;
@@ -561,13 +563,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
     previousLatestTurnRef.current = latestTurn;
+    interruptedSectionIdsRef.current = null;
     setSettlingListIdentity(listIdentityKey);
-    paintedExpandedTurnIds = rememberedPosition?.disclosures?.turns ?? new Set();
+    paintedExpandedFoldIds = rememberedPosition?.disclosures?.folds ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedSpawnEntryIds = rememberedPosition?.disclosures?.spawnEntries ?? new Set();
     paintedExpandedReasoningMessageIds =
       rememberedPosition?.disclosures?.reasoningMessages ?? new Set();
-    setExpandedTurnIds(paintedExpandedTurnIds);
+    setExpandedFoldIds(paintedExpandedFoldIds);
     setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
     setExpandedSpawnEntryIds(paintedExpandedSpawnEntryIds);
     setExpandedReasoningMessageIds(paintedExpandedReasoningMessageIds);
@@ -583,11 +586,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }, []);
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
-  const expandCitedTurn = useCallback((turnId: TurnId) => {
-    setExpandedTurnIds((current) =>
-      current.has(turnId) ? current : new Set([...current, turnId]),
-    );
-  }, []);
+  const expandCitedTurn = useCallback(
+    (turnId: TurnId) => {
+      setExpandedFoldIds((current) => {
+        const folds = deriveTimelineTurnSections(timelineEntries).filter(
+          (section) => section.turnId === turnId,
+        );
+        if (folds.every((row) => current.has(row.id))) return current;
+        return new Set([...current, ...folds.map((row) => row.id)]);
+      });
+    },
+    [timelineEntries],
+  );
   // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
     () =>
@@ -670,14 +680,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   const onToggleTurnFold = useCallback(
-    (turnId: TurnId) => {
-      suspendEndScrollMaintenanceForDisclosure(`turn-fold:${turnId}`);
-      setExpandedTurnIds((existing) => {
+    (foldId: string) => {
+      suspendEndScrollMaintenanceForDisclosure(foldId);
+      setExpandedFoldIds((existing) => {
         const next = new Set(existing);
-        if (next.has(turnId)) {
-          next.delete(turnId);
+        if (next.has(foldId)) {
+          next.delete(foldId);
         } else {
-          next.add(turnId);
+          next.add(foldId);
         }
         return next;
       });
@@ -713,33 +723,39 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
-  // An in-session interrupt leaves its turn expanded so the user keeps their
-  // place; the next turn (or a reload, since this is local state) folds it.
+  // Keep an in-session interrupt expanded until the next turn or a reload.
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = latestTurn;
-    if (!latestTurn || previous?.turnId === undefined) {
-      return;
+    if (latestTurn?.state !== "interrupted" || latestTurn.turnId !== previous?.turnId) {
+      interruptedSectionIdsRef.current = null;
     }
+    if (!latestTurn || !previous) return;
     if (latestTurn.turnId === previous.turnId) {
       if (previous.state === "running" && latestTurn.state === "interrupted") {
-        setExpandedTurnIds((existing) => {
-          const next = new Set(existing);
-          next.add(latestTurn.turnId);
-          return next;
-        });
+        interruptedSectionIdsRef.current = new Set();
+      }
+      const seen = interruptedSectionIdsRef.current;
+      if (seen) {
+        // Feed entries can arrive after the interrupt. Open each section only once.
+        const added = deriveTimelineTurnSections(timelineEntries)
+          .filter((section) => section.turnId === latestTurn.turnId && !seen.has(section.id))
+          .map((section) => section.id);
+        for (const id of added) seen.add(id);
+        if (added.length > 0) {
+          setExpandedFoldIds((current) => new Set([...current, ...added]));
+        }
       }
       return;
     }
-    setExpandedTurnIds((existing) => {
-      if (!existing.has(previous.turnId)) {
-        return existing;
+    setExpandedFoldIds((current) => {
+      const next = new Set(current);
+      for (const section of deriveTimelineTurnSections(timelineEntries)) {
+        if (section.turnId === previous.turnId) next.delete(section.id);
       }
-      const next = new Set(existing);
-      next.delete(previous.turnId);
-      return next;
+      return next.size === current.size ? current : next;
     });
-  }, [latestTurn]);
+  }, [latestTurn, timelineEntries]);
 
   const rowsProjectionRef = useRef<{
     threadKey: string;
@@ -776,7 +792,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         timelineEntries,
         latestTurn,
         runningTurnId,
-        expandedTurnIds: paintedExpandedTurnIds,
+        expandedFoldIds: paintedExpandedFoldIds,
         expandedWorkGroupIds: paintedExpandedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
@@ -799,7 +815,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelineEntries,
     latestTurn,
     runningTurnId,
-    paintedExpandedTurnIds,
+    paintedExpandedFoldIds,
     paintedExpandedWorkGroupIds,
     isWorking,
     activeTurnStartedAt,
@@ -1035,7 +1051,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           scrollOffset: element.scrollTop,
           atEnd: isAtEnd,
           disclosures: {
-            turns: paintedExpandedTurnIds,
+            folds: paintedExpandedFoldIds,
             workGroups: paintedExpandedWorkGroupIds,
             spawnEntries: paintedExpandedSpawnEntryIds,
             reasoningMessages: paintedExpandedReasoningMessageIds,
@@ -1084,7 +1100,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [
     citationPositioning,
-    paintedExpandedTurnIds,
+    paintedExpandedFoldIds,
     paintedExpandedWorkGroupIds,
     paintedExpandedSpawnEntryIds,
     paintedExpandedReasoningMessageIds,
@@ -2362,7 +2378,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         type="button"
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.turnId)}
+        onClick={() => ctx.onToggleTurnFold(row.id)}
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>

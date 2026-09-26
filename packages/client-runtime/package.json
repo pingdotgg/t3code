@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./turn-sections": {
+      "types": "./src/turnSections.ts",
+      "default": "./src/turnSections.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"
