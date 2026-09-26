@@ -1,5 +1,5 @@
 /**
- * otelEnvironment: the OpenTelemetry kill switch and endpoint variables,
+ * otelEnvironment: the OpenTelemetry kill switch, exporter, and endpoint variables,
  * shared by the server and the desktop main process so both agree on what
  * turns export off and where it goes.
  *
@@ -23,8 +23,9 @@ type OtlpSignalName = "TRACES" | "METRICS" | "LOGS";
 
 /**
  * What the OTEL variables say about one signal. `Off` is a signal they
- * claimed with an endpoint, protocol, or headers that do not read, so it is
- * exported nowhere rather than to the bootstrap or Settings collector.
+ * claimed with an endpoint, protocol, or headers that do not read, or turned
+ * off with `OTEL_<SIGNAL>_EXPORTER=none`, so it is exported nowhere rather
+ * than to the bootstrap or Settings collector.
  */
 export type OtelSignal = Data.TaggedEnum<{
   Unset: {};
@@ -179,6 +180,38 @@ const headers = (name: string) =>
     `${name} is not a list of key=value pairs with percent-encoded values, ${NOT_EXPORTED}`,
   );
 
+type Exporter = "otlp" | "none";
+
+const EXPORTERS: ReadonlySet<string> = new Set<Exporter>(["otlp", "none"]);
+
+const isExporter = (entry: string): entry is Exporter => EXPORTERS.has(entry);
+
+/**
+ * `OTEL_<SIGNAL>_EXPORTER`, a case-insensitive list whose default is `otlp`.
+ * Entries T3 Code has no exporter for are named in a warning and dropped, and
+ * a list left with nothing to honor reads as unset, as the specification asks
+ * of any enum value an implementation does not recognize.
+ */
+const exporter = (name: string): Config.Config<Setting<Exporter>> =>
+  Config.String(name).pipe(
+    Config.option,
+    Config.map((option): Setting<Exporter> => {
+      const entries = (Option.getOrUndefined(option) ?? "")
+        .split(",")
+        .map((entry) => entry.trim().toLowerCase())
+        .filter((entry) => entry !== "");
+      const ignored = [...new Set(entries.filter((entry) => !isExporter(entry)))];
+      const known = new Set(entries.filter(isExporter));
+      const value = known.has("otlp") ? "otlp" : known.has("none") ? "none" : undefined;
+      return ignored.length === 0
+        ? { value }
+        : {
+            value,
+            warning: `${name} names ${ignored.join(", ")}, which T3 Code does not export to, so ${ignored.length === 1 ? "it was" : "they were"} ignored`,
+          };
+    }),
+  );
+
 interface Settings {
   readonly endpoint: Setting<URL>;
   readonly protocol: Setting<OtlpProtocol>;
@@ -215,9 +248,23 @@ interface ResolvedSignal {
 /**
  * A signal whose endpoint, protocol, or headers do not read is not exported
  * rather than sent somewhere, in a format, or without the credentials its
- * collector expects.
+ * collector expects. `none` turns the signal off before any of those are read,
+ * whether or not an endpoint was named.
  */
-const signal = (name: OtlpSignalName, own: Settings, generic: Settings): ResolvedSignal => {
+const signal = (
+  name: OtlpSignalName,
+  exporter: Setting<Exporter>,
+  own: Settings,
+  generic: Settings,
+): ResolvedSignal => {
+  if (exporter.value === "none") {
+    return { signal: OtelSignal.Off(), used: [exporter] };
+  }
+  const resolved = endpointSignal(name, own, generic);
+  return { signal: resolved.signal, used: [exporter, ...resolved.used] };
+};
+
+const endpointSignal = (name: OtlpSignalName, own: Settings, generic: Settings): ResolvedSignal => {
   const ownEndpoint = isClaimed(own.endpoint);
   const endpoint = ownEndpoint ? own.endpoint : generic.endpoint;
   if (endpoint.value === undefined) {
@@ -263,16 +310,21 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
   traces: settings("OTEL_EXPORTER_OTLP_TRACES_"),
   metrics: settings("OTEL_EXPORTER_OTLP_METRICS_"),
   logs: settings("OTEL_EXPORTER_OTLP_LOGS_"),
+  exporters: Config.all({
+    traces: exporter("OTEL_TRACES_EXPORTER"),
+    metrics: exporter("OTEL_METRICS_EXPORTER"),
+    logs: exporter("OTEL_LOGS_EXPORTER"),
+  }),
 }).pipe(
-  Effect.map(({ t3, spec, resource, generic, ...own }) => {
+  Effect.map(({ t3, spec, resource, generic, exporters, ...own }) => {
     const disabled = t3.value ?? spec.value ?? false;
     // The kill switch wins outright, so the signals say nothing once it is set.
     const signals = disabled
       ? undefined
       : {
-          traces: signal("TRACES", own.traces, generic),
-          metrics: signal("METRICS", own.metrics, generic),
-          logs: signal("LOGS", own.logs, generic),
+          traces: signal("TRACES", exporters.traces, own.traces, generic),
+          metrics: signal("METRICS", exporters.metrics, own.metrics, generic),
+          logs: signal("LOGS", exporters.logs, own.logs, generic),
         };
     // A generic variable read by several signals warns once.
     const used = new Set(
