@@ -138,6 +138,10 @@ interface HomeScreenProps {
 // measured-height pool expansion. The old tallest-card estimate (~92) fired
 // that warning on every ordinary shelf expand, so the average wins.
 const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
+// Rows away from the viewport are cheap dormant frames (see
+// swipe-row-activation), so render further ahead: a fast fling then reaches
+// rows that are already built instead of rows still being rebuilt.
+const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 /**
  * Top spacing between the list and the Android custom header. The Android
@@ -1014,7 +1018,7 @@ export function HomeScreen(props: HomeScreenProps) {
             getItemType={(item) => item.type}
             itemsAreEqual={threadListV2ListItemsAreEqual}
             estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
-            drawDistance={500}
+            drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
             recycleItems
             extraData={v2ExtraData}
             ListHeaderComponent={v2ListHeader}
