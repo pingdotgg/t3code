@@ -539,6 +539,42 @@ it.effect("tries another checkout when provider refinement remains unknown", () 
   }),
 );
 
+it.effect("stops asking other checkouts once a host is settled as unrecognised", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const enterprise = project({
+      id: "p1",
+      title: "one",
+      workspaceRoot: "/one",
+      repository: "group/one",
+      provider: "unknown",
+      host: "acme.ghe.test",
+    });
+    const service = yield* makeService({
+      projects: [
+        enterprise,
+        { ...enterprise, id: "p2" as ProjectId, workspaceRoot: "/two" },
+        { ...enterprise, id: "p3" as ProjectId, workspaceRoot: "/three" },
+      ],
+      providers: [fakeProvider("gitlab")],
+      resolveHandle: ({ cwd, context }) => {
+        asked.push(cwd);
+        // No hosting CLI claims the host, and the checkout was fine, so the answer is final.
+        return Effect.succeed({
+          context: context!,
+          conclusive: true,
+          provider: undefined as never,
+        });
+      },
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(asked, ["/one"]);
+    assert.strictEqual(result.providers[0]?.kind, "unknown");
+  }),
+);
+
 /** A row as a host that reads several repositories at once hands it over. */
 function batchedChangeRequest(number: number, repository: string, updatedAt: string) {
   return { ...changeRequest(number, updatedAt), repository };

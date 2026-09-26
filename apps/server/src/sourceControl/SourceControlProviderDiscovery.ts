@@ -4,9 +4,11 @@ import type {
   SourceControlProviderDiscoveryItem,
   SourceControlProviderInfo,
   SourceControlProviderKind,
+  VcsError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -289,47 +291,91 @@ export function probeSourceControlProvider(input: {
   );
 }
 
+/**
+ * The outcome of asking every discovery spec whether it owns an unknown remote.
+ *
+ * `conclusive` means the specs reached a verdict about the host: one claimed it, or all of
+ * them answered "not mine". That answer belongs to the host, so it can be cached and no
+ * other checkout of the same host can improve on it. It is false when a probe failed for a
+ * reason that says nothing about the host - a timeout, an unusable checkout - and the next
+ * checkout, or the next attempt, may still answer.
+ */
+export interface UnknownRemoteRefinement {
+  readonly context: SourceControlProvider.SourceControlProviderContext | null;
+  readonly conclusive: boolean;
+}
+
+type SpecRefinement = {
+  readonly provider: SourceControlProviderInfo | null;
+  /** The spec spoke for the host, either by running or by having no CLI to run. */
+  readonly answered: boolean;
+};
+
+/**
+ * A hosting CLI that is not installed answers for every checkout at once: it claims no
+ * remote anywhere. `processRunner` reports the missing executable as a `NotFound` raised by
+ * `ChildProcess.spawn`, and an unusable checkout as a `NotFound` raised by
+ * `FileSystem.access`, so the two ENOENTs stay apart. Every other failure - a timeout, a
+ * permission error, an unreadable stream - says nothing about the host and must not settle
+ * it.
+ */
+function isMissingExecutable(error: VcsError): boolean {
+  if (error._tag !== "VcsProcessSpawnError") return false;
+  const cause = error.cause;
+  if (!(cause instanceof PlatformError.PlatformError)) return false;
+  const reason = cause.reason;
+  return reason._tag === "NotFound" && reason.module === "ChildProcess";
+}
+
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
     readonly process: VcsProcess.VcsProcess["Service"];
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext | null;
-  }): Effect.fn.Return<SourceControlProvider.SourceControlProviderContext | null> {
-    if (input.context === null || input.context.provider.kind !== "unknown") {
-      return input.context;
+  }): Effect.fn.Return<UnknownRemoteRefinement> {
+    if (input.context === null) return { context: null, conclusive: false };
+    if (input.context.provider.kind !== "unknown") {
+      return { context: input.context, conclusive: true };
     }
     const context = input.context;
 
-    const providers = yield* Effect.forEach(input.specs, (spec) => {
-      if (spec.type === "managed-cli") {
-        return spec.refineUnknownRemote({ cwd: input.cwd, context });
-      }
-      if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
-      return input.process
-        .run({
-          operation: "source-control.discovery.refine-unknown-remote",
-          command: spec.executable,
-          args: spec.remoteRefinementArgs ?? spec.authArgs,
-          cwd: input.cwd,
-          allowNonZeroExit: true,
-          timeoutMs: probeTimeoutMs(spec),
-          maxOutputBytes: 8_000,
-          appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map((auth) =>
-            spec.refineUnknownRemote({
-              cwd: input.cwd,
-              context,
-              auth,
-            }),
-          ),
-          Effect.orElseSucceed(() => null),
-        );
-    });
-    const provider = providers.find((candidate) => candidate !== null);
+    const refinements = yield* Effect.forEach(
+      input.specs,
+      (spec): Effect.Effect<SpecRefinement> => {
+        if (spec.type === "managed-cli") {
+          // The managed spec swallows its own missing CLIs, so a null is an answer already.
+          return spec
+            .refineUnknownRemote({ cwd: input.cwd, context })
+            .pipe(Effect.map((provider) => ({ provider, answered: true })));
+        }
+        if (!isCliRemoteRefinementSpec(spec))
+          return Effect.succeed({ provider: null, answered: true });
+        return input.process
+          .run({
+            operation: "source-control.discovery.refine-unknown-remote",
+            command: spec.executable,
+            args: spec.remoteRefinementArgs ?? spec.authArgs,
+            cwd: input.cwd,
+            allowNonZeroExit: true,
+            timeoutMs: probeTimeoutMs(spec),
+            maxOutputBytes: 8_000,
+            appendTruncationMarker: true,
+          })
+          .pipe(
+            Effect.map((auth) => ({
+              provider: spec.refineUnknownRemote({ cwd: input.cwd, context, auth }),
+              answered: true,
+            })),
+            Effect.catch((error) =>
+              Effect.succeed({ provider: null, answered: isMissingExecutable(error) }),
+            ),
+          );
+      },
+    );
+    const provider = refinements.find((candidate) => candidate.provider !== null)?.provider;
+    if (provider) return { context: { ...context, provider }, conclusive: true };
 
-    return provider ? { ...context, provider } : context;
+    return { context, conclusive: refinements.every((candidate) => candidate.answered) };
   },
 );
