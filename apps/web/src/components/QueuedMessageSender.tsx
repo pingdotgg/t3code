@@ -56,7 +56,7 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
   // picks it up. Hold the next message until then, as the composer does for
   // its own sends.
   const lastDispatch = useQueuedMessageStore(
-    (state) => state.lastDispatchByThreadKey[threadKey] ?? null,
+    (state) => state.lastDispatchByThreadKey[threadKey]?.thread ?? null,
   );
   const latestUserMessageId = thread?.messages.findLast((m) => m.role === "user")?.id ?? null;
   const waitingForServer =

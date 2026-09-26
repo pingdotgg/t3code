@@ -102,6 +102,30 @@ describe("queuedMessageStore", () => {
     expect(remove("thread-a", first.id)).toBeNull();
   });
 
+  it("a failed send keeps waiting on the dispatch before it", () => {
+    const { enqueue, beginSend, markDispatching, finishSend, failSend } =
+      useQueuedMessageStore.getState();
+    const earlier = createLocalDispatchSnapshot(undefined);
+    const first = enqueue("thread-a", makeMessage("first"));
+    const second = enqueue("thread-a", makeMessage("second"));
+    const third = enqueue("thread-a", makeMessage("third"));
+    const lastDispatch = () => useQueuedMessageStore.getState().lastDispatchByThreadKey["thread-a"];
+    beginSend("thread-a", first.id, null);
+    markDispatching("thread-a", first.id, earlier);
+    finishSend("thread-a", first.id);
+
+    // Fails before its turn start went out: the first send is still the one to wait on.
+    beginSend("thread-a", second.id, null);
+    failSend("thread-a", second.id);
+    expect(lastDispatch()?.thread).toBe(earlier);
+
+    // Fails after going out: it never reached the server, so the first still counts.
+    beginSend("thread-a", third.id, null);
+    markDispatching("thread-a", third.id, { ...earlier, startedAt: "later" });
+    failSend("thread-a", third.id);
+    expect(lastDispatch()?.thread).toBe(earlier);
+  });
+
   it("Stop takes back a preparing send but not one already dispatching", () => {
     const { enqueue, beginSend, markDispatching, drain, failSend } =
       useQueuedMessageStore.getState();

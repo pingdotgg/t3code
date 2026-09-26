@@ -59,14 +59,22 @@ export interface QueuedComposerMessage {
   createdAt: string;
 }
 
+/**
+ * The thread as it was when its last queued turn start went out. The next
+ * message waits until the server has moved past it, so a send that starts a
+ * new turn and the message after it do not leave on one boundary.
+ */
+interface QueuedDispatch {
+  /** The message that went out, or null for a dispatch restored after a failure. */
+  messageId: string | null;
+  thread: LocalDispatchSnapshot;
+  /** The dispatch this one replaced. If this send fails, that one still counts. */
+  previous: LocalDispatchSnapshot | null;
+}
+
 interface QueuedMessageStoreState {
   queuesByThreadKey: Record<string, QueuedComposerMessage[]>;
-  /**
-   * The thread as it was when its last queued turn start went out. The next
-   * message waits until the server has moved past it, so a send that starts
-   * a new turn and the message after it do not leave on one boundary.
-   */
-  lastDispatchByThreadKey: Record<string, LocalDispatchSnapshot>;
+  lastDispatchByThreadKey: Record<string, QueuedDispatch>;
   enqueue: (threadKey: string, message: Omit<QueuedComposerMessage, "id">) => QueuedComposerMessage;
   /**
    * Marks one message as sending and returns it, or null when it is gone or
@@ -103,7 +111,7 @@ function withQueue(
   state: QueueState,
   threadKey: string,
   queue: QueuedComposerMessage[],
-  lastDispatch?: LocalDispatchSnapshot | null,
+  lastDispatch?: QueuedDispatch | null,
 ): QueueState {
   const queuesByThreadKey = { ...state.queuesByThreadKey, [threadKey]: queue };
   const lastDispatchByThreadKey = { ...state.lastDispatchByThreadKey };
@@ -119,7 +127,7 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
   const update = (
     threadKey: string,
     queue: QueuedComposerMessage[],
-    lastDispatch?: LocalDispatchSnapshot | null,
+    lastDispatch?: QueuedDispatch | null,
   ) => set((state) => withQueue(state, threadKey, queue, lastDispatch));
   return {
     queuesByThreadKey: {},
@@ -153,7 +161,11 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
         queue.map((message) =>
           message.id === id ? { ...message, sending: "dispatching" } : message,
         ),
-        thread,
+        {
+          messageId: id,
+          thread,
+          previous: get().lastDispatchByThreadKey[threadKey]?.thread ?? null,
+        },
       );
       return true;
     },
@@ -170,11 +182,15 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
       const entry = queue.find((message) => message.id === id);
       if (!entry) return false;
       const { sending: _sending, ...rest } = entry;
-      // Nothing reached the server, so there is nothing to wait for.
+      // This send never reached the server, so only an earlier one is worth
+      // waiting for.
+      const dispatch = get().lastDispatchByThreadKey[threadKey];
       update(
         threadKey,
         [{ ...rest, holdUntilUserAction: true }, ...queue.filter((message) => message.id !== id)],
-        null,
+        dispatch?.messageId !== id
+          ? undefined
+          : dispatch.previous && { messageId: null, thread: dispatch.previous, previous: null },
       );
       return true;
     },

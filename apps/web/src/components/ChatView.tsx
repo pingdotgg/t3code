@@ -326,6 +326,7 @@ import {
 import {
   latestCompletedToolActivityId,
   type QueuedComposerMessage,
+  type QueuedMessageSendSettings,
   useQueuedMessages,
   useQueuedMessageStore,
 } from "../queuedMessageStore";
@@ -7248,6 +7249,22 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const queuedMessages = useQueuedMessages(activeThreadKey ?? "");
+  // The composer's model and modes, as a queued message keeps them for its send.
+  const readComposerSendSettings = (
+    sendCtx: ReturnType<ChatComposerHandle["getSendContext"]>,
+  ): QueuedMessageSendSettings => ({
+    modelSelection: sendCtx.selectedModelSelection,
+    runtimeMode,
+    interactionMode: sendCtx.interactionMode,
+    promptEffort: resolvePromptInjectedEffort(
+      getProviderModelCapabilities(
+        sendCtx.selectedProviderModels,
+        sendCtx.selectedModel,
+        sendCtx.selectedProvider,
+      ),
+      sendCtx.selectedPromptEffort,
+    ),
+  });
   // Puts queued messages back into the composer after Stop or Cancel. Prompts
   // join with blank lines; attachments and contexts are added.
   const restoreQueuedMessagesToComposer = (messages: ReadonlyArray<QueuedComposerMessage>) => {
@@ -7280,6 +7297,8 @@ export default function ChatView(props: ChatViewProps) {
     if (restoredImages.length > 0) addComposerDraftImages(composerDraftTarget, restoredImages);
     if (restoredFiles.length > 0) addComposerDraftFiles(composerDraftTarget, restoredFiles);
     if (overflow.length > 0 && activeThreadKey) {
+      // The overflow is the rest of the restored draft, so it follows the composer.
+      const sendCtx = composerRef.current?.getSendContext();
       useQueuedMessageStore.getState().enqueue(activeThreadKey, {
         prompt: "",
         images: overflow.filter((attachment) => attachment.type === "image"),
@@ -7287,7 +7306,7 @@ export default function ChatView(props: ChatViewProps) {
         terminalContexts: [],
         previewAnnotations: [],
         reviewComments: [],
-        sendSettings: firstMessage.sendSettings,
+        sendSettings: sendCtx ? readComposerSendSettings(sendCtx) : firstMessage.sendSettings,
         queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
         // Restoration is not a send. The user decides when the overflow goes.
         holdUntilUserAction: true,
@@ -7664,23 +7683,24 @@ export default function ChatView(props: ChatViewProps) {
       );
       return;
     }
+    // A queued message that will still leave on its own goes first, so a new
+    // send lines up behind it instead of overtaking it.
+    const queueStillSending =
+      activeThreadKey !== null &&
+      (useQueuedMessageStore.getState().queuesByThreadKey[activeThreadKey] ?? []).some(
+        (message) => message.sending !== undefined || !message.holdUntilUserAction,
+      );
     if (
       !directAnnotation &&
-      phase === "running" &&
       activeThreadKey &&
-      (settings.followUpBehavior === "queue") !== (submissionIntent === "alternate")
+      (queueStillSending ||
+        (phase === "running" &&
+          (settings.followUpBehavior === "queue") !== (submissionIntent === "alternate")))
     ) {
-      const promptEffort = resolvePromptInjectedEffort(
-        getProviderModelCapabilities(
-          ctxSelectedProviderModels,
-          ctxSelectedModel,
-          ctxSelectedProvider,
-        ),
-        ctxSelectedPromptEffort,
-      );
+      const sendSettings = readComposerSendSettings(sendCtx);
       if (
         composerRef.current?.validateProviderInput(
-          applyClaudePromptEffortPrefix(promptForSend, promptEffort),
+          applyClaudePromptEffortPrefix(promptForSend, sendSettings.promptEffort),
         ) === false
       ) {
         return;
@@ -7692,12 +7712,7 @@ export default function ChatView(props: ChatViewProps) {
         terminalContexts: [...composerTerminalContexts],
         previewAnnotations: [...composerPreviewAnnotations],
         reviewComments: [...composerReviewComments],
-        sendSettings: {
-          modelSelection: ctxSelectedModelSelection,
-          runtimeMode,
-          interactionMode: sendInteractionMode,
-          promptEffort,
-        },
+        sendSettings,
         queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
         createdAt: new Date().toISOString(),
       });
