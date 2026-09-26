@@ -188,17 +188,19 @@ export const ThemeBackgroundChoice = Schema.Literals([
 export type ThemeBackgroundChoice = typeof ThemeBackgroundChoice.Type;
 const DEFAULT_THEME_BACKGROUND: ThemeBackgroundChoice = "none";
 
-/**
- * How transparent the interface is over the background scene, 0-100%. Higher
- * values show more of the scene; the dim veil still differs per appearance
- * mode so text contrast is tuned separately.
- */
-export const MAX_THEME_BACKGROUND_TRANSPARENCY = 100;
+/** Keep a minimum solid surface fill so text remains readable over scene art. */
+export const MAX_THEME_BACKGROUND_TRANSPARENCY = 85;
 export const ThemeBackgroundTransparency = Schema.Int.check(
-  Schema.isBetween({
-    minimum: 0,
-    maximum: MAX_THEME_BACKGROUND_TRANSPARENCY,
-  }),
+  Schema.isBetween({ minimum: 0, maximum: 100 }),
+).pipe(
+  Schema.decodeTo(
+    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: MAX_THEME_BACKGROUND_TRANSPARENCY })),
+    SchemaTransformation.transform({
+      // Older clients allowed 100%; keep their settings decodable.
+      decode: (value) => Math.min(value, MAX_THEME_BACKGROUND_TRANSPARENCY),
+      encode: (value) => value,
+    }),
+  ),
 );
 export type ThemeBackgroundTransparency = typeof ThemeBackgroundTransparency.Type;
 const DEFAULT_THEME_BACKGROUND_TRANSPARENCY: ThemeBackgroundTransparency = 20;

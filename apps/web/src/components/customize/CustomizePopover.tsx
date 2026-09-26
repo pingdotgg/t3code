@@ -1,6 +1,10 @@
 import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
-import { MAX_INTERFACE_FONT_SIZE, MIN_INTERFACE_FONT_SIZE } from "@t3tools/contracts";
+import {
+  MAX_INTERFACE_FONT_SIZE,
+  MIN_INTERFACE_FONT_SIZE,
+  MAX_THEME_BACKGROUND_TRANSPARENCY,
+} from "@t3tools/contracts";
 import {
   CheckIcon,
   ChevronRightIcon,
@@ -185,7 +189,6 @@ function PresetCard({
   return (
     <button
       type="button"
-      data-previewing={previewing || undefined}
       data-preset={preset.id}
       aria-pressed={selected}
       onClick={() => {
@@ -430,8 +433,7 @@ export function CustomizePopover({
       const target =
         (returnFocusTo &&
           section?.querySelector<HTMLElement>(`[data-fine-tune="${returnFocusTo}"]`)) ??
-        section?.querySelector<HTMLElement>('[data-preset][aria-pressed="true"]') ??
-        section?.querySelector<HTMLElement>("[data-preset]");
+        section;
       target?.focus({ preventScroll: true });
     });
     return () => {
@@ -455,6 +457,7 @@ export function CustomizePopover({
   return (
     <section
       ref={sectionRef}
+      tabIndex={-1}
       aria-label="Customize interface"
       data-customize-popover
       className={cn(
@@ -515,14 +518,14 @@ export function CustomizePopover({
                 aria-label="Background transparency"
                 type="range"
                 min={0}
-                max={100}
+                max={MAX_THEME_BACKGROUND_TRANSPARENCY}
                 step={5}
                 value={transparency}
                 className="settings-slider min-w-0 flex-1"
                 style={
                   {
-                    "--settings-slider-progress": `${transparency}%`,
-                    "--settings-slider-fill-offset": `${0.5 - transparency / 100}rem`,
+                    "--settings-slider-progress": `${(transparency / MAX_THEME_BACKGROUND_TRANSPARENCY) * 100}%`,
+                    "--settings-slider-fill-offset": `${0.5 - transparency / MAX_THEME_BACKGROUND_TRANSPARENCY}rem`,
                   } as CSSProperties
                 }
                 onChange={(event) =>

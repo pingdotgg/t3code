@@ -1489,6 +1489,21 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
   return APP_THEME_VARIABLES[role];
 }
 
+/** Keep scene tints in step with every palette repaint, including unsaved drafts. */
+export function applyThemeBackgroundTints(colors: ThemeColors): void {
+  if (typeof document === "undefined") return;
+  const style = document.documentElement?.style;
+  if (!style) return;
+  for (const [role, variable] of [
+    ["canvas", "--app-backdrop-tint"],
+    ["sidebar", "--app-backdrop-tint-sidebar"],
+    ["toolbar", "--app-backdrop-tint-toolbar"],
+  ] as const) {
+    // Match draft palette handling: retain the last valid color while typing.
+    if (isThemeColor(colors[role])) style.setProperty(variable, colors[role]);
+  }
+}
+
 /** Marks the document as wearing an unsaved draft rather than a stored theme. */
 export const THEME_PREVIEW_ID = "__preview";
 
@@ -1507,6 +1522,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   setThemePreviewSidebarArtwork(false);
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
+  applyThemeBackgroundTints(colors);
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
@@ -1526,6 +1542,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     root.dataset.themeId = palette.id;
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
+    applyThemeBackgroundTints(colors);
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
@@ -1533,6 +1550,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
+  applyThemeBackgroundTints(
+    getStandardThemeColors(appearance ?? legacyThemeMode(theme) ?? "light"),
+  );
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

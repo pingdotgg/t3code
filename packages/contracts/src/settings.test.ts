@@ -610,11 +610,20 @@ describe("ClientSettings theme background", () => {
 });
 
 describe("ClientSettings theme background transparency", () => {
-  it("defaults to 20 and accepts the full range", () => {
+  it("defaults to 20 and accepts readable transparency", () => {
     expect(decodeClientSettings({}).themeBackgroundTransparency).toBe(20);
     expect(
       decodeClientSettingsPatch({ themeBackgroundTransparency: 65 }).themeBackgroundTransparency,
     ).toBe(65);
+  });
+
+  it.each([85, 90, 100])("clamps legacy transparency %s to the readable maximum", (value) => {
+    expect(
+      decodeClientSettings({ themeBackgroundTransparency: value }).themeBackgroundTransparency,
+    ).toBe(85);
+    expect(
+      decodeClientSettingsPatch({ themeBackgroundTransparency: value }).themeBackgroundTransparency,
+    ).toBe(85);
   });
 
   it.each([-1, 101, 1.5])("rejects invalid transparency %s", (value) => {

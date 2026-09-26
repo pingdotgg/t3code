@@ -4,7 +4,11 @@ import {
   type ThemeAppearance,
   type ThemeDefinition,
 } from "@t3tools/shared/themePalettes";
-import { getStandardThemeColors, getThemeColorsForMode } from "./themePalette";
+import {
+  applyThemeBackgroundTints,
+  getStandardThemeColors,
+  getThemeColorsForMode,
+} from "./themePalette";
 
 /** Scene art per choice, served from the app's public assets. */
 export const THEME_BACKGROUNDS: Readonly<Record<ThemeBackgroundChoice, string>> = {
@@ -88,8 +92,8 @@ export function resolveThemeBackgroundUrl(
 /**
  * Paint (or clear) the scene layer for the active theme. Tints come straight
  * from the theme definition's solid colors — reading them off the document
- * would race the palette application and go stale when an environment
- * republishes a theme under the same id.
+ * would race the palette application. Palette repaints also refresh these
+ * tints when theme contents change without changing the selected theme id.
  */
 export function applyThemeBackground(
   url: string | null,
@@ -117,9 +121,7 @@ export function applyThemeBackground(
 
   root.dataset.appBackdrop = "on";
   root.style.setProperty("--app-backdrop-image", `url("${url}")`);
-  root.style.setProperty("--app-backdrop-tint", colors.canvas);
-  root.style.setProperty("--app-backdrop-tint-sidebar", colors.sidebar);
-  root.style.setProperty("--app-backdrop-tint-toolbar", colors.toolbar);
+  applyThemeBackgroundTints(colors);
 
   // syncBrowserChromeTheme paints an opaque body fill for the browser chrome;
   // the scene layer sits under it, so glass mode keeps the body clear.

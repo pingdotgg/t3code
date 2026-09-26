@@ -4,6 +4,8 @@ import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 import {
   applyThemeColorPreview,
   applyThemePalette,
+  setEnvironmentThemes,
+  getEnvironmentThemes,
   getThemeColorsForMode,
   getThemeDefinition,
   getThemeModes,
@@ -1086,5 +1088,52 @@ describe("singleAppearanceOf", () => {
     const { variants: _pair, ...base } = T3_CHAT_THEME;
     expect(singleAppearanceOf({ ...base, id: "x", appearance: "dark" })).toBe("dark");
     expect(singleAppearanceOf(T3_CHAT_THEME)).toBe(null);
+  });
+});
+
+describe("backdrop palette synchronization", () => {
+  it("repaints tints for same-id updates, drafts, and restoration to the standard palette", () => {
+    const properties = new Map<string, string>();
+    const previousThemes = getEnvironmentThemes();
+    vi.stubGlobal("document", {
+      documentElement: {
+        dataset: { appBackdrop: "on" },
+        classList: { toggle: vi.fn() },
+        style: {
+          setProperty: (name: string, value: string) => properties.set(name, value),
+          removeProperty: (name: string) => properties.delete(name),
+        },
+      },
+    });
+    const theme = { ...GROVE_THEME, id: "published-backdrop-test", modes: undefined };
+    const expectTints = (colors: typeof GROVE_THEME.colors) => {
+      expect(properties.get("--app-backdrop-tint")).toBe(colors.canvas);
+      expect(properties.get("--app-backdrop-tint-sidebar")).toBe(colors.sidebar);
+      expect(properties.get("--app-backdrop-tint-toolbar")).toBe(colors.toolbar);
+    };
+    try {
+      setEnvironmentThemes([theme]);
+      applyThemePalette(theme.id, "light");
+      expectTints(theme.colors);
+
+      const colors = { ...theme.colors, canvas: "#123456", sidebar: "#234567", toolbar: "#345678" };
+      setEnvironmentThemes([{ ...theme, colors }]);
+      applyThemePalette(theme.id, "light");
+      expectTints(colors);
+      expect(properties.get("--app-theme-canvas")).toBe(colors.canvas);
+
+      applyThemeColorPreview(OCEAN_THEME.colors, "dark");
+      expectTints(OCEAN_THEME.colors);
+      applyThemeColorPreview({ ...OCEAN_THEME.colors, canvas: "#12" }, "dark");
+      expectTints(OCEAN_THEME.colors);
+
+      applyThemePalette(theme.id, "light");
+      expectTints(colors);
+      applyThemePalette("system", "dark");
+      expectTints(getStandardThemeColors("dark"));
+    } finally {
+      setEnvironmentThemes(previousThemes);
+      vi.unstubAllGlobals();
+    }
   });
 });

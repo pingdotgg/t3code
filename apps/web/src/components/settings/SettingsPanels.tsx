@@ -1437,9 +1437,9 @@ export function AppearanceSettingsPanel() {
                 step={5}
                 style={
                   {
-                    "--settings-slider-progress": `${settings.themeBackgroundTransparency}%`,
+                    "--settings-slider-progress": `${(settings.themeBackgroundTransparency / MAX_THEME_BACKGROUND_TRANSPARENCY) * 100}%`,
                     "--settings-slider-fill-offset": `${
-                      0.5 - settings.themeBackgroundTransparency / 100
+                      0.5 - settings.themeBackgroundTransparency / MAX_THEME_BACKGROUND_TRANSPARENCY
                     }rem`,
                   } as CSSProperties
                 }
