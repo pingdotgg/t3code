@@ -40,6 +40,7 @@ import {
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  mergeRefusalHint,
   readableFailure,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
@@ -1042,6 +1043,47 @@ describe("what to say when an action fails", () => {
     const long = readableFailure(new Error("x".repeat(900)), hint);
     expect(long.length).toBeLessThanOrEqual(320);
     expect(long.endsWith("…")).toBe(true);
+  });
+});
+
+describe("why a merge was refused", () => {
+  const clear = {
+    mergeability: "mergeable",
+    reviewDecision: null,
+    checksState: "passing",
+  } as const;
+
+  it("names a required review, the blocker the host only calls a policy", () => {
+    expect(mergeRefusalHint({ ...clear, reviewDecision: "review-required" })).toContain(
+      "approving review",
+    );
+  });
+
+  it("puts conflicts ahead of reviews and checks, since they need fixing first", () => {
+    expect(
+      mergeRefusalHint({
+        mergeability: "conflicting",
+        reviewDecision: "review-required",
+        checksState: "failing",
+      }),
+    ).toContain("conflicts");
+  });
+
+  it("names failing or running checks when reviews are not in the way", () => {
+    expect(mergeRefusalHint({ ...clear, checksState: "failing" })).toContain("failing");
+    expect(mergeRefusalHint({ ...clear, checksState: "pending" })).toContain("still running");
+  });
+
+  it("blames the branch rules when nothing visible explains the refusal", () => {
+    // The author's own approval shows as "approved" but satisfies no rule.
+    expect(mergeRefusalHint({ ...clear, reviewDecision: "approved" })).toContain("branch rules");
+    expect(mergeRefusalHint(clear)).toContain("branch rules");
+  });
+
+  it("leaves the generic hint when the host has not said whether it can merge", () => {
+    expect(
+      mergeRefusalHint({ mergeability: "unknown", reviewDecision: undefined, checksState: null }),
+    ).toBeNull();
   });
 });
 

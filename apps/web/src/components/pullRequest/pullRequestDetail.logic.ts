@@ -17,6 +17,7 @@ import {
   type PullRequestReaction,
   type PullRequestRef,
   type RepositoryIdentity,
+  type PullRequestReviewDecision,
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
@@ -1073,6 +1074,43 @@ export function readableFailure(failure: unknown, hint: string): string {
   // The host's words alone: the hint is a guess about why, and a guess printed under a reason
   // that contradicts it is worse than no guess at all.
   return bounded;
+}
+
+/**
+ * What to say under a refused merge when the host gave no reason. `gh` reports a blocked merge
+ * only as "the base branch policy prohibits the merge", so this names the blocker from what the
+ * page already knows. Null when mergeability is unknown, which leaves the generic hint.
+ */
+export function mergeRefusalHint(state: {
+  readonly mergeability: PullRequestMergeability;
+  readonly reviewDecision: PullRequestReviewDecision | null | undefined;
+  readonly checksState: PullRequestChecksState | null;
+}): string | null {
+  if (state.mergeability === "unknown") return null;
+  if (state.mergeability === "conflicting") {
+    return "The branch conflicts with the base. Resolve the conflicts, then merge again.";
+  }
+  // GitHub only reports a missing review when a branch rule requires one. The reverse does not
+  // hold: the server shows "approved" once any approval exists, including the author's own, which
+  // no rule counts.
+  if (state.reviewDecision === "review-required") {
+    return "The branch rules require an approving review before this can merge.";
+  }
+  if (state.reviewDecision === "changes-requested") {
+    return "A reviewer requested changes. Their review has to be addressed before this can merge.";
+  }
+  if (state.checksState === "failing") {
+    return "Some checks are failing, and the branch rules may require them to pass.";
+  }
+  if (state.checksState === "pending") {
+    return "Some checks are still running or awaiting action, and the branch rules may require them to pass.";
+  }
+  // Mergeable with nothing failing, yet refused: a branch rule the page cannot see, such as an
+  // approval from someone other than the author, signed commits, or resolved conversations.
+  if (state.mergeability === "mergeable") {
+    return "The branch rules blocked the merge. They may need an approval from someone other than the author, signed commits, or resolved conversations. The pull request on the host lists what is missing.";
+  }
+  return null;
 }
 
 /**
