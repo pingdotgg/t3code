@@ -91,7 +91,6 @@ const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDoc
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
-const encodeStoredShellSnapshot = Schema.encodeEffect(StoredShellSnapshotJson);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
 const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJson);
@@ -606,11 +605,23 @@ export const connectionStorageLayer = Layer.effectContext(
         ),
       saveShell: (environmentId, snapshot) =>
         Effect.gen(function* () {
-          const encoded = yield* encodeStoredShellSnapshot({
-            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
-            environmentId,
-            snapshot,
-          }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
+          // Plain JSON: Schema encoding a snapshot with thousands of threads
+          // blocks the main thread. This skips encode transforms, so a
+          // monogram project icon keeps its decoded shape. loadShell decodes
+          // through the schema, which also accepts the decoded shape. The
+          // mobile cache store round-trip test covers this. Builds from
+          // before monogram icons cannot read that shape, so they drop the
+          // cache and load the server snapshot.
+          const encoded = yield* Effect.try({
+            try: () =>
+              // @effect-diagnostics-next-line preferSchemaOverJson:off - see the comment above.
+              JSON.stringify({
+                schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+                environmentId,
+                snapshot,
+              } satisfies typeof StoredShellSnapshot.Encoded),
+            catch: (cause) => persistenceError("save-shell", cause),
+          });
           yield* writeDatabaseValue(database, SHELL_STORE_NAME, environmentId, encoded);
         }).pipe(
           Effect.mapError((cause) =>

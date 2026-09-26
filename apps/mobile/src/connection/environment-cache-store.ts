@@ -56,7 +56,6 @@ const StoredVcsRefs = Schema.Struct({
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredShellSnapshot),
 );
-const encodeStoredShellSnapshot = Schema.encodeEffect(Schema.fromJsonString(StoredShellSnapshot));
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredThreadSnapshot),
 );
@@ -136,11 +135,21 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       }).pipe(Effect.tap(() => Effect.promise(() => projectFaviconDatabaseCache.hydrate()))),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
-      const payload = yield* encodeStoredShellSnapshot({
-        schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
-        environmentId,
-        snapshot,
-      }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
+      // Plain JSON: Schema encoding a snapshot with thousands of threads
+      // blocks the JS thread. This skips encode transforms, so a monogram
+      // project icon keeps its decoded shape. loadShell decodes through the
+      // schema, which also accepts the decoded shape. The round-trip test
+      // covers this. Builds from before monogram icons cannot read that
+      // shape, so they drop the cache and load the server snapshot.
+      const payload = yield* Effect.try({
+        try: () =>
+          JSON.stringify({
+            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            environmentId,
+            snapshot,
+          } satisfies typeof StoredShellSnapshot.Encoded),
+        catch: (cause) => persistenceError("save-shell", cause),
+      });
       yield* database
         .saveCache(environmentId, "shell", "snapshot", SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION, payload)
         .pipe(Effect.mapError(mapDatabaseError("save-shell")));
