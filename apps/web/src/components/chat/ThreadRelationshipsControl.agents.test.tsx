@@ -1,6 +1,6 @@
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ModelSelection } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
@@ -196,7 +196,11 @@ it("shows readable models and only differing workspace details in agent tooltips
     worktreePath: null as string | null,
     branch: null as string | null,
     title: "Worker",
-    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    modelSelection: {
+      instanceId: "codex",
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }] as ModelSelection["options"],
+    },
     lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
   };
   state.projects = [
@@ -231,6 +235,7 @@ it("shows readable models and only differing workspace details in agent tooltips
       {
         id: "agent",
         childThreadId: "child",
+        origin: "app_owned",
         driver: "codex",
         providerInstanceId: "codex",
         title: "Worker",
@@ -258,7 +263,16 @@ it("shows readable models and only differing workspace details in agent tooltips
       .findAll((node) => typeof node.type === "string")
       .flatMap((node) => node.children.filter((child) => typeof child === "string"))
       .join("");
+  expect(text()).toContain("My GPT · high");
+  state.projection = {
+    ...projection,
+    subagents: [{ ...projection.subagents[0], origin: "provider_native" }],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("My GPT");
+  expect(text()).not.toContain("My GPT · high");
+  state.projection = projection;
+  await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).not.toContain("Tokens");
   expect(text()).not.toContain("Open subagent");
   expect(text()).not.toContain("Project");
@@ -279,6 +293,11 @@ it("shows readable models and only differing workspace details in agent tooltips
     };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(text()).toContain(expected);
+    if (!model?.trim() || model === "gpt-5.5" || model === "custom/model-v1") {
+      expect(text()).not.toContain(" · high");
+    } else {
+      expect(text()).toContain(`${expected} · high`);
+    }
     expect(text()).not.toContain("Unknown");
     if (!model?.trim()) expect(text()).not.toContain("My GPT");
   }
@@ -300,6 +319,56 @@ it("shows readable models and only differing workspace details in agent tooltips
     await act(async () => renderer.update(cloneElement(panel)));
     expect(text()).toContain("Not reported");
     expect(text()).not.toContain("My GPT");
+  }
+
+  state.projection = projection;
+  for (const [options, expected] of [
+    [[{ id: "effort", value: "max" }], " · max"],
+    [[{ id: "reasoning", value: "low" }], " · low"],
+    [[{ id: "variant", value: "high" }], " · high"],
+    [[{ id: "reasoningEffort", value: "none" }], " · none"],
+    [[{ id: "reasoningEffort", value: true }], ""],
+    [[{ id: "serviceTier", value: "fast" }], ""],
+    [[], ""],
+    [undefined, ""],
+  ] as const) {
+    child.modelSelection.options = options;
+    state.shells = [{ environmentId: "test", source: { ...child } }];
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text()).toContain(`My GPT${expected}`);
+    if (!expected) expect(text()).not.toContain("My GPT ·");
+  }
+  child.modelSelection.options = [{ id: "reasoningEffort", value: "high" }];
+  state.shells = [
+    {
+      environmentId: "test",
+      source: { ...child, modelSelection: { ...child.modelSelection, instanceId: "other" } },
+    },
+  ];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).not.toContain("My GPT ·");
+  const config = state.configs.get("test");
+  state.configs.clear();
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("GPT-5.4");
+  expect(text()).not.toContain("GPT-5.4 ·");
+  state.shells = [{ environmentId: "test", source: { ...child } }];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("GPT-5.4 · high");
+  state.configs.set("test", config);
+  for (const model of ["custom/model-v1", "custom/model-v2"]) {
+    state.projection = {
+      ...projection,
+      subagents: [{ ...projection.subagents[0], model }],
+    };
+    state.shells = [
+      {
+        environmentId: "test",
+        source: { ...child, modelSelection: { ...child.modelSelection, model: "custom/model-v1" } },
+      },
+    ];
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text().includes(`${model} · high`)).toBe(model === "custom/model-v1");
   }
 
   state.projection = {
@@ -364,6 +433,7 @@ it("shows readable models and only differing workspace details in agent tooltips
   state.configs.clear();
   await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("GPT-5.4");
+  expect(text()).not.toContain("GPT-5.4 ·");
   expect(text()).not.toContain("gpt-5.4");
   expect(text()).not.toContain("Project");
   expect(text()).not.toContain("Workspace");

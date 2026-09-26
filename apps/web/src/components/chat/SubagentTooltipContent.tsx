@@ -3,9 +3,15 @@ import type {
   OrchestrationProjectShell,
   ServerProvider,
   ProviderDriverKind,
+  ProviderInstanceId,
+  OrchestrationV2Subagent,
 } from "@t3tools/contracts";
 import { fileBasename } from "@t3tools/client-runtime/markdown-links";
-import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  formatModelSlugName,
+  getModelSelectionStringOptionValue,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import type { ReactNode } from "react";
 import {
@@ -26,11 +32,15 @@ import { cn } from "~/lib/utils";
 export function SubagentTooltipContent(props: {
   title: string;
   model: string | null;
+  providerInstanceId: ProviderInstanceId;
+  origin: OrchestrationV2Subagent["origin"];
   provider?: ServerProvider | undefined;
   driver?: ProviderDriverKind | undefined;
   elapsed?: ReactNode;
   parentThread?: Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath"> | undefined;
-  childThread?: Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath"> | undefined;
+  childThread?:
+    | Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath" | "modelSelection">
+    | undefined;
   parentProject?: Pick<OrchestrationProjectShell, "workspaceRoot"> | undefined;
   childProject?: Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot"> | undefined;
   status: string;
@@ -42,6 +52,22 @@ export function SubagentTooltipContent(props: {
     ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
     : model;
   const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
+  const childSelection = props.childThread?.modelSelection;
+  const childModel = props.provider
+    ? (resolveSelectableModel(
+        props.provider.driver,
+        childSelection?.model,
+        props.provider.models,
+      ) ?? childSelection?.model.trim())
+    : childSelection?.model.trim();
+  const effort =
+    props.origin === "app_owned" &&
+    childModel === (modelSlug ?? model) &&
+    childSelection?.instanceId === props.providerInstanceId
+      ? ["reasoningEffort", "effort", "reasoning", "variant"]
+          .map((id) => getModelSelectionStringOptionValue(childSelection, id))
+          .find(Boolean)
+      : undefined;
   const modelLabel = providerModel
     ? getTriggerDisplayModelName(providerModel)
     : model
@@ -98,7 +124,10 @@ export function SubagentTooltipContent(props: {
         ) : (
           <BotIcon className="size-3 shrink-0" />
         )}
-        <span className="min-w-0 truncate text-foreground/75">{modelLabel}</span>
+        <span className="min-w-0 truncate text-foreground/75">
+          {modelLabel}
+          {effort ? ` · ${effort}` : null}
+        </span>
       </div>
       <div className="flex min-w-0 items-center justify-between gap-4">
         <span
