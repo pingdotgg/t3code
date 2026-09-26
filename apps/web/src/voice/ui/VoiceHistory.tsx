@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/button";
 /**
  * Voice history review surface: the list of saved voice sessions with their
  * entry counts, per-session delete, export of everything as JSON, and clear
@@ -36,14 +37,15 @@ export function VoiceHistory(props: VoiceHistoryProps) {
   }
   return (
     <div className="flex flex-col gap-1 text-xs" data-voice-history="">
-      <button
+      <Button
         type="button"
-        className="text-left font-semibold text-muted-foreground"
+        size="micro"
+        variant="ghost-muted"
         aria-expanded={props.open}
         onClick={props.onToggle}
       >
         History ({props.sessions.length})
-      </button>
+      </Button>
       {props.open && (
         <>
           <ul className="flex flex-col gap-1">
@@ -52,34 +54,32 @@ export function VoiceHistory(props: VoiceHistoryProps) {
                 <span className="truncate text-muted-foreground" data-voice-history-session="">
                   {formatSession(summary)}
                 </span>
-                <button
+                <Button
                   type="button"
-                  className="px-1 text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  size="micro"
+                  variant="ghost-muted"
                   disabled={props.frozen}
-                  aria-label={`Delete saved session from ${summary.id}`}
+                  aria-label={`Delete saved session from ${formatSession(summary)}`}
                   onClick={() => props.onDelete(summary.id)}
                 >
                   Delete
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
           <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded-md border px-2 py-0.5 disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={props.onExport}
-            >
+            <Button type="button" size="micro" variant="outline" onClick={props.onExport}>
               Export history
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="rounded-md px-2 py-0.5 text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              size="micro"
+              variant="ghost-muted"
               disabled={props.frozen}
               onClick={props.onClear}
             >
               Clear history
-            </button>
+            </Button>
           </div>
         </>
       )}

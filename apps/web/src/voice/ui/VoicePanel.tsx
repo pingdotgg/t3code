@@ -1,3 +1,6 @@
+import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Label } from "../../components/ui/label";
 /**
  * The voice entry point: mounts the T3 live client (mic capture, speaker
  * playback, transcripts, acknowledged navigation) inside the chat surface.
@@ -549,15 +552,16 @@ export function VoicePanel() {
           <span className="text-xs font-semibold text-muted-foreground">
             Voice ({selection.label})
           </span>
-          <button
+          <Button
             type="button"
             aria-label="Minimize voice"
-            className="rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+            size="micro"
+            variant="ghost-muted"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => setPrefs({ collapsed: true })}
           >
             Minimize
-          </button>
+          </Button>
         </div>
         <VoiceControls
           phase={panelState.phase}
@@ -599,7 +603,7 @@ export function VoicePanel() {
             anchor.href = url;
             anchor.download = `voice-history-${new Date().toISOString()}.json`;
             anchor.click();
-            URL.revokeObjectURL(url);
+            window.setTimeout(() => URL.revokeObjectURL(url), 0);
           }}
           onClear={() => {
             history.clear();
@@ -608,9 +612,8 @@ export function VoicePanel() {
             history.deleteSession(id);
           }}
         />
-        <label>
-          <input
-            type="checkbox"
+        <Label>
+          <Checkbox
             aria-label="Try fast commands"
             checked={fastCommands}
             disabled={
@@ -619,10 +622,10 @@ export function VoicePanel() {
               panelState.phase === "connecting" ||
               panelState.phase === "closing"
             }
-            onChange={(event) => setFastCommands(event.target.checked)}
+            onCheckedChange={setFastCommands}
           />
           Try fast commands
-        </label>
+        </Label>
         {import.meta.env.DEV && (
           <form
             onSubmit={(event) => {

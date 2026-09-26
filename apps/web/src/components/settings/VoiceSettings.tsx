@@ -14,6 +14,9 @@ import {
 } from "../../voice/ui/overlayPreferences";
 import { useVoiceFastCommands } from "../../voice/ui/preferences";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
+import { Label } from "../ui/label";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { Input } from "../ui/input";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -177,32 +180,32 @@ export function VoiceSettingsSection() {
         title="Activation"
         description="How a voice session starts on this device. Always listening keeps a paid live session connected until you press End; hold to talk and double-press work on the corner button and in the panel."
       >
-        <select
-          aria-label="Voice activation"
+        <Select
           value={overlay.activation}
-          onChange={(event) =>
-            setOverlay({ activation: event.target.value as typeof overlay.activation })
-          }
+          onValueChange={(activation) => {
+            if (activation !== null) setOverlay({ activation });
+          }}
         >
-          {VOICE_ACTIVATION_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {VOICE_ACTIVATION_LABELS[mode]}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger size="sm" aria-label="Voice activation">
+            <SelectValue>{VOICE_ACTIVATION_LABELS[overlay.activation]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {VOICE_ACTIVATION_MODES.map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {VOICE_ACTIVATION_LABELS[mode]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
       </SettingsRow>
       <SettingsRow
         title="Fast commands"
         description="Open exact thread matches and create empty drafts quickly. More nuanced requests still use the reasoning model. This preference applies on this device."
       >
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={fastCommands}
-            onChange={(event) => setFastCommands(event.target.checked)}
-          />
+        <Label>
+          <Checkbox checked={fastCommands} onCheckedChange={setFastCommands} />
           Use fast commands
-        </label>
+        </Label>
       </SettingsRow>
       {environment ? (
         <>
