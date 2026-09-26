@@ -5936,15 +5936,24 @@ export default function ChatView(props: ChatViewProps) {
     },
     [composerOverlayElement],
   );
+  const retainsComposerFooterRef = useRef(false);
+  retainsComposerFooterRef.current = !isGitRepo && !showComposerEnvironmentIndicator;
   const publishComposerOverlayHeight = useCallback(
     (height: number) => {
       const nextHeight = Math.ceil(height);
       if (nextHeight <= 0) return;
+      const retainedFooterHeight = retainsComposerFooterRef.current
+        ? (composerOverlayElement
+            ?.querySelector<HTMLElement>('[data-chat-composer-footer="true"]')
+            ?.getBoundingClientRect().height ?? 0)
+        : 0;
       composerOverlayHeightRef.current = nextHeight;
       const nextInset = resolveComposerTimelineInset({
         currentInset: composerTimelineInsetRef.current,
         overlayHeight: nextHeight,
         isResting: composerRestingRef.current,
+        retainedFooterHeight,
+        rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
       });
       if (composerTimelineInsetRef.current !== nextInset) {
         composerTimelineInsetRef.current = nextInset;
@@ -5952,7 +5961,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       publishScrollToEndClearance(nextHeight);
     },
-    [publishScrollToEndClearance],
+    [composerOverlayElement, publishScrollToEndClearance],
   );
   // The composer reports its resting flag from a layout effect, which runs
   // before this component's own layout effects and before any resize

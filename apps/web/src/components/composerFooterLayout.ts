@@ -38,8 +38,8 @@ export function shouldUseRestingComposerLayout(input: {
   // Banners and the tasks badge dock above the surface, so they are absent
   // too. Whether the context strip can host the relocated controls is
   // deliberately absent here: resting reclaims vertical space at every
-  // desktop width, and where the strip is missing or too narrow the controls
-  // simply return when the composer is focused.
+  // desktop width. Without a context strip the footer remains inside the
+  // composer; a narrow strip can hide controls until the composer is focused.
   //
   // Only a timeline scroll rests the composer: the user asked for it with the
   // gesture, and it lifts on the next composer interaction. Losing focus never
@@ -61,9 +61,9 @@ export function shouldUseRestingComposerLayout(input: {
 
 /**
  * How much taller the empty expanded composer is than its resting row on
- * desktop widths, from the layout classes in ChatComposer: the body loses
+ * desktop widths at the default 16px root font. In ChatComposer the body loses
  * 8px of top padding, the prompt clamps from min-h-17.5 (70px) to 32px, and
- * the 48px footer leaves flow.
+ * the 48px footer leaves flow. These rem-based dimensions scale with the root font.
  */
 export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
 
@@ -83,9 +83,16 @@ export function resolveComposerTimelineInset(input: {
   currentInset: number;
   overlayHeight: number;
   isResting: boolean;
+  retainedFooterHeight?: number;
+  rootFontSize?: number;
 }): number {
   return input.isResting
-    ? Math.max(input.currentInset, input.overlayHeight + COMPOSER_RESTING_EXPANSION_MIN_PX)
+    ? Math.max(
+        input.currentInset,
+        input.overlayHeight +
+          COMPOSER_RESTING_EXPANSION_MIN_PX * ((input.rootFontSize ?? 16) / 16) -
+          (input.retainedFooterHeight ?? 0),
+      )
     : input.overlayHeight;
 }
 
