@@ -7,11 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  type CursorSettings,
-  type ModelSelection,
-  type ProviderSetupError,
-} from "@t3tools/contracts";
+import { type CursorSettings, type ModelSelection, ProviderSetupError } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
@@ -35,6 +31,7 @@ import type { CursorAuth } from "../provider/CursorAuth.ts";
 const CURSOR_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 type CursorTextGenerationOperation =
   | "generateCommitMessage"
   | "generatePrContent"
@@ -210,7 +207,10 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           ? cause
           : new TextGenerationError({
               operation,
-              detail: "Cursor SDK text generation failed.",
+              // Sign-in and admission errors tell the user what to do. Keep them.
+              detail: isProviderSetupError(cause)
+                ? cause.detail
+                : "Cursor SDK text generation failed.",
               cause,
             }),
       ),

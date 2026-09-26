@@ -1,5 +1,10 @@
 import type { RunResult } from "@cursor/sdk";
-import { CursorSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import {
+  CursorSettings,
+  ProviderInstanceId,
+  ProviderSetupError,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -368,6 +373,34 @@ describe("CursorTextGeneration", () => {
 
       expect(error.detail).toBe("Sign in with Cursor or add CURSOR_API_KEY in provider settings.");
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("keeps the sign-in instruction when the instance has no credential", () =>
+    Effect.gen(function* () {
+      const detail = "Sign in with Cursor or add CURSOR_API_KEY in provider settings.";
+      const textGeneration = yield* makeCursorTextGeneration(
+        cursorSettings,
+        {},
+        Effect.fail(
+          new ProviderSetupError({
+            instanceId: ProviderInstanceId.make("cursor"),
+            operation: "credentials",
+            detail,
+          }),
+        ),
+      );
+
+      const error = yield* Effect.flip(
+        textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Name this thread",
+          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
+        }),
+      );
+
+      expect(error.detail).toBe(detail);
+      expect(cursorSdkMock.create).not.toHaveBeenCalled();
     }).pipe(Effect.provide(fsLayer)),
   );
 });
