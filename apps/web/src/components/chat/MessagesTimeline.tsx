@@ -550,6 +550,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
+  // Bounds how long a position restore waits for rows that contain the saved
+  // anchor; switched threads can paint another thread's rows for a frame.
+  const restoreDeadlineRef = useRef<number | null>(null);
   // The list stays mounted across thread switches. Its first end pins on the
   // new thread must snap, not glide, even if that thread is mid-turn.
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
@@ -560,6 +563,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
+    restoreDeadlineRef.current = null;
     previousLatestTurnRef.current = latestTurn;
     setSettlingListIdentity(listIdentityKey);
     paintedExpandedTurnIds = rememberedPosition?.disclosures?.turns ?? new Set();
@@ -820,6 +824,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
     [restoreRowIndex, restoringThreadPosition],
   );
+  // Bumped when a restore waiting for the saved anchor's rows reaches its
+  // deadline, so the restore completes even if no row change re-runs the effect.
+  const [restoreWaitTick, setRestoreWaitTick] = useState(0);
   useLayoutEffect(() => {
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
@@ -830,6 +837,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     let cancelled = false;
     let settleFrame: number | null = null;
+    let waitTimer: ReturnType<typeof setTimeout> | null = null;
     const viewport: HTMLElement | null = list.getScrollableNode();
     const cancelRestoration = () => {
       if (cancelled) return;
@@ -837,6 +845,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (settleFrame !== null) cancelAnimationFrame(settleFrame);
       // Supersede any pending estimated-index scroll before the browser applies the gesture.
       if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
+      restoreDeadlineRef.current = null;
       setPositionedThreadKey(listIdentityKey);
     };
     const cancelForNavigation = () => {
@@ -857,10 +866,46 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
     viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
     viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
+    const removeCancelListeners = () => {
+      viewport?.removeEventListener("wheel", cancelForNavigation);
+      viewport?.removeEventListener("touchmove", cancelForNavigation);
+      viewport?.removeEventListener("pointerdown", cancelForNavigation);
+      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+    };
+    const detach = () => {
+      if (cancelPositionRestoreRef?.current === cancelRestoration) {
+        cancelPositionRestoreRef.current = null;
+      }
+      if (waitTimer !== null) clearTimeout(waitTimer);
+      removeCancelListeners();
+    };
     const position = rememberedPosition;
     const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
     if (position?.atEnd === false) onManualNavigation();
     if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
+    if (position?.atEnd === false && index < 0) {
+      // The displayed rows may briefly be a paint-only projection of another
+      // thread. Restoring against those would clamp the offset and mark the
+      // restoration done before the real rows arrive, so wait for rows that
+      // contain the saved anchor (bounded) before falling back. Gestures keep
+      // cancelling through the wait, and the wait always terminates.
+      if (restoreDeadlineRef.current === null) {
+        restoreDeadlineRef.current = Date.now() + 2_000;
+      }
+      if (Date.now() < restoreDeadlineRef.current) {
+        waitTimer = setTimeout(
+          () => {
+            if (!cancelled) setRestoreWaitTick((tick) => tick + 1);
+          },
+          restoreDeadlineRef.current - Date.now() + 25,
+        );
+        return detach;
+      }
+      // Leave the deadline set: the fallback below is async (scrollToOffset
+      // resolves before setPositionedThreadKey runs), so a rows change that
+      // reruns this effect before that completes must see the deadline as
+      // already expired, not start a fresh 2s wait.
+    }
     const scrolling =
       position?.atEnd === false
         ? index >= 0
@@ -875,6 +920,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (position?.atEnd !== false || index < 0) {
+        restoreDeadlineRef.current = null;
         setPositionedThreadKey(listIdentityKey);
         return;
       }
@@ -906,6 +952,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           return;
         }
         if (++stableFrames >= 2) {
+          restoreDeadlineRef.current = null;
           setPositionedThreadKey(listIdentityKey);
         } else {
           settleFrame = requestAnimationFrame(reconcile);
@@ -915,14 +962,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
     return () => {
       cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
       if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+      detach();
     };
   }, [
     citationRequest,
@@ -931,6 +972,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     onManualNavigation,
     rememberedPosition,
+    restoreWaitTick,
     restoringThreadPosition,
     rows,
   ]);

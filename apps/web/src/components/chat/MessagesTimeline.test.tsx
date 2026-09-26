@@ -12,6 +12,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
+import { rememberTimelinePosition } from "./timelineScrollAnchoring";
 import { useComposerFocusState } from "./useComposerFocusState";
 
 vi.mock("@legendapp/list/react", async () => {
@@ -1012,6 +1013,165 @@ describe("MessagesTimeline", () => {
       expect(animatedAttr(renderer)).toBe(true);
     } finally {
       act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("waits for the saved anchor's rows during a position restore, then falls back at its deadline", async () => {
+    vi.useFakeTimers();
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const frame = frames.size + 1;
+      frames.set(frame, callback);
+      return frame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const createListRef = (calls: {
+      scrollToIndex: ReturnType<typeof vi.fn>;
+      scrollToOffset: ReturnType<typeof vi.fn>;
+      scrollToEnd: ReturnType<typeof vi.fn>;
+    }) => {
+      const ref = createRef<LegendListRef | null>();
+      ref.current = {
+        getState: () => ({ indexByKey: () => undefined }),
+        getScrollableNode: () => null,
+        scrollToIndex: calls.scrollToIndex,
+        scrollToOffset: calls.scrollToOffset,
+        scrollToEnd: calls.scrollToEnd,
+      } as unknown as LegendListRef;
+      return ref;
+    };
+    const savedPosition = {
+      rowId: "entry-anchor",
+      offsetWithinRow: 12,
+      scrollOffset: 420,
+      atEnd: false,
+    };
+    const staleEntries = [buildUserTimelineEntry("Another thread's rows")];
+    const anchoredEntries = [
+      buildUserTimelineEntry("Earlier message"),
+      { ...buildUserTimelineEntry("Saved anchor"), id: "entry-anchor" },
+    ];
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      // Switching back paints rows before the saved anchor exists among them.
+      // The restore must not clamp a fallback scroll against those rows.
+      rememberTimelinePosition("environment-local:thread-restore-wait", savedPosition);
+      const waitCalls = {
+        scrollToIndex: vi.fn(() => Promise.resolve()),
+        scrollToOffset: vi.fn(() => Promise.resolve()),
+        scrollToEnd: vi.fn(() => Promise.resolve()),
+      };
+      const waitProps = {
+        ...buildProps(),
+        routeThreadKey: "environment-local:thread-restore-wait",
+        listRef: createListRef(waitCalls),
+      };
+      act(() => {
+        renderer = create(<MessagesTimeline {...waitProps} timelineEntries={staleEntries} />);
+      });
+      expect(waitCalls.scrollToIndex).not.toHaveBeenCalled();
+      expect(waitCalls.scrollToOffset).not.toHaveBeenCalled();
+      expect(waitCalls.scrollToEnd).not.toHaveBeenCalled();
+
+      // Once rows carrying the anchor arrive, the restore targets the anchor.
+      act(() => {
+        renderer!.update(<MessagesTimeline {...waitProps} timelineEntries={anchoredEntries} />);
+      });
+      expect(waitCalls.scrollToIndex).toHaveBeenCalledWith(
+        expect.objectContaining({ index: 1, animated: false, viewPosition: 0, viewOffset: -12 }),
+      );
+      expect(waitCalls.scrollToOffset).not.toHaveBeenCalled();
+      act(() => renderer?.unmount());
+      renderer = undefined;
+
+      // If the anchor never appears, the bounded wait ends and the restore
+      // completes against the saved offset instead of hanging.
+      rememberTimelinePosition("environment-local:thread-restore-fallback", savedPosition);
+      const fallbackCalls = {
+        scrollToIndex: vi.fn(() => Promise.resolve()),
+        scrollToOffset: vi.fn(() => Promise.resolve()),
+        scrollToEnd: vi.fn(() => Promise.resolve()),
+      };
+      const fallbackProps = {
+        ...buildProps(),
+        routeThreadKey: "environment-local:thread-restore-fallback",
+        listRef: createListRef(fallbackCalls),
+      };
+      act(() => {
+        renderer = create(<MessagesTimeline {...fallbackProps} timelineEntries={staleEntries} />);
+      });
+      expect(fallbackCalls.scrollToOffset).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTimeAsync(2_100));
+      expect(fallbackCalls.scrollToOffset).toHaveBeenCalledWith({ offset: 420, animated: false });
+      expect(fallbackCalls.scrollToIndex).not.toHaveBeenCalled();
+    } finally {
+      act(() => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps falling back immediately after the deadline instead of restarting the wait", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const savedPosition = {
+      rowId: "entry-anchor",
+      offsetWithinRow: 12,
+      scrollOffset: 420,
+      atEnd: false,
+    };
+    const staleEntries = [buildUserTimelineEntry("Another thread's rows")];
+    // A later row not carrying the anchor either: a streamed update that
+    // arrives after the deadline expires, before the fallback scroll settles.
+    const stillStaleEntries = [...staleEntries, buildUserTimelineEntry("More streamed content")];
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      rememberTimelinePosition("environment-local:thread-restore-no-restart", savedPosition);
+      // The fallback scroll never resolves in this test, so a second rerender
+      // observes the effect before setPositionedThreadKey ever runs.
+      const calls = {
+        scrollToIndex: vi.fn(() => Promise.resolve()),
+        scrollToOffset: vi.fn(() => new Promise<void>(() => {})),
+        scrollToEnd: vi.fn(() => Promise.resolve()),
+      };
+      const ref = createRef<LegendListRef | null>();
+      ref.current = {
+        getState: () => ({ indexByKey: () => undefined }),
+        getScrollableNode: () => null,
+        scrollToIndex: calls.scrollToIndex,
+        scrollToOffset: calls.scrollToOffset,
+        scrollToEnd: calls.scrollToEnd,
+      } as unknown as LegendListRef;
+      const props = {
+        ...buildProps(),
+        routeThreadKey: "environment-local:thread-restore-no-restart",
+        listRef: ref,
+      };
+
+      act(() => {
+        renderer = create(<MessagesTimeline {...props} timelineEntries={staleEntries} />);
+      });
+      expect(calls.scrollToOffset).not.toHaveBeenCalled();
+
+      // The bounded wait expires and the effect falls back once.
+      await act(() => vi.advanceTimersByTimeAsync(2_100));
+      expect(calls.scrollToOffset).toHaveBeenCalledTimes(1);
+
+      // A streamed update changes the rows again while the fallback scroll
+      // is still pending. Since the anchor is still missing, the effect
+      // reruns; it must fall back again immediately rather than starting
+      // another 2s wait.
+      act(() => {
+        renderer!.update(<MessagesTimeline {...props} timelineEntries={stillStaleEntries} />);
+      });
+      expect(calls.scrollToOffset).toHaveBeenCalledTimes(2);
+    } finally {
+      act(() => renderer?.unmount());
+      vi.useRealTimers();
       vi.unstubAllGlobals();
     }
   });
