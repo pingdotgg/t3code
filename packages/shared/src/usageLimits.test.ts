@@ -665,6 +665,40 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
   });
 
+  it("weights pooled quota by plan multiplier", () => {
+    const [pool] = collectLimitPools(
+      [
+        {
+          ...account("a", [{ ...weekly, usedPercent: 100 }]),
+          plan: "ChatGPT Pro 20x Subscription",
+        },
+        { ...account("b", [{ ...weekly, usedPercent: 82 }]), plan: "ChatGPT Pro 5x Subscription" },
+      ],
+      now,
+    );
+    // 20 parts empty, 5 parts with 18% left: 0.9 of 25 parts.
+    // Both windows are 99% elapsed: 96% used is on pace, where an even 91% would read under.
+    expect(pool!.windows[0]).toMatchObject({ remainingPercent: 4, usedPercent: 96, pace: "on" });
+    expect(pool!.windows[0]!.resets.map((reset) => reset.restoresPercent)).toEqual([80, 16]);
+    const [zero] = collectLimitPools(
+      [{ ...account("a", [{ ...weekly, usedPercent: 60 }]), plan: "Pro 0x" }],
+      now,
+    );
+    expect(zero!.windows[0]!.remainingPercent).toBe(40);
+    // Plus has no multiplier in its label and is the 1x baseline.
+    const [plus] = collectLimitPools(
+      [
+        {
+          ...account("a", [{ ...weekly, usedPercent: 100 }]),
+          plan: "ChatGPT Pro 20x Subscription",
+        },
+        { ...account("b", [{ ...weekly, usedPercent: 0 }]), plan: "ChatGPT Plus Subscription" },
+      ],
+      now,
+    );
+    expect(plus!.windows[0]!.remainingPercent).toBe(5);
+  });
+
   it("falls back to weekly resets when no account reports a session", () => {
     const [pool] = collectLimitPools(
       [

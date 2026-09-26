@@ -9,6 +9,7 @@ import {
   displayLimitWindows,
   formatDuration,
   formatResetsIn,
+  planWeight,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -123,7 +124,15 @@ function PoolWindowCard({
       ) : null}
       <View className="flex-row gap-1">
         {pool.columns.map(({ account, window }, index) => {
-          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+          if (!window) {
+            return (
+              <View
+                key={account.key}
+                className="h-7 min-w-0"
+                style={{ flex: planWeight(account) }}
+              />
+            );
+          }
           return (
             <Pressable
               key={account.key}
@@ -131,7 +140,8 @@ function PoolWindowCard({
               accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
-              className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
+              className="h-7 min-w-0 overflow-hidden rounded-md bg-subtle"
+              style={{ flex: planWeight(account) }}
             >
               <AccountSegment
                 remaining={remainingPercent(window)}
