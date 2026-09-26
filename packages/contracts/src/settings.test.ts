@@ -10,6 +10,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  ThemeBackgroundChoice,
 } from "./settings.ts";
 
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
@@ -568,6 +569,35 @@ describe("ClientSettings environment identification", () => {
   it("rejects unsupported presentation modes", () => {
     expect(() => decodeClientSettings({ environmentIdentificationMode: "badge" })).toThrow();
     expect(() => decodeClientSettingsPatch({ environmentIdentificationMode: "badge" })).toThrow();
+  });
+});
+
+describe("ClientSettings theme background", () => {
+  it("defaults to off and accepts every choice", () => {
+    expect(decodeClientSettings({}).themeBackground).toBe("none");
+
+    for (const choice of ThemeBackgroundChoice.literals) {
+      expect(decodeClientSettingsPatch({ themeBackground: choice }).themeBackground).toBe(choice);
+    }
+  });
+
+  it("rejects unsupported scene choices", () => {
+    expect(() => decodeClientSettings({ themeBackground: "sunset" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ themeBackground: "sunset" })).toThrow();
+  });
+});
+
+describe("ClientSettings theme background transparency", () => {
+  it("defaults to 20 and accepts the full range", () => {
+    expect(decodeClientSettings({}).themeBackgroundTransparency).toBe(20);
+    expect(
+      decodeClientSettingsPatch({ themeBackgroundTransparency: 65 }).themeBackgroundTransparency,
+    ).toBe(65);
+  });
+
+  it.each([-1, 101, 1.5])("rejects invalid transparency %s", (value) => {
+    expect(() => decodeClientSettings({ themeBackgroundTransparency: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ themeBackgroundTransparency: value })).toThrow();
   });
 });
 

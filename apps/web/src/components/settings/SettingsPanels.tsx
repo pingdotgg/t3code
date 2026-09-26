@@ -25,6 +25,7 @@ import {
   type ChatWidth,
   type DiffLayout,
   type EnvironmentIdentificationMode,
+  type ThemeBackgroundChoice,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
@@ -33,6 +34,7 @@ import {
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
+  MAX_THEME_BACKGROUND_TRANSPARENCY,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
@@ -64,6 +66,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
+import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -1297,6 +1300,101 @@ export function AppearanceSettingsPanel() {
                 style={glassOpacitySliderStyle}
                 type="range"
                 value={settings.glassOpacity}
+              />
+            </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("setting-theme-background")}
+          description="Show a dimmed scenic backdrop behind the interface. Theme scene follows the active theme; a picked scene stays across theme changes."
+          resetAction={
+            settings.themeBackground !== DEFAULT_UNIFIED_SETTINGS.themeBackground ? (
+              <SettingResetButton
+                label="background scene"
+                onClick={() =>
+                  updateSettings({
+                    themeBackground: DEFAULT_UNIFIED_SETTINGS.themeBackground,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.themeBackground}
+              onValueChange={(value) => {
+                if (THEME_BACKGROUND_CHOICES.includes(value as ThemeBackgroundChoice)) {
+                  updateSettings({ themeBackground: value as ThemeBackgroundChoice });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Background scene">
+                <SelectValue>{THEME_BACKGROUND_LABELS[settings.themeBackground]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THEME_BACKGROUND_CHOICES.map((choice) => (
+                  <SelectItem hideIndicator key={choice} value={choice}>
+                    {THEME_BACKGROUND_LABELS[choice]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("setting-theme-background-transparency")}
+          description="How much of the background scene shows through the interface. Higher values are more transparent."
+          resetAction={
+            settings.themeBackgroundTransparency !==
+            DEFAULT_UNIFIED_SETTINGS.themeBackgroundTransparency ? (
+              <SettingResetButton
+                label="background transparency"
+                onClick={() =>
+                  updateSettings({
+                    themeBackgroundTransparency:
+                      DEFAULT_UNIFIED_SETTINGS.themeBackgroundTransparency,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                htmlFor="theme-background-transparency"
+              >
+                {settings.themeBackgroundTransparency}%
+              </output>
+              <input
+                aria-label="Background transparency"
+                className="settings-slider min-w-0 flex-1"
+                id="theme-background-transparency"
+                max={MAX_THEME_BACKGROUND_TRANSPARENCY}
+                min={0}
+                onChange={(event) => {
+                  const transparency = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(transparency) &&
+                    transparency >= 0 &&
+                    transparency <= MAX_THEME_BACKGROUND_TRANSPARENCY
+                  ) {
+                    updateSettings({ themeBackgroundTransparency: transparency });
+                  }
+                }}
+                step={5}
+                style={
+                  {
+                    "--settings-slider-progress": `${settings.themeBackgroundTransparency}%`,
+                    "--settings-slider-fill-offset": `${
+                      0.5 - settings.themeBackgroundTransparency / 100
+                    }rem`,
+                  } as CSSProperties
+                }
+                type="range"
+                value={settings.themeBackgroundTransparency}
               />
             </div>
           }

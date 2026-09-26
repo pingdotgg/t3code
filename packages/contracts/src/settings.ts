@@ -158,6 +158,51 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+/**
+ * Which scenic backdrop paints behind the interface, dimmed like tinted glass.
+ * The theme ids mirror `BUILT_IN_THEME_IDS` in `@t3tools/shared/themePalettes`
+ * (contracts cannot import shared); "auto" follows the active built-in theme.
+ * Off by default so upgrading never changes how the workspace looks.
+ */
+export const ThemeBackgroundChoice = Schema.Literals([
+  "auto",
+  "none",
+  // Built-in theme ids: each theme's own scene.
+  "t3-chat",
+  "grove",
+  "ocean",
+  "ember",
+  "iris",
+  // Standalone scenes in the picker library.
+  "alpine",
+  "aurora",
+  "coastline",
+  "dune",
+  "fjord",
+  "forest-lake",
+  "highlands",
+  "meadow",
+  "nightfall",
+  "terraces",
+]);
+export type ThemeBackgroundChoice = typeof ThemeBackgroundChoice.Type;
+const DEFAULT_THEME_BACKGROUND: ThemeBackgroundChoice = "none";
+
+/**
+ * How transparent the interface is over the background scene, 0-100%. Higher
+ * values show more of the scene; the dim veil still differs per appearance
+ * mode so text contrast is tuned separately.
+ */
+export const MAX_THEME_BACKGROUND_TRANSPARENCY = 100;
+export const ThemeBackgroundTransparency = Schema.Int.check(
+  Schema.isBetween({
+    minimum: 0,
+    maximum: MAX_THEME_BACKGROUND_TRANSPARENCY,
+  }),
+);
+export type ThemeBackgroundTransparency = typeof ThemeBackgroundTransparency.Type;
+const DEFAULT_THEME_BACKGROUND_TRANSPARENCY: ThemeBackgroundTransparency = 20;
+
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
     (shortcut) =>
@@ -379,6 +424,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
+  ),
+  themeBackground: ThemeBackgroundChoice.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_BACKGROUND)),
+  ),
+  themeBackgroundTransparency: ThemeBackgroundTransparency.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_BACKGROUND_TRANSPARENCY)),
   ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
@@ -1595,6 +1646,8 @@ export const ClientSettingsPatch = Schema.Struct({
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  themeBackground: Schema.optionalKey(ThemeBackgroundChoice),
+  themeBackgroundTransparency: Schema.optionalKey(ThemeBackgroundTransparency),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
