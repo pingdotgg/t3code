@@ -4,8 +4,8 @@ import { renderTerminalQrCode } from "../startupAccess.ts";
 
 /**
  * Terminal output for `t3 serve --tailcat`: the connection code a client pastes
- * into Add Environment, plus a QR for the mobile app. The code embeds a
- * single-use pairing credential, so it is shown exactly like the pairing URL.
+ * into Add Environment, plus its QR. The code embeds a single-use pairing
+ * credential, so it is shown exactly like the pairing URL.
  */
 /** The code, its QR, and the handling instructions, shared by every terminal entry point. */
 export function formatTailcatConnectionCodeLines(
@@ -17,7 +17,7 @@ export function formatTailcatConnectionCodeLines(
     "",
     renderTerminalQrCode(issued.code),
     "",
-    "Paste the code in T3 Code under Add Environment → Tailcat, or scan it with the mobile app.",
+    "Paste the code in the T3 Code desktop app under Add Environment → Tailcat.",
     "This code embeds a one-time pairing credential. Share it only with the device you are pairing.",
   ];
 }
