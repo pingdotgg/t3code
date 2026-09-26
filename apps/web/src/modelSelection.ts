@@ -325,6 +325,25 @@ export function resolveAppModelSelectionForInstance(
 }
 
 /**
+ * The stored default model as a new thread resolves it. A hidden model falls
+ * back to a visible one, keeping the stored options, so settings shows and
+ * edits what new threads actually get rather than the hidden id.
+ */
+export function resolveEffectiveDefaultModelSelection(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection,
+): ModelSelection {
+  const model = resolveAppModelSelectionForInstance(
+    selection.instanceId,
+    settings,
+    providers,
+    selection.model,
+  );
+  return model === null || model === selection.model ? selection : { ...selection, model };
+}
+
+/**
  * Instance-keyed model options map. Each configured instance gets its own
  * option list so the model picker can show the same driver's built-in and
  * custom instances side by side without collapsing them.
