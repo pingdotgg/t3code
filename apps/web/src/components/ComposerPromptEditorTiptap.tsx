@@ -40,6 +40,11 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
 } from "~/composer-logic";
 import {
+  createComposerDeadKeyGravePlugin,
+  isPlainDeadKeyDown,
+  rememberPlainDeadKey,
+} from "~/composerDeadKeyGrave";
+import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
 } from "~/composer-editor-mentions";
@@ -799,6 +804,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               }),
             ]
           : []),
+        Extension.create({
+          name: "composerDeadKeyGrave",
+          addProseMirrorPlugins() {
+            return [createComposerDeadKeyGravePlugin()];
+          },
+        }),
       ],
       content: buildDocJson(
         value,
@@ -823,6 +834,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       editorProps: {
         attributes: editorAttributes,
         handleKeyDown: (view, event) => {
+          if (isPlainDeadKeyDown(event)) {
+            rememberPlainDeadKey(view);
+          }
           if (
             isMacPlatform(navigator.platform) &&
             (event.key === "Home" || event.key === "End") &&
