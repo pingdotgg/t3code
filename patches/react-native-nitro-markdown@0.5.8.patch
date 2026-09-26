@@ -56,7 +56,7 @@ diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
 +    /* GFM leaves a trailing run of punctuation outside the link, including
 +     * the sentence dots in "https://example.com/a...". */
 +    if(opener->ch == _T(':')) {
-+        while(end > opener->end && ISANYOF(end - 1, _T("?!.,:*_~")))
++        while(end > opener->end && ISANYOF(end - 1, _T("?!.,:*")))
 +            end--;
      }
  
