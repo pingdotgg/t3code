@@ -2003,6 +2003,7 @@ export const make = Effect.gen(function* () {
 
   const runPrStep = Effect.fn("runPrStep")(function* (
     settings: SourceControlTextGenerationSettings,
+    createDraft: boolean,
     cwd: string,
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
@@ -2096,6 +2097,7 @@ export const make = Effect.gen(function* () {
         headSelector: headContext.preferredHeadSelector,
         title: generated.title,
         bodyFile,
+        draft: createDraft,
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
@@ -2703,23 +2705,7 @@ export const make = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const textGenerationSettings = yield* projectSettingsFor(input).pipe(
-          Effect.flatMap((settings) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
-                  style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                      settings,
-                      providers,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
-                ),
-          ),
+        const resolvedSettings = yield* projectSettingsFor(input).pipe(
           Effect.mapError(
             (cause) =>
               new GitManagerError({
@@ -2730,6 +2716,20 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+
+        const textGenerationSettings: SourceControlTextGenerationSettings =
+          resolvedSettings.sourceControlWriterModelSelection === null
+            ? {
+                modelSelection: resolvedSettings.textGenerationModelSelection,
+                style: resolvedSettings.sourceControlWritingStyle,
+              }
+            : {
+                modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+                  resolvedSettings,
+                  yield* providerRegistry.getProviders,
+                ),
+                style: resolvedSettings.sourceControlWritingStyle,
+              };
 
         if (input.featureBranch) {
           yield* Ref.set(currentPhase, Option.some("branch"));
@@ -2802,7 +2802,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    resolvedSettings.createDraftChangeRequests,
+                    input.cwd,
+                    currentBranch,
+                    progress.emit,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };
