@@ -333,6 +333,7 @@ export function applyServerSettingsPatch(
                   mode: "custom" as const,
                   rules: {
                     worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
+                    worktreeSettledAfterDays: next.storageCleanup.worktreeSettledAfterDays,
                     worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
                     worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
                     worktreeUnchanged: next.storageCleanup.worktreeUnchanged,

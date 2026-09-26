@@ -66,16 +66,18 @@ applies when the project and environment are both on **Inherit**.
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected
 environments. Policies are off by default and run on the server at startup, when changed, and
-hourly. Offline machines keep their existing policies.
+hourly. Immediate settled cleanup also runs when a thread settles. Offline machines keep their
+existing policies.
 
 Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
 Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
 manually. Custom applies separate worktree rules to the selected project or checkout. Browser
 captures and log retention remain machine-wide.
 
-Worktrees can be removed after a chosen number of inactive days, after merging, or when they
-have no commits beyond the default branch. Only T3-managed worktrees are eligible. Active
-sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
+Worktrees can be removed after a chosen number of inactive days, after a thread settles, after
+merging, or when they have no commits beyond the default branch. Set settled retention to 0 days
+to remove a worktree as soon as it is safe after settlement. Only T3-managed worktrees are eligible.
+Active sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
 prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
 Merge cleanup requires the commits to be included in the remote default branch, so squash merges
 may need the inactivity rule instead.

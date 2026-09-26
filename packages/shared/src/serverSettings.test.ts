@@ -34,6 +34,7 @@ describe("serverSettings helpers", () => {
       }).storageCleanup,
     ).toEqual({
       worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
       worktreeOnMerge: true,
       worktreeOnDelete: false,
       worktreeUnchanged: false,

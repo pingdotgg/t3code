@@ -221,11 +221,23 @@ export function resolveWorktreeCleanup(
   if (policy?.mode === "off")
     return {
       worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
       worktreeOnMerge: false,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
     };
-  const { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged } =
-    settings.storageCleanup;
-  return { worktreeAfterDays, worktreeOnMerge, worktreeOnDelete, worktreeUnchanged };
+  const {
+    worktreeAfterDays,
+    worktreeSettledAfterDays,
+    worktreeOnMerge,
+    worktreeOnDelete,
+    worktreeUnchanged,
+  } = settings.storageCleanup;
+  return {
+    worktreeAfterDays,
+    worktreeSettledAfterDays,
+    worktreeOnMerge,
+    worktreeOnDelete,
+    worktreeUnchanged,
+  };
 }
