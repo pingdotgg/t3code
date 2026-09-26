@@ -2,6 +2,7 @@ import { MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { ProjectionThreadMessageRepository } from "../Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadMessageRepositoryLive } from "./ProjectionThreadMessages.ts";
@@ -12,6 +13,44 @@ const layer = it.layer(
 );
 
 layer("ProjectionThreadMessageRepository", (it) => {
+  it.effect("finds the latest other assistant message in one turn", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-reclassified-message");
+      const turnId = TurnId.make("turn-reclassified-message");
+      for (const [index, role, messageTurnId] of [
+        [0, "assistant", turnId],
+        [1, "assistant", TurnId.make("other-turn")],
+        [2, "reasoning", turnId],
+        [3, "assistant", turnId],
+      ] as const) {
+        yield* repository.upsert({
+          messageId: MessageId.make(`reclassified-message-${index}`),
+          threadId,
+          turnId: messageTurnId,
+          role,
+          text: "Message body",
+          isStreaming: false,
+          createdAt: `2026-02-28T19:05:0${index}.000Z`,
+          updatedAt: `2026-02-28T19:05:0${index}.000Z`,
+        });
+      }
+
+      const replacement = yield* repository.getLatestAssistantMessageIdForTurn({
+        threadId,
+        turnId,
+        excludeMessageId: MessageId.make("reclassified-message-3"),
+      });
+      assert.strictEqual(Option.getOrNull(replacement), MessageId.make("reclassified-message-0"));
+      const none = yield* repository.getLatestAssistantMessageIdForTurn({
+        threadId,
+        turnId: TurnId.make("other-turn"),
+        excludeMessageId: MessageId.make("reclassified-message-1"),
+      });
+      assert.isTrue(Option.isNone(none));
+    }),
+  );
+
   it.effect("finds the latest live user-message time within one thread", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;

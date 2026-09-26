@@ -615,6 +615,71 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("updates a streamed assistant message to a progress summary", () => {
+      const messageId = MessageId.make("assistant:progress-part");
+      const thread = {
+        ...baseThread,
+        latestTurn: {
+          turnId: TurnId.make("turn-progress"),
+          state: "running" as const,
+          requestedAt: baseThread.createdAt,
+          startedAt: baseThread.createdAt,
+          completedAt: null,
+          assistantMessageId: messageId,
+        },
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-progress"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-progress"),
+            status: "ready" as const,
+            files: [],
+            assistantMessageId: messageId,
+            completedAt: baseThread.updatedAt,
+          },
+        ],
+        messages: [
+          {
+            id: messageId,
+            role: "assistant" as const,
+            text: "Checking the reviews.",
+            turnId: TurnId.make("turn-progress"),
+            streaming: false,
+            createdAt: baseThread.createdAt,
+            updatedAt: baseThread.updatedAt,
+          },
+        ],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: baseThread.updatedAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.message-sent",
+        payload: {
+          threadId: baseThread.id,
+          messageId,
+          role: "reasoning",
+          text: "",
+          turnId: TurnId.make("turn-progress"),
+          streaming: false,
+          createdAt: baseThread.createdAt,
+          updatedAt: baseThread.updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.messages[0]).toMatchObject({
+        id: messageId,
+        role: "reasoning",
+        text: "Checking the reviews.",
+      });
+      expect(result.thread.latestTurn?.assistantMessageId).toBeNull();
+      expect(result.thread.checkpoints[0]?.assistantMessageId).toBeNull();
+    });
+
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,

@@ -1,17 +1,27 @@
 import * as Option from "effect/Option";
+import {
+  isReasoningSummaryMessage,
+  isUnkeyedResponseTurnId,
+  reasoningDisplayKind,
+  unkeyedResponseTurnId as makeUnkeyedResponseTurnId,
+  unsettledTurnId,
+} from "@t3tools/client-runtime/thread-message-presentation";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Schema from "effect/Schema";
 import {
   requestKindFromRequestType,
   type PendingApproval,
 } from "@t3tools/client-runtime/pending-requests";
-import { UserInputAttachmentAnswerPayload, isToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  TurnId,
+  UserInputAttachmentAnswerPayload,
+  isToolLifecycleItemType,
+} from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
   OrchestrationThreadActivity,
   ToolLifecycleItemType,
-  TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -28,6 +38,7 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   workEntryIndicatesToolFailure,
+  workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
   type ToolGroupSummaryKind,
@@ -151,6 +162,7 @@ type RawThreadFeedEntry =
 export type ThreadFeedEntry =
   | (Extract<RawThreadFeedEntry, { type: "message" }> & {
       readonly reasoningMessages?: OrchestrationThread["messages"];
+      readonly reasoningKind?: "summary" | "raw";
     })
   | {
       readonly type: "activity-group";
@@ -1544,6 +1556,12 @@ function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
 
 function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): ThreadFeedEntry[] {
   const grouped: ThreadFeedEntry[] = [];
+  const lastAssistantIndexByTurnId = new Map<TurnId, number>();
+  entries.forEach((entry, index) => {
+    if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
+      lastAssistantIndexByTurnId.set(entry.message.turnId, index);
+    }
+  });
   let firstActivityEntry: Extract<RawThreadFeedEntry, { readonly type: "activity" }> | null = null;
   let openGroupActivities: ThreadFeedActivity[] = [];
   const flushGroup = () => {
@@ -1570,9 +1588,18 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     openGroupActivities = [];
   };
 
-  for (const entry of entries) {
-    // Skip empty messages so they don't break activity grouping.
-    if (isEmptyMessage(entry)) {
+  for (const [index, entry] of entries.entries()) {
+    // Keep the terminal empty assistant answer visible without splitting earlier work.
+    if (isEmptyMessage(entry) && (entry.type !== "message" || entry.message.role !== "assistant")) {
+      continue;
+    }
+    if (
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      isEmptyMessage(entry) &&
+      entry.message.turnId &&
+      lastAssistantIndexByTurnId.get(entry.message.turnId) !== index
+    ) {
       continue;
     }
 
@@ -1618,11 +1645,32 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
 }
 
 export function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): TurnId | null {
-  if (!latestTurn) {
-    return null;
+  return unsettledTurnId(latestTurn);
+}
+
+export function deriveActiveFeedTurnId(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  latestTurn: ThreadFeedLatestTurn | null,
+  activeWorkStartedAt: string | null,
+): TurnId | null {
+  const unsettledTurnId = deriveUnsettledTurnId(latestTurn);
+  if (unsettledTurnId !== null || activeWorkStartedAt === null) return unsettledTurnId;
+  const startedAt = Date.parse(activeWorkStartedAt);
+  const completedAt = latestTurn?.completedAt ? Date.parse(latestTurn.completedAt) : NaN;
+  for (let index = feed.length - 1; index >= 0; index -= 1) {
+    const entry = feed[index]!;
+    if (entry.type === "message" && entry.message.role === "user") break;
+    if (Number.isFinite(startedAt) && Date.parse(entry.createdAt) < startedAt) continue;
+    if (Number.isFinite(completedAt) && Date.parse(entry.createdAt) <= completedAt) continue;
+    const turnId =
+      entry.type === "activity-group"
+        ? entry.turnId
+        : entry.type === "message"
+          ? entry.message.turnId
+          : null;
+    if (turnId !== null) return turnId;
   }
-  const settled = latestTurn.completedAt !== null && latestTurn.state !== "running";
-  return settled ? null : latestTurn.turnId;
+  return null;
 }
 
 interface ThreadFeedTurnFold {
@@ -1635,17 +1683,10 @@ interface ThreadFeedTurnFold {
 function deriveThreadFeedTurnFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
+  isWorking: boolean,
 ): ReadonlyMap<string, ThreadFeedTurnFold> {
   const firstAssistantMessageIdByTurn = new Map<TurnId, string>();
   const terminalAssistantMessageIdByTurn = new Map<TurnId, string>();
-  for (const entry of feed) {
-    if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
-      if (!firstAssistantMessageIdByTurn.has(entry.message.turnId)) {
-        firstAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
-      }
-      terminalAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
-    }
-  }
 
   interface TurnGroup {
     readonly entries: ThreadFeedEntry[];
@@ -1653,9 +1694,15 @@ function deriveThreadFeedTurnFolds(
   }
   const groupsByTurnId = new Map<TurnId, TurnGroup>();
   let pendingUserBoundary: string | null = null;
-  for (const entry of feed) {
+  let unkeyedResponseTurnId: TurnId | null = null;
+  const lastUserMessageIndex = feed.findLastIndex(
+    (entry) => entry.type === "message" && entry.message.role === "user",
+  );
+  const activeVisualTurnIds = new Set<TurnId>();
+  for (const [index, entry] of feed.entries()) {
     if (entry.type === "message" && entry.message.role === "user") {
       pendingUserBoundary = entry.message.createdAt;
+      unkeyedResponseTurnId = makeUnkeyedResponseTurnId(entry.message.id);
       continue;
     }
     // Thinking is work, so it folds with the rest of it. A provider that
@@ -1665,12 +1712,21 @@ function deriveThreadFeedTurnFolds(
     const turnId =
       entry.type === "message" &&
       (entry.message.role === "assistant" || entry.message.role === "reasoning")
-        ? entry.message.turnId
+        ? (entry.message.turnId ?? unkeyedResponseTurnId)
         : entry.type === "activity-group"
           ? entry.turnId
           : null;
     if (!turnId) {
       continue;
+    }
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      if (!firstAssistantMessageIdByTurn.has(turnId)) {
+        firstAssistantMessageIdByTurn.set(turnId, entry.id);
+      }
+      terminalAssistantMessageIdByTurn.set(turnId, entry.id);
+    }
+    if (isWorking && lastUserMessageIndex >= 0 && index > lastUserMessageIndex) {
+      activeVisualTurnIds.add(turnId);
     }
     let group = groupsByTurnId.get(turnId);
     if (!group) {
@@ -1686,31 +1742,46 @@ function deriveThreadFeedTurnFolds(
 
   const unsettledTurnId = deriveUnsettledTurnId(latestTurn);
   const foldsByAnchorId = new Map<string, ThreadFeedTurnFold>();
+  const activeUnkeyedResponseTurnId = isWorking ? unkeyedResponseTurnId : null;
   for (const [turnId, group] of groupsByTurnId) {
     const { entries } = group;
+    if (activeVisualTurnIds.has(turnId)) {
+      continue;
+    }
+    if (isUnkeyedResponseTurnId(turnId) && turnId === activeUnkeyedResponseTurnId) {
+      continue;
+    }
     if (turnId === unsettledTurnId) {
       continue;
     }
-    // A live turn is already excluded above, so only an answer still being
-    // written may hold a fold open. A thinking block stranded by a crashed
-    // provider keeps its streaming flag forever and must not.
-    if (
-      entries.some(
-        (entry) =>
-          entry.type === "message" && entry.message.streaming && entry.message.role !== "reasoning",
-      )
-    ) {
-      continue;
-    }
+    // The turn lifecycle decides whether work is live; an errored provider
+    // can leave even its visible answer marked as streaming.
 
     const firstAssistantMessageId = firstAssistantMessageIdByTurn.get(turnId);
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
+    if (
+      terminalAssistantMessageId === undefined &&
+      ((latestTurn?.turnId === turnId && latestTurn.state === "error") ||
+        entries.some(
+          (entry) =>
+            entry.type === "activity-group" &&
+            entry.activities.some(
+              (activity) =>
+                activity.status === "failure" ||
+                workEntryDisplayIndicatesToolFailure(activity.workEntry),
+            ),
+        ))
+    ) {
+      continue;
+    }
+    const unkeyedResponse = isUnkeyedResponseTurnId(turnId);
     const hiddenEntryIds = new Set(
       entries
         .filter(
           (entry) =>
-            entry.id !== firstAssistantMessageId &&
+            (unkeyedResponse || entry.id !== firstAssistantMessageId) &&
             entry.id !== terminalAssistantMessageId &&
+            !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
             !(entry.type === "activity-group" && isUserInputActivityGroup(entry)),
         )
         .map((entry) => entry.id),
@@ -1718,17 +1789,23 @@ function deriveThreadFeedTurnFolds(
     if (hiddenEntryIds.size === 0) {
       continue;
     }
-    // A lone compaction row stays visible on its own; it only folds away as
-    // part of a turn that already folds other work. Thinking is the same: a
-    // question answered by thought alone keeps its "Thought" row
-    // rather than collapsing behind a "Worked for ..." that hides nothing else.
+    // A lone compaction row stays visible on its own. Reasoning folds when
+    // the turn has a final answer, even if its only other activity was a question.
     const hidesFoldableWork = entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
         !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
         !(entry.type === "message" && entry.message.role === "reasoning"),
     );
-    if (!hidesFoldableWork) {
+    const hidesReasoningBeforeAnswer =
+      terminalAssistantMessageId !== undefined &&
+      entries.some(
+        (entry) =>
+          hiddenEntryIds.has(entry.id) &&
+          entry.type === "message" &&
+          entry.message.role === "reasoning",
+      );
+    if (!hidesFoldableWork && !hidesReasoningBeforeAnswer) {
       continue;
     }
 
@@ -1764,9 +1841,13 @@ function deriveThreadFeedTurnFolds(
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorId.set(firstHiddenEntry.id, {
+    const anchorEntry =
+      terminalEntry && entries.indexOf(firstHiddenEntry) > entries.indexOf(terminalEntry)
+        ? terminalEntry
+        : firstHiddenEntry;
+    foldsByAnchorId.set(anchorEntry.id, {
       turnId,
-      createdAt: firstHiddenEntry.createdAt,
+      createdAt: anchorEntry.createdAt,
       hiddenEntryIds,
       label,
     });
@@ -1780,6 +1861,7 @@ export function deriveThreadFeedPresentation(
   expandedTurnIds: ReadonlySet<TurnId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
+  activeFeedTurnId?: TurnId | null,
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
     (entry) =>
@@ -1791,9 +1873,22 @@ export function deriveThreadFeedPresentation(
   const activeTailGroup = sourceFeed.findLast(
     (entry) => entry.type !== "message" || !isEmptyMessage(entry),
   );
-  const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn);
-  const unsettledTurnId = deriveUnsettledTurnId(latestTurn);
   const isWorking = activeWorkStartedAt !== null;
+  const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn, isWorking);
+  const unsettledTurnId =
+    activeFeedTurnId === undefined
+      ? deriveActiveFeedTurnId(sourceFeed, latestTurn, activeWorkStartedAt)
+      : activeFeedTurnId;
+  const turnsWithSummary = new Set(
+    sourceFeed.flatMap((entry) =>
+      entry.type === "message" &&
+      entry.message.role === "reasoning" &&
+      entry.message.turnId &&
+      isReasoningSummaryMessage(entry.message)
+        ? [entry.message.turnId]
+        : [],
+    ),
+  );
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedTurnIds.has(fold.turnId)) {
@@ -1857,10 +1952,15 @@ export function deriveThreadFeedPresentation(
             unsettledTurnId,
             isWorking,
             run.at(-1) === activeTailGroup,
+            turnsWithSummary.has(runTurnId),
           );
           index = end - 1;
           continue;
         }
+      }
+      if (entry.type === "message" && entry.message.role === "reasoning" && runTurnId === null) {
+        result.push(...groupConsecutiveReasoningMessages([entry], false));
+        continue;
       }
       appendPresentedFeedEntry(
         result,
@@ -1919,6 +2019,7 @@ function appendMixedActivityRun(
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  hasSummary: boolean,
 ) {
   const first = run[0]!;
   const last = run.at(-1)!;
@@ -1930,7 +2031,7 @@ function appendMixedActivityRun(
       : undefined;
   const groupId = firstTool ? toolActivityGroupId(firstTool) : `activity-run:${first.id}`;
   const expanded = expandedWorkGroupIds.has(groupId);
-  const state = `${isWorking}:${unsettledTurnId}:${activeTail}:${expanded}`;
+  const state = `${isWorking}:${unsettledTurnId}:${activeTail}:${expanded}:${hasSummary}`;
   const cached = activityRunsCache.get(first);
   if (
     cached?.state === state &&
@@ -1941,7 +2042,7 @@ function appendMixedActivityRun(
     return;
   }
   const outputStart = result.length;
-  const history = groupConsecutiveReasoningMessages(run).map((entry) =>
+  const history = groupConsecutiveReasoningMessages(run, hasSummary).map((entry) =>
     entry.type === "activity-group"
       ? {
           ...entry,
@@ -1972,8 +2073,23 @@ function appendMixedActivityRun(
   }
   const toolSummary = toolRows.find((entry) => entry.type === "work-toggle");
   const thinking = live && (last.type === "message" || !toolSummary?.shimmer);
-  const thoughtCount = run.filter((entry) => entry.type === "message").length;
-  result.push({
+  const isInlineSummary = (entry: ThreadFeedEntry) =>
+    entry.type === "message" &&
+    entry.message.role === "reasoning" &&
+    entry.reasoningKind === "summary";
+  const thoughtCount = history.reduce(
+    (count, entry) =>
+      entry.type === "message" && !isInlineSummary(entry)
+        ? count + (entry.reasoningMessages?.length ?? 1)
+        : count,
+    0,
+  );
+  if (activities.length + thoughtCount === 0) {
+    result.push(...history);
+    activityRunsCache.set(first, { source: run, state, rows: result.slice(outputStart) });
+    return;
+  }
+  const toggle: ThreadFeedEntry = {
     type: "work-toggle",
     id: live ? LIVE_ACTIVITY_ROW_ID : `work-toggle:${groupId}`,
     createdAt: first.createdAt,
@@ -1995,28 +2111,42 @@ function appendMixedActivityRun(
     hasFailure: toolSummary?.hasFailure ?? false,
     live,
     shimmer: live,
-  });
-  if (expanded) result.push(...history);
+  };
+  let showedToggle = false;
+  for (const entry of history) {
+    if (!isInlineSummary(entry) && !showedToggle) {
+      result.push(toggle);
+      showedToggle = true;
+    }
+    if (expanded || isInlineSummary(entry)) {
+      result.push(entry);
+    }
+  }
   activityRunsCache.set(first, { source: run, state, rows: result.slice(outputStart) });
 }
 
 function groupConsecutiveReasoningMessages(
   feed: ReadonlyArray<ThreadFeedEntry>,
+  hasSummary: boolean,
 ): ThreadFeedEntry[] {
   const result: ThreadFeedEntry[] = [];
+  const kindOf = (message: OrchestrationThread["messages"][number]) =>
+    reasoningDisplayKind(message, hasSummary);
   for (let index = 0; index < feed.length; index += 1) {
     const entry = feed[index]!;
-    if (entry.type !== "message" || entry.message.role !== "reasoning" || !entry.message.turnId) {
+    if (entry.type !== "message" || entry.message.role !== "reasoning") {
       result.push(entry);
       continue;
     }
+    const reasoningKind = kindOf(entry.message);
     const messages = [entry.message];
     while (index + 1 < feed.length) {
       const next = feed[index + 1]!;
       if (
         next.type !== "message" ||
         next.message.role !== "reasoning" ||
-        next.message.turnId !== entry.message.turnId
+        next.message.turnId !== entry.message.turnId ||
+        kindOf(next.message) !== reasoningKind
       ) {
         break;
       }
@@ -2024,18 +2154,19 @@ function groupConsecutiveReasoningMessages(
       index += 1;
     }
     if (messages.length === 1) {
-      result.push(entry);
+      result.push(entry.reasoningKind === reasoningKind ? entry : { ...entry, reasoningKind });
       continue;
     }
     let group = reasoningGroupsCache.get(entry);
     if (
       !group ||
       group.reasoningMessages?.length !== messages.length ||
+      group.reasoningKind !== reasoningKind ||
       !messages.every(
         (message, messageIndex) => group?.reasoningMessages?.[messageIndex] === message,
       )
     ) {
-      group = { ...entry, reasoningMessages: messages };
+      group = { ...entry, reasoningMessages: messages, reasoningKind };
       reasoningGroupsCache.set(entry, group);
     }
     result.push(group);

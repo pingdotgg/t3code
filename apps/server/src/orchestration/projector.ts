@@ -810,6 +810,7 @@ export function projectEvent(
               entry.id === message.id
                 ? {
                     ...entry,
+                    role: message.role,
                     text: message.streaming
                       ? `${entry.text}${message.text}`
                       : message.text.length > 0
@@ -827,11 +828,32 @@ export function projectEvent(
             )
           : [...thread.messages, message];
         const cappedMessages = messages.slice(-MAX_THREAD_MESSAGES);
+        const reclassifiedAssistant =
+          existingMessage?.role === "assistant" && message.role === "reasoning";
+        const replacementAssistantMessageId =
+          reclassifiedAssistant && message.turnId !== null
+            ? (cappedMessages.findLast(
+                (entry) => entry.role === "assistant" && entry.turnId === message.turnId,
+              )?.id ?? null)
+            : null;
+        const latestTurn =
+          reclassifiedAssistant && thread.latestTurn?.assistantMessageId === message.id
+            ? { ...thread.latestTurn, assistantMessageId: replacementAssistantMessageId }
+            : thread.latestTurn;
+        const checkpoints = reclassifiedAssistant
+          ? thread.checkpoints.map((entry) =>
+              entry.assistantMessageId === message.id
+                ? { ...entry, assistantMessageId: replacementAssistantMessageId }
+                : entry,
+            )
+          : thread.checkpoints;
 
         return {
           ...nextBase,
           threads: patchThreadAt(nextBase.threads, threadIndex, {
             messages: cappedMessages,
+            latestTurn,
+            checkpoints,
             updatedAt: event.occurredAt,
           }),
         };

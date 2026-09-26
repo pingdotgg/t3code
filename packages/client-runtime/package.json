@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./thread-message-presentation": {
+      "types": "./src/threadMessagePresentation.ts",
+      "default": "./src/threadMessagePresentation.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

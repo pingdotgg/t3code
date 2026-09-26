@@ -1582,7 +1582,32 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.message-sent": {
-          if (event.payload.turnId === null || event.payload.role !== "assistant") {
+          if (event.payload.turnId === null) {
+            return;
+          }
+          if (event.payload.role === "reasoning") {
+            const existingTurn = yield* projectionTurnRepository.getByTurnId({
+              threadId: event.payload.threadId,
+              turnId: event.payload.turnId,
+            });
+            if (
+              Option.isSome(existingTurn) &&
+              existingTurn.value.assistantMessageId === event.payload.messageId
+            ) {
+              const replacement =
+                yield* projectionThreadMessageRepository.getLatestAssistantMessageIdForTurn({
+                  threadId: event.payload.threadId,
+                  turnId: event.payload.turnId,
+                  excludeMessageId: event.payload.messageId,
+                });
+              yield* projectionTurnRepository.upsertByTurnId({
+                ...existingTurn.value,
+                assistantMessageId: Option.getOrNull(replacement),
+              });
+            }
+            return;
+          }
+          if (event.payload.role !== "assistant") {
             return;
           }
           // A completed assistant message only settles the turn once the

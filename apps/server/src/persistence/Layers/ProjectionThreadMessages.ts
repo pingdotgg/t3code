@@ -11,6 +11,7 @@ import { toPersistenceSqlError } from "../Errors.ts";
 import {
   AppendStreamingProjectionThreadMessage,
   GetProjectionThreadMessageInput,
+  GetLatestAssistantMessageIdForTurnInput,
   HasProjectionThreadAssistantMessageInput,
   ProjectionThreadMessageRepository,
   type ProjectionThreadMessageRepositoryShape,
@@ -204,6 +205,21 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
+  const getLatestAssistantMessageIdForTurnRow = SqlSchema.findOneOption({
+    Request: GetLatestAssistantMessageIdForTurnInput,
+    Result: Schema.Struct({ messageId: ProjectionThreadMessage.fields.messageId }),
+    execute: ({ threadId, turnId, excludeMessageId }) => sql`
+      SELECT message_id AS "messageId"
+      FROM projection_thread_messages
+      WHERE thread_id = ${threadId}
+        AND turn_id = ${turnId}
+        AND role = 'assistant'
+        AND message_id != ${excludeMessageId}
+      ORDER BY created_at DESC, message_id DESC
+      LIMIT 1
+    `,
+  });
+
   const listProjectionThreadMessageRows = SqlSchema.findAll({
     Request: ListProjectionThreadMessagesInput,
     Result: ProjectionThreadMessageDbRowSchema,
@@ -279,6 +295,17 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
         Effect.map((row) => row.exists === 1),
       );
 
+  const getLatestAssistantMessageIdForTurn: ProjectionThreadMessageRepositoryShape["getLatestAssistantMessageIdForTurn"] =
+    (input) =>
+      getLatestAssistantMessageIdForTurnRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError(
+            "ProjectionThreadMessageRepository.getLatestAssistantMessageIdForTurn:query",
+          ),
+        ),
+        Effect.map(Option.map((row) => row.messageId)),
+      );
+
   const listByThreadId: ProjectionThreadMessageRepositoryShape["listByThreadId"] = (input) =>
     listProjectionThreadMessageRows(input).pipe(
       Effect.mapError(
@@ -309,6 +336,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     appendStreaming,
     getByMessageId,
     hasAssistantMessageForTurn,
+    getLatestAssistantMessageIdForTurn,
     listByThreadId,
     getLatestUserMessageAt,
     deleteByThreadId,

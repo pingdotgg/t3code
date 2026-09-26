@@ -325,8 +325,10 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           const runtimeEvent = normalizeFixtureEvent(rawEvent);
           const runtimeType = (runtimeEvent as { type: string }).type;
           if (runtimeType === "content.delta") {
-            const payload = runtimeEvent.payload as { delta?: unknown } | undefined;
-            if (typeof payload?.delta === "string") {
+            const payload = runtimeEvent.payload as
+              | { delta?: unknown; streamKind?: unknown }
+              | undefined;
+            if (payload?.streamKind === "assistant_text" && typeof payload.delta === "string") {
               assistantDeltas.push(payload.delta);
             }
           } else if (runtimeType === "message.delta") {

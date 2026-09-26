@@ -67,6 +67,91 @@ const encodeThreadLinkedPullRequest = Schema.encodeSync(
   Schema.fromJsonString(ThreadLinkedPullRequest),
 );
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-reclassified-anchor-")))(
+  "reasoning message projection",
+  (it) => {
+    it.effect("clears the assistant anchor when progress becomes reasoning", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-reclassified-anchor");
+        const turnId = TurnId.make("turn-reclassified-anchor");
+        const messageId = MessageId.make("assistant:reclassified-anchor");
+        const at = "2026-03-01T08:00:00.000Z";
+        const append = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore.append(event).pipe(Effect.flatMap(pipeline.projectEvent));
+        const fields = (id: string) => ({
+          eventId: EventId.make(`evt-${id}`),
+          occurredAt: at,
+          commandId: CommandId.make(`cmd-${id}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`cmd-${id}`),
+          metadata: {},
+        });
+
+        yield* append({
+          ...fields("anchor-project"),
+          type: "project.created",
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-reclassified-anchor"),
+          payload: {
+            projectId: ProjectId.make("project-reclassified-anchor"),
+            title: "Anchor",
+            workspaceRoot: "/tmp/reclassified-anchor",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: at,
+            updatedAt: at,
+          },
+        });
+        yield* append({
+          ...fields("anchor-thread"),
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          payload: {
+            threadId,
+            projectId: ProjectId.make("project-reclassified-anchor"),
+            title: "Anchor",
+            modelSelection: { instanceId: ProviderInstanceId.make("opencode"), model: "mimo" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: at,
+            updatedAt: at,
+          },
+        });
+        const sendMessage = (role: "assistant" | "reasoning", id: string) =>
+          append({
+            ...fields(id),
+            type: "thread.message-sent",
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            payload: {
+              threadId,
+              messageId,
+              role,
+              text: role === "assistant" ? "Checking the audit." : "",
+              turnId,
+              streaming: role === "assistant",
+              createdAt: at,
+              updatedAt: at,
+            },
+          });
+        yield* sendMessage("assistant", "anchor-assistant");
+        const anchor = sql<{ readonly assistantMessageId: string | null }>`
+          SELECT assistant_message_id AS "assistantMessageId"
+          FROM projection_turns WHERE turn_id = ${turnId}
+        `;
+        assert.deepEqual(yield* anchor, [{ assistantMessageId: messageId }]);
+        yield* sendMessage("reasoning", "anchor-reasoning");
+        assert.deepEqual(yield* anchor, [{ assistantMessageId: null }]);
+      }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-cursor-batch-")))(
   "OrchestrationProjectionPipeline cursor batches",
   (it) => {

@@ -17,6 +17,7 @@ import {
   agentSpawnSummary,
   buildPendingUserInputAnswers,
   buildThreadFeed,
+  deriveActiveFeedTurnId,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -414,7 +415,13 @@ describe("buildThreadFeed", () => {
       ),
     });
     const initial = buildThreadFeed(thread);
-    expect(initial.map((row) => row.id)).toEqual(["work-1", "message-4", "work-5"]);
+    expect(initial.map((row) => row.id)).toEqual([
+      "work-1",
+      "message-2",
+      "work-3",
+      "message-4",
+      "work-5",
+    ]);
     const split = buildThreadFeed({
       ...thread,
       messages: [{ ...messages[0]!, text: "Now visible" }, messages[1]!],
@@ -426,17 +433,18 @@ describe("buildThreadFeed", () => {
       "message-4",
       "work-5",
     ]);
-    expect(split[0]).not.toBe(initial[0]);
+    expect(split[0]).toBe(initial[0]);
+    expect(split[1]).not.toBe(initial[1]);
     expect(split.at(-1)).toBe(initial.at(-1));
-    expect(initial[0]).toMatchObject({ activities: [{ id: "work-1" }, { id: "work-3" }] });
+    expect(initial[0]).toMatchObject({ activities: [{ id: "work-1" }] });
 
     const reordered = buildThreadFeed({
       ...thread,
       messages: [messages[0]!, { ...messages[1]!, createdAt: "2026-04-01T00:00:06.000Z" }],
     });
-    expect(reordered.map((row) => row.id)).toEqual(["work-1", "message-4"]);
-    expect(reordered[0]).toMatchObject({
-      activities: [{ id: "work-1" }, { id: "work-3" }, { id: "work-5" }],
+    expect(reordered.map((row) => row.id)).toEqual(["work-1", "message-2", "work-3", "message-4"]);
+    expect(reordered[2]).toMatchObject({
+      activities: [{ id: "work-3" }, { id: "work-5" }],
     });
     const olderMessage = {
       ...messages[1]!,
@@ -452,6 +460,8 @@ describe("buildThreadFeed", () => {
     expect(prepended.map((row) => row.id)).toEqual([
       "older-message",
       "work-1",
+      "message-2",
+      "work-3",
       "message-4",
       "work-5",
     ]);
@@ -483,6 +493,48 @@ describe("buildThreadFeed", () => {
         activities: [{ summary: "Compacted context 899K → 19K tokens" }],
       },
     ]);
+  });
+
+  it("keeps compaction visible beside a settled work fold", () => {
+    const turnId = TurnId.make("turn-compaction-with-work");
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({
+        messages: [
+          {
+            id: MessageId.make("answer"),
+            role: "assistant",
+            text: "Done",
+            turnId,
+            streaming: false,
+            createdAt: "2026-09-01T00:00:03.000Z",
+            updatedAt: "2026-09-01T00:00:03.000Z",
+          },
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("compaction"),
+            kind: "context-compaction",
+            tone: "info",
+            summary: "Compacted context",
+            createdAt: "2026-09-01T00:00:01.000Z",
+            turnId,
+          }),
+          makeActivity({
+            id: EventId.make("command"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Ran command",
+            createdAt: "2026-09-01T00:00:02.000Z",
+            turnId,
+            payload: { itemType: "command_execution", title: "Ran command", status: "completed" },
+          }),
+        ],
+      }),
+      null,
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual(["activity-group", "turn-fold", "message"]);
+    expect(rows[0]?.id).toBe("compaction");
   });
 
   it("keeps long Claude commands expandable without repeating them in full detail", () => {
@@ -1834,6 +1886,21 @@ describe("buildThreadFeed", () => {
       label: "Worked for 17s",
       expanded: false,
     });
+    const failedFeed = buildThreadFeed({
+      ...thread,
+      messages: thread.messages.map((message) =>
+        message.id === MessageId.make("assistant-final")
+          ? { ...message, streaming: true }
+          : message,
+      ),
+    });
+    expect(
+      deriveThreadFeedPresentation(
+        failedFeed,
+        { ...thread.latestTurn!, state: "error" },
+        new Set(),
+      ).map((entry) => entry.id),
+    ).toEqual(["assistant-first", "turn-fold:turn-1", "assistant-final"]);
 
     const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
     expect(expanded.map((entry) => entry.id)).toEqual([
@@ -2318,9 +2385,9 @@ describe("buildThreadFeed", () => {
   it("groups ordered reasoning blocks, keeps the live slot, and restores the group after unfolding", () => {
     const turnId = TurnId.make("reasoning-group");
     const messages: OrchestrationThread["messages"] = [1, 2, 3, 4].map((second) => ({
-      id: MessageId.make(`reasoning-${second}`),
+      id: MessageId.make(`reasoning:raw:${second}`),
       role: "reasoning",
-      text: `**Step ${second}**\n\nCheck ${second}.`,
+      text: `**Step ${second}**\n\n${`Check ${second}. `.repeat(250)}`,
       turnId,
       streaming: second === 4,
       createdAt: `2026-04-01T00:00:0${second}.000Z`,
@@ -2397,7 +2464,7 @@ describe("buildThreadFeed", () => {
     expect(toolRunning[0]).not.toMatchObject({ summary: "Thinking" });
     const nextThought = {
       ...messages[3]!,
-      id: MessageId.make("reasoning-after-tool"),
+      id: MessageId.make("reasoning:raw:after-tool"),
       createdAt: "2026-04-01T00:00:06.000Z",
       updatedAt: "2026-04-01T00:00:06.000Z",
     };
@@ -2425,7 +2492,7 @@ describe("buildThreadFeed", () => {
       reasoningAgainFeed,
       thread.latestTurn,
       new Set(),
-      new Set([`activity-run:${messages[0]!.id}`]),
+      new Set(messages.map((message) => `activity-run:${message.id}`)),
       "now",
     );
     expect(expandedLive.map((entry) => entry.type)).toEqual([
@@ -2578,7 +2645,7 @@ describe("buildThreadFeed", () => {
       if (boundary === "failed-tool") {
         // A failed call stays inside the run instead of splitting it.
         expect(rows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
-          { hasFailure: true, hiddenCount: 3 },
+          { hasFailure: true, hiddenCount: 1 },
         ]);
       }
       expect(reasoningRows).toEqual(
@@ -2587,10 +2654,514 @@ describe("buildThreadFeed", () => {
           id: message.id,
           createdAt: message.createdAt,
           message,
+          reasoningKind: "summary",
         })),
       );
     },
   );
+
+  it("keeps short OpenCode progress inline and its raw trace separately expandable", () => {
+    const turnId = TurnId.make("reasoning-kinds");
+    const messages: OrchestrationThread["messages"] = [
+      ["reasoning:raw:first", "Private trace"],
+      ["assistant:progress", "Checking the review."],
+      ["reasoning:raw:second", "More private trace"],
+    ].map(([id, value], index) => ({
+      id: MessageId.make(id!),
+      role: "reasoning" as const,
+      text: value!,
+      turnId,
+      streaming: false,
+      createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+    }));
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set([turnId]),
+      new Set([`activity-run:${messages[0]!.id}`]),
+    ).filter((row) => row.type === "message");
+    expect(rows.map((row) => row.type === "message" && row.reasoningKind)).toEqual([
+      "raw",
+      "summary",
+      "raw",
+    ]);
+    const collapsed = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set([turnId]),
+    );
+    expect(collapsed.map((row) => row.type)).toEqual(["work-toggle", "message"]);
+    expect(collapsed[1]).toMatchObject({ message: messages[1], reasoningKind: "summary" });
+  });
+
+  it("recognizes raw reasoning after an answer when a prior run has a summary", () => {
+    const turnId = TurnId.make("split-reasoning-kinds");
+    const messages: OrchestrationThread["messages"] = [
+      ["reasoning:summary:first", "Checking the review.", "reasoning"],
+      ["assistant:answer", "Initial answer", "assistant"],
+      ["reasoning:raw:later", "Short raw trace", "reasoning"],
+    ].map(([id, value, role], index) => ({
+      id: MessageId.make(id!),
+      role: role as "reasoning" | "assistant",
+      text: value!,
+      turnId,
+      streaming: false,
+      createdAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${index + 1}.000Z`,
+    }));
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set([turnId]),
+      new Set([`activity-run:${messages[2]!.id}`]),
+    );
+    expect(rows.find((row) => row.id === messages[2]!.id)).toMatchObject({
+      type: "message",
+      reasoningKind: "raw",
+    });
+  });
+
+  it("keeps a long provider summary inline and a short raw-only thought inline", () => {
+    const turnId = TurnId.make("reasoning-lengths");
+    const summary = {
+      id: MessageId.make("reasoning:summary:long"),
+      role: "reasoning" as const,
+      text: "Summary ".repeat(300),
+      turnId,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:01.000Z",
+      updatedAt: "2026-04-01T00:00:01.000Z",
+    };
+    const shortRaw = {
+      ...summary,
+      id: MessageId.make("reasoning:raw:short"),
+      text: "Checking the result.",
+      turnId: TurnId.make("raw-only"),
+      createdAt: "2026-04-01T00:00:02.000Z",
+      updatedAt: "2026-04-01T00:00:02.000Z",
+    };
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages: [summary, shortRaw], activities: [] }),
+      null,
+      new Set([turnId, shortRaw.turnId]),
+    );
+    expect(rows.filter((row) => row.type === "message").map((row) => row.reasoningKind)).toEqual([
+      "summary",
+      "summary",
+    ]);
+  });
+
+  it("folds reasoning-only work after a final answer", () => {
+    const turnId = TurnId.make("reasoning-only");
+    const messages: OrchestrationThread["messages"] = [
+      {
+        id: MessageId.make("reasoning:raw:trace"),
+        role: "reasoning",
+        text: "Checking the branch",
+        turnId,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:01.000Z",
+        updatedAt: "2026-04-01T00:00:01.000Z",
+      },
+      {
+        id: MessageId.make("assistant:final"),
+        role: "assistant",
+        text: "Audit complete",
+        turnId,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:02.000Z",
+        updatedAt: "2026-04-01T00:00:02.000Z",
+      },
+    ];
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      {
+        turnId,
+        state: "completed",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+      },
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual(["turn-fold", "message"]);
+
+    const nextUser = {
+      id: MessageId.make("next-prompt"),
+      role: "user" as const,
+      text: "Continue",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:04.000Z",
+      updatedAt: "2026-04-01T00:00:04.000Z",
+    };
+    const whileNextTurnStarts = deriveThreadFeedPresentation(
+      buildThreadFeed({
+        messages: [{ ...messages[0]!, streaming: true }, messages[1]!, nextUser],
+        activities: [],
+      }),
+      {
+        turnId: TurnId.make("next-turn"),
+        state: "running",
+        startedAt: nextUser.createdAt,
+        completedAt: null,
+      },
+      new Set(),
+      new Set(),
+      nextUser.createdAt,
+    );
+    expect(whileNextTurnStarts.some((row) => row.type === "turn-fold")).toBe(true);
+  });
+
+  it("retains a settled empty assistant answer after reasoning", () => {
+    const turnId = TurnId.make("empty-answer");
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({
+        messages: [
+          {
+            id: MessageId.make("reasoning:summary:empty-answer"),
+            role: "reasoning",
+            text: "Checked the branch.",
+            turnId,
+            streaming: false,
+            createdAt: "2026-04-01T00:00:01.000Z",
+            updatedAt: "2026-04-01T00:00:01.000Z",
+          },
+          {
+            id: MessageId.make("assistant:empty:empty-answer"),
+            role: "assistant",
+            text: "",
+            turnId,
+            streaming: false,
+            createdAt: "2026-04-01T00:00:02.000Z",
+            updatedAt: "2026-04-01T00:00:02.000Z",
+          },
+        ],
+        activities: [],
+      }),
+      {
+        turnId,
+        state: "completed",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+      },
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual(["turn-fold", "message"]);
+    expect(rows.at(-1)).toMatchObject({
+      type: "message",
+      message: { role: "assistant", text: "" },
+    });
+    const providerEmptyRows = buildThreadFeed({
+      messages: [
+        {
+          id: MessageId.make("provider-empty-answer"),
+          role: "assistant",
+          text: "  ",
+          turnId,
+          streaming: true,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+      ],
+      activities: [],
+    });
+    expect(providerEmptyRows).toMatchObject([
+      { type: "message", message: { id: "provider-empty-answer", text: "  " } },
+    ]);
+  });
+
+  it("keeps one work group across intermediate empty assistant messages", () => {
+    const turnId = TurnId.make("turn-empty-progress");
+    const at = (second: number) => `2026-04-01T00:00:0${second}.000Z`;
+    const rows = buildThreadFeed({
+      messages: [
+        {
+          id: MessageId.make("intermediate-empty"),
+          role: "assistant",
+          text: "",
+          turnId,
+          streaming: false,
+          createdAt: at(2),
+          updatedAt: at(2),
+        },
+        {
+          id: MessageId.make("terminal-empty"),
+          role: "assistant",
+          text: "",
+          turnId,
+          streaming: false,
+          createdAt: at(4),
+          updatedAt: at(4),
+        },
+      ],
+      activities: [1, 3].map((second) =>
+        makeActivity({
+          id: EventId.make(`tool-${second}`),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          turnId,
+          createdAt: at(second),
+          payload: { itemType: "file_read", status: "completed" },
+        }),
+      ),
+    });
+
+    expect(rows).toMatchObject([
+      { type: "activity-group", activities: [{ id: "tool-1" }, { id: "tool-3" }] },
+      { type: "message", message: { id: "terminal-empty", text: "" } },
+    ]);
+  });
+
+  it("leaves failed work visible when the turn has no answer", () => {
+    const turnId = TurnId.make("failed-without-answer");
+    const latestTurn = {
+      turnId,
+      state: "error" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: "2026-04-01T00:00:03.000Z",
+      assistantMessageId: null,
+    };
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({
+        messages: [
+          {
+            id: MessageId.make("reasoning:raw:failed"),
+            role: "reasoning",
+            text: "Checking the provider.",
+            turnId,
+            streaming: false,
+            createdAt: "2026-04-01T00:00:01.000Z",
+            updatedAt: "2026-04-01T00:00:01.000Z",
+          },
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("provider-error"),
+            kind: "runtime.error",
+            tone: "error",
+            summary: "Provider error",
+            createdAt: "2026-04-01T00:00:02.000Z",
+            turnId,
+            payload: { message: "Connection lost" },
+          }),
+        ],
+      }),
+      latestTurn,
+      new Set(),
+    );
+    expect(rows.some((row) => row.type === "turn-fold")).toBe(false);
+    expect(rows.some((row) => row.type === "activity-group")).toBe(true);
+  });
+
+  it("keeps a failed tool visible when its display tone is still tool", () => {
+    const turnId = TurnId.make("failed-tool-without-answer");
+    const feed = buildThreadFeed({
+      messages: [
+        {
+          id: MessageId.make("failed-tool-reasoning"),
+          role: "reasoning",
+          text: "Checking the tests.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:01.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("failed-tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Run tests",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: { itemType: "command_execution", status: "failed", detail: "Exit code 1" },
+        }),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      feed,
+      {
+        turnId,
+        state: "completed",
+        startedAt: "2026-04-01T00:00:00.000Z",
+        completedAt: "2026-04-01T00:00:03.000Z",
+      },
+      new Set(),
+    );
+    expect(rows.some((row) => row.type === "turn-fold")).toBe(false);
+    expect(rows.some((row) => row.type === "work-toggle" && row.hasFailure)).toBe(true);
+  });
+
+  it("keeps a new live tool visible while the latest turn projection still names the prior turn", () => {
+    const priorTurnId = TurnId.make("prior-turn");
+    const activeTurnId = TurnId.make("new-running-turn");
+    const latestTurn = {
+      turnId: priorTurnId,
+      state: "completed" as const,
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: "2026-04-01T00:00:01.000Z",
+    };
+    const feed = buildThreadFeed({
+      messages: [
+        {
+          id: MessageId.make("new-turn-prompt"),
+          role: "user",
+          text: "Run the tests",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("new-running-tool"),
+          kind: "tool.updated",
+          tone: "tool",
+          summary: "Running tests",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId: activeTurnId,
+          payload: { itemType: "command_execution", status: "inProgress" },
+        }),
+      ],
+    });
+    const activeWorkStartedAt = "2026-04-01T00:00:02.000Z";
+    expect(deriveActiveFeedTurnId(feed, latestTurn, activeWorkStartedAt)).toBe(activeTurnId);
+    expect(
+      deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), activeWorkStartedAt),
+    ).toMatchObject([
+      { type: "message", message: { role: "user" } },
+      { type: "work-toggle", live: true, shimmer: true },
+    ]);
+    expect(deriveActiveFeedTurnId(feed, latestTurn, null)).toBeNull();
+  });
+
+  it("folds earlier turnless reports from one completed response", () => {
+    const messages: OrchestrationThread["messages"] = [
+      {
+        id: MessageId.make("prompt"),
+        role: "user",
+        text: "Audit this branch",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+      ...[1, 2, 3].map((index) => ({
+        id: MessageId.make(`report-${index}`),
+        role: "assistant" as const,
+        text: `Audit report ${index}`,
+        turnId: null,
+        streaming: false,
+        createdAt: `2026-04-01T00:00:0${index}.000Z`,
+        updatedAt: `2026-04-01T00:00:0${index}.000Z`,
+      })),
+    ];
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual(["message", "turn-fold", "message"]);
+    expect(rows.at(-1)?.id).toBe("report-3");
+    const liveRows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set(),
+      new Set(),
+      "2026-04-01T00:00:00.000Z",
+    );
+    expect(liveRows.filter((row) => row.type === "turn-fold")).toHaveLength(0);
+    const nextUser = {
+      id: MessageId.make("next-prompt"),
+      role: "user" as const,
+      text: "Continue",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:10.000Z",
+      updatedAt: "2026-04-01T00:00:10.000Z",
+    };
+    const nextTurnRows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages: [...messages, nextUser], activities: [] }),
+      null,
+      new Set(),
+      new Set(),
+      nextUser.createdAt,
+    );
+    expect(nextTurnRows.filter((row) => row.type === "turn-fold")).toHaveLength(1);
+  });
+
+  it("folds turnless reasoning with its completed response", () => {
+    const messages: OrchestrationThread["messages"] = [
+      {
+        id: MessageId.make("prompt"),
+        role: "user",
+        text: "Audit this branch",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+      {
+        id: MessageId.make("reasoning:raw:thought"),
+        role: "reasoning",
+        text: "Checking the files.",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:01.000Z",
+        updatedAt: "2026-04-01T00:00:01.000Z",
+      },
+      {
+        id: MessageId.make("answer"),
+        role: "assistant",
+        text: "Done",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:02.000Z",
+        updatedAt: "2026-04-01T00:00:02.000Z",
+      },
+    ];
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual(["message", "turn-fold", "message"]);
+  });
+
+  it("places a late-only reasoning fold before its answer", () => {
+    const turnId = TurnId.make("late-thought");
+    const messages: OrchestrationThread["messages"] = [
+      {
+        id: MessageId.make("answer"),
+        role: "assistant",
+        text: "Done",
+        turnId,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:02.000Z",
+        updatedAt: "2026-04-01T00:00:02.000Z",
+      },
+      {
+        id: MessageId.make("reasoning:raw:late"),
+        role: "reasoning",
+        text: "One last check.",
+        turnId,
+        streaming: false,
+        createdAt: "2026-04-01T00:00:03.000Z",
+        updatedAt: "2026-04-01T00:00:03.000Z",
+      },
+    ];
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed({ messages, activities: [] }),
+      null,
+      new Set(),
+    );
+    expect(rows.map((row) => row.type)).toEqual(["turn-fold", "message"]);
+  });
 
   it("shows one Thinking row while a turn works without live tool activity", () => {
     const turnId = TurnId.make("turn-thinking");

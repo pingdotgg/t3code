@@ -29,10 +29,9 @@ import {
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
   workEntryViewedImagePath,
-  summarizeToolGroup,
-  omitSupersededLifecycleMarkers,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import type {
   AgentPanelModel,
   RuntimeSubagent,
@@ -63,6 +62,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -102,9 +102,6 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Root, RootContent } from "mdast";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   BotIcon,
@@ -140,7 +137,6 @@ import { Button } from "../ui/button";
 import type { QueuedComposerMessage } from "../../queuedMessageStore";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
   buildAttachmentVideoAsset,
   buildAttachmentVideoPreview,
@@ -180,7 +176,6 @@ import {
   deriveUnsettledTurnId,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
-  workEntryIsActiveTurnActivity,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -202,7 +197,6 @@ import {
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
-  type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -318,12 +312,18 @@ interface TimelineRowActivityState {
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
 }
 
+function messageIsLiveStreaming(message: ChatMessage, activity: TimelineRowActivityState): boolean {
+  if (!message.streaming) return false;
+  if (message.turnId === null || activity.unsettledTurnId === null) return activity.isWorking;
+  return message.turnId === activity.unsettledTurnId;
+}
+
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 
 interface WorkGroupViewState {
-  scrollPositions: Map<string, WorkGroupScrollAnchor>;
   expandedEntries: Set<string>;
+  scrollPositions: Map<string, { readonly entryId: string; readonly offset: number }>;
 }
 
 const WorkGroupViewCtx = createContext<{
@@ -588,13 +588,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       current.has(turnId) ? current : new Set([...current, turnId]),
     );
   }, []);
-  // Nested tool state shares the bounded thread-position cache.
+  // Expanded tool-entry disclosures share the thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
-    () =>
-      rememberedPosition?.disclosures?.workGroupState ?? {
-        scrollPositions: new Map(),
-        expandedEntries: new Set(),
-      },
+    () => ({
+      expandedEntries:
+        rememberedPosition?.disclosures?.workGroupState?.expandedEntries ?? new Set(),
+      scrollPositions:
+        rememberedPosition?.disclosures?.workGroupState?.scrollPositions ?? new Map(),
+    }),
     [listIdentityKey, rememberedPosition],
   );
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -1680,7 +1681,6 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
-  const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
 
@@ -1689,24 +1689,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        isExpandedToolGroup
-          ? "pb-1"
-          : isExpandedToolGroupHeader
-            ? "pb-0"
-            : row.kind === "turn-fold" || row.kind === "working"
-              ? "pb-1.5"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  (row.kind === "message" && row.message.role === "reasoning") ||
-                  row.kind === "work" ||
-                  row.kind === "work-live" ||
-                  row.kind === "work-toggle" ||
-                  row.kind === "activity-group" ||
-                  row.kind === "thinking" ||
-                  row.kind === "worktree-setup"
-                ? "pb-2"
-                : "pb-4",
+        isExpandedToolGroupHeader
+          ? "pb-0"
+          : row.kind === "turn-fold" || row.kind === "working"
+            ? "pb-1.5"
+            : (row.kind === "message" &&
+                  row.message.role === "assistant" &&
+                  !row.showAssistantMeta) ||
+                row.kind === "reasoning-run" ||
+                row.kind === "work" ||
+                row.kind === "work-live" ||
+                row.kind === "work-toggle" ||
+                row.kind === "thinking" ||
+                row.kind === "worktree-setup"
+              ? "pb-2"
+              : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"
@@ -1715,20 +1712,28 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={
-        row.kind === "message" || row.kind === "assistant-meta" ? row.message.id : undefined
+        row.kind === "message" || row.kind === "assistant-meta"
+          ? row.message.id
+          : row.kind === "reasoning-run"
+            ? row.messages[0]?.id
+            : undefined
       }
-      data-message-role={row.kind === "message" ? row.message.role : undefined}
+      data-message-role={
+        row.kind === "message"
+          ? row.message.role
+          : row.kind === "reasoning-run"
+            ? "reasoning"
+            : undefined
+      }
     >
       {row.kind === "work" ? (
         <WorkGroupSection
           anchorKey={row.id}
           groupedEntries={row.groupedEntries}
-          isExpandedToolGroup={row.isExpandedToolGroup}
           displayLabel={row.displayLabel}
         />
       ) : null}
       {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
-      {row.kind === "activity-group" ? <ActivityGroupTimelineRow row={row} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
@@ -1736,9 +1741,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
-      {row.kind === "message" && row.message.role === "reasoning" ? (
-        <ReasoningTimelineRow row={row} />
-      ) : null}
+      {row.kind === "reasoning-run" ? <ReasoningTimelineRow row={row} /> : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
@@ -2379,7 +2382,10 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const activity = use(TimelineRowActivityCtx);
+  const isStreaming = messageIsLiveStreaming(row.message, activity);
+  const messageText =
+    row.message.text.trim().length > 0 ? row.message.text : isStreaming ? "" : "(empty response)";
 
   return (
     <>
@@ -2396,7 +2402,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             text={messageText}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
-            isStreaming={Boolean(row.message.streaming)}
+            isStreaming={isStreaming}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
             headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -2605,103 +2611,6 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
   );
 }
 
-function ActivityGroupTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "activity-group" }>;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const work = omitSupersededLifecycleMarkers(
-    row.entries.flatMap((entry) =>
-      entry.kind === "work" && workEntryIsVisibleInGroup(entry.entry, row.active)
-        ? [entry.entry]
-        : [],
-    ),
-    (entry) => entry,
-  );
-  const thoughtCount = row.entries.filter((entry) => entry.kind === "message").length;
-  const lastThoughtIndex = row.entries.findLastIndex((entry) => entry.kind === "message");
-  const trailingWork = omitSupersededLifecycleMarkers(
-    row.entries
-      .slice(lastThoughtIndex + 1)
-      .flatMap((entry) =>
-        entry.kind === "work" && workEntryIsVisibleInGroup(entry.entry, row.active)
-          ? [entry.entry]
-          : [],
-      ),
-    (entry) => entry,
-  );
-  const liveWork = trailingWork.findLast(workEntryIsActiveTurnActivity) ?? trailingWork.at(-1);
-  const thinking = row.active && liveWork === undefined;
-  const iconWork = row.active ? liveWork : work.at(-1);
-  const failed = iconWork !== undefined && workEntryDisplayIndicatesToolFailure(iconWork);
-  const label = row.active
-    ? liveWork
-      ? liveWorkEntryLabel(liveWork, ctx.workspaceRoot, true)
-      : "Thinking"
-    : work.length > 0
-      ? summarizeToolGroup(work)
-      : `Thought${thoughtCount > 1 ? ` (×${thoughtCount})` : ""}`;
-  const details: ReactNode[] = [];
-  if (row.expanded) {
-    for (let index = 0; index < row.entries.length; index += 1) {
-      const entry = row.entries[index]!;
-      if (entry.kind === "work") {
-        const entries = [entry.entry];
-        while (row.entries[index + 1]?.kind === "work") {
-          const next = row.entries[++index]!;
-          if (next.kind === "work") entries.push(next.entry);
-        }
-        details.push(
-          <WorkGroupSection
-            key={entry.id}
-            anchorKey={entry.id}
-            disclosureAnchorKey={row.id}
-            groupedEntries={omitSupersededLifecycleMarkers(entries, (entry) => entry)}
-            isExpandedToolGroup
-          />,
-        );
-      } else {
-        const messages = [entry.message];
-        while (row.entries[index + 1]?.kind === "message") {
-          const next = row.entries[++index]!;
-          if (next.kind === "message") messages.push(next.message);
-        }
-        details.push(
-          <ReasoningTraceBlock
-            key={entry.id}
-            anchorKey={row.id}
-            messages={messages}
-            live={row.active && index === row.entries.length - 1}
-            showHeader={work.length > 0}
-          />,
-        );
-      }
-    }
-  }
-  return (
-    <div>
-      <button
-        type="button"
-        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-label={failed ? `${label}, tool call failed` : undefined}
-        aria-expanded={row.expanded}
-        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-      >
-        <LiveActivityRow
-          label={label}
-          iconName={iconWork ? workEntryIconName(iconWork) : "brain"}
-          toolIcon={iconWork?.toolIcon ?? iconWork?.toolSource?.icon}
-          failed={failed}
-          active={row.active}
-          shimmer={thinking}
-        />
-      </button>
-      {row.expanded ? <div className="mt-2">{details}</div> : null}
-    </div>
-  );
-}
-
 function ThinkingTimelineRow() {
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
@@ -2714,156 +2623,103 @@ function ThinkingTimelineRow() {
   );
 }
 
-function remarkThoughtPreview(fallback: string) {
-  return (tree: Root) => {
-    const plainText = (node: Root | RootContent): string => {
-      if (node.type === "html" || node.type === "definition") return "";
-      if ("alt" in node) return node.alt ?? "";
-      if ("value" in node) return node.value;
-      if ("children" in node) {
-        const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(
-          node.type,
-        )
-          ? " "
-          : "";
-        return node.children.map(plainText).join(separator);
-      }
-      return node.type === "break" ? " " : "";
-    };
-    tree.children = [
-      { type: "text", value: plainText(tree).replace(/\s+/g, " ").trim() || fallback },
-    ];
-  };
-}
-
-/**
- * Thinking inside a tool group has its own disclosure, preserved across recycling.
- * A group whose row already reads "Thought" (no visible tool) skips the header.
- */
-function ReasoningTraceBlock({
-  anchorKey,
-  messages,
-  live,
-  showHeader,
+/** Summaries read like narration; raw traces remain available on demand. */
+const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
+  row,
 }: {
-  anchorKey: string;
-  messages: ReadonlyArray<ChatMessage>;
-  live: boolean;
-  showHeader: boolean;
+  row: Extract<TimelineRow, { kind: "reasoning-run" }>;
+}) {
+  if (row.reasoningKind === "raw") {
+    return <RawReasoningTimelineRow row={row} />;
+  }
+  return <SummaryReasoningTimelineRow row={row} />;
+});
+
+function SummaryReasoningTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "reasoning-run" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
-  const first = messages[0]!;
-  const expanded = !showHeader || ctx.expandedReasoningMessageIds.has(first.id);
-  const streaming =
-    live &&
-    messages.some((reasoningMessage) => reasoningMessage.streaming) &&
-    isWorking &&
-    first.turnId !== null &&
-    first.turnId === unsettledTurnId;
-  if (
-    messages.every((reasoningMessage) => reasoningMessage.text.trim().length === 0) &&
-    !streaming
-  ) {
-    return null;
-  }
-  const label = streaming ? "Thinking" : "Thought";
-  const collapsedPreview = messages.find((message) => message.text.trim().length > 0)?.text.trim();
-  const headerText = expanded ? (
-    label
-  ) : (
-    <ReactMarkdown remarkPlugins={[remarkGfm, [remarkThoughtPreview, label]]}>
-      {collapsedPreview ?? label}
-    </ReactMarkdown>
-  );
+  const activity = use(TimelineRowActivityCtx);
+  const detailsId = useId();
+  const messageId = row.messages[0]!.id;
+  const expanded = ctx.expandedReasoningMessageIds.has(messageId);
+  const chunks = row.messages.map((message) => message.text.trim()).filter(Boolean);
+  const text = chunks.join(" ");
+  const streaming = row.messages.some((message) => messageIsLiveStreaming(message, activity));
+  if (text.length === 0) return streaming ? <ThinkingTimelineRow /> : null;
+  const longSummary =
+    text.length > 2_000 ||
+    chunks.reduce((count, chunk) => count + chunk.split("\n").length, 0) > 25;
+  const preview = chunks.slice(0, 25).join(" ").slice(0, 2_000).split("\n").slice(0, 25).join("\n");
   return (
-    <div className="flex flex-col">
-      {showHeader ? (
+    <div className="relative min-w-0 px-1 py-0.5">
+      <div
+        id={detailsId}
+        className={cn(
+          longSummary && (expanded ? "max-h-96 overflow-y-auto" : "max-h-48 overflow-hidden"),
+        )}
+      >
+        <ChatMarkdown
+          text={longSummary && !expanded ? preview : text}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          isStreaming={streaming}
+          lineBreaks={shouldPreserveAssistantLineBreaks(text)}
+          skills={ctx.skills}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onImageExpand={ctx.onImageExpand}
+        />
+      </div>
+      {longSummary ? (
         <button
           type="button"
+          className="mt-1 cursor-pointer text-secondary-label text-xs hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
           aria-expanded={expanded}
-          onClick={() => ctx.onToggleReasoning(first.id, !expanded, anchorKey)}
-          className="flex min-h-6 cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 text-start text-sm leading-relaxed transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          aria-controls={detailsId}
+          onClick={() => ctx.onToggleReasoning(messageId, !expanded, row.id)}
         >
-          <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-            <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
-          </span>
-          <span
-            ref={streaming ? observeVisibleAnimation : undefined}
-            className="relative min-w-0 flex-1 truncate text-secondary-label"
-          >
-            {headerText}
-            {streaming ? <ActivityShimmerOverlay>{headerText}</ActivityShimmerOverlay> : null}
-          </span>
-          <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
-            <ChevronRightIcon
-              className={cn(
-                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
-                expanded && "rotate-90",
-              )}
-            />
-          </span>
+          {expanded ? "Show less" : "Show more"}
         </button>
-      ) : null}
-      {expanded ? (
-        <div className="ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text">
-          {messages.map((reasoningMessage) => (
-            <ChatMarkdown
-              key={reasoningMessage.id}
-              className="text-foreground"
-              text={reasoningMessage.text}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={streaming && reasoningMessage.streaming}
-              lineBreaks
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onImageExpand={ctx.onImageExpand}
-            />
-          ))}
-        </div>
       ) : null}
     </div>
   );
 }
 
-/**
- * A provider's thinking trace. Collapsed by default: reasoning is context for
- * the answer, not the answer. The open/closed flag lives on the list so it
- * survives row recycling in the virtualizer.
- */
-const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
+function RawReasoningTimelineRow({
   row,
 }: {
-  row: Extract<TimelineRow, { kind: "message" }>;
+  row: Extract<TimelineRow, { kind: "reasoning-run" }>;
 }) {
   const ctx = use(TimelineRowCtx);
-  const { message } = row;
-  const expanded = ctx.expandedReasoningMessageIds.has(message.id);
-  const { onToggleReasoning } = ctx;
-  const toggle = useCallback(() => {
-    onToggleReasoning(message.id, !expanded, row.id);
-  }, [expanded, message.id, row.id, onToggleReasoning]);
-
-  if (message.text.trim().length === 0) {
-    return null;
-  }
-
+  const activity = use(TimelineRowActivityCtx);
+  const detailsId = useId();
+  const messageId = row.messages[0]!.id;
+  const expanded = ctx.expandedReasoningMessageIds.has(messageId);
+  const streaming = row.messages.some((message) => messageIsLiveStreaming(message, activity));
+  const label = `Thought${row.messages.length > 1 ? ` (×${row.messages.length})` : ""}`;
   return (
-    <div className={cn("flex flex-col", expanded && "mb-1")}>
+    <div className={cn("flex min-w-0 flex-col", expanded && "mb-1")}>
       <button
         type="button"
-        aria-expanded={expanded}
-        onClick={toggle}
         className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 py-0.5 text-start transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-expanded={expanded}
+        aria-controls={detailsId}
+        onClick={() => ctx.onToggleReasoning(messageId, !expanded, row.id)}
       >
         <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
           <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <span className="relative min-w-0 flex-1 truncate text-secondary-label text-sm leading-relaxed">
-            Thought
+          <span
+            className={cn(
+              "relative min-w-0 flex-1 truncate text-secondary-label text-sm leading-relaxed",
+              streaming && "live-tool-shine",
+            )}
+          >
+            {label}
           </span>
           <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
             <ChevronRightIcon
@@ -2876,23 +2732,34 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
         </span>
       </button>
       {expanded ? (
-        <div className="mt-1 ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text">
-          <ChatMarkdown
-            className="text-foreground"
-            text={message.text}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            lineBreaks
-            skills={ctx.skills}
-            headingLevelOffset={MESSAGE_HEADING_LEVEL}
-            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-            onImageExpand={ctx.onImageExpand}
-          />
+        <div
+          id={detailsId}
+          role="region"
+          aria-label={label}
+          tabIndex={0}
+          data-reasoning-scroll
+          className="mt-1 ms-7 flex max-h-96 flex-col gap-3 overflow-x-hidden overflow-y-auto px-0.5 py-1 select-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        >
+          {row.messages.map((message) => (
+            <ChatMarkdown
+              key={message.id}
+              className="text-foreground"
+              text={message.text}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={messageIsLiveStreaming(message, activity)}
+              lineBreaks
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onImageExpand={ctx.onImageExpand}
+            />
+          ))}
         </div>
       ) : null}
     </div>
   );
-});
+}
 
 function CompactingLabel() {
   return (
@@ -2936,43 +2803,29 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
 // re-render only the affected row, not the entire list.
 // ---------------------------------------------------------------------------
 
-/** Renders standalone activity or one bounded, virtualized expanded tool group. */
+/** Renders standalone activity; expanded entries are separate outer-list rows. */
 const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
   disclosureAnchorKey = anchorKey,
   groupedEntries,
-  isExpandedToolGroup,
   displayLabel,
 }: {
   anchorKey: string;
   disclosureAnchorKey?: string;
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
-  isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
+  const { workspaceRoot, onToggleWorkEntry } = use(TimelineRowCtx);
   const onToggleStandaloneEntry = useCallback(
     (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
     [disclosureAnchorKey, onToggleWorkEntry],
   );
   const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroup)),
-    [groupedEntries, isExpandedToolGroup],
+    () => groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry)),
+    [groupedEntries],
   );
 
   if (nonEmptyEntries.length === 0) return null;
-  if (isExpandedToolGroup) {
-    return (
-      <ExpandedWorkGroupEntries
-        key={`${routeThreadKey}:${anchorKey}`}
-        anchorKey={anchorKey}
-        disclosureAnchorKey={disclosureAnchorKey}
-        entries={nonEmptyEntries}
-        workspaceRoot={workspaceRoot}
-      />
-    );
-  }
-
   return (
     <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label="Activity">
       <div className="space-y-px">
@@ -3266,39 +3119,50 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
-    <button
-      type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={failed ? `${label}, tool call failed` : undefined}
-      aria-expanded={row.expanded}
-      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-    >
-      <LiveActivityRow
-        label={
-          row.entry.questionAnswer ? (
-            <span className="flex min-w-0 gap-1.5">
-              <span className="shrink-0">{label}</span>
-              <span
-                className={cn(
-                  "truncate",
-                  !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
-                    ? "text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
-                {getQuestionAnswerPreview(row.entry.questionAnswer)}
+    <div className="-mx-1 px-1">
+      <button
+        type="button"
+        className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-label={failed ? `${label}, tool call failed` : undefined}
+        aria-expanded={row.expanded}
+        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      >
+        <LiveActivityRow
+          label={
+            row.entry.questionAnswer ? (
+              <span className="flex min-w-0 gap-1.5">
+                <span className="shrink-0">{label}</span>
+                <span
+                  className={cn(
+                    "truncate",
+                    !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
+                      ? "text-foreground"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {getQuestionAnswerPreview(row.entry.questionAnswer)}
+                </span>
               </span>
-            </span>
-          ) : (
-            label
-          )
-        }
-        iconName={workEntryIconName(row.entry)}
-        toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
-        failed={failed}
-        active={row.active}
-      />
-    </button>
+            ) : (
+              label
+            )
+          }
+          iconName={workEntryIconName(row.entry)}
+          toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
+          failed={failed}
+          active={row.active}
+        />
+      </button>
+      {row.expanded ? (
+        <ExpandedWorkGroupEntries
+          key={`${ctx.routeThreadKey}:${row.groupId}`}
+          anchorKey={row.groupId}
+          disclosureAnchorKey={row.id}
+          entries={row.groupedEntries}
+          workspaceRoot={ctx.workspaceRoot}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -3346,26 +3210,37 @@ function WorkGroupToggleTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   return (
-    <button
-      type="button"
-      className="group/tool-group group/timeline-row relative flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
-      aria-expanded={row.expanded}
-      onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-    >
-      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <ToolActivityIconView
-          icon={row.toolIcon}
-          fallbackName={
-            row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
-          }
-          className="size-4 shrink-0 stroke-2"
-          muted
+    <div className="-mx-1 px-1">
+      <button
+        type="button"
+        className="group/tool-group group/timeline-row relative flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+        aria-expanded={row.expanded}
+        onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      >
+        <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+          <ToolActivityIconView
+            icon={row.toolIcon}
+            fallbackName={
+              row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
+            }
+            className="size-4 shrink-0 stroke-2"
+            muted
+          />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
+        <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
+      </button>
+      {row.expanded ? (
+        <ExpandedWorkGroupEntries
+          key={`${ctx.routeThreadKey}:${row.groupId}`}
+          anchorKey={row.groupId}
+          disclosureAnchorKey={row.id}
+          entries={row.groupedEntries}
+          workspaceRoot={ctx.workspaceRoot}
         />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
-      <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
-    </button>
+      ) : null}
+    </div>
   );
 }
 

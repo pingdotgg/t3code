@@ -213,6 +213,7 @@ interface OpenCodeIdleReconciliation {
 }
 
 interface OpenCodePromptAdmission {
+  steering: boolean;
   readonly generation: number;
   readonly turnId: TurnId;
   readonly messageId: string;
@@ -222,6 +223,8 @@ interface OpenCodePromptAdmission {
   idleDuringAdmission: { readonly turnId: TurnId; readonly raw: unknown } | undefined;
   idleObservedAfterMessage: boolean;
   messageObserved: boolean;
+  assistantResponseFinished: boolean;
+  responseReceipt: Deferred.Deferred<void>;
   busyObserved: boolean;
   idleStatusConfirmations: number;
   accepted: boolean;
@@ -332,6 +335,7 @@ type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" 
   text: string | undefined;
   emittedText: string | undefined;
   completed: boolean;
+  progressClassified: boolean;
 };
 
 type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "id" | "tokens">;
@@ -350,6 +354,7 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
+  readonly messageTurnIdById: Map<string, TurnId>;
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
@@ -597,8 +602,14 @@ function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserI
   }));
 }
 
-function resolveTextStreamKind(part: Pick<Part, "type">): "assistant_text" | "reasoning_text" {
-  return part.type === "reasoning" ? "reasoning_text" : "assistant_text";
+function resolveTextStreamKind(
+  part: Pick<OpenCodeTextPartState, "type" | "progressClassified">,
+): "assistant_text" | "assistant_progress_text" | "reasoning_text" {
+  return part.type === "reasoning"
+    ? "reasoning_text"
+    : part.progressClassified
+      ? "assistant_progress_text"
+      : "assistant_text";
 }
 
 function retainOpenCodeTextPart(
@@ -616,6 +627,7 @@ function retainOpenCodeTextPart(
     ...(part.time !== undefined ? { time: part.time } : {}),
     emittedText: previous?.emittedText,
     completed: previous?.completed ?? false,
+    progressClassified: previous?.progressClassified ?? false,
   };
   parts.set(part.id, state);
   context.textPartsByMessageId.set(part.messageID, parts);
@@ -685,6 +697,17 @@ function messageRoleForPart(
     return known;
   }
   return part.type === "tool" ? "assistant" : undefined;
+}
+
+const MAX_RECENT_MESSAGE_TURN_IDS = 4_096;
+
+function rememberMessageTurnId(context: OpenCodeSessionContext, messageId: string, turnId: TurnId) {
+  const associations = context.messageTurnIdById;
+  associations.delete(messageId);
+  associations.set(messageId, turnId);
+  if (associations.size > MAX_RECENT_MESSAGE_TURN_IDS) {
+    associations.delete(associations.keys().next().value!);
+  }
 }
 
 function detailFromToolPart(part: Extract<Part, { type: "tool" }>): string | undefined {
@@ -873,6 +896,9 @@ const cancelPendingOpenCodePrompt = Effect.fn("cancelPendingOpenCodePrompt")(fun
     return;
   }
   admission.cancelled = true;
+  if (admission.recoveryFiber) {
+    yield* Fiber.interrupt(admission.recoveryFiber);
+  }
   if (admission.promptFiber) {
     yield* Fiber.interrupt(admission.promptFiber);
   }
@@ -1357,6 +1383,7 @@ export function makeOpenCodeAdapter(
         if (!promptAdmission.requiresMessageReceipt) {
           yield* Deferred.await(promptAdmission.acceptance);
         }
+        let lastStatusIsIdle = false;
         for (
           let retryCount = 0;
           retryCount < 5 || (promptAdmission.requiresMessageReceipt && !promptAdmission.accepted);
@@ -1433,6 +1460,7 @@ export function makeOpenCodeAdapter(
           const status = statusData?.[context.openCodeSessionId];
           const isIdle =
             statusData !== undefined && (status === undefined || status.type === "idle");
+          lastStatusIsIdle = isIdle;
           const isBusy = status?.type === "busy" || status?.type === "retry";
           if (isBusy) {
             promptAdmission.busyObserved = true;
@@ -1446,14 +1474,14 @@ export function makeOpenCodeAdapter(
           if (
             isIdle &&
             idle !== undefined &&
-            (promptAdmission.messageObserved || promptAdmission.busyObserved)
+            (promptAdmission.assistantResponseFinished || promptAdmission.busyObserved)
           ) {
             context.promptAdmission = undefined;
             context.awaitingBusyAfterInterruption = false;
             yield* scheduleIdleReconciliation(context, promptAdmission.turnId, idle.raw);
             return;
           }
-          if (isIdle && promptAdmission.messageObserved) {
+          if (isIdle && promptAdmission.assistantResponseFinished) {
             promptAdmission.idleStatusConfirmations += 1;
             if (promptAdmission.idleStatusConfirmations >= 2) {
               context.promptAdmission = undefined;
@@ -1474,7 +1502,7 @@ export function makeOpenCodeAdapter(
           }
           if (
             isIdle &&
-            promptAdmission.messageObserved &&
+            promptAdmission.assistantResponseFinished &&
             promptAdmission.recoveryRaw !== undefined
           ) {
             context.promptAdmission = undefined;
@@ -1489,6 +1517,61 @@ export function makeOpenCodeAdapter(
 
           const delayMs = Math.min(250 * 2 ** retryCount, 2_000);
           yield* Effect.sleep(`${delayMs} millis`);
+        }
+        // An idle status can precede OpenCode's first assistant response. Keep
+        // the turn owned until that response arrives; its terminal update
+        // restarts reconciliation without polling an idle session indefinitely.
+        if (promptAdmission.messageObserved && !promptAdmission.assistantResponseFinished) {
+          // The terminal assistant event may have been lost during a reconnect.
+          // Confirm it from OpenCode's durable messages before waiting for the stream.
+          if (lastStatusIsIdle) {
+            const messages = yield* runOpenCodeSdk("session.messages", (signal) =>
+              context.client.session.messages({ sessionID: context.openCodeSessionId }, { signal }),
+            ).pipe(Effect.timeout("1 second"), Effect.option);
+            if (
+              (yield* Ref.get(context.stopped)) ||
+              sessions.get(context.session.threadId) !== context ||
+              context.promptAdmission !== promptAdmission ||
+              context.activeTurnId !== promptAdmission.turnId ||
+              context.promptGeneration !== promptAdmission.generation ||
+              promptAdmission.cancelled
+            ) {
+              return;
+            }
+            const finished =
+              Option.isSome(messages) &&
+              messages.value.data?.some(
+                (message) =>
+                  message.info.role === "assistant" &&
+                  message.info.parentID === promptAdmission.messageId &&
+                  (message.info.finish === "stop" || message.info.finish === "length"),
+              );
+            if (finished) {
+              promptAdmission.assistantResponseFinished = true;
+              yield* Deferred.succeed(promptAdmission.responseReceipt, undefined);
+            }
+          }
+          const response = yield* Deferred.await(promptAdmission.responseReceipt).pipe(
+            Effect.timeoutOption("2 minutes"),
+          );
+          if (Option.isNone(response)) {
+            yield* failPromptAdmissionRecovery(context, promptAdmission);
+            return;
+          }
+          if (
+            context.promptAdmission === promptAdmission &&
+            context.activeTurnId === promptAdmission.turnId &&
+            context.promptGeneration === promptAdmission.generation &&
+            !promptAdmission.cancelled
+          ) {
+            context.promptAdmission = undefined;
+            yield* scheduleIdleReconciliation(
+              context,
+              promptAdmission.turnId,
+              promptAdmission.recoveryRaw,
+            );
+          }
+          return;
         }
         yield* failPromptAdmissionRecovery(context, promptAdmission);
       }).pipe(
@@ -1611,6 +1694,34 @@ export function makeOpenCodeAdapter(
       // one-shot guard, so the call would no-op.
       yield* abortOpenCodeSessionForTeardown(context);
       yield* Scope.close(context.sessionScope, Exit.void);
+    });
+
+    const emitAssistantProgressCompletion = Effect.fn("emitAssistantProgressCompletion")(function* (
+      context: OpenCodeSessionContext,
+      part: OpenCodeTextPartState,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (part.text === undefined || part.text.trim().length === 0) return;
+      part.progressClassified = true;
+      part.completed = true;
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: part.id,
+          createdAt: part.time?.end !== undefined ? isoFromEpochMs(part.time.end) : undefined,
+          raw,
+        })),
+        type: "item.completed",
+        payload: {
+          itemType: "assistant_message",
+          status: "completed",
+          presentation: "progress",
+          title: "Assistant message",
+          detail: part.text,
+        },
+      });
     });
 
     /** Emit content.delta and item.completed events for an assistant text part. */
@@ -2264,7 +2375,24 @@ export function makeOpenCodeAdapter(
         return;
       }
 
-      const turnId = context.activeTurnId;
+      if (event.type === "message.updated" && event.properties.info.role === "assistant") {
+        const parentId = event.properties.info.parentID;
+        const parentTurnId = parentId ? context.messageTurnIdById.get(parentId) : undefined;
+        if (parentTurnId) {
+          rememberMessageTurnId(context, event.properties.info.id, parentTurnId);
+        }
+      }
+      const assistantMessageId =
+        event.type === "message.updated" && event.properties.info.role === "assistant"
+          ? event.properties.info.id
+          : event.type === "message.part.updated"
+            ? event.properties.part.messageID
+            : event.type === "message.part.delta"
+              ? event.properties.messageID
+              : undefined;
+      const turnId =
+        (assistantMessageId ? context.messageTurnIdById.get(assistantMessageId) : undefined) ??
+        context.activeTurnId;
       yield* writeNativeEventBestEffort(context.session.threadId, {
         observedAt: yield* nowIso,
         event: {
@@ -2336,15 +2464,7 @@ export function makeOpenCodeAdapter(
             promptAdmission.messageObserved = true;
             yield* Deferred.succeed(promptAdmission.messageReceipt, undefined);
             if (promptAdmission.accepted) {
-              const idle = promptAdmission.idleDuringAdmission;
-              context.awaitingBusyAfterInterruption = false;
-              context.promptAdmission = undefined;
-              if (promptAdmission.recoveryFiber) {
-                yield* Fiber.interrupt(promptAdmission.recoveryFiber);
-              }
-              if (idle) {
-                yield* scheduleIdleReconciliation(context, idle.turnId, idle.raw);
-              }
+              yield* schedulePromptAdmissionRecovery(context, event);
             }
           }
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
@@ -2352,6 +2472,22 @@ export function makeOpenCodeAdapter(
             context.textPartsByMessageId.delete(event.properties.info.id);
           }
           if (event.properties.info.role === "assistant") {
+            if (
+              promptAdmission !== undefined &&
+              promptAdmission.messageId === event.properties.info.parentID &&
+              (event.properties.info.finish === "stop" || event.properties.info.finish === "length")
+            ) {
+              promptAdmission.assistantResponseFinished = true;
+              yield* Deferred.succeed(promptAdmission.responseReceipt, undefined);
+              if (promptAdmission.accepted) {
+                if (promptAdmission.recoveryFiber) {
+                  yield* Fiber.interrupt(promptAdmission.recoveryFiber);
+                }
+                context.promptAdmission = undefined;
+                context.awaitingBusyAfterInterruption = false;
+                yield* scheduleIdleReconciliation(context, promptAdmission.turnId, event);
+              }
+            }
             const usage = context.turnTokenUsage;
             const parentMessageId =
               typeof event.properties.info.parentID === "string" &&
@@ -2387,6 +2523,13 @@ export function makeOpenCodeAdapter(
               .get(event.properties.info.id)
               ?.values() ?? []) {
               yield* emitAssistantTextDelta(context, part, turnId, event);
+              if (
+                part.type === "text" &&
+                !part.progressClassified &&
+                event.properties.info.finish === "tool-calls"
+              ) {
+                yield* emitAssistantProgressCompletion(context, part, turnId, event);
+              }
             }
           }
           break;
@@ -2594,8 +2737,17 @@ export function makeOpenCodeAdapter(
             yield* cancelIdleReconciliation(context);
             context.awaitingBusyAfterInterruption = false;
             if (context.promptAdmission?.turnId === turnId) {
-              context.promptAdmission.busyObserved = true;
-              yield* schedulePromptAdmissionRecovery(context, event);
+              const admission = context.promptAdmission;
+              admission.busyObserved = true;
+              if (admission.accepted && admission.messageObserved) {
+                admission.cancelled = true;
+                context.promptAdmission = undefined;
+                if (admission.recoveryFiber) {
+                  yield* Fiber.interrupt(admission.recoveryFiber);
+                }
+              } else {
+                yield* schedulePromptAdmissionRecovery(context, event);
+              }
             }
             yield* updateProviderSession(context, {
               status: "running",
@@ -2625,9 +2777,23 @@ export function makeOpenCodeAdapter(
               break;
             }
             if (context.promptAdmission?.turnId === turnId) {
-              context.promptAdmission.idleDuringAdmission = { turnId, raw: event };
-              context.promptAdmission.idleObservedAfterMessage =
-                context.promptAdmission.messageObserved;
+              const admission = context.promptAdmission;
+              const priorIdle = admission.idleDuringAdmission ?? admission.priorIdle;
+              admission.idleDuringAdmission = { turnId, raw: event };
+              admission.idleObservedAfterMessage = admission.messageObserved;
+              if (
+                admission.accepted &&
+                admission.messageObserved &&
+                (priorIdle || !context.awaitingBusyAfterInterruption)
+              ) {
+                admission.cancelled = true;
+                context.promptAdmission = undefined;
+                if (admission.recoveryFiber) {
+                  yield* Fiber.interrupt(admission.recoveryFiber);
+                }
+                yield* scheduleIdleReconciliation(context, turnId, event);
+                break;
+              }
               yield* schedulePromptAdmissionRecovery(context, event);
               break;
             }
@@ -2660,6 +2826,14 @@ export function makeOpenCodeAdapter(
             }
             if (context.interruptedTurnId !== undefined || context.reconcileIdleStatus) {
               break;
+            }
+          }
+          const promptAdmission = context.promptAdmission;
+          if (promptAdmission) {
+            promptAdmission.cancelled = true;
+            context.promptAdmission = undefined;
+            if (promptAdmission.recoveryFiber) {
+              yield* Fiber.interrupt(promptAdmission.recoveryFiber);
             }
           }
           yield* cancelIdleReconciliation(context);
@@ -3018,6 +3192,7 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
+          messageTurnIdById: new Map(),
           turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,
@@ -3178,7 +3353,12 @@ export function makeOpenCodeAdapter(
             : undefined;
           context.pendingIdleReconciliation = undefined;
           const promptGeneration = context.promptGeneration + 1;
+          const previousAdmission = context.promptAdmission;
+          if (previousAdmission?.recoveryFiber) {
+            yield* Fiber.interrupt(previousAdmission.recoveryFiber);
+          }
           const promptAdmission: OpenCodePromptAdmission = {
+            steering: steeringTurnId !== undefined,
             generation: promptGeneration,
             turnId,
             messageId,
@@ -3188,6 +3368,8 @@ export function makeOpenCodeAdapter(
             idleDuringAdmission: undefined,
             idleObservedAfterMessage: false,
             messageObserved: false,
+            assistantResponseFinished: false,
+            responseReceipt: Deferred.makeUnsafe<void>(),
             busyObserved: false,
             idleStatusConfirmations: 0,
             accepted: false,
@@ -3201,6 +3383,7 @@ export function makeOpenCodeAdapter(
           context.promptAdmission = promptAdmission;
 
           context.activeTurnId = turnId;
+          rememberMessageTurnId(context, messageId, turnId);
           if (steeringTurnId === undefined) {
             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
           }
@@ -3491,13 +3674,29 @@ export function makeOpenCodeAdapter(
           ) {
             context.awaitingBusyAfterInterruption = false;
             const idle = promptAdmission.idleDuringAdmission;
-            if (idle && !promptAdmission.idleObservedAfterMessage) {
-              yield* schedulePromptAdmissionRecovery(context, idle.raw);
-            } else {
+            if (promptAdmission.busyObserved && promptAdmission.messageObserved) {
+              if (promptAdmission.recoveryFiber) {
+                yield* Fiber.interrupt(promptAdmission.recoveryFiber);
+              }
               context.promptAdmission = undefined;
-            }
-            if (idle && promptAdmission.idleObservedAfterMessage) {
+              if (idle) {
+                yield* scheduleIdleReconciliation(context, turnId, idle.raw);
+              }
+            } else if (promptAdmission.assistantResponseFinished) {
+              if (promptAdmission.recoveryFiber) {
+                yield* Fiber.interrupt(promptAdmission.recoveryFiber);
+              }
+              context.promptAdmission = undefined;
+              yield* scheduleIdleReconciliation(context, turnId, promptAdmission.recoveryRaw);
+            } else if (
+              idle &&
+              promptAdmission.idleObservedAfterMessage &&
+              promptAdmission.steering
+            ) {
+              context.promptAdmission = undefined;
               yield* scheduleIdleReconciliation(context, turnId, idle.raw);
+            } else {
+              yield* schedulePromptAdmissionRecovery(context, idle?.raw);
             }
           } else {
             yield* schedulePromptAdmissionRecovery(context, promptAdmission.recoveryRaw);
@@ -3626,6 +3825,9 @@ export function makeOpenCodeAdapter(
         const promptAdmission = context.promptAdmission;
         if (promptAdmission !== undefined && promptAdmission.turnId === interruptedTurnId) {
           promptAdmission.cancelled = true;
+          if (promptAdmission.recoveryFiber) {
+            yield* Fiber.interrupt(promptAdmission.recoveryFiber);
+          }
           if (promptAdmission.promptFiber) {
             yield* Fiber.interrupt(promptAdmission.promptFiber);
           }
@@ -3976,6 +4178,7 @@ export function makeOpenCodeAdapter(
           context.relatedSessionIds.clear();
           context.relatedSessionIds.add(forkedSessionId);
           context.messageRoleById.clear();
+          context.messageTurnIdById.clear();
           context.textPartsByMessageId.clear();
           context.turnTokenUsage = undefined;
           context.activeTurnId = undefined;

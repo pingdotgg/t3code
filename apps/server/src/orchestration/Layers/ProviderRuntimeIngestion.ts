@@ -1074,6 +1074,11 @@ const make = Effect.gen(function* () {
     timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
     lookup: () => Effect.succeed(0),
   });
+  const progressMessageIds = yield* Cache.make<MessageId, boolean>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(false),
+  });
 
   // When a thinking block opened, so "Thought for ..." measures the model's
   // time and not the moment buffered text happened to be flushed.
@@ -1266,22 +1271,38 @@ const make = Effect.gen(function* () {
     turnId?: TurnId;
   }) =>
     Effect.gen(function* () {
+      const baseKey = assistantSegmentBaseKeyFromEvent(input.event);
       if (!input.turnId) {
-        return assistantSegmentMessageId(assistantSegmentBaseKeyFromEvent(input.event), 0);
+        return assistantSegmentMessageId(baseKey, 0);
       }
 
-      const activeMessageId = yield* getActiveAssistantMessageIdForTurn(
-        input.threadId,
-        input.turnId,
-      );
-      if (Option.isSome(activeMessageId)) {
-        return activeMessageId.value;
+      const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
+      const activeMessageId = Option.getOrUndefined(state)?.activeMessageId;
+      if (activeMessageId) {
+        // OpenCode can classify an already streamed text part as tool-call
+        // progress when its parent message finishes. Keep each part separate
+        // so that reclassification cannot move text from an earlier answer.
+        if (
+          input.event.provider !== "opencode" ||
+          Option.getOrUndefined(state)?.baseKey === baseKey
+        ) {
+          return activeMessageId;
+        }
+        yield* finalizeActiveSegmentForTurn({
+          event: input.event,
+          threadId: input.threadId,
+          turnId: input.turnId,
+          createdAt: input.event.createdAt,
+          commandTag: "assistant-complete-on-new-part",
+          finalDeltaCommandTag: "assistant-delta-finalize-on-new-part",
+          hasProjectedMessage: false,
+        });
       }
 
       return yield* startAssistantSegmentForTurn({
         threadId: input.threadId,
         turnId: input.turnId,
-        baseKey: assistantSegmentBaseKeyFromEvent(input.event),
+        baseKey,
       });
     });
 
@@ -1422,6 +1443,7 @@ const make = Effect.gen(function* () {
 
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId).pipe(
+      Effect.andThen(Cache.invalidate(progressMessageIds, messageId)),
       Effect.andThen(Cache.invalidate(reasoningPartIndexByMessageId, messageId)),
       Effect.andThen(Cache.invalidate(reasoningStartedAtByMessageId, messageId)),
     );
@@ -1445,7 +1467,9 @@ const make = Effect.gen(function* () {
         return false;
       }
 
-      const isReasoning = messageStreamRoleOf(input.messageId) === "reasoning";
+      const isReasoning =
+        messageStreamRoleOf(input.messageId) === "reasoning" ||
+        Option.isSome(yield* Cache.getOption(progressMessageIds, input.messageId));
       yield* orchestrationEngine.dispatch({
         type: isReasoning ? "thread.message.reasoning.delta" : "thread.message.assistant.delta",
         commandId: yield* providerCommandId(input.event, input.commandTag),
@@ -1503,6 +1527,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    presentation?: "progress";
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
@@ -1514,7 +1539,10 @@ const make = Effect.gen(function* () {
             : "";
       const hasRenderableText = hasRenderableAssistantText(text);
 
-      const isReasoning = messageStreamRoleOf(input.messageId) === "reasoning";
+      const isReasoning =
+        input.presentation === "progress" ||
+        messageStreamRoleOf(input.messageId) === "reasoning" ||
+        Option.isSome(yield* Cache.getOption(progressMessageIds, input.messageId));
 
       if (hasRenderableText) {
         yield* orchestrationEngine.dispatch({
@@ -1783,6 +1811,7 @@ const make = Effect.gen(function* () {
       if (
         event.type === "content.delta" &&
         event.payload.streamKind !== "assistant_text" &&
+        event.payload.streamKind !== "assistant_progress_text" &&
         event.payload.streamKind !== "reasoning_text" &&
         event.payload.streamKind !== "reasoning_summary_text"
       ) {
@@ -1961,6 +1990,10 @@ const make = Effect.gen(function* () {
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
+      const assistantProgressDelta =
+        event.type === "content.delta" && event.payload.streamKind === "assistant_progress_text"
+          ? event.payload.delta
+          : undefined;
       const reasoningDelta =
         event.type === "content.delta" &&
         (event.payload.streamKind === "reasoning_text" ||
@@ -2092,6 +2125,61 @@ const make = Effect.gen(function* () {
             delta: assistantDelta,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
+          });
+        }
+      }
+
+      if (assistantProgressDelta && assistantProgressDelta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        const messageId = MessageId.make(
+          `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+        );
+        if (turnId) {
+          yield* rememberAssistantMessageId(thread.id, turnId, messageId);
+        }
+        yield* Cache.set(progressMessageIds, messageId, true);
+        const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
+        const progressMode = streamingMode === "token" ? "paragraph" : streamingMode;
+        const spillChunk = yield* appendBufferedAssistantText(
+          messageId,
+          assistantProgressDelta,
+          progressMode,
+          yield* Clock.currentTimeMillis,
+        );
+        if (spillChunk.length > 0) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.reasoning.delta",
+            commandId: yield* providerCommandId(event, "assistant-progress-delta-buffer-spill"),
+            threadId: thread.id,
+            messageId,
+            delta: spillChunk,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
+        // OpenCode can append text after classifying a completed part as
+        // progress. Finish a live part at item or turn completion instead of
+        // persisting a completion for every token. Late deltas from a settled
+        // turn still need immediate completion.
+        const progressTurn =
+          turnId && (activeTurnId === null || !sameId(activeTurnId, turnId))
+            ? yield* projectionTurnRepository.getByTurnId({ threadId: thread.id, turnId })
+            : Option.none();
+        const isSettledProgressTurn =
+          Option.isSome(progressTurn) &&
+          progressTurn.value.state !== "pending" &&
+          progressTurn.value.state !== "running";
+        if (!turnId || isSettledProgressTurn) {
+          yield* finalizeAssistantMessage({
+            event,
+            threadId: thread.id,
+            messageId,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+            commandTag: "assistant-progress-complete",
+            finalDeltaCommandTag: "assistant-progress-delta-finalize",
+            hasProjectedMessage: (yield* getThreadMessageById(thread.id, messageId)) !== undefined,
+            presentation: "progress",
           });
         }
       }
@@ -2255,6 +2343,7 @@ const make = Effect.gen(function* () {
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
               ),
               fallbackText: event.payload.detail,
+              presentation: event.payload.presentation,
             }
           : undefined;
       const proposedPlanCompletion =
@@ -2283,10 +2372,15 @@ const make = Effect.gen(function* () {
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
           : Option.none<MessageId>();
-        const assistantMessageId = Option.getOrElse(
-          activeAssistantMessageId,
-          () => assistantCompletion.messageId,
-        );
+        const activeMessageMatchesItem =
+          Option.isSome(activeAssistantMessageId) &&
+          (activeAssistantMessageId.value === assistantCompletion.messageId ||
+            activeAssistantMessageId.value.startsWith(`${assistantCompletion.messageId}:segment:`));
+        const assistantMessageId =
+          assistantCompletion.presentation === "progress" ||
+          (event.provider === "opencode" && !activeMessageMatchesItem)
+            ? assistantCompletion.messageId
+            : Option.getOrElse(activeAssistantMessageId, () => assistantCompletion.messageId);
         const [existingAssistantMessage, hasAssistantMessagesForTurn] = yield* Effect.all([
           getThreadMessageById(thread.id, assistantMessageId),
           turnId === undefined
@@ -2301,6 +2395,7 @@ const make = Effect.gen(function* () {
           !existingAssistantMessage || existingAssistantMessage.text.length === 0;
 
         const shouldSkipRedundantCompletion =
+          assistantCompletion.presentation !== "progress" &&
           Option.isNone(activeAssistantMessageId) &&
           turnId !== undefined &&
           hasAssistantMessagesForTurn &&
@@ -2316,10 +2411,16 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             messageId: assistantMessageId,
             ...(turnId ? { turnId } : {}),
-            createdAt: now,
+            createdAt:
+              assistantCompletion.presentation === "progress"
+                ? (existingAssistantMessage?.createdAt ?? now)
+                : now,
             commandTag: "assistant-complete",
             finalDeltaCommandTag: "assistant-delta-finalize",
             hasProjectedMessage: existingAssistantMessage !== undefined,
+            ...(assistantCompletion.presentation !== undefined
+              ? { presentation: assistantCompletion.presentation }
+              : {}),
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
@@ -2330,7 +2431,12 @@ const make = Effect.gen(function* () {
           }
         }
 
-        if (turnId) {
+        if (
+          turnId &&
+          (assistantCompletion.presentation !== "progress" ||
+            (Option.isSome(activeAssistantMessageId) &&
+              activeAssistantMessageId.value === assistantMessageId))
+        ) {
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
         }
       }
@@ -2405,6 +2511,9 @@ const make = Effect.gen(function* () {
                     commandTag: "assistant-complete-finalize",
                     finalDeltaCommandTag: "assistant-delta-finalize-fallback",
                     hasProjectedMessage: existingMessage !== undefined,
+                    ...(existingMessage?.role === "reasoning"
+                      ? { presentation: "progress" as const }
+                      : {}),
                   }),
                 ),
               ),

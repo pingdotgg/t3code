@@ -61,6 +61,14 @@ export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
 export type HasProjectionThreadAssistantMessageInput =
   typeof HasProjectionThreadAssistantMessageInput.Type;
 
+export const GetLatestAssistantMessageIdForTurnInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  excludeMessageId: MessageId,
+});
+export type GetLatestAssistantMessageIdForTurnInput =
+  typeof GetLatestAssistantMessageIdForTurnInput.Type;
+
 export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -97,6 +105,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly hasAssistantMessageForTurn: (
     input: HasProjectionThreadAssistantMessageInput,
   ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /** Find the last assistant message in a turn without loading message bodies. */
+  readonly getLatestAssistantMessageIdForTurn: (
+    input: GetLatestAssistantMessageIdForTurnInput,
+  ) => Effect.Effect<Option.Option<MessageId>, ProjectionRepositoryError>;
 
   /**
    * List projected thread messages for a thread.
