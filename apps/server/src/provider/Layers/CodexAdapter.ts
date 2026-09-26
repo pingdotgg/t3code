@@ -633,6 +633,23 @@ function toTurnStatus(
   }
 }
 
+function isConnectionFailure(turn: EffectCodexSchema.V2TurnCompletedNotification["turn"]): boolean {
+  if (turn.status !== "failed") return false;
+  const info = turn.error?.codexErrorInfo;
+  if (!info || typeof info !== "object") return false;
+  const transportFailure =
+    "httpConnectionFailed" in info
+      ? info.httpConnectionFailed
+      : "responseStreamConnectionFailed" in info
+        ? info.responseStreamConnectionFailed
+        : "responseStreamDisconnected" in info
+          ? info.responseStreamDisconnected
+          : undefined;
+  // An HTTP error response is evidence of an upstream rejection, not a lost
+  // connection. Generic retry exhaustion likewise does not identify its cause.
+  return transportFailure !== undefined && transportFailure.httpStatusCode == null;
+}
+
 function normalizeItemType(raw: string | undefined | null): string {
   const type = trimText(raw);
   if (!type) return "item";
@@ -1626,6 +1643,7 @@ function mapToRuntimeEvents(
         payload: {
           state: toTurnStatus(payload.turn.status),
           ...(errorMessage ? { errorMessage } : {}),
+          ...(isConnectionFailure(payload.turn) ? { failureKind: "connection" as const } : {}),
         },
       },
     ];
@@ -2585,6 +2603,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   });
 
+  const checkConnection: NonNullable<CodexAdapterShape["checkConnection"]> = (threadId) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.checkConnection ?? Effect.succeed(undefined)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "connection/check", cause),
+      ),
+    );
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.readThread),
@@ -2731,6 +2759,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     startSession,
     sendTurn,
     compaction: { type: "native", start: compactThread },
+    checkConnection,
     interruptTurn,
     readThread,
     rollbackThread,

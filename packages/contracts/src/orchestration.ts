@@ -1496,6 +1496,14 @@ const ThreadSessionSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  connectionInterruptedTurnId: Schema.optional(TurnId),
+  recoveryAdmission: Schema.optional(
+    Schema.Struct({
+      interruptedTurnId: TurnId,
+      expectedSnapshotSequence: NonNegativeInt,
+      reservationUpdatedAt: Schema.optional(IsoDateTime),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 
@@ -1971,6 +1979,7 @@ export const ThreadRevertedPayload = Schema.Struct({
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({
   threadId: ThreadId,
+  turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });
 

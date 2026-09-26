@@ -130,6 +130,121 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it.each(["unrelated thread activity", "same-thread Stop"] as const)(
+    "fences recovery admission against %s",
+    async (change) => {
+      const system = await createOrchestrationSystem();
+      const projectId = ProjectId.make("recovery-project");
+      const threadId = ThreadId.make("recovery-target");
+      const otherThreadId = ThreadId.make("recovery-unrelated");
+      const turnId = TurnId.make("recovery-interrupted-turn");
+      const failedAt = "2026-01-01T00:01:00.000Z";
+      const recoveryAt = "2026-01-01T00:02:00.000Z";
+      try {
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("recovery-project-create"),
+            projectId,
+            title: "Recovery",
+            workspaceRoot: "/tmp/recovery-project",
+            createdAt: now(),
+          }),
+        );
+        for (const id of [threadId, otherThreadId]) {
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`create-${id}`),
+              threadId: id,
+              projectId,
+              title: "Recovery",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt: now(),
+            }),
+          );
+        }
+        for (const status of ["running", "error"] as const) {
+          await system.run(
+            system.engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`recovery-session-${status}`),
+              threadId,
+              createdAt: status === "running" ? now() : failedAt,
+              session: {
+                threadId,
+                status,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: status === "running" ? turnId : null,
+                lastError: status === "error" ? "Connection lost" : null,
+                updatedAt: status === "running" ? now() : failedAt,
+              },
+            }),
+          );
+        }
+        const before = await system.readModel();
+        expect(before.threads.find((thread) => thread.id === threadId)?.latestTurn).toMatchObject({
+          turnId,
+          state: "error",
+        });
+        const expectedSnapshotSequence = before.snapshotSequence;
+        await system.run(
+          system.engine.dispatch(
+            change === "same-thread Stop"
+              ? {
+                  type: "thread.turn.interrupt",
+                  commandId: CommandId.make("recovery-stop"),
+                  threadId,
+                  createdAt: recoveryAt,
+                }
+              : {
+                  type: "thread.meta.update",
+                  commandId: CommandId.make("recovery-unrelated-rename"),
+                  threadId: otherThreadId,
+                  title: "Unrelated activity",
+                },
+          ),
+        );
+        const after = await system.readModel();
+        expect(after.snapshotSequence).toBeGreaterThan(expectedSnapshotSequence);
+        expect(after.threads.find((thread) => thread.id === threadId)?.updatedAt).toBe(failedAt);
+        const claim = system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("recovery-claim"),
+          threadId,
+          createdAt: recoveryAt,
+          session: {
+            threadId,
+            status: "starting",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: recoveryAt,
+          },
+          recoveryAdmission: { interruptedTurnId: turnId, expectedSnapshotSequence },
+        });
+        if (change === "same-thread Stop") {
+          const error = await system.run(claim.pipe(Effect.flip));
+          expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        } else {
+          await system.run(claim);
+        }
+        const final = await system.readModel();
+        expect(final.threads.find((thread) => thread.id === threadId)?.session?.status).toBe(
+          change === "same-thread Stop" ? "error" : "starting",
+        );
+      } finally {
+        await system.dispose();
+      }
+    },
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {

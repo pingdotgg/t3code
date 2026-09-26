@@ -394,6 +394,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "resume-after-connection-loss",
+    title: "Resume after connection loss",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: [
+      "network interruption disconnected reconnect connectivity automatically recovery",
+    ],
+  },
+  {
     id: "background-activity",
     title: "Background activity",
     to: "/settings/general",

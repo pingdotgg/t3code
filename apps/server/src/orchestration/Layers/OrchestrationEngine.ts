@@ -1,3 +1,5 @@
+import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
@@ -84,6 +86,7 @@ function commandToAggregateRef(command: OrchestrationCommand): {
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
+  const activityRepository = yield* ProjectionThreadActivityRepository;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -172,6 +175,22 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }
 
         if (
+          envelope.command.type === "thread.session.set" &&
+          envelope.command.recoveryAdmission !== undefined &&
+          envelope.command.recoveryAdmission.reservationUpdatedAt === undefined &&
+          (yield* eventStore.hasEventAfter({
+            aggregateKind: "thread",
+            aggregateId: envelope.command.threadId,
+            sequenceExclusive: envelope.command.recoveryAdmission.expectedSnapshotSequence,
+          }))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `thread ${envelope.command.threadId} changed before connection recovery admission`,
+          });
+        }
+
+        if (
           envelope.command.type === "thread.auto-settle" &&
           (yield* eventStore.hasEventAfter({
             aggregateKind: "thread",
@@ -242,9 +261,33 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // Recovery receipts are durable but omitted from command snapshots and
+        // can age out of their activity window. Read only this errored turn.
+        const settlingThreadId =
+          envelope.command.type === "thread.auto-settle" ? envelope.command.threadId : undefined;
+        const settlingThread =
+          settlingThreadId === undefined
+            ? undefined
+            : commandReadModel.threads.find((thread) => thread.id === settlingThreadId);
+        const connectionRecoveryActivity =
+          settlingThread?.latestTurn?.state === "error"
+            ? (yield* activityRepository.listByThreadId({
+                threadId: settlingThread.id,
+                turnId: settlingThread.latestTurn.turnId,
+                activityKinds: [
+                  "connection.interrupted",
+                  "connection.recovery.waiting",
+                  "connection.recovery.resumed",
+                  "connection.recovery.failed",
+                  "connection.recovery.cancelled",
+                ],
+                limit: 1,
+              }))[0]
+            : undefined;
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          ...(connectionRecoveryActivity ? { connectionRecoveryActivity } : {}),
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
@@ -470,4 +513,4 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
   makeOrchestrationEngine,
-);
+).pipe(Layer.provide(ProjectionThreadActivityRepositoryLive));

@@ -1,3 +1,4 @@
+import { deriveConnectionRecoveryNotice } from "@t3tools/client-runtime/connection-recovery";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -2683,6 +2684,97 @@ export default function ChatView(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
+  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
+    () => derivePendingRequests(threadActivities),
+    [threadActivities],
+  );
+  const [recoveryNoticeClock, refreshRecoveryNotice] = useState(() => Date.now());
+  const recoveryNotice = useMemo(
+    () =>
+      deriveConnectionRecoveryNotice({
+        activities: threadActivities,
+        latestTurn: activeLatestTurn,
+        enabled: settings.resumeThreadsAfterConnectionLoss,
+        pendingRequest: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
+        now: Math.max(recoveryNoticeClock, Date.now()),
+      }),
+    [
+      threadActivities,
+      activeLatestTurn,
+      settings.resumeThreadsAfterConnectionLoss,
+      pendingApprovals.length,
+      pendingUserInputs.length,
+      recoveryNoticeClock,
+    ],
+  );
+  const displayedThreadError =
+    recoveryNotice !== null && localServerError === null ? null : visibleThreadError;
+  const recoveryNoticeExpiresAt = recoveryNotice?.expiresAt ?? null;
+  useEffect(() => {
+    if (recoveryNoticeExpiresAt === null) return;
+    const timer = setTimeout(
+      () => refreshRecoveryNotice(recoveryNoticeExpiresAt),
+      Math.max(0, recoveryNoticeExpiresAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [recoveryNoticeExpiresAt]);
+  const setThreadError = useCallback(
+    (targetThreadId: ThreadId | null, error: string | null) => {
+      if (!targetThreadId) return;
+      const nextError = sanitizeThreadErrorMessage(error);
+      const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
+      if (
+        shouldWriteThreadErrorToCurrentServerThread({
+          activeServerThread,
+          routeThreadRef,
+          targetThreadId,
+        })
+      ) {
+        setLocalServerErrorsByThreadKey((existing) => {
+          if ((existing[routeThreadKey]?.message ?? null) === nextError) {
+            return existing;
+          }
+          return {
+            ...existing,
+            [routeThreadKey]: nextEntry,
+          };
+        });
+        return;
+      }
+      const localDraftErrorKey = draftId ?? targetThreadId;
+      setLocalDraftErrorsByDraftId((existing) => {
+        if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
+          return existing;
+        }
+        return {
+          ...existing,
+          [localDraftErrorKey]: nextEntry,
+        };
+      });
+    },
+    [activeServerThread, draftId, routeThreadKey, routeThreadRef],
+  );
+  const handleStopConnectionRecovery = useCallback(async () => {
+    if (
+      !activeThread ||
+      (recoveryNotice?.kind !== "waiting" && recoveryNotice?.kind !== "stop-failed")
+    )
+      return;
+    const result = await interruptThreadTurn({
+      environmentId,
+      input: buildThreadTurnInterruptInput(activeThread),
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to stop automatic resume.",
+      );
+    }
+  }, [activeThread, environmentId, interruptThreadTurn, recoveryNotice?.kind, setThreadError]);
+  const interruptedActiveTask =
+    activeRunningTurnId !== null && pendingApprovals.length === 0 && pendingUserInputs.length === 0;
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -2741,7 +2833,9 @@ export default function ChatView(props: ChatViewProps) {
           id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
           variant: unavailableConnection.phase === "error" ? "error" : "warning",
           icon: <WifiOffIcon />,
-          title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
+          title: interruptedActiveTask
+            ? "Connection lost. Reconnecting…"
+            : `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
           actions: (
             <>
               {!environmentReconnecting ? (
@@ -2843,10 +2937,36 @@ export default function ChatView(props: ChatViewProps) {
             }),
       });
     }
+    if (!activeEnvironmentUnavailableState && recoveryNotice) {
+      items.push({
+        id: "connection-recovery",
+        icon: recoveryNotice.kind === "resumed" ? <CheckCircle2Icon /> : <WifiOffIcon />,
+        compact: true,
+        actions:
+          recoveryNotice.kind === "waiting" || recoveryNotice.kind === "stop-failed" ? (
+            <Button size="xs" variant="ghost" onClick={() => void handleStopConnectionRecovery()}>
+              Stop
+            </Button>
+          ) : undefined,
+        variant:
+          recoveryNotice.kind === "failed" || recoveryNotice.kind === "stop-failed"
+            ? "warning"
+            : "default",
+        priority: "urgent",
+        title: (
+          <span role="status" aria-live="polite">
+            {recoveryNotice.label}
+          </span>
+        ),
+      });
+    }
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
     return items;
   }, [
     automaticEnvironment,
+    recoveryNotice,
+    handleStopConnectionRecovery,
+    interruptedActiveTask,
     autoBalanceUpdateBanner,
     activeEnvironmentUnavailableState,
     reconnectWarningGraceElapsed,
@@ -2913,7 +3033,6 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeThread?.session ?? null);
-  const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const latestCheckpointCompletedAt = activeThread?.checkpoints.at(-1)?.completedAt ?? null;
   const workspaceMutationId = useMemo(() => {
     const activityId = latestWorkspaceMutationId(threadActivities);
@@ -2937,10 +3056,6 @@ export default function ChatView(props: ChatViewProps) {
         agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
       }),
     [agentSessionLive, threadActivities],
-  );
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
-    () => derivePendingRequests(threadActivities),
-    [threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = JSON.stringify([
@@ -3728,7 +3843,7 @@ export default function ChatView(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner = Boolean(displayedThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -3941,42 +4056,6 @@ export default function ChatView(props: ChatViewProps) {
     null;
   const hasReachedSplitLimit =
     (activeTerminalGroup?.terminalIds.length ?? 0) >= MAX_TERMINALS_PER_GROUP;
-  const setThreadError = useCallback(
-    (targetThreadId: ThreadId | null, error: string | null) => {
-      if (!targetThreadId) return;
-      const nextError = sanitizeThreadErrorMessage(error);
-      const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
-      if (
-        shouldWriteThreadErrorToCurrentServerThread({
-          activeServerThread,
-          routeThreadRef,
-          targetThreadId,
-        })
-      ) {
-        setLocalServerErrorsByThreadKey((existing) => {
-          if ((existing[routeThreadKey]?.message ?? null) === nextError) {
-            return existing;
-          }
-          return {
-            ...existing,
-            [routeThreadKey]: nextEntry,
-          };
-        });
-        return;
-      }
-      const localDraftErrorKey = draftId ?? targetThreadId;
-      setLocalDraftErrorsByDraftId((existing) => {
-        if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
-          return existing;
-        }
-        return {
-          ...existing,
-          [localDraftErrorKey]: nextEntry,
-        };
-      });
-    },
-    [activeServerThread, draftId, routeThreadKey, routeThreadRef],
-  );
 
   const interruptContextRef = useRef({ activeThread, phase, setThreadError });
   interruptContextRef.current = { activeThread, phase, setThreadError };
@@ -9836,7 +9915,7 @@ export default function ChatView(props: ChatViewProps) {
                 onOpenProviderSetup={openProviderSetup}
               />
               <ThreadErrorBanner
-                error={visibleThreadError}
+                error={displayedThreadError}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

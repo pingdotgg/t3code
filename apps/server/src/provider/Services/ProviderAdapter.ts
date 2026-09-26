@@ -88,6 +88,9 @@ export interface ProviderAdapterShape<TError> {
   /** Omitted when this adapter does not support manual context compaction. */
   readonly compaction?: ProviderCompaction<TError>;
 
+  /** Probe the active model endpoint without starting work. Undefined means unsupported. */
+  readonly checkConnection?: (threadId: ThreadId) => Effect.Effect<boolean | undefined, TError>;
+
   /**
    * Interrupt an active turn.
    */

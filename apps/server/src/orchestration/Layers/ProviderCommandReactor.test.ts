@@ -121,6 +121,7 @@ describe("ProviderCommandReactor", () => {
     | OrchestrationEngineService
     | ProviderCommandReactor
     | ProjectionSnapshotQuery
+    | ServerSettingsService
     | SqlClient.SqlClient,
     unknown
   > | null = null;
@@ -178,6 +179,8 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
+    readonly resumeThreadsAfterConnectionLoss?: boolean;
+    readonly checkConnectionEffect?: NonNullable<ProviderServiceShape["checkConnection"]>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
@@ -195,7 +198,12 @@ describe("ProviderCommandReactor", () => {
     createdBaseDirs.add(baseDir);
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
-    const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+    const runtimeEventPubSub = Effect.runSync(
+      PubSub.unbounded<{
+        readonly event: ProviderRuntimeEvent;
+        readonly delivered: Deferred.Deferred<void>;
+      }>(),
+    );
     const tryHandlePromptCommand = vi.fn<ProviderAuthService["Service"]["tryHandlePromptCommand"]>(
       input?.tryHandlePromptCommandEffect ?? (() => Effect.succeed(false)),
     );
@@ -267,13 +275,16 @@ describe("ProviderCommandReactor", () => {
         ),
       );
     });
-    const sendTurn = vi.fn((_: unknown) =>
+    const sendTurn = vi.fn<ProviderServiceShape["sendTurn"]>((_) =>
       Effect.succeed({
         threadId: ThreadId.make("thread-1"),
         turnId: asTurnId("turn-1"),
       }),
     );
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
+    const checkConnection = vi.fn<NonNullable<ProviderServiceShape["checkConnection"]>>(
+      input?.checkConnectionEffect ?? (() => Effect.succeed(undefined)),
+    );
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
@@ -361,6 +372,7 @@ describe("ProviderCommandReactor", () => {
       startSession: startSession as ProviderServiceShape["startSession"],
       sendTurn: sendTurn as ProviderServiceShape["sendTurn"],
       compactThread,
+      checkConnection,
       interruptTurn: interruptTurn as ProviderServiceShape["interruptTurn"],
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
@@ -369,6 +381,7 @@ describe("ProviderCommandReactor", () => {
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          promptlessTurnContinuation: modelSelection.instanceId.startsWith("codex"),
         }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
@@ -399,7 +412,14 @@ describe("ProviderCommandReactor", () => {
       rollbackConversation: () => unsupported(),
       uploadFeedback: () => unsupported(),
       get streamEvents() {
-        return Stream.fromPubSub(runtimeEventPubSub);
+        return Stream.fromPubSub(runtimeEventPubSub).pipe(
+          Stream.flatMap(({ event, delivered }) =>
+            Stream.concat(
+              Stream.succeed(event),
+              Stream.fromEffect(Deferred.succeed(delivered, undefined)).pipe(Stream.drain),
+            ),
+          ),
+        );
       },
     };
 
@@ -493,7 +513,11 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(Layer.mock(TerminalManager)({ closeIdle: closeIdleTerminals })),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          resumeThreadsAfterConnectionLoss: input?.resumeThreadsAfterConnectionLoss ?? false,
+        }),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -503,6 +527,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const settings = await runtime.runPromise(Effect.service(ServerSettingsService));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -616,6 +641,17 @@ describe("ProviderCommandReactor", () => {
       tryHandlePromptCommand,
       startSession,
       sendTurn,
+      checkConnection,
+      emitRuntimeEvent: (event: ProviderRuntimeEvent) =>
+        runEffect(
+          Effect.gen(function* () {
+            const delivered = yield* Deferred.make<void>();
+            yield* PubSub.publish(runtimeEventPubSub, { event, delivered });
+            yield* Deferred.await(delivered);
+          }),
+        ),
+      updateSettings: (patch: Parameters<typeof settings.updateSettings>[0]) =>
+        runEffect(settings.updateSettings(patch)),
       compactThread,
       interruptTurn,
       respondToRequest,
@@ -851,6 +887,829 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }),
+  );
+
+  async function interruptConnection(
+    harness: Awaited<ReturnType<typeof createHarness>>,
+    beforeEvidence?: () => Promise<void>,
+  ) {
+    const threadId = ThreadId.make("thread-1");
+    const now = "2026-01-01T00:00:00.000Z";
+    const originalSent = Deferred.makeUnsafe<void>();
+    const originalSend = harness.sendTurn.getMockImplementation()!;
+    harness.sendTurn.mockImplementationOnce((input) =>
+      originalSend(input).pipe(Effect.tap(() => Deferred.succeed(originalSent, undefined))),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-original-turn"),
+        threadId,
+        message: {
+          messageId: asMessageId("original-message"),
+          role: "user",
+          text: "Original task with instructions that must not be replayed",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(Deferred.await(originalSent));
+    await harness.drain();
+    for (const status of ["running", "error"] as const) {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`cmd-connection-session-${status}`),
+          threadId,
+          session: {
+            threadId,
+            status,
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: status === "running" ? asTurnId("turn-1") : null,
+            lastError: status === "error" ? "Connection lost" : null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+    }
+    await beforeEvidence?.();
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-connection-interrupted"),
+        threadId,
+        activity: {
+          id: EventId.make("connection-interrupted"),
+          tone: "info",
+          kind: "connection.interrupted",
+          summary: "Connection interrupted",
+          payload: {},
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await harness.drain();
+  }
+
+  it("does not resume a stopped turn when connection evidence arrives later", async () => {
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () => Effect.succeed(true),
+    });
+    await interruptConnection(harness, async () => {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("stop-before-evidence"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+      for (const status of ["running", "error"] as const) {
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(`late-provider-${status}`),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status,
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: status === "running" ? asTurnId("turn-1") : null,
+              lastError: "Connection lost",
+              updatedAt: "2026-01-01T00:00:02.000Z",
+            },
+            createdAt: "2026-01-01T00:00:02.000Z",
+          }),
+        );
+      }
+    });
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.checkConnection).not.toHaveBeenCalled();
+  });
+
+  it("leaves connection recovery disabled by default", async () => {
+    const harness = await createHarness();
+    await interruptConnection(harness);
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.checkConnection).not.toHaveBeenCalled();
+    const thread = (await harness.readModel()).threads[0];
+    expect(thread?.latestTurn?.state).toBe("error");
+    expect(thread?.activities.at(-1)?.kind).toBe("connection.recovery.cancelled");
+  });
+
+  it("reports unsupported connectivity without attempting a continuation", async () => {
+    const harness = await createHarness({ resumeThreadsAfterConnectionLoss: true });
+    const domain = await harness.runEffect(
+      harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!)),
+    );
+    const failedReceipt = harness.runEffect(
+      domain.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "thread.activity-appended" &&
+            event.payload.activity.kind === "connection.recovery.failed",
+        ),
+        Stream.runHead,
+      ),
+    );
+    await interruptConnection(harness);
+    await failedReceipt;
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads[0];
+    expect(harness.checkConnection).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(
+      thread?.activities.find((activity) => activity.kind === "connection.recovery.failed"),
+    ).toMatchObject({ payload: { reason: "unsupported" } });
+  });
+
+  it.each(["connection.interrupted", "connection.recovery.waiting"] as const)(
+    "clears a prior process's %s receipt on startup without resuming work",
+    async (kind) => {
+      const harness = await createHarness({
+        deferReactorStart: true,
+        resumeThreadsAfterConnectionLoss: true,
+        checkConnectionEffect: () => Effect.succeed(true),
+      });
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-stale-recovery-session"),
+          threadId,
+          session: {
+            threadId,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: "Connection lost",
+            updatedAt: createdAt,
+          },
+          createdAt,
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-stale-recovery-waiting"),
+          threadId,
+          activity: {
+            id: EventId.make("stale-recovery-waiting"),
+            tone: "info",
+            kind,
+            summary: "Connection lost. Waiting to resume…",
+            payload: { interruptedTurnId: "prior-turn" },
+            turnId: asTurnId("prior-turn"),
+            createdAt,
+          },
+          createdAt,
+        }),
+      );
+      await harness.startReactor();
+      await harness.drain();
+
+      const thread = (await harness.readModel()).threads[0];
+      expect(thread?.activities.at(-1)).toMatchObject({
+        kind: "connection.recovery.cancelled",
+        turnId: "prior-turn",
+      });
+      expect(harness.checkConnection).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not continue while the provider remains disconnected", async () => {
+    const checked = Effect.runSync(Deferred.make<void>());
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () => Deferred.succeed(checked, undefined).pipe(Effect.as(false)),
+    });
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    await harness.drain();
+
+    expect(harness.checkConnection).toHaveBeenCalledWith(ThreadId.make("thread-1"));
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.some((activity) => activity.kind === "connection.recovery.resumed"),
+    ).toBe(false);
+  });
+
+  it("cancels pending connection recovery when the user stops the task", async () => {
+    const checked = Effect.runSync(Deferred.make<void>());
+    const connectivity = Effect.runSync(Deferred.make<boolean>());
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+    });
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    const domain = await harness.runEffect(
+      harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!)),
+    );
+    const cancelledReceipt = harness.runEffect(
+      domain.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "thread.activity-appended" &&
+            event.payload.activity.kind === "connection.recovery.cancelled",
+        ),
+        Stream.runHead,
+      ),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-stop-connection-recovery"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await cancelledReceipt;
+    await harness.drain();
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.some((activity) => activity.kind === "connection.recovery.cancelled"),
+    ).toBe(true);
+  });
+
+  it("rechecks the setting after a pending probe becomes ready", async () => {
+    const checked = Effect.runSync(Deferred.make<void>());
+    const connectivity = Effect.runSync(Deferred.make<boolean>());
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+    });
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    await harness.updateSettings({ resumeThreadsAfterConnectionLoss: false });
+    const domain = await harness.runEffect(
+      harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!)),
+    );
+    const cancelledReceipt = harness.runEffect(
+      domain.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "thread.activity-appended" &&
+            event.payload.activity.kind === "connection.recovery.cancelled",
+        ),
+        Stream.runHead,
+      ),
+    );
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await cancelledReceipt;
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels pending recovery when newer user work supersedes the interrupted turn", async () => {
+    const checked = Effect.runSync(Deferred.make<void>());
+    const connectivity = Effect.runSync(Deferred.make<boolean>());
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+    });
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    const newerSent = Effect.runSync(Deferred.make<void>());
+    harness.sendTurn.mockImplementation(() =>
+      Deferred.succeed(newerSent, undefined).pipe(
+        Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("newer-turn") }),
+      ),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-newer-user-work"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("newer-message"),
+          role: "user",
+          text: "Do this newer task instead",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(newerSent));
+    await harness.drain();
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+      input: "Do this newer task instead",
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("continuation");
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.some((activity) => activity.kind === "connection.recovery.cancelled"),
+    ).toBe(true);
+  });
+
+  it("cancels provider admission and releases its reservation when Stop arrives", async () => {
+    const checked = Deferred.makeUnsafe<void>();
+    const connectivity = Deferred.makeUnsafe<boolean>();
+    const admitting = Deferred.makeUnsafe<void>();
+    const interrupted = Deferred.makeUnsafe<void>();
+    let nativeRunning = false;
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+      stopSessionEffect: () =>
+        Effect.sync(() => {
+          nativeRunning = false;
+        }),
+    });
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    harness.sendTurn.mockImplementation(() =>
+      Effect.sync(() => {
+        nativeRunning = true;
+      }).pipe(
+        Effect.andThen(Deferred.succeed(admitting, undefined)),
+        Effect.andThen(Effect.never),
+        Effect.ensuring(Deferred.succeed(interrupted, undefined)),
+      ),
+    );
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await harness.runEffect(Deferred.await(admitting));
+    const domain = await harness.runEffect(
+      harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!)),
+    );
+    const cancelled = harness.runEffect(
+      domain.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "thread.activity-appended" &&
+            event.payload.activity.kind === "connection.recovery.cancelled",
+        ),
+        Stream.runHead,
+      ),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("stop-during-admission"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(interrupted));
+    await cancelled;
+    await harness.drain();
+    const thread = (await harness.readModel()).threads[0];
+    expect(thread?.session?.status).not.toBe("starting");
+    expect(thread?.session?.lastError).toBe("Connection lost");
+    expect(
+      thread?.activities.some((activity) => activity.kind === "connection.recovery.resumed"),
+    ).toBe(false);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+    expect(harness.stopSession).toHaveBeenCalledWith({ threadId: "thread-1" });
+    expect(nativeRunning).toBe(false);
+  });
+
+  it.each([false, true])(
+    "keeps uncertain native work blocked after cleanup fails (lost reply: %s)",
+    async (lostReply) => {
+      const checked = Deferred.makeUnsafe<void>();
+      const connectivity = Deferred.makeUnsafe<boolean>();
+      const accepted = Deferred.makeUnsafe<void>();
+      const newerSent = Deferred.makeUnsafe<void>();
+      let nativeRunning = false;
+      let cleanupAllowed = false;
+      const cleanupError = new ProviderAdapterRequestError({
+        provider: "codex",
+        method: "turn/interrupt",
+        detail: "Native cleanup failed",
+      });
+      const harness = await createHarness({
+        resumeThreadsAfterConnectionLoss: true,
+        checkConnectionEffect: () =>
+          Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+        interruptTurnEffect: () => Effect.fail(cleanupError),
+        stopSessionEffect: () =>
+          cleanupAllowed
+            ? Effect.sync(() => {
+                nativeRunning = false;
+              })
+            : Effect.fail(cleanupError),
+      });
+      await interruptConnection(harness);
+      await harness.runEffect(Deferred.await(checked));
+      harness.sendTurn.mockImplementationOnce(() =>
+        Effect.sync(() => {
+          nativeRunning = true;
+        }).pipe(
+          Effect.andThen(Deferred.succeed(accepted, undefined)),
+          Effect.andThen(
+            lostReply
+              ? Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: "codex",
+                    method: "turn/start",
+                    detail: "Reply lost after acceptance",
+                  }),
+                )
+              : Effect.succeed({
+                  threadId: ThreadId.make("thread-1"),
+                  turnId: asTurnId("accepted-recovery"),
+                }),
+          ),
+        ),
+      );
+      await harness.runEffect(Deferred.succeed(connectivity, true));
+      await harness.runEffect(Deferred.await(accepted));
+      await harness.drain();
+      const startNewer = async (id: string) => {
+        const domain = await harness.runEffect(
+          harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!)),
+        );
+        const rejected = harness.runEffect(
+          domain.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "thread.activity-appended" &&
+                event.payload.activity.kind === "provider.turn.start.failed" &&
+                (event.payload.activity.payload as { requestId?: string }).requestId === id,
+            ),
+            Stream.runHead,
+          ),
+        );
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`new-${id}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(id),
+              role: "user",
+              text: "New task",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          }),
+        );
+        await rejected;
+        await harness.drain();
+      };
+      await startNewer("blocked-first");
+      await startNewer("blocked-second");
+      expect(nativeRunning).toBe(true);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect(await harness.readPendingTurnStarts()).toEqual([]);
+      const thread = (await harness.readModel()).threads[0];
+      expect(
+        thread?.activities.some(
+          (activity) =>
+            activity.kind === "connection.recovery.failed" &&
+            (activity.payload as { reason?: string }).reason === "cancellation-failed",
+        ),
+      ).toBe(true);
+      cleanupAllowed = true;
+      harness.sendTurn.mockImplementationOnce(() =>
+        Effect.sync(() => {
+          expect(nativeRunning).toBe(false);
+          return { threadId: ThreadId.make("thread-1"), turnId: asTurnId("after-cleanup") };
+        }).pipe(Effect.tap(() => Deferred.succeed(newerSent, undefined))),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("new-after-cleanup"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("after-cleanup"),
+            role: "user",
+            text: "Try again",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: "2026-01-01T00:00:04.000Z",
+        }),
+      );
+      await harness.runEffect(Deferred.await(newerSent));
+      await harness.drain();
+      expect(harness.sendTurn).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it("lets another thread start while native recovery cancellation waits", async () => {
+    const checked = Deferred.makeUnsafe<void>();
+    const connectivity = Deferred.makeUnsafe<boolean>();
+    const admitting = Deferred.makeUnsafe<void>();
+    const stopping = Deferred.makeUnsafe<void>();
+    const allowStop = Deferred.makeUnsafe<void>();
+    const otherSent = Deferred.makeUnsafe<void>();
+    const sameSent = Deferred.makeUnsafe<void>();
+    let sameThreadSent = false;
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+      stopSessionEffect: () =>
+        Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Deferred.await(allowStop))),
+    });
+    const otherThread = ThreadId.make("thread-other");
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-other-thread"),
+        threadId: otherThread,
+        projectId: asProjectId("project-1"),
+        title: "Other thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    harness.sendTurn.mockImplementationOnce(() =>
+      Deferred.succeed(admitting, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+    harness.sendTurn.mockImplementation((input) =>
+      Effect.gen(function* () {
+        if (input.threadId === otherThread) yield* Deferred.succeed(otherSent, undefined);
+        else {
+          sameThreadSent = true;
+          yield* Deferred.succeed(sameSent, undefined);
+        }
+        return { threadId: input.threadId, turnId: asTurnId(`${input.threadId}-new`) };
+      }),
+    );
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await harness.runEffect(Deferred.await(admitting));
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("stop-first-thread"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(stopping));
+    for (const threadId of [ThreadId.make("thread-1"), otherThread]) {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`new-${threadId}`),
+          threadId,
+          message: {
+            messageId: asMessageId(`new-message-${threadId}`),
+            role: "user",
+            text: "New task",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:03.000Z",
+        }),
+      );
+    }
+    await harness.runEffect(Deferred.await(otherSent));
+    expect(sameThreadSent).toBe(false);
+    await harness.runEffect(Deferred.succeed(allowStop, undefined));
+    await harness.runEffect(Deferred.await(sameSent));
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(4);
+  });
+
+  it("interrupts the accepted continuation before admitting newer user work", async () => {
+    const checked = Deferred.makeUnsafe<void>();
+    const connectivity = Deferred.makeUnsafe<boolean>();
+    const accepted = Deferred.makeUnsafe<void>();
+    const newerSent = Deferred.makeUnsafe<void>();
+    let nativeRunning = false;
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+      interruptTurnEffect: () =>
+        Effect.sync(() => {
+          nativeRunning = false;
+        }),
+    });
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    harness.sendTurn.mockImplementationOnce(() =>
+      Effect.sync(() => {
+        nativeRunning = true;
+      }).pipe(
+        Effect.andThen(Deferred.succeed(accepted, undefined)),
+        Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("accepted-recovery") }),
+      ),
+    );
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await harness.runEffect(Deferred.await(accepted));
+    await harness.drain();
+    harness.sendTurn.mockImplementationOnce(() =>
+      Effect.sync(() => {
+        expect(nativeRunning).toBe(false);
+        return { threadId: ThreadId.make("thread-1"), turnId: asTurnId("newer-turn") };
+      }).pipe(Effect.tap(() => Deferred.succeed(newerSent, undefined))),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("newer-after-accepted"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("newer-accepted-message"),
+          role: "user",
+          text: "New task",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(newerSent));
+    await harness.drain();
+    expect(harness.interruptTurn).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      turnId: "accepted-recovery",
+    });
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["completion", "approval", "question"] as const)(
+    "continues once without replaying the prompt and confirms recovery after %s",
+    async (progress) => {
+      const checked = Effect.runSync(Deferred.make<void>());
+      const connectivity = Effect.runSync(Deferred.make<boolean>());
+      const continuationStarted = Effect.runSync(Deferred.make<void>());
+      const harness = await createHarness({
+        resumeThreadsAfterConnectionLoss: true,
+        checkConnectionEffect: () =>
+          Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+      });
+      await interruptConnection(harness);
+      await harness.runEffect(Deferred.await(checked));
+      harness.sendTurn.mockImplementation(() =>
+        Deferred.succeed(continuationStarted, undefined).pipe(
+          Effect.as({ threadId: ThreadId.make("thread-1"), turnId: asTurnId("turn-resumed") }),
+        ),
+      );
+      await harness.runEffect(Deferred.succeed(connectivity, true));
+      await harness.runEffect(Deferred.await(continuationStarted));
+
+      const resumedEvent = {
+        eventId: EventId.make("resumed-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-resumed"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      };
+      await harness.emitRuntimeEvent({ ...resumedEvent, type: "turn.started", payload: {} });
+      await harness.drain();
+      const beforeProgress = (await harness.readModel()).threads[0];
+      expect(beforeProgress?.session).toMatchObject({ status: "starting", lastError: null });
+      expect(
+        beforeProgress?.activities.some(
+          (activity) => activity.kind === "connection.recovery.resumed",
+        ),
+      ).toBe(false);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+        threadId: "thread-1",
+        continuation: true,
+      });
+      expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("input");
+      expect(harness.sendTurn.mock.calls[1]?.[0]).not.toHaveProperty("attachments");
+
+      await harness.emitRuntimeEvent({
+        ...resumedEvent,
+        eventId: EventId.make("stale-unrelated-completion"),
+        turnId: asTurnId("older-unrelated-turn"),
+        type: "turn.completed",
+        payload: { state: "failed" },
+      });
+      await harness.drain();
+      const afterStaleEvent = (await harness.readModel()).threads[0];
+      expect(
+        afterStaleEvent?.activities.some(
+          (activity) =>
+            activity.kind === "connection.recovery.failed" ||
+            activity.kind === "connection.recovery.resumed",
+        ),
+      ).toBe(false);
+
+      const domain = await harness.runEffect(
+        harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!)),
+      );
+      const resumedReceipt = harness.runEffect(
+        domain.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "thread.activity-appended" &&
+              event.payload.activity.kind === "connection.recovery.resumed",
+          ),
+          Stream.runHead,
+        ),
+      );
+      await harness.emitRuntimeEvent(
+        progress === "completion"
+          ? {
+              ...resumedEvent,
+              eventId: EventId.make("resumed-completed"),
+              type: "turn.completed",
+              payload: { state: "completed" },
+            }
+          : progress === "approval"
+            ? {
+                ...resumedEvent,
+                eventId: EventId.make("resumed-approval"),
+                type: "request.opened",
+                payload: { requestType: "command_execution_approval" },
+              }
+            : {
+                ...resumedEvent,
+                eventId: EventId.make("resumed-question"),
+                type: "user-input.requested",
+                payload: {
+                  questions: [
+                    {
+                      id: "q1",
+                      header: "Question",
+                      question: "Continue?",
+                      options: [],
+                      multiSelect: false,
+                    },
+                  ],
+                },
+              },
+      );
+      await resumedReceipt;
+      await harness.drain();
+
+      // Another delivery for the same interruption must not create a second turn.
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-connection-interrupted-duplicate"),
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("connection-interrupted-duplicate"),
+            tone: "info",
+            kind: "connection.interrupted",
+            summary: "Connection interrupted",
+            payload: {},
+            turnId: asTurnId("turn-1"),
+            createdAt: "2026-01-01T00:00:03.000Z",
+          },
+          createdAt: "2026-01-01T00:00:03.000Z",
+        }),
+      );
+      await harness.drain();
+      const thread = (await harness.readModel()).threads[0];
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(1);
+      expect(harness.interruptTurn).not.toHaveBeenCalled();
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(harness.respondToRequest).not.toHaveBeenCalled();
+      expect(harness.respondToUserInput).not.toHaveBeenCalled();
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "connection.recovery.resumed"),
+      ).toHaveLength(1);
+    },
   );
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {

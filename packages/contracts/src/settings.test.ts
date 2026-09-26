@@ -20,6 +20,23 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings connection loss recovery", () => {
+  it.each([{}, { continueThreadsAfterServerUpdate: true }])(
+    "keeps recovery disabled when upgrading settings %j",
+    (savedSettings) => {
+      expect(decodeServerSettings(savedSettings).resumeThreadsAfterConnectionLoss).toBe(false);
+    },
+  );
+
+  it.each([
+    { resumeThreadsAfterConnectionLoss: true, continueThreadsAfterServerUpdate: false },
+    { resumeThreadsAfterConnectionLoss: false, continueThreadsAfterServerUpdate: true },
+  ])("round-trips the independent preferences %j", (preferences) => {
+    expect(decodeServerSettingsPatch(preferences)).toEqual(preferences);
+    expect(encodeServerSettings(decodeServerSettings(preferences))).toMatchObject(preferences);
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

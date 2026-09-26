@@ -34,6 +34,7 @@ import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
@@ -58,6 +59,9 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
+import { GitManager } from "../../git/GitManager.ts";
+import { PullRequestService } from "../../pullRequest/PullRequestService.ts";
 import {
   ProviderRuntimeIngestionLive,
   splitBufferedAssistantText,
@@ -269,6 +273,7 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    observeSettlementAfterError?: boolean;
     workspaceSubdirectory?: string;
     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
   }) {
@@ -293,12 +298,54 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const settlementAttempts = Effect.runSync(Queue.unbounded<void>());
+    const firstSettlementSnapshot = Effect.runSync(Deferred.make<void>());
+    let observeErrorPublication = false;
+    let settledAtErrorPublication: string | null | undefined;
+    const observedOrchestrationLayer = Layer.effect(
+      OrchestrationEngineService,
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery;
+        return OrchestrationEngineService.of({
+          ...engine,
+          dispatch: (command) =>
+            engine.dispatch(command).pipe(
+              Effect.ensuring(
+                command.type === "thread.auto-settle"
+                  ? Queue.offer(settlementAttempts, undefined)
+                  : Effect.void,
+              ),
+              Effect.tap(() =>
+                Effect.gen(function* () {
+                  if (
+                    !observeErrorPublication ||
+                    command.type !== "thread.session.set" ||
+                    command.session.status !== "error"
+                  )
+                    return;
+                  observeErrorPublication = false;
+                  // Hold ingestion after its committed error session. The real
+                  // settlement worker must decide before ingestion can continue.
+                  yield* Queue.take(settlementAttempts);
+                  const thread = yield* snapshots.getThreadShellById(command.threadId);
+                  settledAtErrorPublication = Option.getOrThrow(thread).settledAt;
+                }),
+              ),
+            ),
+        });
+      }),
+    ).pipe(Layer.provide(orchestrationLayer), Layer.provide(projectionSnapshotLayer));
     const ingestionProjectionSnapshotLayer = Layer.effect(
       ProjectionSnapshotQuery,
       Effect.gen(function* () {
         const query = yield* ProjectionSnapshotQuery;
         return ProjectionSnapshotQuery.of({
           ...query,
+          getShellSnapshot: () =>
+            query
+              .getShellSnapshot()
+              .pipe(Effect.tap(() => Deferred.succeed(firstSettlementSnapshot, undefined))),
           getThreadDetailById: () =>
             Effect.die("provider runtime ingestion must not hydrate thread detail"),
         });
@@ -320,14 +367,20 @@ describe("ProviderRuntimeIngestion", () => {
       monotonicTimeNanos: realClock.monotonicTimeNanos,
       sleep: (duration) => realClock.sleep(duration),
     };
-    const layer = ProviderRuntimeIngestionLive.pipe(
+    const layer = Layer.merge(ProviderRuntimeIngestionLive, ThreadSettlementReactor.layer).pipe(
       Layer.provide(Layer.succeed(Clock.Clock, shiftedClock)),
-      Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(observedOrchestrationLayer),
       Layer.provideMerge(ingestionProjectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
       // engine, and the snapshot query (reader).
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(ThreadPlanProgress.layer),
+      Layer.provide(Layer.mock(GitManager)({})),
+      Layer.provide(
+        Layer.mock(PullRequestService)({
+          subscribeMerges: Effect.succeed(Stream.empty),
+        }),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -416,6 +469,18 @@ describe("ProviderRuntimeIngestion", () => {
     return {
       engine,
       dispatch,
+      startSettlement: async () => {
+        const reactor = await testRuntime.runPromise(
+          Effect.service(ThreadSettlementReactor.ThreadSettlementReactor),
+        );
+        await testRuntime.runPromise(reactor.start().pipe(Scope.provide(scope!)));
+        await testRuntime.runPromise(
+          Deferred.await(firstSettlementSnapshot).pipe(Effect.andThen(reactor.drain)),
+        );
+        observeErrorPublication = options?.observeSettlementAfterError === true;
+      },
+      settledAtErrorPublication: () => settledAtErrorPublication,
+      awaitSettlementAttempt: () => testRuntime.runPromise(Queue.take(settlementAttempts)),
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
       readTurn: (turnId: TurnId) =>
         testRuntime.runPromise(
@@ -480,6 +545,236 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it.each([true, false])(
+    "records failed-turn recovery evidence only when opted in: %s",
+    async (enabled) => {
+      const harness = await createHarness({
+        serverSettings: { resumeThreadsAfterConnectionLoss: enabled },
+      });
+      const base = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("connection-turn"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+      };
+      await harness.emitAndDrain([
+        { ...base, type: "turn.started", eventId: asEventId("connection-started"), payload: {} },
+        {
+          ...base,
+          type: "turn.completed",
+          eventId: asEventId("connection-failed"),
+          payload: { state: "failed", failureKind: "connection", errorMessage: "Connection lost" },
+        },
+      ]);
+
+      const thread = (await harness.readModel()).threads[0];
+      expect(thread?.session).toMatchObject({ status: "error", activeTurnId: null });
+      expect(thread?.latestTurn).toMatchObject({ turnId: "connection-turn", state: "error" });
+      expect(
+        thread?.activities.filter((activity) => activity.kind === "connection.interrupted"),
+      ).toMatchObject(
+        enabled ? [{ turnId: "connection-turn", summary: "Connection interrupted" }] : [],
+      );
+    },
+  );
+
+  it.each(["failed", "cancelled", "manual settlement"] as const)(
+    "protects connection recovery from PR settlement until %s",
+    async (outcome) => {
+      const harness = await createHarness({
+        serverSettings: {
+          resumeThreadsAfterConnectionLoss: true,
+          sidebarAutoSettleOnMerge: true,
+          sidebarAutoSettleAfterDays: null,
+        },
+        observeSettlementAfterError: true,
+      });
+      const threadId = asThreadId("thread-1");
+      const turnId = asTurnId("recover-before-settlement");
+      await harness.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("link-merged-pr"),
+        threadId,
+        linkedPullRequest: {
+          projectId: asProjectId("project-1"),
+          repository: "project/repository",
+          number: 1,
+          url: "https://example.test/project/repository/pull/1",
+        },
+      });
+      await harness.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("sync-merged-pr"),
+        threadId,
+        host: "example.test",
+        repository: "project/repository",
+        number: 1,
+        snapshot: {
+          state: "merged",
+          title: "Merged pull request",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+          syncedAt: "2026-01-01T00:00:02.000Z",
+          mergedAt: "2026-01-01T00:00:02.000Z",
+          closedAt: null,
+        },
+        stack: null,
+      });
+      await harness.emitAndDrain([
+        {
+          type: "turn.started",
+          eventId: asEventId("recover-before-settlement-started"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          turnId,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          payload: {},
+        },
+      ]);
+      await harness.startSettlement();
+      await harness.emitAndDrain([
+        {
+          type: "turn.completed",
+          eventId: asEventId("recover-before-settlement-failed"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          turnId,
+          createdAt: "2026-01-01T00:00:03.000Z",
+          payload: { state: "failed", failureKind: "connection", errorMessage: "Connection lost" },
+        },
+      ]);
+      expect(harness.settledAtErrorPublication()).toBeNull();
+      expect((await harness.readThreadShell()).settledAt).toBeNull();
+
+      const appendRecovery = (state: "waiting" | "failed" | "cancelled") =>
+        harness.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`recovery-settlement-${state}`),
+          threadId,
+          activity: {
+            id: asEventId(`recovery-settlement-${state}`),
+            kind: `connection.recovery.${state}`,
+            tone: "info",
+            summary: state,
+            payload: {},
+            turnId,
+            createdAt: "2026-01-01T00:00:04.000Z",
+          },
+          createdAt: "2026-01-01T00:00:04.000Z",
+        });
+      const sweepAfterSessionUpdate = async (commandId: string) => {
+        const thread = await harness.readThreadShell();
+        await harness.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(commandId),
+          threadId,
+          session: { ...thread.session!, updatedAt: "2026-01-01T00:00:05.000Z" },
+          createdAt: "2026-01-01T00:00:05.000Z",
+        });
+        await harness.awaitSettlementAttempt();
+      };
+      await appendRecovery("waiting");
+      await sweepAfterSessionUpdate("sweep-pending-recovery");
+      expect((await harness.readThreadShell()).settledAt).toBeNull();
+      if (outcome === "manual settlement") {
+        await harness.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("manually-settle-pending-recovery"),
+          threadId,
+        });
+      } else {
+        await appendRecovery(outcome);
+        await sweepAfterSessionUpdate("sweep-finished-recovery");
+      }
+      expect((await harness.readThreadShell()).settledAt).not.toBeNull();
+    },
+  );
+
+  it.each([
+    { name: "a superseded turn", turnId: "old-turn", state: "failed", failureKind: "connection" },
+    { name: "an ordinary provider failure", turnId: "current-turn", state: "failed" },
+    {
+      name: "a completed turn",
+      turnId: "current-turn",
+      state: "completed",
+      failureKind: "connection",
+    },
+    {
+      name: "an interrupted turn",
+      turnId: "current-turn",
+      state: "interrupted",
+      failureKind: "connection",
+    },
+  ])("does not request recovery for $name", async (testCase) => {
+    const harness = await createHarness({
+      serverSettings: { resumeThreadsAfterConnectionLoss: true },
+    });
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.started",
+        turnId: asTurnId("current-turn"),
+        eventId: asEventId("current-started"),
+        payload: {},
+      },
+      {
+        ...base,
+        type: "turn.completed",
+        turnId: asTurnId(testCase.turnId),
+        eventId: asEventId("non-recoverable-terminal"),
+        payload: { state: testCase.state, failureKind: testCase.failureKind },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "connection.interrupted"),
+    ).toEqual([]);
+    if (testCase.turnId === "old-turn") {
+      expect(thread?.session).toMatchObject({ status: "running", activeTurnId: "current-turn" });
+    }
+  });
+
+  it("does not request recovery from an untargeted terminal event or a provider retry warning", async () => {
+    const harness = await createHarness({
+      serverSettings: { resumeThreadsAfterConnectionLoss: true },
+    });
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("untargeted-connection-failure"),
+        payload: { state: "failed", failureKind: "connection" },
+      },
+      {
+        ...base,
+        type: "runtime.warning",
+        turnId: asTurnId("retrying-turn"),
+        eventId: asEventId("retrying-connection"),
+        payload: { message: "Reconnecting... 2/5" },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "connection.interrupted"),
+    ).toEqual([]);
+    expect(thread?.activities.some((activity) => activity.kind === "runtime.warning")).toBe(true);
+    expect(thread?.session?.status).toBe("ready");
   });
 
   it.each([

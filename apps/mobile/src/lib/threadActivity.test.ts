@@ -943,6 +943,36 @@ describe("buildThreadFeed", () => {
     }
   });
 
+  it("keeps recovery notices out of the permanent conversation feed", () => {
+    const activities = [
+      "connection.interrupted",
+      "connection.recovery.waiting",
+      "connection.recovery.resumed",
+      "connection.recovery.failed",
+      "connection.recovery.cancelled",
+    ].map((kind, sequence) =>
+      makeActivity({
+        id: EventId.make(`recovery-${sequence}`),
+        kind,
+        sequence,
+        summary: "Recovery update",
+        createdAt: "2026-09-01T00:00:00.000Z",
+      }),
+    );
+    activities.push(
+      makeActivity({
+        id: EventId.make("work"),
+        kind: "tool.completed",
+        summary: "Read files",
+        sequence: 6,
+        createdAt: "2026-09-01T00:00:01.000Z",
+      }),
+    );
+    expect(buildThreadFeed({ activities, messages: [] })).toMatchObject([
+      { type: "activity-group", activities: [{ id: "work" }] },
+    ]);
+  });
+
   it("leaves failed setup snapshots to the setup card", () => {
     const feed = buildThreadFeed(
       makeThread({

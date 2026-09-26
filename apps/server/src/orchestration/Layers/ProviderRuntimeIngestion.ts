@@ -1936,10 +1936,23 @@ const make = Effect.gen(function* () {
             );
           }
 
+          const connectionInterruptedTurnId =
+            event.type === "turn.completed" &&
+            event.payload.state === "failed" &&
+            event.payload.failureKind === "connection" &&
+            eventTurnId !== undefined &&
+            (yield* serverSettingsService.getSettings.pipe(
+              Effect.map((settings) => settings.resumeThreadsAfterConnectionLoss),
+              Effect.orElseSucceed(() => false),
+            ))
+              ? eventTurnId
+              : undefined;
+
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "thread-session-set"),
             threadId: thread.id,
+            ...(connectionInterruptedTurnId !== undefined ? { connectionInterruptedTurnId } : {}),
             session: {
               threadId: thread.id,
               status,

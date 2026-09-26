@@ -60,6 +60,11 @@ export interface ProviderServiceShape {
     requestId?: MessageId,
   ) => Effect.Effect<void, ProviderServiceError>;
 
+  /** Probe provider connectivity without restoring a stopped session or starting a turn. */
+  readonly checkConnection?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean | undefined, ProviderServiceError>;
+
   /**
    * Interrupt a running provider turn.
    */

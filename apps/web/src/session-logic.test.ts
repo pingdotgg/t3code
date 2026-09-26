@@ -477,6 +477,20 @@ describe("workEntryIndicatesToolNeutralStatus", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps recovery notices out of the permanent conversation log", () => {
+    const activities = [
+      "connection.interrupted",
+      "connection.recovery.waiting",
+      "connection.recovery.resumed",
+      "connection.recovery.failed",
+      "connection.recovery.cancelled",
+    ].map((kind, sequence) => makeActivity({ id: `recovery-${sequence}`, kind, sequence }));
+    activities.push(
+      makeActivity({ id: "work", kind: "tool.completed", summary: "Read files", sequence: 6 }),
+    );
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual(["work"]);
+  });
+
   it("keeps the latest task progress without emitting plan-update log entries", () => {
     const activities = [
       makeActivity({ id: "before", kind: "tool.completed", summary: "Read files", sequence: 0 }),

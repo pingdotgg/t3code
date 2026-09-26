@@ -101,6 +101,7 @@ describe("splitSharedServerPatch", () => {
       sidebarAutoSettleAfterDays: 7,
       sidebarAutoSettleOnMerge: false,
       continueThreadsAfterServerUpdate: true,
+      resumeThreadsAfterConnectionLoss: true,
       enableAgentBrowserAccess: false,
       defaultThreadEnvMode: "worktree",
       newWorktreesStartFromOrigin: true,
@@ -112,6 +113,7 @@ describe("splitSharedServerPatch", () => {
       newWorktreesStartFromOrigin: true,
     });
     expect(localPatch).toEqual({
+      resumeThreadsAfterConnectionLoss: true,
       enableAgentBrowserAccess: false,
       defaultThreadEnvMode: "worktree",
     });

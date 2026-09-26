@@ -208,6 +208,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+  const supportsConnectionLossContinuation = targets.every(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.threadConnectionLossContinuation ===
+      true,
+  );
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -450,6 +455,27 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         }
                         onValueChange={(value) =>
                           write({ continueThreadsAfterServerUpdate: value })
+                        }
+                      />
+                    </View>
+                    <View className="border-t border-border-subtle">
+                      <FanoutSwitchRow
+                        icon="arrow.uturn.forward"
+                        label="Resume after connection loss"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : supportsConnectionLossContinuation
+                              ? "Automatically resume tasks interrupted by a lost connection when connectivity returns. Automatic recovery supports Codex with the built-in OpenAI connection."
+                              : "Update older servers to enable recovery after connection loss."
+                        }
+                        value={uniform("resumeThreadsAfterConnectionLoss")}
+                        disabled={
+                          disabledFor("resumeThreadsAfterConnectionLoss") ||
+                          !supportsConnectionLossContinuation
+                        }
+                        onValueChange={(value) =>
+                          write({ resumeThreadsAfterConnectionLoss: value })
                         }
                       />
                     </View>
