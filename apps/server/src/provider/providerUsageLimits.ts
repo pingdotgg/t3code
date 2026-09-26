@@ -124,7 +124,8 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
  *
  * Limits stamped before the check started came from a cache (Claude
  * instances share one probe), so they can be minutes old. Those do not
- * replace newer published limits, such as a turn's update.
+ * replace newer published windows, such as a turn's update. Reset credits
+ * still come from the probe, because each check reads them itself.
  */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
@@ -141,7 +142,8 @@ export function resolveUsageLimitsAfterProbe(input: {
     probed &&
     Date.parse(probed.checkedAt) < Math.min(input.checkStartedAt, Date.parse(published.checkedAt))
   ) {
-    return published;
+    const { resetCredits: _published, ...windows } = published;
+    return probed.resetCredits ? { ...windows, resetCredits: probed.resetCredits } : windows;
   }
   return probed;
 }

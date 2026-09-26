@@ -106,7 +106,14 @@ describe("resolveUsageLimitsAfterProbe", () => {
     const midProbeUpdate = { checkedAt: "2026-09-03T12:05:02.000Z", windows: [session] };
     const resolve = (current: ServerProviderUsageLimits, probed: ServerProviderUsageLimits) =>
       resolveUsageLimitsAfterProbe({ published: current, probed, checkStartedAt: startedAt });
-    expect(resolve(turnUpdate, cached)).toBe(turnUpdate);
+    expect(resolve(turnUpdate, cached)).toEqual(turnUpdate);
+    // The check read credits itself, so a spent credit does not survive.
+    const spent = { availableCount: 1, nextCreditId: "spent" };
+    const current = { availableCount: 0 };
+    expect(
+      resolve({ ...turnUpdate, resetCredits: spent }, { ...cached, resetCredits: current }),
+    ).toEqual({ ...turnUpdate, resetCredits: current });
+    expect(resolve({ ...turnUpdate, resetCredits: spent }, cached)).toEqual(turnUpdate);
     expect(resolve(midProbeUpdate, fresh)).toBe(fresh);
     expect(resolve(published, cached)).toBe(cached);
   });

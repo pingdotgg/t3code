@@ -16,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as MutableHashSet from "effect/MutableHashSet";
 
 import { type ClaudeCapabilitiesProbe, probeClaudeCapabilities } from "../Layers/ClaudeProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
@@ -32,8 +33,9 @@ export type ClaudeProbeInput = Pick<ClaudeSettings, "binaryPath" | "homePath"> &
 
 const PROBE_TTL = Duration.minutes(5);
 // A failed probe or usage read leaves every instance with that input unverified
-// or without limits, so retry soon.
-const FAILED_PROBE_TTL = Duration.seconds(30);
+// or without limits, so the first failure retries soon. A repeat failure
+// (signed out, no usage endpoint) waits the full TTL, like a success.
+const FIRST_FAILURE_TTL = Duration.seconds(30);
 // Keep this far above any real instance count. The cache evicts the least
 // recently used key, and every refresh reads the keys in the same order, so a
 // cap below the live key count makes each refresh re-probe every instance.
@@ -54,21 +56,32 @@ export class ClaudeProbeCache extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  // Inputs whose last probe failed. Compares keys like the cache does.
+  const failing = MutableHashSet.empty<ClaudeProbeInput>();
   const cache = yield* Cache.makeWith(
     (input: ClaudeProbeInput) =>
       probeClaudeCapabilities(
         input,
         mergeProviderInstanceEnvironment(input.environment),
         input.cwd,
+      ).pipe(
+        Effect.map((probe) => {
+          if (probe?.usage !== undefined) {
+            MutableHashSet.remove(failing, input);
+            return { probe, timeToLive: PROBE_TTL };
+          }
+          const repeat = MutableHashSet.has(failing, input);
+          MutableHashSet.add(failing, input);
+          return { probe, timeToLive: repeat ? PROBE_TTL : FIRST_FAILURE_TTL };
+        }),
       ),
     {
       capacity: MAX_CACHED_PROBES,
-      timeToLive: (exit) =>
-        Exit.isSuccess(exit) && exit.value?.usage !== undefined ? PROBE_TTL : FAILED_PROBE_TTL,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? exit.value.timeToLive : FIRST_FAILURE_TTL),
     },
   );
   return {
-    capabilities: (input) => Cache.get(cache, input),
+    capabilities: (input) => Cache.get(cache, input).pipe(Effect.map(({ probe }) => probe)),
     invalidate: (input) => Cache.invalidate(cache, input),
   } satisfies ClaudeProbeCache["Service"];
 });

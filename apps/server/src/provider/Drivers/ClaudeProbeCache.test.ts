@@ -109,29 +109,37 @@ it.effect("an empty home and an explicit ~/.claude run separate probes", () =>
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
-it.effect("retries a failed probe or usage read after a short TTL and keeps a success longer", () =>
+it.effect("retries a first failure after 30 seconds and a repeat failure after 5 minutes", () =>
   Effect.gen(function* () {
     const query = yield* mockSdk();
     query.mockImplementationOnce(failedQuery).mockImplementationOnce(failedUsageQuery);
     const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
+    const read = cache.capabilities(input("/homes/work"));
 
-    assert.equal(yield* cache.capabilities(input("/homes/work")), undefined);
-    assert.equal(yield* cache.capabilities(input("/homes/work")), undefined);
+    assert.equal(yield* read, undefined);
+    yield* TestClock.adjust("29 seconds");
+    yield* read;
     assert.equal(query.mock.calls.length, 1);
 
-    yield* TestClock.adjust("30 seconds");
-    const withoutUsage = yield* cache.capabilities(input("/homes/work"));
-    assert.isDefined(withoutUsage);
-    assert.isUndefined(withoutUsage?.usage);
+    // A failed usage read is a failure too, and this one repeats.
+    yield* TestClock.adjust("1 second");
+    assert.isUndefined((yield* read)?.usage);
+    assert.equal(query.mock.calls.length, 2);
+    yield* TestClock.adjust("4 minutes");
+    yield* read;
     assert.equal(query.mock.calls.length, 2);
 
-    yield* TestClock.adjust("30 seconds");
-    assert.isDefined((yield* cache.capabilities(input("/homes/work")))?.usage);
+    yield* TestClock.adjust("1 minute");
+    assert.isDefined((yield* read)?.usage);
     assert.equal(query.mock.calls.length, 3);
 
-    yield* TestClock.adjust("1 minute");
-    yield* cache.capabilities(input("/homes/work"));
-    assert.equal(query.mock.calls.length, 3);
+    // A success ends the streak, so the next failure retries soon again.
+    query.mockImplementationOnce(failedQuery);
+    yield* TestClock.adjust("5 minutes");
+    assert.equal(yield* read, undefined);
+    yield* TestClock.adjust("30 seconds");
+    assert.isDefined(yield* read);
+    assert.equal(query.mock.calls.length, 5);
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
