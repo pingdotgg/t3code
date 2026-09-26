@@ -4,7 +4,8 @@ Status: proposed cross-surface decision, not ratified policy.
 
 Leaving an unsent composition through Cancel, close, back, swipe, Escape or a
 change of target should preserve the draft with its destination, or ask for an
-explicit discard decision. Empty editors can close directly. Explicit Discard
+explicit discard decision. An editor is empty only when it has neither text nor
+attachments; only then can it close directly. Explicit Discard
 is itself a decision; it does not need a second confirmation.
 
 This applies to web and Electron review editors and React Native review sheets
