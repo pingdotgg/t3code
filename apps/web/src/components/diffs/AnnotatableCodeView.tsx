@@ -1,3 +1,4 @@
+import { ComposerBanner } from "../chat/ComposerBanner";
 import type {
   AnnotationSide,
   CodeViewDiffItem,
@@ -268,10 +269,14 @@ export function AnnotatableCodeView({
     <>
       {retainedDraft && !filesByKey.has(retainedDraft.fileKey) ? (
         <div className="shrink-0 border-b border-border/60 px-3 py-2">
-          <p className="text-xs text-muted-foreground">
-            Draft for {retainedDraft.comment.filePath}. The original selection is retained with your
-            comment.
-          </p>
+          <ComposerBanner.Root placement="floating">
+            <ComposerBanner.Row>
+              <ComposerBanner.Content>
+                Draft for {retainedDraft.comment.filePath}. The original selection is retained with
+                your comment.
+              </ComposerBanner.Content>
+            </ComposerBanner.Row>
+          </ComposerBanner.Root>
           <DiffCommentAnnotation
             kind="draft"
             rangeLabel={retainedDraft.comment.rangeLabel}

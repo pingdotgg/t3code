@@ -1,3 +1,4 @@
+import { ComposerBanner } from "../chat/ComposerBanner";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
@@ -1114,10 +1115,14 @@ function PullRequestCodeTab({
   const detachedDraft =
     draft && !files.some((file) => buildFileDiffRenderKey(file) === draft.fileKey) ? (
       <div className="shrink-0 border-b border-border/60 px-3 py-2">
-        <p className="text-xs text-muted-foreground">
-          Draft for {draft.path}. The original lines are not currently available; your text is
-          retained.
-        </p>
+        <ComposerBanner.Root placement="floating">
+          <ComposerBanner.Row>
+            <ComposerBanner.Content>
+              Draft for {draft.path}. The original lines are not currently available; your text is
+              retained.
+            </ComposerBanner.Content>
+          </ComposerBanner.Row>
+        </ComposerBanner.Root>
         {renderAnnotation({
           side: "additions",
           lineNumber: 1,
