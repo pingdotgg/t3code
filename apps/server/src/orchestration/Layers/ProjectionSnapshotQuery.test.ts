@@ -47,6 +47,7 @@ const encodeThreadLinkedPullRequest = Schema.encodeSync(
 const encodeMessageContext = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationMessageContext),
 );
+const encodeActivityPayload = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.effect("reads project shells without loading threads or resolving excluded projects", () => {
   const resolved: string[] = [];
@@ -2902,6 +2903,97 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
       assert.equal(new Set(seenActivities).size, seenActivities.length);
       assert.equal(seenMessages.length, 9);
       assert.equal(seenActivities.length, 6);
+    }),
+  );
+
+  it.effect("preserves agent lifecycle outside the turn window and activity cap", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const expectedIds: string[] = [];
+
+      for (let index = 0; index < 17; index += 1) {
+        const taskId = `agent-${index}`;
+        const turnId = index < 8 ? "turn-1" : "turn-5";
+        const at = index < 8 ? "2026-03-01T00:00:30.000Z" : "2026-03-01T00:04:30.000Z";
+        for (const [offset, kind, payload] of [
+          [0, "task.started", { taskId, agentKind: "agent", title: taskId }],
+          [
+            1,
+            "task.progress",
+            { taskId, agentKind: "agent", usageSnapshot: true, typedUsage: { totalTokens: 1000 } },
+          ],
+          [2, "task.updated", { taskId, status: "idle" }],
+          [3, "tool.progress", { taskId, toolName: "Read" }],
+        ] as const) {
+          const id = `${taskId}-${offset}`;
+          expectedIds.push(id);
+          yield* sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+            ) VALUES (${id}, 'thread-w', ${turnId}, 'info', ${kind}, 'Agent activity',
+              ${encodeActivityPayload(payload)}, ${index * 4 + offset}, ${at})
+          `;
+        }
+      }
+
+      const assertAgents = (activities: ReadonlyArray<{ id: string }>) => {
+        const ids = activities.map((activity) => activity.id);
+        assert.deepStrictEqual(
+          ids.filter((id) => id.startsWith("agent-")),
+          expectedIds,
+        );
+        assert.equal(ids.length, new Set(ids).size);
+        assert.ok(!ids.includes("old-background"));
+      };
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES
+          ('malformed-task', 'thread-w', 'turn-1', 'info', 'task.started', 'Legacy task',
+            '{invalid', 68, '2026-03-01T00:00:30.000Z'),
+          ('malformed-heartbeat', 'thread-w', 'turn-1', 'info', 'tool.progress', 'Legacy heartbeat',
+            '{invalid', 69, '2026-03-01T00:00:30.000Z')
+      `;
+
+      const window = Option.getOrThrow(
+        yield* query.getThreadDetailSnapshot(threadW, { turnLimit: 1 }),
+      );
+      assertAgents(window.thread.activities);
+      assert.ok(!window.thread.messages.some((message) => message.id === "user-msg-1"));
+      const older = Option.getOrThrow(
+        yield* query.getThreadDetailSnapshot(threadW, {
+          turnLimit: 1,
+          beforeCursor: window.page!.beforeCursor!,
+        }),
+      );
+      assertAgents(older.thread.activities);
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES ('old-background', 'thread-w', 'turn-1', 'info', 'task.started', 'Shell',
+          '{"taskId":"shell","agentKind":"background"}', 70, '2026-03-01T00:00:30.000Z')
+      `;
+      yield* sql`
+        WITH RECURSIVE rows(n) AS (
+          SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 501
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) SELECT 'noise-' || n, 'thread-w', 'turn-5', 'tool', 'tool.completed', 'Tool', '{}',
+          100 + n, '2026-03-01T00:04:40.000Z' FROM rows
+      `;
+      const detail = Option.getOrThrow(yield* query.getThreadDetailById(threadW));
+      const snapshot = Option.getOrThrow(
+        yield* query.getThreadDetailSnapshot(threadW, { turnLimit: 1 }),
+      );
+      for (const activities of [detail.activities, snapshot.thread.activities]) {
+        assertAgents(activities);
+        assert.equal(activities.length, 500 + expectedIds.length);
+      }
     }),
   );
 

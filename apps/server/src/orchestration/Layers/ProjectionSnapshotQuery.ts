@@ -1919,6 +1919,20 @@ pending_approval_requests AS (
         ),
         pinned_activity_ids AS (
           SELECT activity_id
+          FROM projection_thread_activities
+          WHERE thread_id = ${threadId}
+            AND kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed', 'tool.progress')
+            AND json_valid(payload_json)
+            AND json_extract(payload_json, '$.taskId') IN (
+              SELECT json_extract(payload_json, '$.taskId')
+              FROM projection_thread_activities
+              WHERE thread_id = ${threadId}
+                AND kind IN ('task.started', 'task.progress', 'task.updated', 'task.completed')
+                AND json_valid(payload_json)
+                AND json_extract(payload_json, '$.agentKind') = 'agent'
+            )
+          UNION ALL
+          SELECT activity_id
           FROM pending_approval_activities
           WHERE request_order = 1
           UNION ALL
@@ -1929,9 +1943,10 @@ pending_approval_requests AS (
         )
   `;
 
-  // Blocking request payloads must remain available even if they predate the
-  // recent activity window. Each CTE returns at most one unresolved row per
-  // request, so the merge below stays bounded by actionable work.
+  // Agent lifecycle and blocking requests outlive chat pagination. Keep every
+  // lifecycle row for known agents, including status rows without an agentKind
+  // stamp, so fresh clients fold the same roster and usage as live clients.
+  // Each request CTE still returns at most one unresolved row per request.
   const listPinnedThreadActivityRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadActivityDbRowSchema,
