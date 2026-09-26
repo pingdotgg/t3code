@@ -275,7 +275,23 @@ export function isXAiMonitorTool(toolCall: AcpToolCallState): boolean {
   return isXAiMonitorStartAck(xAiToolOutputText(toolCall));
 }
 
+/**
+ * A shell command Grok runs in the background (asked for, or moved there after
+ * its auto-background timeout) acknowledges with
+ * `{ type: "BackgroundTaskStarted", task_id }` and completes its tool call
+ * while the process still runs. Like a monitor, it ends only with
+ * `x.ai/task_completed` for that task id.
+ */
+function xAiBackgroundShellTaskId(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  return nonEmptyString(rawOutput?.type) === "BackgroundTaskStarted"
+    ? nonEmptyString(rawOutput?.task_id)
+    : undefined;
+}
+
 export function extractXAiMonitorTaskId(toolCall: AcpToolCallState): string | undefined {
+  const backgroundShellTaskId = xAiBackgroundShellTaskId(toolCall);
+  if (backgroundShellTaskId !== undefined) return backgroundShellTaskId;
   if (!isXAiMonitorTool(toolCall)) return undefined;
   const rawOutput = unknownRecord(toolCall.data.rawOutput);
   // Live ACP start ACK: { type: "Monitor", taskId, timeoutMs, persistent }
@@ -591,6 +607,10 @@ export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToo
         status: exitCode === 0 ? "completed" : "failed",
       };
     }
+  }
+  if (xAiBackgroundShellTaskId(withTitle) !== undefined) {
+    // Start acknowledgement only; the command still runs in the background.
+    return { ...withTitle, status: "inProgress" };
   }
   if (!isXAiMonitorTool(withTitle)) {
     return withTitle;
