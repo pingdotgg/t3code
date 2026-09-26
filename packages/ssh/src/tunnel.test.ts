@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -804,5 +805,137 @@ describe("archive runner script", () => {
         assert.isFalse(yield* fs.exists(lock));
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
+  );
+});
+
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("remote launch reconnect", () => {
+  // Stand-in for `t3 serve`: answers the readiness probe and records itself in
+  // the default-home runtime file, as every server with that base dir does.
+  const SERVER_SCRIPT = `import * as fs from "node:fs";
+import * as http from "node:http";
+const arg = (name) => process.argv[process.argv.indexOf(name) + 1];
+const runtimeDir = arg("--base-dir") + "/userdata";
+const server = http.createServer((_request, response) => response.end("ready"));
+server.listen(Number(arg("--port")), "127.0.0.1", () => {
+  const port = server.address().port;
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.writeFileSync(
+    runtimeDir + "/server-runtime.json",
+    JSON.stringify({ pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+  );
+});
+`;
+
+  const isRunning = (pid: number) =>
+    Effect.sync(() => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+  const stop = (pid: number) =>
+    Effect.sync(() => {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already stopped.
+      }
+    });
+
+  // Runs the real launch script against a throwaway HOME and returns what it
+  // reported plus the managed pid it recorded, if any.
+  const makeLaunchHome = Effect.fn("makeLaunchHome")(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-reconnect-" });
+    const serverScript = `${home}/server.mjs`;
+    const launchScript = `${home}/launch.sh`;
+    const stateDir = `${home}/.t3/ssh-launch/reconnect`;
+    const runtimeFile = `${home}/.t3/userdata/server-runtime.json`;
+    yield* fs.writeFileString(serverScript, SERVER_SCRIPT);
+    yield* fs.writeFileString(
+      launchScript,
+      buildRemoteLaunchScript({ nodeScriptPath: serverScript }),
+    );
+    const env = { PATH: process.env.PATH ?? "", HOME: home };
+
+    const managedPid = fs.readFileString(`${stateDir}/pid`).pipe(
+      Effect.map((text) => Number(text.trim())),
+      Effect.orElseSucceed(() => 0),
+    );
+
+    const launch = Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make("sh", [launchScript, "reconnect"], { env, extendEnv: false }),
+      );
+      const result = yield* Effect.all(
+        {
+          stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+          stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          exitCode: child.exitCode.pipe(Effect.map(Number)),
+        },
+        { concurrency: "unbounded" },
+      );
+      // Register the server before asserting, so cleanup also stops it on failure.
+      const pid = yield* managedPid;
+      if (pid > 0) {
+        yield* Effect.addFinalizer(() => stop(pid));
+      }
+      assert.equal(result.exitCode, 0, result.stderr);
+      return { report: JSON.parse(result.stdout.trim().split("\n").at(-1) ?? ""), pid };
+    });
+
+    // Starts a separate default-home server, as a user-started `t3 serve` would.
+    const startDefaultServer = Effect.gen(function* () {
+      yield* fs.remove(runtimeFile, { force: true });
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          process.execPath,
+          [serverScript, "serve", "--port", "0", "--base-dir", `${home}/.t3`],
+          { env, extendEnv: false },
+        ),
+      );
+      yield* Effect.addFinalizer(() => child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore));
+      const runtime = yield* fs
+        .readFileString(runtimeFile)
+        .pipe(Effect.retry({ schedule: Schedule.spaced("50 millis"), times: 100 }));
+      return JSON.parse(runtime) as { readonly pid: number; readonly port: number };
+    });
+
+    return { launch, startDefaultServer };
+  });
+
+  it.live("keeps the managed server it started when the desktop reconnects", () =>
+    Effect.gen(function* () {
+      const { launch } = yield* makeLaunchHome();
+      const first = yield* launch;
+      const second = yield* launch;
+
+      assert.deepStrictEqual(second.report, {
+        remotePort: first.report.remotePort,
+        serverKind: "managed",
+      });
+      assert.equal(second.pid, first.pid);
+      assert.isTrue(yield* isRunning(first.pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("hands over to a different default server and stops the managed one", () =>
+    Effect.gen(function* () {
+      const { launch, startDefaultServer } = yield* makeLaunchHome();
+      const managed = yield* launch;
+      const defaultServer = yield* startDefaultServer;
+
+      const handedOver = yield* launch;
+      assert.deepStrictEqual(handedOver.report, {
+        remotePort: defaultServer.port,
+        serverKind: "external",
+      });
+      assert.isFalse(yield* isRunning(managed.pid));
+      assert.isTrue(yield* isRunning(defaultServer.pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

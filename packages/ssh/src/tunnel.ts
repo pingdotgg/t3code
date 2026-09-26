@@ -640,6 +640,11 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
+# The managed server also runs with the default base dir, so the runtime file
+# can name it. Only a different default server takes over the managed one.
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]; then
+  DEFAULT_REMOTE_PORT=""
+fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
