@@ -272,6 +272,31 @@ export type ServerProviders = typeof ServerProviders.Type;
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
 
+/**
+ * How long a workspace snapshot answers for its directory. A provider resolves
+ * commands and skills from the working directory, so the set changes whenever
+ * the user edits that project — a retained snapshot has to expire or the menu
+ * reports what was true when the workspace was first opened.
+ */
+export const WORKSPACE_SNAPSHOT_TTL_MS = 5 * 60_000;
+
+/**
+ * Whether a workspace snapshot still answers for its directory. Server and
+ * clients share this so a client stops asking for a refresh at the same moment
+ * the registry stops re-probing. `now` is passed in rather than read here: the
+ * server reads it from Effect's `Clock`, the clients from `Date.now()`.
+ */
+export const isWorkspaceSnapshotFresh = (
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "checkedAt">,
+  now: number,
+): boolean => {
+  const checkedAt = Date.parse(snapshot.checkedAt);
+  // An unparseable timestamp is treated as expired: re-probing costs one
+  // handshake, while trusting it would pin the menu for the process's life.
+  if (Number.isNaN(checkedAt)) return false;
+  return now - checkedAt < WORKSPACE_SNAPSHOT_TTL_MS;
+};
+
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,
   localTracingEnabled: Schema.Boolean,

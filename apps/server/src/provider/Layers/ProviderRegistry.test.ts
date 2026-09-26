@@ -22,6 +22,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
+  WORKSPACE_SNAPSHOT_TTL_MS,
   type ServerProvider,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
@@ -1580,6 +1581,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             );
             yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
             assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+
+            // A directory's commands and skills change while the server runs,
+            // so a retained snapshot expires and the next refresh re-probes.
+            yield* TestClock.setTime(
+              Date.parse(scopedProvider.checkedAt) + WORKSPACE_SNAPSHOT_TTL_MS + 1,
+            );
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+            const reprobed = yield* registry.getProviders;
+            assert.strictEqual(reprobed[0]?.workspaceSnapshots?.length, 1);
+            assert.deepStrictEqual(
+              reprobed[0]?.workspaceSnapshots?.[0]?.skills,
+              scopedProvider.skills,
+            );
 
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);

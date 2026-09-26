@@ -3,12 +3,14 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  isWorkspaceSnapshotFresh,
   resolveEnvironmentMachineKind,
   ServerConfig,
   ServerObservability,
   ServerProvider,
   ServerProviders,
   ServerUpsertKeybindingResult,
+  WORKSPACE_SNAPSHOT_TTL_MS,
 } from "./server.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -247,5 +249,24 @@ describe("resolveEnvironmentMachineKind", () => {
     expect(
       resolveEnvironmentMachineKind({ environment: parsed, settings: decodeSettings({}) }),
     ).toBe("server");
+  });
+});
+
+describe("isWorkspaceSnapshotFresh", () => {
+  const checkedAt = "2026-06-10T00:00:00.000Z";
+  const at = (offsetMs: number) => Date.parse(checkedAt) + offsetMs;
+
+  it("keeps a snapshot until its window elapses", () => {
+    expect(isWorkspaceSnapshotFresh({ checkedAt }, at(0))).toBe(true);
+    expect(isWorkspaceSnapshotFresh({ checkedAt }, at(WORKSPACE_SNAPSHOT_TTL_MS - 1))).toBe(true);
+    expect(isWorkspaceSnapshotFresh({ checkedAt }, at(WORKSPACE_SNAPSHOT_TTL_MS))).toBe(false);
+  });
+
+  it("expires a snapshot whose timestamp cannot be read", () => {
+    expect(isWorkspaceSnapshotFresh({ checkedAt: "not a date" }, at(0))).toBe(false);
+  });
+
+  it("keeps a snapshot stamped ahead of the reader's clock", () => {
+    expect(isWorkspaceSnapshotFresh({ checkedAt }, at(-60_000))).toBe(true);
   });
 });

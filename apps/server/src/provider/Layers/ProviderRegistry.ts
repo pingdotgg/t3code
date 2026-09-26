@@ -24,12 +24,14 @@
  */
 import {
   defaultInstanceIdForDriver,
+  isWorkspaceSnapshotFresh,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
@@ -81,6 +83,16 @@ const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean 
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
 const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 16;
+
+/**
+ * Whether this provider already answers for `cwd` without re-probing. A
+ * snapshot past its TTL reads as absent so the next refresh replaces it:
+ * the commands and skills a directory publishes change while the server runs.
+ */
+function hasFreshWorkspaceSnapshot(provider: ServerProvider, cwd: string, now: number): boolean {
+  const snapshot = provider.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
+  return snapshot !== undefined && isWorkspaceSnapshotFresh(snapshot, now);
+}
 
 export function upsertProviderWorkspaceSnapshot(
   provider: ServerProvider,
@@ -839,13 +851,10 @@ export const ProviderRegistryLive = Layer.effect(
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
     }) {
+      const now = yield* Clock.currentTimeMillis;
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      if (
-        !provider ||
-        !provider.enabled ||
-        provider.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
-      ) {
+      if (!provider || !provider.enabled || hasFreshWorkspaceSnapshot(provider, input.cwd, now)) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -868,7 +877,7 @@ export const ProviderRegistryLive = Layer.effect(
                   return Ref.modify(providersRef, (currentProviders) => {
                     const nextProviders = currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
-                      !candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd)
+                      !hasFreshWorkspaceSnapshot(candidate, input.cwd, now)
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
                     );

@@ -1,7 +1,8 @@
-import type {
-  ServerProvider,
-  ServerProviderSkill,
-  ServerProviderSlashCommand,
+import {
+  isWorkspaceSnapshotFresh,
+  type ServerProvider,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
@@ -109,6 +110,24 @@ function resolveProviderWorkspaceSnapshot(
 ) {
   if (!cwd) return undefined;
   return provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+}
+
+/**
+ * Whether the provider's snapshot for `cwd` is recent enough to leave alone.
+ * Only refresh decisions use this. A stale snapshot still reads better than
+ * the machine-wide lists, so the resolvers below keep serving it until a
+ * newer one replaces it rather than dropping the workspace's own entries.
+ */
+export function hasFreshProviderWorkspaceSnapshot(
+  provider: ServerProvider | null | undefined,
+  cwd: string | null | undefined,
+): boolean {
+  const snapshot = provider && resolveProviderWorkspaceSnapshot(provider, cwd);
+  // Wall clock rather than Effect's `Clock`: this runs in React render paths on
+  // web and mobile, where there is no Effect runtime to read one from. The
+  // server passes its own `Clock` reading to `isWorkspaceSnapshotFresh`.
+  // @effect-diagnostics-next-line globalDate:off
+  return Boolean(snapshot && isWorkspaceSnapshotFresh(snapshot, Date.now()));
 }
 
 export function resolveProviderSkillsForCwd(

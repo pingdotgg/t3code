@@ -645,4 +645,22 @@ export const makePendingClaudeProvider = (
     });
   });
 
+/**
+ * Slash commands as Claude Code would publish them from `cwd`. Project commands
+ * and plugins resolve from the working directory, so a workspace needs its own
+ * probe. `undefined` when the probe fails, so callers keep the list they have.
+ */
+export const probeClaudeSlashCommandsForCwd = Effect.fn("probeClaudeSlashCommandsForCwd")(
+  function* (
+    claudeSettings: ClaudeSettings,
+    cwd: string,
+    environment?: NodeJS.ProcessEnv,
+  ): Effect.fn.Return<ReadonlyArray<ServerProviderSlashCommand> | undefined, never, Path.Path> {
+    const capabilities = yield* probeClaudeCapabilities(claudeSettings, environment, cwd);
+    return capabilities
+      ? dedupeSlashCommands([COMPACT_SLASH_COMMAND, ...capabilities.slashCommands])
+      : undefined;
+  },
+);
+
 export { probeClaudeCapabilities };

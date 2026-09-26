@@ -17,6 +17,7 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   probeClaudeCapabilities,
+  probeClaudeSlashCommandsForCwd,
 } from "./ClaudeProvider.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -221,5 +222,54 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     ]);
     assert.equal(capabilities?.usage, undefined);
     assert.equal(abortSignal?.aborted, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads slash commands from the workspace the snapshot is for", () =>
+  Effect.gen(function* () {
+    let probedCwd: string | undefined;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      probedCwd = options?.cwd;
+      return {
+        initializationResult: async () => ({
+          account: { email: "dev@example.com" },
+          commands: [
+            { name: "create-pr", description: "Open a pull request", argumentHint: "" },
+            { name: "compact", description: "Duplicate of the built-in", argumentHint: "" },
+          ],
+        }),
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+          rate_limits_available: false,
+        }),
+      } as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+    const slashCommands = yield* probeClaudeSlashCommandsForCwd(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+      "/workspace/project",
+    );
+
+    assert.equal(probedCwd, "/workspace/project");
+    assert.deepEqual(slashCommands, [
+      { name: "compact", description: "Summarize the conversation and reduce context usage" },
+      { name: "create-pr", description: "Open a pull request" },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reports no workspace slash commands when the probe fails", () =>
+  Effect.gen(function* () {
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
+      throw new Error("probe failed");
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+    const slashCommands = yield* probeClaudeSlashCommandsForCwd(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+      "/workspace/project",
+    );
+
+    assert.equal(slashCommands, undefined);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
