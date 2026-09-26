@@ -97,7 +97,28 @@ const MODEL_IDS: Record<number, string> = {
   1018: "gemini-3-flash-preview",
   1084: "gemini-3-flash-preview",
   1047: "gemini-3-flash-preview",
+  342: "gpt-oss-120b-medium",
+  1020: "gemini-3.5-flash-low",
+  1072: "gemini-3.6-flash-medium",
+  1073: "gemini-3.6-flash-low",
+  1132: "gemini-3-flash-agent",
+  1133: "gemini-3-flash-agent",
+  1187: "gemini-3.5-flash-extra-low",
+  1298: "gemini-3.7-flash-high",
+  1299: "gemini-3.7-flash-medium",
+  1301: "gemini-3.7-flash-tiered",
+  1318: "gemini-3.8-flash-high",
+  1319: "gemini-3.8-flash-medium",
+  1320: "gemini-3.8-flash-low",
+  1322: "gemini-3.8-flash-tiered",
 };
+
+/** Prices effort and routing variants such as `gemini-3.8-flash-high` at their base model. */
+function antigravityRateModel(model: string): string {
+  const base = model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/, "");
+  // Rate tables only list Gemini 3 Flash under its preview name, as `MODEL_IDS` does.
+  return base === "gemini-3-flash" ? "gemini-3-flash-preview" : base;
+}
 
 function modelName(name: string, id: number): string {
   if (name) {
@@ -228,16 +249,18 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
             const id = textAt(usage, key);
             return id ? [`antigravity:${key}:${id}`] : [];
           });
+          const model =
+            MODEL_IDS[numberAt(usage, 1)] ||
+            entry.model ||
+            (source === "step" ? generationModels.get(idx) : "") ||
+            modelName("", numberAt(usage, 1)) ||
+            "antigravity-unknown";
           const record: UsageRecord = {
             provider: "antigravity",
             sessionId,
             timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
-            model:
-              MODEL_IDS[numberAt(usage, 1)] ||
-              entry.model ||
-              (source === "step" ? generationModels.get(idx) : "") ||
-              modelName("", numberAt(usage, 1)) ||
-              "antigravity-unknown",
+            model,
+            rateModel: antigravityRateModel(model),
             totals,
             reportedCostUsd: null,
             fast: false,
@@ -298,14 +321,16 @@ export async function readAntigravityUsage(
         : target;
     const x = target.record.totals;
     const y = source.record.totals;
+    const model =
+      first.record.model === "antigravity-unknown"
+        ? first === target
+          ? source.record.model
+          : target.record.model
+        : first.record.model;
     target.record = {
       ...first.record,
-      model:
-        first.record.model === "antigravity-unknown"
-          ? first === target
-            ? source.record.model
-            : target.record.model
-          : first.record.model,
+      model,
+      rateModel: antigravityRateModel(model),
       timestampMs: bestTime.record.timestampMs,
       totals: {
         uncachedInputTokens: Math.max(x.uncachedInputTokens, y.uncachedInputTokens),
