@@ -4,9 +4,8 @@
  * work.
  *
  * Thin wrapper over `@t3tools/tailscale` (the same client the server's own
- * `--tailscale-serve` uses). What it adds is dev-share semantics: replacing a
- * stale mapping left by a killed run, and refusing to serve over routes it
- * could not remove.
+ * `--tailscale-serve` uses). What it adds is dev-share error reporting and
+ * lifecycle cleanup for the exact mapping this dev server owns.
  *
  * Because browser dev is single-origin (Vite proxies the backend — see
  * `resolveDevProxyTarget` in apps/web/vite.config.ts), one proxy rule covering
@@ -18,7 +17,7 @@ import {
   disableTailscaleServe,
   ensureTailscaleServe,
   readTailscaleStatus,
-  type TailscaleCommandError,
+  type TailscaleServeError,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -41,10 +40,12 @@ const DIAGNOSTIC_EXPLANATIONS: Record<TailscaleStderrDiagnostic, string | undefi
  * Our own wording for why a tailscale command failed, derived from the
  * classified diagnostic. Never the CLI's text — see `stderrDiagnosticOf`.
  */
-const explainCommandFailure = (error: TailscaleCommandError): string | undefined =>
+const explainCommandFailure = (error: TailscaleServeError): string | undefined =>
   error._tag === "TailscaleCommandExitError" && error.stderrDiagnostic !== undefined
     ? (DIAGNOSTIC_EXPLANATIONS[error.stderrDiagnostic] ?? "run the command by hand to see why")
-    : undefined;
+    : error._tag === "TailscaleServePortOccupiedError"
+      ? "the port already belongs to a different Tailscale Serve handler"
+      : undefined;
 
 /**
  * Three distinct failures, three classes: each has its own caller-visible
@@ -82,15 +83,9 @@ export class TailnetNameMissingError extends Schema.TaggedError<TailnetNameMissi
   }
 }
 
-/**
- * `stage` is a genuine multi-value discriminator: both stages share the same
- * semantics (a `tailscale serve` invocation failed for this port) and differ
- * only in which one, which the message states plainly.
- */
 export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>()(
   "DevServeFailedError",
   {
-    stage: Schema.Literals(["clear-existing", "serve"]),
     webPort: Schema.Number,
     explanation: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
@@ -98,10 +93,7 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
 ) {
   override get message(): string {
     const port = String(this.webPort);
-    const base =
-      this.stage === "clear-existing"
-        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} off\` and retry`
-        : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
+    const base = `could not serve port ${port} on the tailnet`;
     return this.explanation ? `${base}: ${this.explanation}` : base;
   }
 
@@ -116,7 +108,7 @@ export type DevShareError =
   | DevServeFailedError;
 
 /**
- * Removes any mapping for `webPort`, reporting whether the port is now clear.
+ * Removes the matching localhost mapping for `webPort`, preserving other handlers.
  *
  * Runs uninterruptibly: this is called from a finalizer on the way out of an
  * interrupted program, and cancelling the cleanup subprocess would leave
@@ -130,14 +122,18 @@ export const unshareDevServer = (
     readonly explanation?: string | undefined;
     // Kept structured so a caller wrapping this can preserve the real error
     // chain rather than a flattened string.
-    readonly cause?: TailscaleCommandError | undefined;
+    readonly cause?: TailscaleServeError | undefined;
   },
   never,
   ChildProcessSpawner.ChildProcessSpawner
 > =>
-  disableTailscaleServe({ servePort: webPort }).pipe(
+  disableTailscaleServe({
+    localHost: "localhost",
+    localPort: webPort,
+    servePort: webPort,
+  }).pipe(
     Effect.as({ cleared: true } as const),
-    Effect.catch((error: TailscaleCommandError) =>
+    Effect.catch((error: TailscaleServeError) =>
       Effect.succeed(
         // "Nothing was mapped" leaves the port clear either way.
         error._tag === "TailscaleCommandExitError" &&
@@ -162,7 +158,7 @@ export interface DevShareResult {
 
 /**
  * Publishes `webPort` on the tailnet at the same port number and returns the
- * resulting HTTPS URL. Idempotent: re-running replaces any existing mapping.
+ * resulting HTTPS URL. Reuses the matching handler and refuses other mappings.
  */
 export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (input: {
   readonly webPort: number;
@@ -172,24 +168,6 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
   );
   if (status.magicDnsName === null) {
     return yield* new TailnetNameMissingError();
-  }
-
-  // Clear any mapping left behind by a run that was killed before its finalizer
-  // could fire. Serve config survives both the process and a reboot, and a
-  // stale entry may carry path routes we no longer want — older versions mapped
-  // /ws, /api and friends to a separate backend port, and serving "/" alone
-  // would leave those pointing at a port nothing is listening on.
-  const cleared = yield* unshareDevServer(input.webPort);
-  if (!cleared.cleared) {
-    // Serving over routes we failed to remove would hand out a URL that is
-    // broken in a way the user cannot see: the page loads while /ws and /api
-    // silently resolve to a dead backend. Better to refuse and say why.
-    return yield* new DevServeFailedError({
-      stage: "clear-existing",
-      webPort: input.webPort,
-      ...(cleared.explanation !== undefined ? { explanation: cleared.explanation } : {}),
-      ...(cleared.cause !== undefined ? { cause: cleared.cause } : {}),
-    });
   }
 
   // Proxy to the hostname Vite binds rather than the package default of
@@ -206,7 +184,6 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);
       return new DevServeFailedError({
-        stage: "serve",
         webPort: input.webPort,
         ...(explanation !== undefined ? { explanation } : {}),
         cause: error,
