@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -236,7 +237,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         Effect.all([resolver.resolve("/repo"), resolver.resolve("/repo")]),
       );
       expect(yield* Queue.take(heldCalls)).toEqual(["-C", "/repo", "rev-parse", "--show-toplevel"]);
-      // git is still held, yet both reads have answered with the last identity.
+      // Let the reads finish. git is still held, yet both have answered.
+      yield* Effect.yieldNow;
       expect(reads.pollUnsafe()).toBeDefined();
       expect(yield* Fiber.join(reads)).toEqual([first, first]);
 
@@ -291,6 +293,76 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         "rev-parse",
         "--show-toplevel",
       ]);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
+  );
+
+  it.effect("queues one background refresh per folder", () =>
+    Effect.gen(function* () {
+      const heldCalls = yield* Queue.unbounded<ReadonlyArray<string>>();
+      const release = yield* Deferred.make<void>();
+      let holdGit = false;
+      const resolver = yield* makeFakeGitResolver((args) =>
+        Effect.gen(function* () {
+          if (holdGit) {
+            yield* Queue.offer(heldCalls, args);
+            yield* Deferred.await(release);
+          }
+          return args.includes("rev-parse")
+            ? `${args[1]}\n`
+            : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n";
+        }),
+      );
+      yield* resolver.resolve("/a");
+      yield* resolver.resolve("/b");
+      yield* TestClock.adjust(Duration.minutes(15));
+      holdGit = true;
+
+      yield* Effect.forkChild(
+        Effect.forEach(["/a", "/a", "/a", "/a", "/b"], (cwd) => resolver.resolve(cwd), {
+          concurrency: "unbounded",
+        }),
+      );
+      expect((yield* Queue.take(heldCalls))[1]).toBe("/a");
+      yield* Effect.yieldNow;
+      // Repeat reads of "/a" did not take the slots "/b" needs.
+      expect(Option.getOrUndefined(yield* Queue.poll(heldCalls))?.[1]).toBe("/b");
+      yield* Deferred.succeed(release, undefined);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
+  );
+
+  it.effect("keeps a forced refresh over an older background lookup", () =>
+    Effect.gen(function* () {
+      const heldCalls = yield* Queue.unbounded<ReadonlyArray<string>>();
+      const release = yield* Deferred.make<void>();
+      let holdNextRemoteRead = false;
+      let remoteUrl = "git@github.com:T3Tools/old.git";
+      const resolver = yield* makeFakeGitResolver((args) =>
+        Effect.gen(function* () {
+          if (args.includes("rev-parse")) return "/repo\n";
+          // Read the remote before waiting, like a git call that started earlier.
+          const stdout = `origin\t${remoteUrl} (fetch)\n`;
+          if (holdNextRemoteRead) {
+            holdNextRemoteRead = false;
+            yield* Queue.offer(heldCalls, args);
+            yield* Deferred.await(release);
+          }
+          return stdout;
+        }),
+      );
+      yield* resolver.resolve("/repo");
+      yield* TestClock.adjust(Duration.minutes(15));
+      holdNextRemoteRead = true;
+      yield* Effect.forkChild(resolver.resolve("/repo"));
+      yield* Queue.take(heldCalls);
+
+      remoteUrl = "git@github.com:T3Tools/new.git";
+      yield* resolver.resolve("/repo", { refresh: true });
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.minutes(15));
+
+      // The older lookup finished last, but the expired entry answers with the refresh.
+      expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe("github.com/t3tools/new");
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
   );
 
