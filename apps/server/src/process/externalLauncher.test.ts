@@ -338,7 +338,78 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
       "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
     );
     assert.equal(spawned.options.shell, false);
+
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: "C:/workspace with spaces/media/author's clip.mp4",
+      });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    assert.deepEqual(spawned.args, ["C:\\workspace with spaces\\media\\author's clip.mp4"]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(!windowsHost)(
+  "executes the Windows reveal helper with the launcher's process options",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-launch-" });
+      const recorderPath = path.join(tempDir, "recorder.cmd");
+      const outputPath = path.join(tempDir, "argv.txt");
+      yield* fileSystem.writeFileString(recorderPath, `@echo off\r\n>"${outputPath}" echo(%*\r\n`);
+      let helper: ChildProcessSpawner.ChildProcessHandle | undefined;
+      const recordingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          assert.ok(ChildProcess.isStandardCommand(command));
+          if (!ChildProcess.isStandardCommand(command))
+            throw new Error("Expected a standard command");
+          const source = Buffer.from(command.args.at(-1) ?? "", "base64").toString("utf16le");
+          // Substitute only Explorer, preserving the production launch options.
+          // Wait for the recorder so its output is complete when the helper exits.
+          const recordingSource =
+            source.replace("'explorer.exe'", `'${recorderPath.replaceAll("'", "''")}'`) + " -Wait";
+          helper = yield* spawner.spawn(
+            ChildProcess.make(
+              command.command,
+              [
+                ...command.args.slice(0, -1),
+                Buffer.from(recordingSource, "utf16le").toString("base64"),
+              ],
+              command.options,
+            ),
+          );
+          return helper;
+        }),
+      );
+      const launcher = yield* ExternalLauncher.make.pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
+      );
+      yield* launcher.launchEditor({
+        editor: "file-manager",
+        cwd: "C:/workspace with spaces/author's file.md",
+        reveal: true,
+      });
+      assert.ok(helper);
+      assert.equal(yield* helper.exitCode, 0);
+      assert.equal(
+        (yield* fileSystem.readFileString(outputPath)).trim(),
+        `/select,"C:\\workspace with spaces\\author's file.md"`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 // Real-chain smoke check for the Explorer selection contract: runs the exact
