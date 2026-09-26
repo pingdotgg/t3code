@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   RightPanelTabs,
+  agentsWorkingLabel,
   resolvePullRequestTabLink,
   shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
@@ -17,6 +18,14 @@ describe("browser profile submenu", () => {
     expect(shouldOpenDefaultBrowserProfileFromMenuClick("touch")).toBe(false);
     expect(shouldOpenDefaultBrowserProfileFromMenuClick("mouse")).toBe(true);
     expect(shouldOpenDefaultBrowserProfileFromMenuClick(undefined)).toBe(true);
+  });
+});
+
+describe("agentsWorkingLabel", () => {
+  it("pluralizes the count of agents currently working", () => {
+    expect(agentsWorkingLabel(1)).toBe("1 agent working");
+    expect(agentsWorkingLabel(2)).toBe("2 agents working");
+    expect(agentsWorkingLabel(0)).toBe("0 agents working");
   });
 });
 

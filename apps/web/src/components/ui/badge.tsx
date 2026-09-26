@@ -15,6 +15,7 @@ const badgeVariants = cva(
     },
     variants: {
       size: {
+        count: "h-3.5 min-w-3.5 rounded-full border-0 px-1 text-[9px] font-semibold tabular-nums",
         control:
           "h-7 min-w-7 rounded-[var(--control-radius)] px-[calc(--spacing(2)-1px)] text-sm sm:h-6 sm:min-w-6 sm:text-xs",
         default:
@@ -29,6 +30,7 @@ const badgeVariants = cva(
         destructive: "bg-destructive text-white [button&,a&]:hover:bg-destructive/90",
         error: "bg-destructive/8 text-destructive-foreground dark:bg-destructive/16",
         info: "bg-info/8 text-info-foreground dark:bg-info/16",
+        infoSolid: "bg-info text-white",
         outline:
           "border-input bg-background text-foreground dark:bg-input/32 [button&,a&]:hover:bg-accent/50 dark:[button&,a&]:hover:bg-input/48",
         secondary: "bg-secondary text-secondary-foreground [button&,a&]:hover:bg-secondary/90",
