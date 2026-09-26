@@ -1,5 +1,5 @@
 diff --git a/dist/ImageViewing.js b/dist/ImageViewing.js
-index 3d7641a9a94864415d207c678b71f8c592c90aa1..5282ec55e7004f831e437610c06fe816db2a7f12 100644
+index 3d7641a9a94864415d207c678b71f8c592c90aa1..b7733f9667ff12cdbf0d69b79d75de78833282d4 100644
 --- a/dist/ImageViewing.js
 +++ b/dist/ImageViewing.js
 @@ -6,7 +6,7 @@
@@ -27,6 +27,15 @@ index 3d7641a9a94864415d207c678b71f8c592c90aa1..5282ec55e7004f831e437610c06fe816
      const [headerTransform, footerTransform, toggleBarsVisible] = useAnimatedComponents();
      useEffect(() => {
          if (onImageIndexChange) {
+@@ -33,7 +35,7 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClos
+         // @ts-ignore
+         (_b = (_a = imageList) === null || _a === void 0 ? void 0 : _a.current) === null || _b === void 0 ? void 0 : _b.setNativeProps({ scrollEnabled: !isScaled });
+         toggleBarsVisible(!isScaled);
+-    }, [imageList]);
++    }, [imageList, toggleBarsVisible]);
+     if (!visible) {
+         return null;
+     }
 @@ -45,7 +47,8 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClos
          imageIndex: currentImageIndex,
      })) : (<ImageDefaultHeader onRequestClose={onRequestCloseEnhanced}/>)}
