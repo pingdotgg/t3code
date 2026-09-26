@@ -40,7 +40,10 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-uninstall-" });
+      // The real path, because the launcher is found by its real path.
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-uninstall-" }),
+      );
       const versionsDir = path.join(root, "runtime/versions");
       const exe = path.join(versionsDir, "1.0.0/t3");
       const otherExe = path.join(root, "other/runtime/versions/1.0.0/t3");

@@ -76,7 +76,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
   }
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
   if (Option.isNone(linkTarget)) {
-    // The `t3` script runs the executable by absolute path. Find it on PATH.
+    // The `t3` script runs the executable by absolute path. Look for the script.
     return launcherOwnsVersionsDir(path, input.versionsDir, input.launchedAs)
       ? yield* findPosixLauncher(input.launchedAs)
       : undefined;
