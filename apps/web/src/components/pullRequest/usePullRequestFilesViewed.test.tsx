@@ -4,6 +4,7 @@ import {
   type PullRequestFilesViewedResult,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import { REACT_ACT_SAFE_FAKE_TIMER_METHODS } from "@t3tools/shared/testing/reactActFakeTimers";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -76,7 +77,7 @@ async function reads(state: "unviewed" | "viewed" | "dismissed") {
 }
 
 beforeEach(async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: [...REACT_ACT_SAFE_FAKE_TIMER_METHODS] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   host.data = answer("unviewed");
   host.refresh.mockReset();

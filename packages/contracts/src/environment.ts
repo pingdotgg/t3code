@@ -185,6 +185,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server brokers GPT Live voice sessions (the voice broker routes under
+      /api/voice/sessions) with its environment-owned OpenAI key. Absent on
+      servers from before voice brokering shipped, so clients hide the voice
+      entry point and never probe the broker route under version skew. */
+  voiceLive: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
@@ -198,6 +203,14 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
+
+export const EnvironmentConnectionState = Schema.Literals([
+  "connecting",
+  "connected",
+  "disconnected",
+  "error",
+]);
+export type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
 
 export const RepositoryIdentityLocator = Schema.Struct({
   source: Schema.Literal("git-remote"),

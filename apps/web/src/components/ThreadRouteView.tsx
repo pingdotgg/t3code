@@ -13,6 +13,7 @@ import {
   useBackgroundDraftSubmissionPending,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { recordMissingThreadRedirect } from "../missingThreadRedirects";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
   useEnvironmentThreadRefs,
@@ -168,6 +169,13 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
       if (environmentHasAnyThreads) {
+        // Explicit provenance for the voice navigator: this redirect away is
+        // the guard's authoritative missing-thread verdict for this exact
+        // thread, not a user-initiated navigation to "/".
+        recordMissingThreadRedirect({
+          environmentId: target.threadRef.environmentId,
+          threadId: target.threadRef.threadId,
+        });
         void navigate({ to: "/", replace: true });
       }
     }

@@ -1,6 +1,7 @@
 import { act, useSyncExternalStore } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { EnvironmentId } from "@t3tools/contracts";
+import { REACT_ACT_SAFE_FAKE_TIMER_METHODS } from "@t3tools/shared/testing/reactActFakeTimers";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 // Like the real atom, a refresh yields a new access object and re-renders subscribers.
@@ -43,7 +44,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: [...REACT_ACT_SAFE_FAKE_TIMER_METHODS] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("fetch", () => {
     primes++;

@@ -287,6 +287,10 @@
       "types": "./src/testing/longTempDir.ts",
       "import": "./src/testing/longTempDir.ts"
     },
+    "./testing/reactActFakeTimers": {
+      "types": "./src/testing/reactActFakeTimers.ts",
+      "import": "./src/testing/reactActFakeTimers.ts"
+    },
     "./testing/symlinks": {
       "types": "./src/testing/symlinks.ts",
       "import": "./src/testing/symlinks.ts"
