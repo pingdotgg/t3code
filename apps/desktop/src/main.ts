@@ -67,6 +67,7 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
+import * as DesktopKeepAwake from "./power/DesktopKeepAwake.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -186,6 +187,14 @@ const desktopWslBackendLayer = DesktopWslBackend.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
 
+// KeepAwake implements Brutal Awake behavior on Windows: a
+// powerSaveBlocker ("prevent-display-sleep") plus SetThreadExecutionState
+// with display/away-mode flags plus powercfg lid=Do Nothing and
+// sleep/hibernate=never with save/restore, a userData crash-recovery file,
+// and a scoped 25 s re-assert loop. Other platforms hold the display-sleep
+// blocker only. The Layer.scoped release restores power settings on app quit.
+const desktopKeepAwakeLayer = DesktopKeepAwake.layer;
+
 const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
@@ -201,6 +210,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   Layer.provideMerge(desktopSnapShotLayer),
   Layer.provideMerge(DesktopUpdates.layer),
   Layer.provideMerge(desktopWslBackendLayer),
+  Layer.provideMerge(desktopKeepAwakeLayer),
   Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
 );
 
