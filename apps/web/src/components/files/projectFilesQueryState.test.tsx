@@ -309,4 +309,31 @@ describe("project query refresh", () => {
       atomHooks.registry = null;
     }
   });
+
+  it("does not let an optimistic draft hide a truncated read", async () => {
+    const truncatedRead: ProjectReadFileResult = {
+      ...file("partial"),
+      byteLength: 2_000_000,
+      truncated: true,
+    };
+    const readAtom = Atom.make(Effect.succeed(truncatedRead));
+    const draftAtom = Atom.make({ confirmedAgainst: undefined, data: file("draft") });
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(draftAtom);
+    atomHooks.registry = registry;
+
+    try {
+      await flushEffects();
+      reactHooks.beginRender();
+      const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+      expect(query.data?.truncated).toBe(true);
+      expect(query.data?.contents).toBe("partial");
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
 });
