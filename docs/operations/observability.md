@@ -631,6 +631,11 @@ machine that sets `OTEL_SDK_DISABLED` for everything else. It accepts the usual 
 OpenTelemetry specification and only `true` disables export, so `OTEL_SDK_DISABLED=1` does not.
 Values are case-insensitive and trimmed. An unrecognized value is ignored with a startup warning.
 
+`OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, or `OTEL_LOGS_EXPORTER` set to `none` turns off
+just that signal, overriding an OTEL endpoint and the Settings endpoint. A `T3CODE_OTLP_*_URL` still
+wins for its signal. `otlp` is the default, and any other exporter name, such as `console` or
+`prometheus`, is ignored with a startup warning.
+
 ### What Is Instrumented Today
 
 Current high-value span and metric boundaries include:
