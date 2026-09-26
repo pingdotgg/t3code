@@ -4,9 +4,16 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
@@ -19,6 +26,7 @@ import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
@@ -26,10 +34,14 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
+  resolveAvailableNewThreadProjectRef,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  resolveWorkspaceOptionsAfterEnvironmentRetarget,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -42,9 +54,7 @@ interface NewThreadWorkspaceOptions {
   startFromOrigin?: boolean;
 }
 
-// The workspace options the caller passed explicitly, shaped for the draft
-// store: absent keys stay absent so they never overwrite existing draft
-// state. Every reuse path applies exactly this set.
+/** Copies only workspace fields the caller passed so reuse cannot clobber stored draft state. */
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
   return {
     ...(options?.branch !== undefined ? { branch: options.branch } : {}),
@@ -54,8 +64,11 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
   };
 }
 
+/** Opens New Chat on a reachable copy of the requested project, reusing an empty mapped draft. */
 export function useNewThreadHandler() {
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -65,7 +78,7 @@ export function useNewThreadHandler() {
 
   return useCallback(
     (
-      projectRef: ScopedProjectRef,
+      requestedProjectRef: ScopedProjectRef,
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
@@ -78,6 +91,42 @@ export function useNewThreadHandler() {
       // up again and finding whichever draft it happens to hold.
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
       const projects = readProjects();
+      const isEnvironmentReachable = (environmentId: EnvironmentId) =>
+        canCreateProjectInEnvironment(
+          environments.find((environment) => environment.environmentId === environmentId)
+            ?.connection.phase,
+        );
+      const logicalKeyByPhysicalKey = buildPhysicalToLogicalProjectKeyMap({
+        projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+      });
+      const projectRef = resolveAvailableNewThreadProjectRef({
+        requested: requestedProjectRef,
+        projects,
+        settings: projectGroupingSettings,
+        logicalKeyByPhysicalKey,
+        isEnvironmentReachable,
+        primaryEnvironmentId,
+      });
+      if (projectRef === null) {
+        const environment = environments.find(
+          (candidate) => candidate.environmentId === requestedProjectRef.environmentId,
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Environment unavailable",
+            description: `${environment?.label ?? "The selected environment"} is not connected.`,
+          }),
+        );
+        return Promise.resolve(null);
+      }
+      const workspaceOptions = resolveWorkspaceOptionsAfterEnvironmentRetarget({
+        requestedEnvironmentId: requestedProjectRef.environmentId,
+        targetEnvironmentId: projectRef.environmentId,
+        options,
+      });
       const targetServerSettings =
         environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
       const {
@@ -150,7 +199,9 @@ export function useNewThreadHandler() {
       // query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
         const consultProjectFile =
-          project !== undefined && projectSettings.settings.defaultThreadEnvMode === null;
+          project !== undefined &&
+          projectSettings.settings.defaultThreadEnvMode === null &&
+          isEnvironmentReachable(project.environmentId);
         const projectFile = consultProjectFile
           ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
           : null;
@@ -161,13 +212,15 @@ export function useNewThreadHandler() {
           projectFile,
         ).settings.defaultThreadEnvMode;
       };
+      // Group key from buildProjectGroups (identitySource), not a re-derivation from the winner row.
       const logicalProjectKey = project
-        ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+        ? (logicalKeyByPhysicalKey.get(derivePhysicalProjectKey(project)) ??
+          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings))
         : scopedProjectKey(projectRef);
-      const hasBranchOption = options?.branch !== undefined;
-      const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const hasEnvModeOption = options?.envMode !== undefined;
-      const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      const hasBranchOption = workspaceOptions?.branch !== undefined;
+      const hasWorktreePathOption = workspaceOptions?.worktreePath !== undefined;
+      const hasEnvModeOption = workspaceOptions?.envMode !== undefined;
+      const hasStartFromOriginOption = workspaceOptions?.startFromOrigin !== undefined;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -219,7 +272,7 @@ export function useNewThreadHandler() {
           // below and does not follow this guard.
           let workspaceContext: NewThreadWorkspaceOptions | null = null;
           if (hasExplicitWorkspaceOption) {
-            workspaceContext = pickExplicitWorkspaceOptions(options);
+            workspaceContext = pickExplicitWorkspaceOptions(workspaceOptions);
           } else if (!isDraftAlreadyOpen) {
             const defaultEnvMode = await resolveDefaultEnvMode();
             if (routeChangedSinceRequest()) {
@@ -341,14 +394,17 @@ export function useNewThreadHandler() {
           hasEnvModeOption ||
           hasStartFromOriginOption
         ) {
-          setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
+          setDraftThreadContext(
+            currentRouteTarget.draftId,
+            pickExplicitWorkspaceOptions(workspaceOptions),
+          );
         }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
           threadId: latestActiveDraftThread.threadId,
           createdAt: latestActiveDraftThread.createdAt,
           runtimeMode: latestActiveDraftThread.runtimeMode,
           interactionMode: latestActiveDraftThread.interactionMode,
-          ...pickExplicitWorkspaceOptions(options),
+          ...pickExplicitWorkspaceOptions(workspaceOptions),
         });
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
@@ -360,7 +416,7 @@ export function useNewThreadHandler() {
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       return (async () => {
-        const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
+        const initialEnvMode = workspaceOptions?.envMode ?? (await resolveDefaultEnvMode());
         if (routeChangedSinceRequest()) {
           return null;
         }
@@ -391,7 +447,7 @@ export function useNewThreadHandler() {
             createdAt: racedDraft.createdAt,
             runtimeMode: racedDraft.runtimeMode,
             interactionMode: racedDraft.interactionMode,
-            ...pickExplicitWorkspaceOptions(options),
+            ...pickExplicitWorkspaceOptions(workspaceOptions),
           });
           await router.navigate({
             to: "/draft/$draftId",
@@ -403,11 +459,11 @@ export function useNewThreadHandler() {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
           threadId,
           createdAt,
-          branch: options?.branch ?? null,
-          worktreePath: options?.worktreePath ?? null,
+          branch: workspaceOptions?.branch ?? null,
+          worktreePath: workspaceOptions?.worktreePath ?? null,
           envMode: initialEnvMode,
           startFromOrigin:
-            options?.startFromOrigin ??
+            workspaceOptions?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
@@ -430,10 +486,18 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [environmentServerConfigs, getCurrentRouteTarget, projectGroupingSettings, router],
+    [
+      environmentServerConfigs,
+      environments,
+      getCurrentRouteTarget,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      router,
+    ],
   );
 }
 
+/** Chat-view bindings for New Chat: the active thread or draft and the default project to open. */
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const routeTarget = useParams({
