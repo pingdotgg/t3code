@@ -38,8 +38,6 @@ window.addEventListener("vite:preloadError", (event) => {
   }
 });
 
-const app = <AppRoot router={router} />;
-
 // Managed auth is cloud-only, and the Electron Clerk provider bundles the full
 // clerk-js runtime. Loading only the selected runtime as a split chunk keeps
 // every Clerk byte out of the startup graph for local-mode users, and keeps
@@ -51,6 +49,14 @@ const managedAuthShellModule =
       : import("./components/clerk/BrowserManagedAuthShell")
     : null;
 
+// These hosts are no-ops outside Electron but pull in the full desktop
+// preview/browser implementation when statically imported by AppRoot. Start
+// the Electron-only request during startup and await it with the router so the
+// existing host readiness and first-commit ordering stay unchanged.
+const electronOnlyHostsModule = isElectron
+  ? import("./components/ElectronOnlyHosts").then((module) => module.ElectronOnlyHosts)
+  : null;
+
 // The index.html boot splash lives inside #root, and React's first commit
 // clears it. Resolve everything that first commit needs, the selected
 // managed-auth runtime and the initial route's split chunks, before
@@ -59,14 +65,16 @@ const managedAuthShellModule =
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
   router.load(),
+  electronOnlyHostsModule,
 ])
-  .then(([ManagedAuthShell]) => {
+  .then(([ManagedAuthShell, , ElectronOnlyHosts]) => {
     // A route chunk failure still resolves router.load(): the error is parked in
     // the lazy component and surfaces through the route error boundary. Skip the
     // paint when a reload is on its way, and only re-arm the guard after a boot
     // that fetched every chunk it asked for.
     if (reloadScheduled) return;
     if (!chunkLoadFailed) clearChunkReloadGuard();
+    const app = <AppRoot router={router} electronOnlyHosts={ElectronOnlyHosts ?? undefined} />;
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (
