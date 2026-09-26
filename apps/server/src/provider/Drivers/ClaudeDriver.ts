@@ -34,6 +34,7 @@ import {
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { readClaudeRelayUsageLimits } from "../Layers/claudeRelayUsageLimits.ts";
 import { makeClaudeScopedLimitNames } from "../Layers/claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../Layers/claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../Layers/resetCreditCoordinator.ts";
@@ -228,6 +229,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
                     Effect.provideService(Path.Path, path),
                   ),
               ),
+            ),
+            Effect.flatMap((snapshot) =>
+              effectiveConfig.enabled &&
+              snapshot.installed &&
+              snapshot.auth.status === "authenticated"
+                ? readClaudeRelayUsageLimits(processEnv).pipe(
+                    Effect.map((usageLimits) =>
+                      usageLimits ? { ...snapshot, usageLimits } : snapshot,
+                    ),
+                    Effect.provideService(HttpClient.HttpClient, httpClient),
+                  )
+                : Effect.succeed(snapshot),
             ),
             Effect.map(stampIdentity),
           ),
