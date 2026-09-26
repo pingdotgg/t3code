@@ -44,7 +44,10 @@ const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.
 // Stopping a session kills the agent with SIGTERM; Windows terminates the
 // process instead, so the mock never sees a signal to log.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
-async function makeMockAgentWrapper(
+type AcpMockWire = "v1" | "v2";
+
+async function makeMockAgentWrapperOn(
+  wire: AcpMockWire,
   extraEnv?: Record<string, string>,
   options?: { initialDelaySeconds?: number },
 ) {
@@ -52,7 +55,7 @@ async function makeMockAgentWrapper(
   return writeFakeCli({
     directory: dir,
     name: "fake-agent",
-    env: extraEnv ?? {},
+    env: { T3_ACP_WIRE: wire, ...extraEnv },
     source: execScriptSource({
       scriptPath: mockAgentPath,
       ...(options?.initialDelaySeconds === undefined
@@ -62,7 +65,8 @@ async function makeMockAgentWrapper(
   });
 }
 
-async function makeProbeWrapper(
+async function makeProbeWrapperOn(
+  wire: AcpMockWire,
   requestLogPath: string,
   argvLogPath: string,
   extraEnv?: Record<string, string>,
@@ -71,7 +75,7 @@ async function makeProbeWrapper(
   return writeFakeCli({
     directory: dir,
     name: "fake-agent",
-    env: { T3_ACP_REQUEST_LOG_PATH: requestLogPath, ...extraEnv },
+    env: { T3_ACP_WIRE: wire, T3_ACP_REQUEST_LOG_PATH: requestLogPath, ...extraEnv },
     source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
   });
 }
@@ -161,7 +165,27 @@ const cursorAdapterTestLayer = it.layer(
   ),
 );
 
-cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+// Released cursor-agent speaks the ACP v1 message shape; v2 covers the upgrade path.
+for (const wire of ["v1", "v2"] as const) {
+  cursorAdapterTestLayer(`CursorAdapterLive (ACP ${wire})`, (it) =>
+    cursorAdapterLiveTests(it, wire),
+  );
+}
+
+function cursorAdapterLiveTests(
+  it: Parameters<Parameters<typeof cursorAdapterTestLayer>[1]>[0],
+  wire: AcpMockWire,
+) {
+  const makeMockAgentWrapper = (
+    extraEnv?: Record<string, string>,
+    options?: { initialDelaySeconds?: number },
+  ) => makeMockAgentWrapperOn(wire, extraEnv, options);
+  const makeProbeWrapper = (
+    requestLogPath: string,
+    argvLogPath: string,
+    extraEnv?: Record<string, string>,
+  ) => makeProbeWrapperOn(wire, requestLogPath, argvLogPath, extraEnv);
+
   it.effect("rejects rollback without discarding the provider conversation", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -1660,4 +1684,4 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
   );
-});
+}

@@ -46,12 +46,14 @@ const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.
 // process instead, so the mock never sees a signal to log.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+type AcpMockWire = "v1" | "v2";
+
+async function makeMockGrokWrapperOn(wire: AcpMockWire, extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   return writeFakeCli({
     directory: dir,
     name: "fake-grok",
-    env: { T3_ACP_GROK: "1", ...extraEnv },
+    env: { T3_ACP_GROK: "1", T3_ACP_WIRE: wire, ...extraEnv },
     source: execScriptSource({ scriptPath: mockAgentPath }),
   });
 }
@@ -214,7 +216,20 @@ it("requires a settlement to match the live Grok turn", () => {
   );
 });
 
-it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+const grokAdapterLive = it.layer(grokAdapterTestLayer);
+
+// Released Grok speaks the ACP v1 message shape; v2 covers the upgrade path.
+for (const wire of ["v1", "v2"] as const) {
+  grokAdapterLive(`GrokAdapterLive (ACP ${wire})`, (it) => grokAdapterLiveTests(it, wire));
+}
+
+function grokAdapterLiveTests(
+  it: Parameters<Parameters<typeof grokAdapterLive>[1]>[0],
+  wire: AcpMockWire,
+) {
+  const makeMockGrokWrapper = (extraEnv?: Record<string, string>) =>
+    makeMockGrokWrapperOn(wire, extraEnv);
+
   it.effect("rejects rollback without discarding the provider conversation", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-unsupported-rollback");
@@ -401,6 +416,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           (request) => (request.params as { prompt: Array<{ type: string; text: string }> }).prompt,
         );
       assert.equal(prompts.length, 3);
+      // ACP v2 removed session/set_model; Grok switches models through the config option.
+      assert.equal(
+        requests.some((request) => request.method === "session/set_model"),
+        wire === "v1",
+      );
       assert.deepEqual(prompts[2], [{ type: "text", text: "/goal status" }]);
       assert.deepEqual(prompts[0]?.[0], { type: "text", text: "First prompt" });
       assert.include(prompts[0]?.[1]?.text, "Grok harness, as grok-mock-alt");
@@ -2643,4 +2663,4 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
   );
-});
+}

@@ -4,8 +4,10 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
+import * as Stdio from "effect/Stdio";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -16,12 +18,21 @@ import type * as AcpSchema from "effect-acp/schema";
 import type * as AcpCompat from "effect-acp/compat";
 
 import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
+import { makeAcpMockV1Wire } from "./acpMockV1Wire.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 // Grok on ACP v2 reports its versioned model ids as the model config option.
 const grokProfile = process.env.T3_ACP_GROK === "1";
+// Real Grok, cursor-agent and Antigravity speak the v1 message shape.
+const v1Wire =
+  process.env.T3_ACP_WIRE === "v1"
+    ? makeAcpMockV1Wire({
+        protocolVersion: antigravityProfile ? 2 : 1,
+        sessionState: () => ({ modes: modeState(), models: modelState() }),
+      })
+    : undefined;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -156,7 +167,8 @@ function logExit(reason: string): void {
 }
 
 function writeJsonRpcNotification(method: string, params: unknown): void {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
+  const message = { jsonrpc: "2.0", method, params };
+  process.stdout.write(v1Wire ? v1Wire.toClientLines(message) : `${JSON.stringify(message)}\n`);
 }
 
 function logResidualCallbackResponse(kind: string): void {
@@ -2350,28 +2362,36 @@ const program = Effect.gen(function* () {
   return yield* Effect.never;
 }).pipe(
   Effect.provide(
-    EffectAcpAgent.layerStdio(
-      requestLogPath
-        ? {
-            logIncoming: true,
-            logger: (event) => {
-              if (event.direction !== "incoming" || event.stage !== "raw") {
-                return Effect.void;
+    Layer.effect(
+      EffectAcpAgent.AcpAgent,
+      Effect.flatMap(Effect.service(Stdio.Stdio), (stdio) => {
+        const logRequest = (payload: string) =>
+          requestLogPath === undefined
+            ? undefined
+            : NodeFS.appendFileSync(
+                requestLogPath,
+                payload.endsWith("\n") ? payload : `${payload}\n`,
+                "utf8",
+              );
+        // The v1 profile logs what the client sent, before it becomes v2.
+        if (v1Wire) return EffectAcpAgent.make(v1Wire.wrapStdio(stdio, logRequest));
+        return EffectAcpAgent.make(
+          stdio,
+          requestLogPath
+            ? {
+                logIncoming: true,
+                logger: (event) => {
+                  const payload = event.payload;
+                  return event.direction === "incoming" &&
+                    event.stage === "raw" &&
+                    typeof payload === "string"
+                    ? Effect.sync(() => logRequest(payload))
+                    : Effect.void;
+                },
               }
-              if (typeof event.payload !== "string") {
-                return Effect.void;
-              }
-              const payload = event.payload;
-              return Effect.sync(() => {
-                NodeFS.appendFileSync(
-                  requestLogPath,
-                  payload.endsWith("\n") ? payload : `${payload}\n`,
-                  "utf8",
-                );
-              });
-            },
-          }
-        : {},
+            : {},
+        );
+      }),
     ),
   ),
   Effect.scoped,

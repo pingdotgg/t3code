@@ -311,9 +311,10 @@ const layer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("AntigravityAdapter", (it) => {
-  it.effect(
-    "runs native auth, resume, models, commands, and streaming through the ACP transport",
-    () =>
+  // Released Antigravity reports protocol version 2 but answers in the v1 shape.
+  it.effect.each(["v1", "v2"] as const)(
+    "runs native auth, resume, models, commands, and streaming through the ACP %s transport",
+    (wire) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -345,6 +346,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
                   ...process.env,
                   T3_ACP_ANTIGRAVITY: "1",
                   T3_ACP_REQUEST_LOG_PATH: requestLog,
+                  T3_ACP_WIRE: wire,
                 },
                 extendEnv: false,
               },
@@ -398,7 +400,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         const requests = yield* decodeRequestLog(lines);
         expect(
           requests
-            .filter((request) => request.method === "auth/login")
+            .filter((request) => request.method === (wire === "v1" ? "authenticate" : "auth/login"))
             .map((request) => request.params),
         ).toEqual([{ methodId: "oauth-personal" }, { methodId: "oauth-personal" }]);
         expect(requests.some((request) => request.method === "session/resume")).toBe(true);
@@ -410,7 +412,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         ).toContainEqual({
           sessionId: "mock-session-1",
           configId: "mode",
-          type: "id",
+          ...(wire === "v2" ? { type: "id" } : {}),
           value: "auto_edit",
         });
       }),
