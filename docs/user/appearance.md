@@ -21,6 +21,19 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Customize the interface
+
+On web and desktop, choose **Customize interface** at the bottom of the sidebar, in the command
+palette, or under **Settings → Appearance** to arrange the app in place. Palettes open beside the
+thread list, chat header, and composer. Drag details to reorder them, switch off the ones you don't
+need, and change the theme, text size, and chat width while watching the result. The composer
+palette can hold the composer expanded or collapsed so you can see both layouts, and sets the order
+of the environment and model controls in the strip under it.
+
+Changes apply immediately. **Revert** undoes everything since you opened the mode, and **Done** or
+Escape keeps it. Like other appearance preferences, the arrangement is saved on each device or
+browser. Mobile does not have this mode.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

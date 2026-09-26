@@ -979,6 +979,8 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useInterfaceLayout } from "../../hooks/useInterfaceLayout";
+import { useComposerPreview } from "../customize/customizeInterfaceStore";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
@@ -2138,8 +2140,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     key: 0,
     active: false,
   });
+  const composerPreview = useComposerPreview();
+  // Customize interface can hold either layout while its preview is forced.
   const isComposerCollapsedMobile =
-    isMobileViewport && !forceExpandedOnMobile && !isComposerFocused && !hasMultilinePrompt;
+    isMobileViewport &&
+    (composerPreview === "live"
+      ? !forceExpandedOnMobile && !isComposerFocused && !hasMultilinePrompt
+      : composerPreview === "collapsed");
 
   // ------------------------------------------------------------------
   // Refs
@@ -2538,7 +2545,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
+  const toolbarLayout = useInterfaceLayout("composerToolbar");
   const showComposerAttachAction =
+    !toolbarLayout.hidden.has("attach") &&
     fileStagingLimit !== null &&
     (!activePendingProgress ||
       (supportsQuestionAttachments &&
@@ -4732,10 +4741,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerResting = shouldUseRestingComposerLayout({
     isExistingThread: routeKind === "server" && activeThreadId !== null,
     isMobileViewport,
-    isScrollCollapsed: isComposerScrollCollapsed,
+    isScrollCollapsed:
+      composerPreview === "live" ? isComposerScrollCollapsed : composerPreview === "collapsed",
     hasExpandedChrome: composerHasExpandedChrome,
     hasMultilinePrompt,
-    timelineOverflows,
+    // A forced preview shows the resting layout even on a short thread.
+    timelineOverflows: composerPreview === "collapsed" || timelineOverflows,
   });
   const expandedComposerImages = isComposerResting
     ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
@@ -4955,40 +4966,46 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const iconOnlyBlockCount = composerControlsInStrip
     ? restingControlsIconOnlyBlockCount
     : expandedControlsLayout.iconOnlyBlockCount;
+  // Blocks are measured and overflow into the compact menu from the end, so
+  // the user's order also decides which block gives way first.
+  const restingBlockIds = toolbarLayout.order.filter(
+    (id): id is "traits" | "mode" =>
+      (id === "traits" ? providerTraitsPicker !== null : id === "mode") &&
+      !toolbarLayout.hidden.has(id),
+  );
+  const isRestingBlockHidden = (id: "traits" | "mode") =>
+    restingBlockIds.indexOf(id) >= restingBlockIds.length - restingHiddenBlockCount;
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsInStrip ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: composerControlsHidden || isRestingBlockHidden("traits"),
   });
-  const restingBlockDefs = [
-    ...(providerTraitsPicker
-      ? [
-          {
-            id: "traits",
-            content: (
-              <>
-                <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
-                {restingProviderTraitsPicker}
-              </>
-            ),
-          },
-        ]
-      : []),
-    {
-      id: "mode",
-      content: (
-        <ComposerFooterModeControls
-          showInteractionModeToggle={planModeUiEnabled}
-          interactionMode={interactionMode}
-          runtimeMode={runtimeMode}
-          size={composerControlsInStrip ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
-          onToggleInteractionMode={toggleInteractionMode}
-          onRuntimeModeChange={handleRuntimeModeChange}
-        />
-      ),
-    },
-  ];
+  const restingBlockDefs = restingBlockIds.map((id) =>
+    id === "traits"
+      ? {
+          id,
+          content: (
+            <>
+              <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
+              {restingProviderTraitsPicker}
+            </>
+          ),
+        }
+      : {
+          id,
+          content: (
+            <ComposerFooterModeControls
+              showInteractionModeToggle={planModeUiEnabled}
+              interactionMode={interactionMode}
+              runtimeMode={runtimeMode}
+              size={composerControlsInStrip ? "xs" : "sm"}
+              hidden={composerControlsHidden || isRestingBlockHidden("mode")}
+              onToggleInteractionMode={toggleInteractionMode}
+              onRuntimeModeChange={handleRuntimeModeChange}
+            />
+          ),
+        },
+  );
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);

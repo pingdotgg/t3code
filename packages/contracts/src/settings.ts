@@ -295,6 +295,22 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+/**
+ * One surface arranged in Customize interface mode: element ids in the order
+ * the user placed them, plus the ids they hid. Ids stay open strings so a
+ * layout saved by another build always decodes; clients drop ids they don't
+ * know and slot new elements into their default position.
+ */
+export const InterfaceSurfaceLayout = Schema.Struct({
+  order: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  hidden: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type InterfaceSurfaceLayout = typeof InterfaceSurfaceLayout.Type;
+
+/** Sparse per-surface layouts keyed by surface id; an absent surface uses its defaults. */
+export const InterfaceLayout = Schema.Record(Schema.String, InterfaceSurfaceLayout);
+export type InterfaceLayout = typeof InterfaceLayout.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -447,6 +463,7 @@ export const ClientSettingsSchema = Schema.Struct({
   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Rich text is the default; users can opt out for literal Markdown editing.
   composerRichTextEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  interfaceLayout: InterfaceLayout.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
@@ -1633,6 +1650,7 @@ export const ClientSettingsPatch = Schema.Struct({
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
+  interfaceLayout: Schema.optionalKey(InterfaceLayout),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),

@@ -300,6 +300,19 @@ function useClientSettingsValue(): ClientSettings {
   );
 }
 
+/**
+ * One client setting, re-rendering only when that value changes. Use it in
+ * components mounted many times, where `useClientSettings` would re-render
+ * every instance on any settings write.
+ */
+export function useClientSetting<K extends keyof ClientSettings>(key: K): ClientSettings[K] {
+  return useSyncExternalStore(
+    subscribeClientSettings,
+    () => getClientSettingsSnapshot()[key],
+    () => DEFAULT_CLIENT_SETTINGS[key],
+  );
+}
+
 export function mergeEnvironmentSettings(
   serverSettings: ServerSettings,
   clientSettings: ClientSettings,

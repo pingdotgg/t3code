@@ -8,6 +8,7 @@ import type {
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
+import type { ResolvedSurfaceLayout } from "../interfaceLayout";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -74,6 +75,20 @@ export function shouldShowComposerContextStrip(input: {
     input.hasActiveProject &&
     (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
   );
+}
+
+/**
+ * Whether anything visible sits before a collapsed composer's controls in the
+ * context strip, which decides if the controls open with a separator.
+ */
+export function resolveContextBarLeadsControls(
+  layout: ResolvedSurfaceLayout<"composerContextBar">,
+  shown: { workspace: boolean; branch: boolean },
+): boolean {
+  const controlsIndex = layout.order.indexOf("controls");
+  return layout.order
+    .slice(0, controlsIndex)
+    .some((id) => id !== "controls" && shown[id] && !layout.hidden.has(id));
 }
 
 // Labels collapse to icons when the strip's content no longer fits. A small

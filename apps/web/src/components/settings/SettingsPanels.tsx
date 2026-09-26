@@ -1,7 +1,16 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
-import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  CheckIcon,
+  ChevronRightIcon,
+  SettingsIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
+import { useCustomizeInterfaceStore } from "../customize/customizeInterfaceStore";
+import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1148,6 +1157,35 @@ function BackgroundActivityAdvancedDialog({
   );
 }
 
+/** Points to Customize interface mode, where these settings apply on the live app. */
+function CustomizeInPlaceCard() {
+  const navigateToMainApp = useNavigateToMainApp();
+  const openCustomize = useCustomizeInterfaceStore((store) => store.open);
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card/60 px-4 py-3">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary ring-1 ring-primary/20 ring-inset">
+        <SlidersHorizontalIcon className="size-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">Customize in place</p>
+        <p className="text-xs text-muted-foreground">
+          Change these on your real threads, and arrange the thread list, composer, and header.
+        </p>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          openCustomize();
+          void navigateToMainApp();
+        }}
+      >
+        Customize interface
+      </Button>
+    </div>
+  );
+}
+
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
@@ -1189,6 +1227,7 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <CustomizeInPlaceCard />
       <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary
