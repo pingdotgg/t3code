@@ -477,6 +477,10 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
 });
 
 const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjectionPipeline")(
+  /**
+   * Project orchestration events into the thread, turn, and session read models.
+   * A goal-clear activity drops a pending turn the same way compaction does.
+   */
   function* () {
     const sql = yield* SqlClient.SqlClient;
     const eventStore = yield* OrchestrationEventStore;
@@ -1375,9 +1379,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       });
     });
 
-    const applyThreadTurnsProjection: ProjectorDefinition["apply"] = Effect.fn(
-      "applyThreadTurnsProjection",
-    )(function* (event, _attachmentSideEffects) {
+    /**
+     * Project turn rows. A goal-clear activity drops the pending turn start
+     * the same way context compaction does, so `/goal clear` never becomes a turn.
+     */
+    function* applyThreadTurnsProjectionBody(
+      event: OrchestrationEvent,
+      _attachmentSideEffects: AttachmentSideEffects,
+    ) {
       switch (event.type) {
         case "thread.created":
           yield* projectionTurnRepository.deleteByThreadId({
@@ -1413,10 +1422,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.activity-appended": {
-          if (event.payload.activity.kind === "context-compaction") {
-            const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
-              event.payload,
-            );
+          if (
+            event.payload.activity.kind === "context-compaction" ||
+            event.payload.activity.kind === "provider.goal.cleared"
+          ) {
+            const pendingTurnStart =
+              yield* projectionTurnRepository.getPendingTurnStartByThreadId(event.payload);
             if (
               Option.isNone(pendingTurnStart) ||
               String(pendingTurnStart.value.messageId) !==
@@ -1459,7 +1470,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             // Leaving the "running" session status is the turn-end signal:
             // settle still-running turns so their duration reflects the whole
             // turn rather than the last assistant message.
-            const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
+            const settledTurnState = settledTurnStateForSessionStatus(
+              event.payload.session.status,
+            );
             if (settledTurnState === null) {
               return;
             }
@@ -1493,8 +1506,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           yield* Effect.forEach(
             otherRunningTurns.filter(
-              (turn) => turn.turnId !== null && turn.turnId !== turnId && turn.state === "running",
+              /**
+               * Other turns that are still running after this session settles.
+               */
+              (turn) =>
+                turn.turnId !== null && turn.turnId !== turnId && turn.state === "running",
             ),
+            /**
+             * Settle each other running turn now that a new turn is active.
+             */
             (turn) =>
               turn.turnId === null
                 ? Effect.void
@@ -1777,9 +1797,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         default:
           return;
       }
-    });
+    }
 
-    const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
+    const applyThreadTurnsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyThreadTurnsProjection",
+    )(applyThreadTurnsProjectionBody);
+
+    /** Checkpoint rows are not part of this orchestration read model. */
+    function applyCheckpointsProjection() {
+      return Effect.void;
+    }
 
     const applyPendingApprovalsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyPendingApprovalsProjection",

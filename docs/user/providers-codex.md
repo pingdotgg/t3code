@@ -72,6 +72,12 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+## Clear a goal
+
+In an existing Codex thread, send `/goal clear` to remove the persisted goal.
+The thread and project files stay. T3 confirms when the goal is cleared, or
+when there was no goal to remove.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

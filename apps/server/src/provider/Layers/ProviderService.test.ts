@@ -136,6 +136,9 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
+/**
+ * Fake adapter used to assert provider routing, including goal clear.
+ */
 function makeFakeCodexAdapter(
   provider: ProviderDriverKind = CODEX_DRIVER,
   supportsConversationRollback?: boolean,
@@ -257,6 +260,14 @@ function makeFakeCodexAdapter(
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  /** Fake Codex goal clear. Returns a cleared goal. */
+  function fakeCodexClearGoal(
+    _threadId: ThreadId,
+  ): Effect.Effect<{ readonly cleared: boolean }, ProviderAdapterError> {
+    return Effect.succeed({ cleared: true });
+  }
+  const clearGoal = vi.fn(fakeCodexClearGoal);
+
   const uploadFeedback = vi.fn(
     (
       input: ProviderUploadFeedbackInput,
@@ -294,7 +305,7 @@ function makeFakeCodexAdapter(
     hasSession,
     readThread,
     rollbackThread,
-    ...(provider === CODEX_DRIVER ? { uploadFeedback } : {}),
+    ...(provider === CODEX_DRIVER ? { uploadFeedback, clearGoal } : {}),
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -332,6 +343,7 @@ function makeFakeCodexAdapter(
     readThread,
     rollbackThread,
     uploadFeedback,
+    clearGoal,
     stopAll,
   };
 }
@@ -1617,7 +1629,12 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-routing.layer("ProviderServiceLive routing", (it) => {
+routing.layer(
+  "ProviderServiceLive routing",
+  /**
+   * Provider routing, including goal clear to the bound adapter.
+   */
+  (it) => {
   it.effect.each([CODEX_DRIVER, CLAUDE_AGENT_DRIVER, CURSOR_DRIVER])(
     "rejects missing, file, and saved workspace paths before starting %s",
     (driver) =>
@@ -2140,6 +2157,67 @@ routing.layer("ProviderServiceLive routing", (it) => {
       yield* Fiber.join(retryFiber);
       yield* provider.stopSession({ threadId });
     }),
+  );
+
+  /**
+   * Start a Codex session and assert `clearGoal` is forwarded once.
+   */
+  function* routeGoalClearToCodexAdapter() {
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = asThreadId("thread-goal-clear-route");
+          yield* provider.startSession(threadId, {
+            provider: CODEX_DRIVER,
+            providerInstanceId: codexInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+          routing.codex.clearGoal.mockClear();
+
+          const result = yield* provider.clearGoal(threadId);
+
+          assert.deepStrictEqual(result, { cleared: true });
+          assert.deepStrictEqual(routing.codex.clearGoal.mock.calls, [[threadId]]);
+  }
+  /** ProviderService sends goal clear to the Codex adapter bound to the thread. */
+  function runRouteGoalClearToCodexAdapter() {
+    return Effect.gen(routeGoalClearToCodexAdapter);
+  }
+  /**
+   * ProviderService sends goal clear to the Codex adapter bound to the thread.
+   */
+  it.effect(
+    "routes goal clear to the Codex adapter",
+    runRouteGoalClearToCodexAdapter,
+  );
+
+  /**
+   * Start a Claude session and assert goal clear returns a validation error.
+   */
+  function* rejectGoalClearWithoutChannel() {
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = asThreadId("thread-goal-clear-claude");
+          yield* provider.startSession(threadId, {
+            provider: CLAUDE_AGENT_DRIVER,
+            providerInstanceId: claudeAgentInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+
+          const error = yield* provider.clearGoal(threadId).pipe(Effect.flip);
+
+          assert.instanceOf(error, ProviderValidationError);
+          assert.include(error.issue, "does not support clearing a goal");
+  }
+  /** Providers without a goal channel fail validation instead of starting a turn. */
+  function runRejectGoalClearWithoutChannel() {
+    return Effect.gen(rejectGoalClearWithoutChannel);
+  }
+  /**
+   * Providers without a goal channel fail validation instead of starting a turn.
+   */
+  it.effect(
+    "rejects goal clear for providers without a goal channel",
+    runRejectGoalClearWithoutChannel,
   );
 
   it.effect("routes feedback to the Codex adapter and returns its feedback ID", () =>

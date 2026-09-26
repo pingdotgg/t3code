@@ -214,10 +214,14 @@ export interface CodexThreadSnapshot {
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
   readonly getSession: Effect.Effect<ProviderSession>;
+  /**
+   * Start a turn on the live Codex thread.
+   */
   readonly sendTurn: (
     input: CodexSessionRuntimeSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, CodexSessionRuntimeError>;
   readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly clearGoal: Effect.Effect<{ readonly cleared: boolean }, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
   readonly rollbackThread: (
@@ -1296,14 +1300,22 @@ export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
   return { threadId, turns: snapshot.turns.slice(0, retainedCount) };
 });
 
-export const makeCodexSessionRuntime = (
-  options: CodexSessionRuntimeOptions,
-): Effect.Effect<
-  CodexSessionRuntimeShape,
-  CodexErrors.CodexAppServerError,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
+export const makeCodexSessionRuntime =
+  /**
+   * Build the live Codex session runtime, including thread/goal/clear.
+   */
+  (
+    options: CodexSessionRuntimeOptions,
+  ): Effect.Effect<
+    CodexSessionRuntimeShape,
+    CodexErrors.CodexAppServerError,
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
+  > =>
+  Effect.gen(
+      /**
+       * Open the app-server session and implement runtime methods on that connection.
+       */
+      function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
@@ -2540,14 +2552,31 @@ export const makeCodexSessionRuntime = (
       yield* Queue.shutdown(events);
     });
 
+    /**
+     * Ask Codex to drop the persisted goal. `cleared` is false when none was set.
+     */
+    function* clearCodexSessionGoal() {
+      const providerThreadId = yield* readProviderThreadId;
+      return yield* client.request("thread/goal/clear", { threadId: providerThreadId });
+    }
+
     return {
       start,
       getSession: Ref.get(sessionRef),
-      compactThread: Effect.gen(function* () {
+      compactThread: Effect.gen(
+        /**
+         * Ask Codex to compact the live thread.
+         */
+        function* () {
         const providerThreadId = yield* readProviderThreadId;
         yield* client.request("thread/compact/start", { threadId: providerThreadId });
       }),
-      sendTurn: (input) =>
+      clearGoal: clearCodexSessionGoal,
+      sendTurn:
+        /**
+         * Start a Codex turn on the live app-server thread.
+         */
+        (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           if (hasConfiguredMcpServer(options.appServerArgs)) {

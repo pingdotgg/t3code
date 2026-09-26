@@ -112,6 +112,9 @@ function isLegacyTurnCompletedEvent(
   );
 }
 
+/**
+ * Build a provider service stub for runtime ingestion tests.
+ */
 function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(
     PubSub.unbounded<{
@@ -121,18 +124,70 @@ function createProviderServiceHarness() {
   );
   const runtimeSessions: ProviderSession[] = [];
 
-  const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+  /**
+   * Fail any provider call this ingestion harness does not implement.
+   */
+  function unsupported() {
+    return Effect.die(new Error("Unsupported provider call in test")) as never;
+  }
+  /** Unused ingestion stub. This harness never starts a provider session. */
+  function unusedIngestionStartSession() {
+    return unsupported();
+  }
+  /** Unused ingestion stub. This harness never sends a provider turn. */
+  function unusedIngestionSendTurn() {
+    return unsupported();
+  }
+  /** Unused ingestion stub. This harness never compacts a thread. */
+  function unusedIngestionCompactThread() {
+    return unsupported();
+  }
+  /** Goal clear is not exercised by the ingestion harness. */
+  function unusedIngestionClearGoal() {
+    return unsupported();
+  }
+  /** Unused ingestion stub. This harness never interrupts a turn. */
+  function unusedIngestionInterruptTurn() {
+    return unsupported();
+  }
+  /** Unused ingestion stub. This harness never answers an approval. */
+  function unusedIngestionRespondToRequest() {
+    return unsupported();
+  }
+  /** Unused ingestion stub. This harness never answers user input. */
+  function unusedIngestionRespondToUserInput() {
+    return unsupported();
+  }
+  /** Unused ingestion stub. This harness never stops a session. */
+  function unusedIngestionStopSession() {
+    return unsupported();
+  }
+  /** Return the sessions this ingestion harness has recorded. */
+  function listIngestionSessions() {
+    return Effect.succeed([...runtimeSessions]);
+  }
   const service: ProviderServiceShape = {
-    startSession: () => unsupported(),
-    sendTurn: () => unsupported(),
-    compactThread: () => unsupported(),
-    interruptTurn: () => unsupported(),
-    respondToRequest: () => unsupported(),
-    respondToUserInput: () => unsupported(),
-    stopSession: () => unsupported(),
-    listSessions: () => Effect.succeed([...runtimeSessions]),
+    /** Unused ingestion stub. This harness never starts a provider session. */
+    startSession: unusedIngestionStartSession,
+    /** Unused ingestion stub. This harness never sends a provider turn. */
+    sendTurn: unusedIngestionSendTurn,
+    /** Unused ingestion stub. This harness never compacts a thread. */
+    compactThread: unusedIngestionCompactThread,
+    /** Goal clear is not exercised by the ingestion harness. */
+    clearGoal: unusedIngestionClearGoal,
+    /** Unused ingestion stub. This harness never interrupts a turn. */
+    interruptTurn: unusedIngestionInterruptTurn,
+    /** Unused ingestion stub. This harness never answers an approval. */
+    respondToRequest: unusedIngestionRespondToRequest,
+    /** Unused ingestion stub. This harness never answers user input. */
+    respondToUserInput: unusedIngestionRespondToUserInput,
+    /** Unused ingestion stub. This harness never stops a session. */
+    stopSession: unusedIngestionStopSession,
+    /** Return the sessions this ingestion harness has recorded. */
+    listSessions: listIngestionSessions,
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
-    assertConversationRollbackSupported: () => unsupported(),
+    /** Rollback support is not part of the ingestion harness. */
+    assertConversationRollbackSupported: unusedIngestionStopSession,
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
       return Effect.succeed({
@@ -146,8 +201,10 @@ function createProviderServiceHarness() {
         },
       });
     },
-    rollbackConversation: () => unsupported(),
-    uploadFeedback: () => unsupported(),
+    /** Conversation rollback is not part of the ingestion harness. */
+    rollbackConversation: unusedIngestionStopSession,
+    /** Feedback upload is not part of the ingestion harness. */
+    uploadFeedback: unusedIngestionStopSession,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub).pipe(
         Stream.flatMap(({ events, enqueued }) =>

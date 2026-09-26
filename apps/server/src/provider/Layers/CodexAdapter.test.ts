@@ -86,6 +86,26 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly compactThread = Effect.void;
 
+  /** Resolve a cleared goal for the fake Codex runtime. */
+  public resolveFakeClearedGoal() {
+    return Promise.resolve({ cleared: true });
+  }
+
+  public readonly clearGoalImpl = vi.fn(
+    /** Resolve a cleared goal for the fake Codex runtime. */
+    () => this.resolveFakeClearedGoal(),
+  );
+
+  /** Forward goal clear to the fake runtime implementation. */
+  public readFakeClearGoal() {
+    return this.clearGoalImpl();
+  }
+
+  clearGoal = Effect.promise(
+    /** Forward goal clear to the fake runtime implementation. */
+    () => this.readFakeClearGoal(),
+  );
+
   public readonly interruptTurnImpl = vi.fn((_turnId?: TurnId): Promise<void> =>
     Promise.resolve(undefined),
   );
@@ -318,7 +338,12 @@ const sessionErrorLayer = it.layer(
   ),
 );
 
-sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+sessionErrorLayer(
+  "CodexAdapterLive session errors",
+  /**
+   * Codex adapter session behavior, including thread/goal/clear.
+   */
+  (it) => {
   it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -377,6 +402,38 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.equal(event.payload.state, "compacted");
       yield* adapter.stopSession(threadId);
     }),
+  );
+
+  /**
+   * Start a session, clear the goal, and assert the runtime was called once.
+   */
+  function* clearPersistedGoalThroughAppServer() {
+          const adapter = yield* CodexAdapter;
+          const threadId = asThreadId("thread-goal-clear");
+          yield* adapter.startSession({
+            provider: ProviderDriverKind.make("codex"),
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const runtime = sessionRuntimeFactory.lastRuntime;
+          NodeAssert.ok(runtime);
+
+          const result = yield* adapter.clearGoal!(threadId);
+
+          NodeAssert.deepStrictEqual(result, { cleared: true });
+          NodeAssert.equal(runtime.clearGoalImpl.mock.calls.length, 1);
+          yield* adapter.stopSession(threadId);
+  }
+  /** The Codex adapter forwards goal clear to the session runtime. */
+  function runClearPersistedGoalThroughAppServer() {
+    return Effect.gen(clearPersistedGoalThroughAppServer);
+  }
+  /**
+   * The Codex adapter forwards goal clear to the session runtime.
+   */
+  it.effect(
+    "clears the persisted goal through the Codex app-server",
+    runClearPersistedGoalThroughAppServer,
   );
 
   it.effect("uploads feedback for the active Codex thread", () =>

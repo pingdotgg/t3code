@@ -89,6 +89,12 @@ export interface ProviderAdapterShape<TError> {
   readonly compaction?: ProviderCompaction<TError>;
 
   /**
+   * Clear a persisted provider goal without starting a model turn.
+   * Omitted when this adapter has no goal control channel.
+   */
+  readonly clearGoal?: (threadId: ThreadId) => Effect.Effect<{ readonly cleared: boolean }, TError>;
+
+  /**
    * Interrupt an active turn.
    */
   readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;

@@ -472,7 +472,11 @@ const correlateRuntimeEventWithInstance = (
   return { ...event, providerInstanceId: source.instanceId };
 };
 
-const makeProviderService = Effect.fn("makeProviderService")(function* (
+const makeProviderService = Effect.fn("makeProviderService")(
+  /**
+   * Route provider operations, including goal clear, to the adapter bound to each thread.
+   */
+  function* (
   options?: ProviderServiceLiveOptions,
 ) {
   const analytics = yield* Effect.service(AnalyticsService.AnalyticsService);
@@ -2263,6 +2267,37 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  /**
+   * Clear a persisted provider goal through the bound adapter.
+   * Fails when that adapter has no goal channel.
+   */
+  function* clearPersistedProviderGoal(
+    threadId: Parameters<ProviderServiceMethod<"clearGoal">>[0],
+  ) {
+    const routed = yield* resolveRoutableSession({
+      threadId,
+      operation: "ProviderService.clearGoal",
+      allowRecovery: true,
+    });
+    const clearGoalForAdapter = routed.adapter.clearGoal;
+    if (clearGoalForAdapter === undefined) {
+      return yield* toValidationError(
+        "ProviderService.clearGoal",
+        `Provider '${routed.adapter.provider}' does not support clearing a goal.`,
+      );
+    }
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "clear-goal",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": threadId,
+    });
+    return yield* clearGoalForAdapter(routed.threadId);
+  }
+
+  const clearGoal: ProviderServiceMethod<"clearGoal"> = Effect.fn("clearGoal")(
+    clearPersistedProviderGoal,
+  );
+
   const uploadFeedback: ProviderServiceMethod<"uploadFeedback"> = Effect.fn("uploadFeedback")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -2418,6 +2453,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     compactThread,
+    clearGoal,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

@@ -2225,16 +2225,17 @@ function mapToRuntimeEvents(
   return [];
 }
 
-/**
- * Build a Codex provider adapter bound to a specific `CodexSettings` payload.
- *
- * The adapter is a captured closure over `codexConfig` — the `binaryPath` and
- * `homePath` are read from that payload, not from `ServerSettingsService`.
- * This is what makes multi-instance routing possible: each `ProviderInstance`
- * in the registry owns its own closure with its own config, so two Codex
- * instances with different `homePath`s cannot step on each other.
- */
-export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
+export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(
+  /**
+   * Build a Codex provider adapter bound to a specific `CodexSettings` payload.
+   *
+   * The adapter is a captured closure over `codexConfig` — the `binaryPath` and
+   * `homePath` are read from that payload, not from `ServerSettingsService`.
+   * This is what makes multi-instance routing possible: each `ProviderInstance`
+   * in the registry owns its own closure with its own config, so two Codex
+   * instances with different `homePath`s cannot step on each other.
+   */
+  function* (
   codexConfig: CodexSettings,
   options?: CodexAdapterLiveOptions,
 ) {
@@ -2585,6 +2586,23 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
   });
 
+  /**
+   * Clear the persisted Codex goal via thread/goal/clear. Does not start a turn.
+   */
+  function* clearCodexAdapterGoal(threadId: ThreadId) {
+    const session = yield* requireSession(threadId);
+    return yield* session.runtime.clearGoal.pipe(
+      Effect.mapError(
+        /**
+         * Map a thread/goal/clear runtime failure into an adapter error.
+         */
+        (cause) => mapCodexRuntimeError(threadId, "thread/goal/clear", cause),
+      ),
+    );
+  }
+
+  const clearGoal = Effect.fn("clearGoal")(clearCodexAdapterGoal);
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.readThread),
@@ -2731,6 +2749,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     startSession,
     sendTurn,
     compaction: { type: "native", start: compactThread },
+    clearGoal,
     interruptTurn,
     readThread,
     rollbackThread,

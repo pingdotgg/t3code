@@ -46,6 +46,47 @@ import * as ServerSettings from "../src/serverSettings.ts";
 import * as AnalyticsService from "../src/telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
 
+/** Unused startup stub. Orphan recovery never starts a provider session. */
+function unusedOrphanStartSession() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery never sends a provider turn. */
+function unusedOrphanSendTurn() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery never compacts a thread. */
+function unusedOrphanCompactThread() {
+  return Effect.die("unused");
+}
+/** Unused goal-clear stub for orphaned-session startup. */
+function unusedOrphanClearGoal() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery never interrupts a turn. */
+function unusedOrphanInterruptTurn() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery never answers an approval. */
+function unusedOrphanRespondToRequest() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery never answers user input. */
+function unusedOrphanRespondToUserInput() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery never stops a session. */
+function unusedOrphanStopSession() {
+  return Effect.die("unused");
+}
+/** Unused startup stub. Orphan recovery reads no live provider sessions. */
+function unusedOrphanListSessions() {
+  return Effect.succeed([]);
+}
+/** Unused startup stub for provider calls orphan recovery never makes. */
+function unusedOrphanProviderCall() {
+  return Effect.die("unused");
+}
+
 const providerInstanceId = ProviderInstanceId.make("codex");
 const projectId = ProjectId.make("project-startup-orphan");
 const threadId = ThreadId.make("thread-startup-orphan");
@@ -112,19 +153,34 @@ const startupDependencies = Layer.mergeAll(
   AnalyticsService.layerTest,
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.succeed(ProviderService.ProviderService, {
-    startSession: () => Effect.die("unused"),
-    sendTurn: () => Effect.die("unused"),
-    compactThread: () => Effect.die("unused"),
-    interruptTurn: () => Effect.die("unused"),
-    respondToRequest: () => Effect.die("unused"),
-    respondToUserInput: () => Effect.die("unused"),
-    stopSession: () => Effect.die("unused"),
-    listSessions: () => Effect.succeed([]),
-    getCapabilities: () => Effect.die("unused"),
-    assertConversationRollbackSupported: () => Effect.die("unused"),
-    getInstanceInfo: () => Effect.die("unused"),
-    rollbackConversation: () => Effect.die("unused"),
-    uploadFeedback: () => Effect.die("unused"),
+    /** Unused startup stub. Orphan recovery never starts a provider session. */
+    startSession: unusedOrphanStartSession,
+    /** Unused startup stub. Orphan recovery never sends a provider turn. */
+    sendTurn: unusedOrphanSendTurn,
+    /** Unused startup stub. Orphan recovery never compacts a thread. */
+    compactThread: unusedOrphanCompactThread,
+    /** Unused goal-clear stub for orphaned-session startup. */
+    clearGoal: unusedOrphanClearGoal,
+    /** Unused startup stub. Orphan recovery never interrupts a turn. */
+    interruptTurn: unusedOrphanInterruptTurn,
+    /** Unused startup stub. Orphan recovery never answers an approval. */
+    respondToRequest: unusedOrphanRespondToRequest,
+    /** Unused startup stub. Orphan recovery never answers user input. */
+    respondToUserInput: unusedOrphanRespondToUserInput,
+    /** Unused startup stub. Orphan recovery never stops a session. */
+    stopSession: unusedOrphanStopSession,
+    /** Unused startup stub. Orphan recovery reads no live provider sessions. */
+    listSessions: unusedOrphanListSessions,
+    /** Unused startup stub for provider calls orphan recovery never makes. */
+    getCapabilities: unusedOrphanProviderCall,
+    /** Unused startup stub for provider calls orphan recovery never makes. */
+    assertConversationRollbackSupported: unusedOrphanProviderCall,
+    /** Unused startup stub for provider calls orphan recovery never makes. */
+    getInstanceInfo: unusedOrphanProviderCall,
+    /** Unused startup stub for provider calls orphan recovery never makes. */
+    rollbackConversation: unusedOrphanProviderCall,
+    /** Unused startup stub for provider calls orphan recovery never makes. */
+    uploadFeedback: unusedOrphanProviderCall,
     streamEvents: Stream.empty,
   }),
 );

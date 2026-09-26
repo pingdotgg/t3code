@@ -558,7 +558,11 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
   return { status: "ready", auth };
 }
 
-export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
+/**
+ * Probe Codex and build the provider snapshot, including the `/goal clear`
+ * slash command when the app-server is reachable.
+ */
+function* probeCodexProviderStatus(
   codexSettings: CodexSettings,
   probe: (input: {
     readonly binaryPath: string;
@@ -684,6 +688,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         description: "Send this thread and Codex logs to OpenAI",
         input: { hint: "Describe the issue (optional)" },
       },
+      {
+        name: "goal clear",
+        description: "Remove the persisted goal",
+      },
     ],
     probe: {
       installed: true,
@@ -694,7 +702,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       usageLimits,
     },
   });
-});
+}
+
+export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(
+  probeCodexProviderStatus,
+);
 
 // NOTE: the singleton `CodexProviderLive` Layer has been removed as part of
 // the per-instance-driver refactor. `CodexDriver.create()` builds a managed

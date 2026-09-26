@@ -85,6 +85,9 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
+/**
+ * Build a provider service stub for checkpoint tests. Goal clear is unsupported.
+ */
 function createProviderServiceHarness(
   cwd: string,
   hasSession = true,
@@ -100,8 +103,44 @@ function createProviderServiceHarness(
     ProviderServiceShape["assertConversationRollbackSupported"]
   >(() => Effect.void);
 
-  const unsupported = <A>() =>
-    Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
+  /**
+   * Fail any provider call this checkpoint harness does not implement.
+   */
+  function unsupported<A>() {
+    return Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
+  }
+  /** Unused checkpoint stub. This harness never starts a provider session. */
+  function unusedCheckpointStartSession() {
+    return unsupported();
+  }
+  /** Unused checkpoint stub. This harness never sends a provider turn. */
+  function unusedCheckpointSendTurn() {
+    return unsupported();
+  }
+  /** Unused checkpoint stub. This harness never compacts a thread. */
+  function unusedCheckpointCompactThread() {
+    return unsupported();
+  }
+  /** Goal clear is not exercised by the checkpoint harness. */
+  function unusedCheckpointClearGoal() {
+    return unsupported();
+  }
+  /** Unused checkpoint stub. This harness never interrupts a turn. */
+  function unusedCheckpointInterruptTurn() {
+    return unsupported();
+  }
+  /** Unused checkpoint stub. This harness never answers an approval. */
+  function unusedCheckpointRespondToRequest() {
+    return unsupported();
+  }
+  /** Unused checkpoint stub. This harness never answers user input. */
+  function unusedCheckpointRespondToUserInput() {
+    return unsupported();
+  }
+  /** Unused checkpoint stub. This harness never stops a session. */
+  function unusedCheckpointStopSession() {
+    return unsupported();
+  }
   const listSessions = () =>
     hasSession
       ? Effect.succeed([
@@ -117,13 +156,22 @@ function createProviderServiceHarness(
         ] satisfies ReadonlyArray<ProviderSession>)
       : Effect.succeed([] as ReadonlyArray<ProviderSession>);
   const service: ProviderServiceShape = {
-    startSession: () => unsupported(),
-    sendTurn: () => unsupported(),
-    compactThread: () => unsupported(),
-    interruptTurn: () => unsupported(),
-    respondToRequest: () => unsupported(),
-    respondToUserInput: () => unsupported(),
-    stopSession: () => unsupported(),
+    /** Unused checkpoint stub. This harness never starts a provider session. */
+    startSession: unusedCheckpointStartSession,
+    /** Unused checkpoint stub. This harness never sends a provider turn. */
+    sendTurn: unusedCheckpointSendTurn,
+    /** Unused checkpoint stub. This harness never compacts a thread. */
+    compactThread: unusedCheckpointCompactThread,
+    /** Goal clear is not exercised by the checkpoint harness. */
+    clearGoal: unusedCheckpointClearGoal,
+    /** Unused checkpoint stub. This harness never interrupts a turn. */
+    interruptTurn: unusedCheckpointInterruptTurn,
+    /** Unused checkpoint stub. This harness never answers an approval. */
+    respondToRequest: unusedCheckpointRespondToRequest,
+    /** Unused checkpoint stub. This harness never answers user input. */
+    respondToUserInput: unusedCheckpointRespondToUserInput,
+    /** Unused checkpoint stub. This harness never stops a session. */
+    stopSession: unusedCheckpointStopSession,
     listSessions,
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     assertConversationRollbackSupported,
@@ -139,7 +187,8 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
-    uploadFeedback: () => unsupported(),
+    /** Unused checkpoint stub. This harness never uploads feedback. */
+    uploadFeedback: unusedCheckpointStopSession,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },

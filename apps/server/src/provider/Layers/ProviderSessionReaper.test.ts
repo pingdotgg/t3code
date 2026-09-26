@@ -54,7 +54,38 @@ const drainFibers = Effect.forEach(Array.from({ length: 10 }), () => Effect.yiel
   discard: true,
 });
 
-const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
+/** Fail any provider call this reaper harness does not implement. */
+function unsupported() {
+  return Effect.die(new Error("Unsupported provider call in test")) as never;
+}
+/** Unused reaper stub. Session sweeps never start a provider session. */
+function unusedReaperStartSession() {
+  return unsupported();
+}
+/** Unused reaper stub. Session sweeps never send a provider turn. */
+function unusedReaperSendTurn() {
+  return unsupported();
+}
+/** Unused reaper stub. Session sweeps never compact a thread. */
+function unusedReaperCompactThread() {
+  return unsupported();
+}
+/** Goal clear is not exercised by the session reaper. */
+function unusedReaperClearGoal() {
+  return unsupported();
+}
+/** Unused reaper stub. Session sweeps never interrupt a turn. */
+function unusedReaperInterruptTurn() {
+  return unsupported();
+}
+/** Unused reaper stub. Session sweeps never answer an approval. */
+function unusedReaperRespondToRequest() {
+  return unsupported();
+}
+/** Unused reaper stub. Session sweeps never answer user input. */
+function unusedReaperRespondToUserInput() {
+  return unsupported();
+}
 
 function makeReadModel(
   threads: ReadonlyArray<{
@@ -120,7 +151,12 @@ function makeReadModel(
   };
 }
 
-describe("ProviderSessionReaper", () => {
+describe(
+  "ProviderSessionReaper",
+  /**
+   * Session reaper coverage. Goal clear is only a service-shape stub.
+   */
+  () => {
   let runtime: ManagedRuntime.ManagedRuntime<
     ProviderSessionReaper | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
     unknown
@@ -173,6 +209,9 @@ describe("ProviderSessionReaper", () => {
     );
   }
 
+  /**
+   * Build a reaper harness. Goal clear is present only to satisfy the service shape.
+   */
   async function createHarness(input: {
     readonly readModel: ReturnType<typeof makeReadModel>;
     readonly stopSessionImplementation?: (input: {
@@ -190,16 +229,25 @@ describe("ProviderSessionReaper", () => {
     );
 
     const providerService: ProviderServiceShape = {
-      startSession: () => unsupported(),
-      sendTurn: () => unsupported(),
-      compactThread: () => unsupported(),
-      interruptTurn: () => unsupported(),
-      respondToRequest: () => unsupported(),
-      respondToUserInput: () => unsupported(),
+      /** Unused reaper stub. Session sweeps never start a provider session. */
+      startSession: unusedReaperStartSession,
+      /** Unused reaper stub. Session sweeps never send a provider turn. */
+      sendTurn: unusedReaperSendTurn,
+      /** Unused reaper stub. Session sweeps never compact a thread. */
+      compactThread: unusedReaperCompactThread,
+      /** Goal clear is not exercised by the session reaper. */
+      clearGoal: unusedReaperClearGoal,
+      /** Unused reaper stub. Session sweeps never interrupt a turn. */
+      interruptTurn: unusedReaperInterruptTurn,
+      /** Unused reaper stub. Session sweeps never answer an approval. */
+      respondToRequest: unusedReaperRespondToRequest,
+      /** Unused reaper stub. Session sweeps never answer user input. */
+      respondToUserInput: unusedReaperRespondToUserInput,
       stopSession,
       listSessions: () => Effect.succeed([]),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
-      assertConversationRollbackSupported: () => unsupported(),
+      /** Rollback support is not part of the session reaper. */
+      assertConversationRollbackSupported: unusedReaperStartSession,
       getInstanceInfo: (instanceId) => {
         const driverKind = ProviderDriverKind.make(String(instanceId));
         return Effect.succeed({
@@ -213,8 +261,10 @@ describe("ProviderSessionReaper", () => {
           },
         });
       },
-      rollbackConversation: () => unsupported(),
-      uploadFeedback: () => unsupported(),
+      /** Conversation rollback is not part of the session reaper. */
+      rollbackConversation: unusedReaperStartSession,
+      /** Feedback upload is not part of the session reaper. */
+      uploadFeedback: unusedReaperStartSession,
       streamEvents: Stream.empty,
     };
 
