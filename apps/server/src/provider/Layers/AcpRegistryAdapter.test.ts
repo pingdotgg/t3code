@@ -230,53 +230,56 @@ function acpRegistryAdapterTests(
       }).pipe(Effect.scoped, TestClock.withLive),
   );
 
-  it.effect("asks before an MCP tool call in approval-required mode", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("acp-registry-mcp-approval");
-      const { adapter, events, interaction, requestLogPath } = yield* makeHarness({
-        wire,
-        env: { T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION: "1" },
-      });
-      yield* adapter.startSession({
-        threadId,
-        cwd: process.cwd(),
-        runtimeMode: "approval-required",
-      });
-      const turn = yield* adapter
-        .sendTurn({ threadId, input: "Use an MCP tool" })
-        .pipe(Effect.forkScoped);
-      const opened = yield* Deferred.await(interaction);
-      if (opened.type !== "request.opened" || opened.requestId === undefined) {
-        return assert.fail(`Expected an approval, got ${opened.type}`);
-      }
-      expect(opened.payload).toMatchObject({
-        requestType: "mcp_elicitation_approval",
-        detail: "Approve this request?",
-      });
-      expect(opened.payload.options?.map((option) => option.decision)).toEqual([
-        "accept",
-        "decline",
-        "cancel",
-      ]);
-      yield* adapter.respondToRequest(
-        threadId,
-        ApprovalRequestId.make(opened.requestId),
-        "decline",
-      );
-      yield* Fiber.join(turn);
-      yield* adapter.stopSession(threadId);
+  // Auto-accept edits approves edits only, so MCP tool calls still ask.
+  for (const runtimeMode of ["approval-required", "auto-accept-edits"] as const) {
+    it.effect(`asks before an MCP tool call in ${runtimeMode} mode`, () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("acp-registry-mcp-approval");
+        const { adapter, events, interaction, requestLogPath } = yield* makeHarness({
+          wire,
+          env: { T3_ACP_EMIT_MCP_TOOL_APPROVAL_ELICITATION: "1" },
+        });
+        yield* adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode,
+        });
+        const turn = yield* adapter
+          .sendTurn({ threadId, input: "Use an MCP tool" })
+          .pipe(Effect.forkScoped);
+        const opened = yield* Deferred.await(interaction);
+        if (opened.type !== "request.opened" || opened.requestId === undefined) {
+          return assert.fail(`Expected an approval, got ${opened.type}`);
+        }
+        expect(opened.payload).toMatchObject({
+          requestType: "mcp_elicitation_approval",
+          detail: "Approve this request?",
+        });
+        expect(opened.payload.options?.map((option) => option.decision)).toEqual([
+          "accept",
+          "decline",
+          "cancel",
+        ]);
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(opened.requestId),
+          "decline",
+        );
+        yield* Fiber.join(turn);
+        yield* adapter.stopSession(threadId);
 
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "request.resolved",
-          requestId: opened.requestId,
-          payload: { requestType: "mcp_elicitation_approval", decision: "decline" },
-        }),
-      );
-      const requests = yield* readRequestLog(requestLogPath);
-      expect(requests.map((request) => request.result)).toContainEqual({ action: "decline" });
-    }).pipe(Effect.scoped, TestClock.withLive),
-  );
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "request.resolved",
+            requestId: opened.requestId,
+            payload: { requestType: "mcp_elicitation_approval", decision: "decline" },
+          }),
+        );
+        const requests = yield* readRequestLog(requestLogPath);
+        expect(requests.map((request) => request.result)).toContainEqual({ action: "decline" });
+      }).pipe(Effect.scoped, TestClock.withLive),
+    );
+  }
 
   it.effect("closes a question the user can no longer answer", () =>
     Effect.gen(function* () {

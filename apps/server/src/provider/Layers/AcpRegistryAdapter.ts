@@ -52,6 +52,7 @@ import {
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import {
+  acpAutoApprovalOptionId,
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
@@ -445,8 +446,7 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
     if (context.stopped || request.sessionId !== context.nativeSessionId) return CANCELLED;
     const disposition = acpPermissionDisposition(policyFor(context), request);
     if (disposition === "allow") {
-      // Prefer a one-time grant, so a later switch to Supervised still asks.
-      return permissionResponse(selectOptionId(request, ["allow_once", "allow_always"]));
+      return permissionResponse(acpAutoApprovalOptionId(request));
     }
     if (disposition === "deny") {
       return permissionResponse(selectOptionId(request, ["reject_once", "reject_always"]));
