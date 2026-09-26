@@ -175,7 +175,7 @@ describe("computeReadiness", () => {
     });
   });
 
-  it("treats base distance as informational", () => {
+  it("treats base distance and unavailable comparison evidence as informational", () => {
     const result = computeReadiness(
       snapshot({
         behindBaseBy: null,
@@ -189,9 +189,7 @@ describe("computeReadiness", () => {
         },
       }),
     );
-    expect(result.ready).toBe(false);
-    expect(result.label).toBe("blocked");
-    expect(result.blockers).toContainEqual({ kind: "base-comparison-unknown" });
+    expect(result).toEqual({ ready: true, label: "ready-to-merge", blockers: [] });
 
     const behind = computeReadiness(snapshot({ behindBaseBy: 3 }));
     expect(behind).toEqual({ ready: true, label: "ready-to-merge", blockers: [] });

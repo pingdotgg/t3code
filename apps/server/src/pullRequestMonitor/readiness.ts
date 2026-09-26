@@ -42,9 +42,6 @@ export function computeReadiness(
   if (snapshot.mergeability !== "mergeable") {
     blockers.push({ kind: "mergeability", detail: snapshot.mergeability });
   }
-  if (!snapshot.completeness.baseComparisonKnown) {
-    blockers.push({ kind: "base-comparison-unknown" });
-  }
   if (!snapshot.completeness.reviewsComplete) {
     blockers.push({ kind: "evidence-incomplete", detail: "reviews" });
   }

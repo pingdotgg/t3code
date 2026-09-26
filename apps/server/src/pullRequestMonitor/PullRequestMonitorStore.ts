@@ -14,7 +14,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { formatPullRequestMonitorCanonicalKey } from "./canonicalKey.ts";
+import {
+  formatPullRequestMonitorCanonicalKey,
+  normalizeRepositoryIdentity,
+} from "./canonicalKey.ts";
 import { emptyCursor, type PullRequestMonitorCursor } from "./monitorDiff.ts";
 import { MAX_RETAINED_SNAPSHOTS } from "./pollSchedule.ts";
 
@@ -400,11 +403,12 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const getByProjectRef: PullRequestMonitorStoreApi["getByProjectRef"] = (input) =>
-    sql<MonitorRow>`
+  const getByProjectRef: PullRequestMonitorStoreApi["getByProjectRef"] = (input) => {
+    const repository = normalizeRepositoryIdentity(input.repository);
+    return sql<MonitorRow>`
       SELECT * FROM pull_request_monitors
       WHERE project_id = ${input.projectId}
-        AND repository = ${input.repository}
+        AND lower(repository) = ${repository}
         AND number = ${input.number}
       ORDER BY updated_at DESC
       LIMIT 1
@@ -418,6 +422,7 @@ export const make = Effect.gen(function* () {
           : storeError("Failed to load monitor by project ref.", cause),
       ),
     );
+  };
 
   const list: PullRequestMonitorStoreApi["list"] = (input) =>
     Effect.gen(function* () {

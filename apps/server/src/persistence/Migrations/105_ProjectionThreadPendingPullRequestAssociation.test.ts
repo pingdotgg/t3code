@@ -8,13 +8,13 @@ import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("104_ProjectionThreadPendingPullRequestAssociation", (it) => {
+layer("105_ProjectionThreadPendingPullRequestAssociation", (it) => {
   it.effect("adds the pending association projection column", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
       yield* runMigrations({ toMigrationInclusive: 103 });
-      yield* runMigrations({ toMigrationInclusive: 104 });
+      yield* runMigrations({ toMigrationInclusive: 105 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)
@@ -28,9 +28,9 @@ layer("104_ProjectionThreadPendingPullRequestAssociation", (it) => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 103 });
       yield* sql`DROP TABLE projection_threads`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 104`;
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 105`;
 
-      yield* runMigrations({ toMigrationInclusive: 104 });
+      yield* runMigrations({ toMigrationInclusive: 105 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)

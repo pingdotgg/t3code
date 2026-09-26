@@ -145,6 +145,56 @@ describe("presentCollaborativeAcceptanceStatus", () => {
     expect(result.blocker).toContain("candidate head changed");
   });
 
+  it("does not require informational base-distance evidence", () => {
+    const result = presentCollaborativeAcceptanceStatus({
+      monitor: {
+        monitor: {
+          status: "ready",
+          readiness: {
+            ready: true,
+            label: "ready-to-merge",
+            blockers: [],
+          },
+          lastError: null,
+        },
+        latestSnapshot: {
+          headSha: "head-1",
+          completeness: {
+            reviewsComplete: true,
+            reviewThreadsComplete: true,
+            issueCommentsComplete: true,
+            checksComplete: true,
+            requiredChecksKnown: true,
+            baseComparisonKnown: false,
+          },
+        },
+      } as never,
+      acceptance: {
+        record: {
+          providerEvidence: {
+            complete: true,
+            reviewEvidenceComplete: true,
+            reviewThreadEvidenceComplete: true,
+            commentEvidenceComplete: true,
+            checkEvidenceComplete: true,
+            requiredChecksKnown: true,
+          },
+          projection: {
+            executionPhase: "monitoring",
+            collaborationStatus: "none",
+            acceptanceLifecycle: "accepted",
+            readiness: "ready-now",
+            reasons: [],
+            headSha: "head-1",
+          },
+        },
+      } as never,
+    });
+
+    expect(result.readiness).toBe("Ready now");
+    expect(result.blocker).toBeNull();
+  });
+
   it("does not infer collaborative readiness from a monitor-only result", () => {
     const result = presentCollaborativeAcceptanceStatus({
       monitor: {
