@@ -85,17 +85,13 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown>): boolean 
 }
 
 /**
- * Blocked-on-you work in a thread's retained activities: each approval or
- * user-input request with no later resolution for the same requestId, keyed
- * by requestId. The decider uses it to block settle, snooze, and history
- * import. It is the server-side twin of the shell's hasPendingApprovals and
- * hasPendingUserInput flags. The clearing rules MUST match
- * ProjectionPipeline's pending accounting: resolved activities always clear,
- * and respond.failed clears only when its detail marks the request stale or
- * unknown. Otherwise settle is rejected on threads whose shell flags are clear.
- * It reads only the kinds in REQUEST_ACTIVITY_ROLES, so add a new request kind
- * there. Activities are capped at the most recent 500 plus pending async
- * questions.
+ * Open approval and user-input requests in a thread's retained activities,
+ * keyed by requestId. The decider uses it to block settle, snooze, and history
+ * import. The clearing rules MUST match ProjectionPipeline's pending
+ * accounting behind the shell's hasPendingApprovals and hasPendingUserInput,
+ * or settle is rejected on threads that show nothing pending: a resolution
+ * always clears, and a respond failure clears only when its detail marks the
+ * request stale or unknown. Add a new request kind to REQUEST_ACTIVITY_ROLES.
  */
 export function openRequests(thread: Pick<OrchestrationThread, "activities">) {
   const requests = new Map<string, OrchestrationThread["activities"][number]>();

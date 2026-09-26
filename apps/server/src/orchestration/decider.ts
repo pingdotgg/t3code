@@ -159,12 +159,9 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 
 /**
  * Decides the events for one command. `readModel` is the slim command model
- * that projectEvent in projector.ts builds. It keeps only user messages (plus
- * the first non-user message, for the history-import guard), request
- * activities (plus payload-free placeholders while a request is open), and
- * checkpoints without file lists, which the decider reads for turnId and
- * status. A new rule here must not read assistant text, tool activity
- * payloads, or checkpoint files unless projector.ts first keeps them.
+ * that projectEvent in projector.ts builds. It has no assistant text, tool
+ * activity payloads, or checkpoint file lists, so a new rule that reads them
+ * must first make projectEvent keep them.
  */
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
