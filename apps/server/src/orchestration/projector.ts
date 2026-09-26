@@ -58,8 +58,8 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
-// The activity kinds openRequests in decider.ts reads. The command model
-// drops all other activities.
+// The activity kinds openRequests reads. The command model keeps other kinds
+// only as payload-free placeholders, and only while a request is open.
 const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
   "approval.requested",
   "approval.resolved",
@@ -68,6 +68,61 @@ const REQUEST_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
   "provider.approval.respond.failed",
   "provider.user-input.respond.failed",
 ]);
+
+function isStaleRequestFailureDetail(payload: Record<string, unknown>): boolean {
+  const detail = typeof payload.detail === "string" ? payload.detail.toLowerCase() : null;
+  if (detail === null) return false;
+  return (
+    detail.includes("stale pending approval request") ||
+    detail.includes("unknown pending approval request") ||
+    detail.includes("unknown pending permission request") ||
+    detail.includes("stale pending user-input request") ||
+    detail.includes("unknown pending user-input request") ||
+    detail.includes("unknown pending user input request") ||
+    detail.includes("unknown pending codex user input request")
+  );
+}
+
+/**
+ * Blocked-on-you work in a thread's retained activities: each approval or
+ * user-input request with no later resolution for the same requestId, keyed
+ * by requestId. The decider uses it to block settle, snooze, and history
+ * import. It is the server-side twin of the shell's hasPendingApprovals and
+ * hasPendingUserInput flags. The clearing rules MUST match
+ * ProjectionPipeline's pending accounting: resolved activities always clear,
+ * and respond.failed clears only when its detail marks the request stale or
+ * unknown. Otherwise settle is rejected on threads whose shell flags are clear.
+ * Activities are capped at the most recent 500 plus pending async questions.
+ */
+export function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+  const requests = new Map<string, OrchestrationThread["activities"][number]>();
+  for (const activity of thread.activities) {
+    if (!Predicate.isObject(activity.payload)) continue;
+    const requestId = activity.payload.requestId;
+    if (typeof requestId !== "string") continue;
+    if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
+      requests.set(requestId, activity);
+    } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
+      requests.delete(requestId);
+    } else if (
+      (activity.kind === "provider.approval.respond.failed" ||
+        activity.kind === "provider.user-input.respond.failed") &&
+      isStaleRequestFailureDetail(activity.payload)
+    ) {
+      requests.delete(requestId);
+    }
+  }
+  return requests;
+}
+
+// Other activity kinds only matter because they count toward the 500 cap,
+// which can push an open request out of the decider's view. Once no request
+// is open, their placeholders can go.
+function dropIdlePlaceholders(activities: OrchestrationThread["activities"]) {
+  return openRequests({ activities }).size > 0
+    ? activities
+    : activities.filter((activity) => REQUEST_ACTIVITY_KINDS.has(activity.kind));
+}
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
@@ -318,7 +373,8 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
  * decider and the engine's command checks read it; clients read the SQL
  * projections. It lives for the whole server process, so it keeps only what
  * the decider reads: user messages, request activities, and checkpoints
- * without their file lists.
+ * without their file lists. While a request is open, other activities stay as
+ * payload-free placeholders so the activity cap counts them as before.
  */
 export function projectEvent(
   model: OrchestrationReadModel,
@@ -1029,7 +1085,9 @@ export function projectEvent(
             thread.proposedPlans,
             retainedTurnIds,
           ).slice(-200);
-          const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
+          const activities = dropIdlePlaceholders(
+            retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds),
+          );
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
           const latestTurn =
@@ -1071,7 +1129,10 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
-          if (!REQUEST_ACTIVITY_KINDS.has(payload.activity.kind)) {
+          // Other kinds are kept without their payload, and only while a
+          // request is open (see dropIdlePlaceholders).
+          const isRequest = REQUEST_ACTIVITY_KINDS.has(payload.activity.kind);
+          if (!isRequest && openRequests(thread).size === 0) {
             return {
               ...nextBase,
               threads: patchThreadAt(nextBase.threads, threadIndex, {
@@ -1080,11 +1141,13 @@ export function projectEvent(
             };
           }
 
-          const activities = retainThreadActivities(
-            [
-              ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-              payload.activity,
-            ].toSorted(compareThreadActivities),
+          const activities = dropIdlePlaceholders(
+            retainThreadActivities(
+              [
+                ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
+                isRequest ? payload.activity : { ...payload.activity, payload: null },
+              ].toSorted(compareThreadActivities),
+            ),
           );
 
           return {

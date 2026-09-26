@@ -19,13 +19,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as TestClock from "effect/testing/TestClock";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 const BASE = DateTime.makeUnsafe("2026-03-01T12:00:00.000Z");
-const at = (second: number) => DateTime.formatIso(DateTime.add(BASE, { seconds: second }));
+const at = (second: number) =>
+  DateTime.formatIso(DateTime.add(BASE, { milliseconds: Math.round(second * 1_000) }));
 const THREAD = ThreadId.make("thread-parity");
 const IMPORTED = ThreadId.make("import:codex:parity");
 
@@ -102,6 +104,17 @@ const session = (second: number, status: "running" | "ready" | "stopped", active
       updatedAt: at(second),
     },
   });
+// Tool output that arrives while turn 3 waits on the user.
+const toolRun = (firstSecond: number, first: number, count: number) =>
+  Array.from({ length: count }, (_, index) =>
+    activity(
+      firstSecond + index / 1_000,
+      `tool-3-${String(first + index).padStart(3, "0")}`,
+      "tool.completed",
+      "turn-3",
+      { data: { output: "ok" } },
+    ),
+  );
 const checkpoint = (second: number, turn: number) =>
   threadEvent(THREAD, "thread.turn-diff-completed", second, {
     turnId: `turn-${turn}`,
@@ -176,20 +189,57 @@ const stages: ReadonlyArray<ReadonlyArray<OrchestrationEvent>> = [
     threadEvent(THREAD, "thread.reverted", 40, { turnCount: 1 }),
     message(990, "user-3", "user", null, "Try again"),
   ],
+  // 6. Turn 3 asks an async question and waits on an approval while 499 more
+  // activities arrive. The old 500 activity cap still holds the approval.
+  [
+    session(991, "running", "turn-3"),
+    ...toolRun(991.1, 0, 3),
+    activity(992, "question-3", "user-input.requested", "turn-3", {
+      requestId: "question-3",
+      responseMode: "message",
+    }),
+    activity(992.5, "approval-3", "approval.requested", "turn-3", { requestId: "approval-3" }),
+    ...toolRun(993, 3, 499),
+    session(996, "ready"),
+  ],
+  // 7. One more activity pushes the approval out of the old cap. The pending
+  // async question stays past the cap.
+  [...toolRun(997, 502, 1)],
 ];
 
+// The old command projector's activity cap: the most recent 500 activities,
+// plus pending async questions.
+function capActivities(activities: ReadonlyArray<OrchestrationThread["activities"][number]>) {
+  const recentStart = activities.length - 500;
+  if (recentStart <= 0) return activities;
+  const pending = new Map<string, OrchestrationThread["activities"][number]>();
+  for (const entry of activities) {
+    if (!Predicate.isObject(entry.payload)) continue;
+    const { requestId } = entry.payload;
+    if (typeof requestId !== "string") continue;
+    if (entry.kind === "user-input.requested" && entry.payload.responseMode === "message") {
+      pending.set(requestId, entry);
+    } else if (entry.kind === "user-input.resolved") {
+      pending.delete(requestId);
+    }
+  }
+  const pinned = new Set(pending.values());
+  return activities.filter((entry, index) => index >= recentStart || pinned.has(entry));
+}
+
 // Rebuilds the full history the command projector used to keep: every
-// non-user message with its text, every activity, and checkpoint file lists,
-// with a revert dropping what belonged to the reverted turns. User messages
-// come from the slim model, which still keeps all of them. The timeline stays
-// under the old caps, and every non-user message has a turn id or an imported
-// id, so the old caps and revert fallbacks never apply.
+// non-user message with its text, every activity under the old cap, and
+// checkpoint file lists, with a revert dropping what belonged to the reverted
+// turns. User messages come from the slim model, which still keeps all of
+// them. The timeline stays under the message and checkpoint caps, and every
+// non-user message has a turn id or an imported id, so the old message caps
+// and revert fallbacks never apply.
 function fullHistoryThread(
   thread: OrchestrationThread,
   events: ReadonlyArray<OrchestrationEvent>,
 ): OrchestrationThread {
   let messages: OrchestrationMessage[] = [];
-  let activities: Array<OrchestrationThread["activities"][number]> = [];
+  let activities: ReadonlyArray<OrchestrationThread["activities"][number]> = [];
   const files = new Map<string, ReadonlyArray<OrchestrationCheckpointFile>>();
   const turnCounts = new Map<string, number>();
   for (const event of events) {
@@ -213,7 +263,12 @@ function fullHistoryThread(
         : [...messages, next];
     } else if (event.type === "thread.activity-appended") {
       const { activity: appended } = event.payload;
-      activities = [...activities.filter((entry) => entry.id !== appended.id), appended];
+      activities = capActivities(
+        [...activities.filter((entry) => entry.id !== appended.id), appended].toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        ),
+      );
     } else if (event.type === "thread.turn-diff-completed") {
       files.set(event.payload.turnId, event.payload.files);
       turnCounts.set(event.payload.turnId, event.payload.checkpointTurnCount);
@@ -342,9 +397,10 @@ const outcomeNames: Record<string, string> = {
 };
 
 it.layer(NodeServices.layer)("command model decider parity", (it) => {
-  // The command projector drops non-user messages, non-request activities, and
-  // checkpoint file lists. After each stage, the decider must decide every
-  // command the same way on that slim model as on the full history.
+  // The command projector drops non-user messages, checkpoint file lists, and
+  // non-request activities (it keeps them without payload while a request is
+  // open). After each stage, the decider must decide every command the same
+  // way on that slim model as on the full history.
   it.effect("decides the same on the slim command model as on full history", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(BASE, { seconds: 1_000 })));
@@ -378,6 +434,8 @@ it.layer(NodeServices.layer)("command model decider parity", (it) => {
           "settle: blocked, auto-settle: blocked, snooze: rejected, append user-1: rejected, append user-2: rejected, turn start user-3: ok, missing diff turn-1: rejected, missing diff turn-2: rejected, import: rejected",
           "settle: ok, auto-settle: blocked, snooze: rejected, append user-1: rejected, append user-2: rejected, turn start user-3: ok, missing diff turn-1: rejected, missing diff turn-2: rejected, import: rejected",
           "settle: blocked, auto-settle: blocked, snooze: rejected, append user-1: rejected, append user-2: ok, turn start user-3: ok, missing diff turn-1: rejected, missing diff turn-2: ok, import: rejected",
+          "settle: blocked, auto-settle: blocked, snooze: rejected, append user-1: rejected, append user-2: ok, turn start user-3: ok, missing diff turn-1: rejected, missing diff turn-2: ok, import: rejected",
+          "settle: ok, auto-settle: blocked, snooze: rejected, append user-1: rejected, append user-2: ok, turn start user-3: ok, missing diff turn-1: rejected, missing diff turn-2: ok, import: rejected",
         ]
       `);
     }),

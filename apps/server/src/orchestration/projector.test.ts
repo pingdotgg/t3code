@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { it as effectIt } from "@effect/vitest";
@@ -614,7 +615,7 @@ describe("orchestration projector", () => {
     expect(afterUpdate.threads[0]?.updatedAt).toBe(updatedAt);
   });
 
-  effectIt.effect("keeps only user messages and request activities in the command model", () =>
+  effectIt.effect("keeps only what the decider reads in the command model", () =>
     Effect.gen(function* () {
       const threadId = "thread-slim";
       const at = (second: number) => `2026-02-23T09:00:${String(second).padStart(2, "0")}.000Z`;
@@ -628,28 +629,40 @@ describe("orchestration projector", () => {
           commandId: `cmd-${sequence}`,
           payload: { threadId, ...payload },
         });
-      const message = (id: string, role: "user" | "assistant") => ({
-        messageId: id,
-        role,
-        text: `${role} text`,
-        turnId: null,
-        streaming: false,
-        createdAt: at(0),
-        updatedAt: at(0),
-      });
-      const activity = (id: string, kind: string, payload: object) => ({
-        activity: {
-          id,
-          tone: "tool",
-          kind,
-          summary: kind,
-          payload,
+      const message = (sequence: number, id: string, role: "user" | "assistant") =>
+        event(sequence, "thread.message-sent", {
+          messageId: id,
+          role,
+          text: `${role} text`,
           turnId: null,
-          createdAt: at(0),
-        },
+          streaming: false,
+          createdAt: at(sequence),
+          updatedAt: at(sequence),
+        });
+      const activity = (sequence: number, id: string, kind: string, payload: object) =>
+        event(sequence, "thread.activity-appended", {
+          activity: {
+            id,
+            tone: "tool",
+            kind,
+            summary: kind,
+            payload,
+            turnId: null,
+            createdAt: at(sequence),
+          },
+        });
+      const project = Effect.fnUntraced(function* (
+        model: OrchestrationReadModel,
+        events: ReadonlyArray<OrchestrationEvent>,
+      ) {
+        let current = model;
+        for (const next of events) {
+          current = yield* projectEvent(current, next);
+        }
+        return current;
       });
 
-      const events = [
+      const whileOpen = yield* project(createEmptyReadModel(at(0)), [
         event(1, "thread.created", {
           projectId: "project-1",
           title: "demo",
@@ -660,54 +673,47 @@ describe("orchestration projector", () => {
           createdAt: at(0),
           updatedAt: at(0),
         }),
-        event(2, "thread.message-sent", message("user-1", "user")),
-        event(3, "thread.message-sent", message("assistant:1", "assistant")),
-        event(
-          4,
-          "thread.activity-appended",
-          activity("approval-1", "approval.requested", {
-            requestId: "request-1",
-          }),
-        ),
-        event(5, "thread.turn-diff-completed", {
+        message(2, "user-1", "user"),
+        message(3, "assistant:1", "assistant"),
+        activity(4, "tool-1", "tool.started", { toolKind: "command" }),
+        activity(5, "approval-1", "approval.requested", { requestId: "request-1" }),
+        event(6, "thread.turn-diff-completed", {
           turnId: "turn-1",
           checkpointTurnCount: 1,
           checkpointRef: "refs/t3/checkpoints/thread-slim/turn/1",
           status: "ready",
           files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 0 }],
           assistantMessageId: "assistant:1",
-          completedAt: at(5),
+          completedAt: at(6),
         }),
-        event(
-          6,
-          "thread.activity-appended",
-          activity("tool-1", "tool.completed", {
-            data: { output: "x".repeat(10_000) },
-          }),
-        ),
-        // Carries a requestId, but openRequests does not read this kind.
-        event(
-          7,
-          "thread.activity-appended",
-          activity("answer-1", "user-input.answer-submitted", {
-            requestId: "request-2",
-            answers: { q1: "yes" },
-          }),
-        ),
-      ];
-      let model = createEmptyReadModel(at(0));
-      for (const next of events) {
-        model = yield* projectEvent(model, next);
-      }
+        activity(7, "tool-2", "tool.completed", { data: { output: "x".repeat(10_000) } }),
+      ]);
+      // While a request is open, other activities stay without their payload
+      // so they still count toward the activity cap.
+      expect(whileOpen.threads[0]?.activities.map((entry) => [entry.id, entry.payload])).toEqual([
+        ["approval-1", { requestId: "request-1" }],
+        ["tool-2", null],
+      ]);
 
+      const model = yield* project(whileOpen, [
+        activity(8, "approval-1-done", "approval.resolved", { requestId: "request-1" }),
+        // Carries a requestId, but openRequests does not read this kind.
+        activity(9, "answer-1", "user-input.answer-submitted", {
+          requestId: "request-2",
+          answers: { q1: "yes" },
+        }),
+      ]);
       const thread = model.threads[0];
       expect(thread?.messages.map((entry) => entry.id)).toEqual(["user-1"]);
-      expect(thread?.activities.map((entry) => entry.id)).toEqual(["approval-1"]);
+      expect(thread?.activities.map((entry) => entry.id)).toEqual([
+        "approval-1",
+        "approval-1-done",
+      ]);
       expect(thread?.checkpoints.map((entry) => [entry.turnId, entry.files])).toEqual([
         ["turn-1", []],
       ]);
       // Dropped events still move updatedAt, which the decider re-emits.
-      expect(thread?.updatedAt).toBe(at(7));
+      expect(thread?.updatedAt).toBe(at(9));
     }),
   );
 
