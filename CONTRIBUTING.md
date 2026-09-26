@@ -17,6 +17,8 @@ If that sounds annoying, that is because it is. This project is still early and 
 
 PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
 
+PRs also receive an advisory contribution sniff test that explains objective guideline gaps. It does not accept, reject, or replace maintainer review.
+
 If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
 
 ## What We Are Most Likely To Accept

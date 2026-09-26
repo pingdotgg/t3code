@@ -1,0 +1,70 @@
+name: PR Guideline Review
+
+on:
+  pull_request_target:
+    types:
+      [
+        opened,
+        reopened,
+        edited,
+        synchronize,
+        ready_for_review,
+        converted_to_draft,
+        labeled,
+        unlabeled,
+      ]
+
+permissions: {}
+
+jobs:
+  review:
+    name: Review contribution guidelines
+    if: github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 5
+    concurrency:
+      group: pr-guideline-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      # pull_request_target has a write-capable token for fork PRs. Load only
+      # the trusted base-branch reviewer. PR files are API data and are never
+      # checked out or executed.
+      - name: Checkout trusted reviewer
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/VOUCHED.td
+          sparse-checkout-cone-mode: false
+
+      - name: Update contribution sniff test
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const fs = require("node:fs");
+            const reviewer = require("./.github/scripts/pr-guideline-review.cjs");
+            try {
+              let vouchedUsers = new Set();
+              try {
+                vouchedUsers = reviewer.parseVouchedUsers(
+                  fs.readFileSync(".github/VOUCHED.td", "utf8"),
+                );
+              } catch (error) {
+                core.warning(`Trusted contributor list was unavailable; using PR association and labels: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              await reviewer.reviewPull({
+                github,
+                context,
+                core,
+                policyRevision: context.sha,
+                vouchedUsers,
+              });
+            } catch (error) {
+              core.warning(`Advisory contribution review was unavailable: ${error instanceof Error ? error.message : String(error)}`);
+              throw error;
+            }
