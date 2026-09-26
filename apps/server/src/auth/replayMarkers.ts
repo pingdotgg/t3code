@@ -1,4 +1,3 @@
-import { DPOP_REPLAY_WINDOW_SECONDS } from "@t3tools/shared/dpop";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 
-import { CLOUD_REPLAY_MARKER_PREFIXES, CLOUD_REPLAY_WINDOW_SECONDS } from "../cloud/http.ts";
+import { CLOUD_REPLAY_MARKER_PREFIXES } from "../cloud/http.ts";
 import * as ServerConfig from "../config.ts";
 import { forkParked } from "../serverActivation.ts";
 import { DPOP_REPLAY_MARKER_PREFIX } from "./dpop.ts";
@@ -17,12 +16,13 @@ const REPLAY_MARKER_PREFIXES = [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKE
 
 /**
  * How long a replay marker stays on disk. A marker only matters while its proof
- * can still be accepted, so this is twice the longest proof window. A longer
- * window moves it too. Markers are files, so a restart does not reset them.
+ * can pass the time check (about 5 minutes for DPoP, 7 for cloud proofs). After
+ * that, the time check rejects a replay by itself. The sweep and the time check
+ * both use the wall clock, so a pruned marker can let a replay through only if
+ * the clock moves back by almost a day, or if the filesystem stamps mtimes almost
+ * a day behind. Markers are files, so a restart does not reset them.
  */
-export const REPLAY_MARKER_MAX_AGE = Duration.seconds(
-  2 * Math.max(DPOP_REPLAY_WINDOW_SECONDS, CLOUD_REPLAY_WINDOW_SECONDS),
-);
+export const REPLAY_MARKER_MAX_AGE = Duration.days(1);
 
 /**
  * Deletes replay markers whose mtime is older than `REPLAY_MARKER_MAX_AGE`.
@@ -64,14 +64,14 @@ export const pruneExpiredReplayMarkers = Effect.fn("replayMarkers.pruneExpired")
   }
 });
 
-/** Prunes expired replay markers after server activation, then every 10 minutes. */
+/** Prunes expired replay markers after server activation, then every hour. */
 export const layer = Layer.effectDiscard(
   forkParked(
     pruneExpiredReplayMarkers().pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Failed to prune expired replay markers", { cause }),
       ),
-      Effect.repeat(Schedule.spaced(Duration.minutes(10))),
+      Effect.repeat(Schedule.spaced(Duration.hours(1))),
     ),
   ),
 );

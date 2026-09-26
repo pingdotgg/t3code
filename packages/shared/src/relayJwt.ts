@@ -11,8 +11,6 @@ export const RELAY_MINT_RESPONSE_TYP = "t3-env-mint+jwt";
 export const RELAY_HEALTH_RESPONSE_TYP = "t3-env-health+jwt";
 export const RELAY_ACTIVITY_PUBLISH_TYP = "t3-env-activity+jwt";
 export const RELAY_MANAGED_TUNNEL_RECOVERY_TYP = "t3-env-managed-tunnel-recovery+jwt";
-/** Clock skew `verifyRelayJwt` allows on `iat`, `exp`, and the max token age. */
-export const RELAY_JWT_CLOCK_TOLERANCE_SECONDS = 60;
 
 export class RelayJwtError extends Schema.TaggedError<RelayJwtError>()("RelayJwtError", {
   operation: Schema.Literals(["sign", "verify"]),
@@ -85,7 +83,7 @@ export function verifyRelayJwt(input: {
         issuer: input.issuer,
         audience: input.audience,
         maxTokenAge: input.maxTokenAge ?? "5 minutes",
-        clockTolerance: RELAY_JWT_CLOCK_TOLERANCE_SECONDS,
+        clockTolerance: 60,
         currentDate: DateTime.toDate(DateTime.makeUnsafe(input.nowEpochSeconds * 1_000)),
       });
       return verified.payload;

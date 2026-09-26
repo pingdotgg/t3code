@@ -50,7 +50,6 @@ import {
 import {
   computeDpopAccessTokenHash,
   computeDpopJwkThumbprint,
-  DPOP_REPLAY_WINDOW_SECONDS,
   type DpopPublicJwk,
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
@@ -183,7 +182,6 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
-import { CLOUD_REPLAY_WINDOW_SECONDS } from "./cloud/http.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
@@ -2670,8 +2668,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       assert.equal((yield* exchange).response.status, 200);
-      // Until the window ends, only the replay marker rejects the proof.
-      yield* TestClock.adjust(Duration.seconds(DPOP_REPLAY_WINDOW_SECONDS - 1));
+      // While the proof is fresh, only the replay marker rejects it.
       assert.equal((yield* exchange).body.dpopFailureReason, "replay");
       // Once the marker can be pruned, the time check rejects the proof by itself.
       yield* TestClock.setTime(
@@ -3814,8 +3811,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepStrictEqual(yield* postAll, [200, 200]);
-      // Until the window ends, only the replay markers reject the proofs (409).
-      yield* TestClock.adjust(Duration.seconds(CLOUD_REPLAY_WINDOW_SECONDS - 1));
+      // While the proofs are fresh, only the replay markers reject them (409).
       assert.deepStrictEqual(yield* postAll, [409, 409]);
       // Once the markers can be pruned, the time checks reject the proofs by themselves (401).
       yield* TestClock.setTime(
