@@ -89,6 +89,21 @@ export function newlyTerminalRows(
   });
 }
 
+// Whether any row entered, left, or changed phase between two aggregates.
+// Throttling must never drop these: the environment publishes only on phase
+// changes and stays silent while a phase holds, so a dropped transition is
+// never retried and the card shows the previous phase until the next one.
+export function rowPhasesChanged(
+  previousAggregate: RelayAgentActivityAggregateState,
+  nextAggregate: RelayAgentActivityAggregateState,
+): boolean {
+  if (previousAggregate.activities.length !== nextAggregate.activities.length) return true;
+  const previousPhases = new Map(
+    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
+  );
+  return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
+}
+
 export function terminalTransitionRows(
   input: TransitionInput & { readonly nowMs: number; readonly includeUnobserved?: boolean },
 ) {
