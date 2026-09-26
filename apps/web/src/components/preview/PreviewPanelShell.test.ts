@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { getPreviewPanelMaxWidth } from "./PreviewPanelShell";
+import { getPreviewPanelDefaultWidth, getPreviewPanelMaxWidth } from "./PreviewPanelShell";
 
 describe("getPreviewPanelMaxWidth", () => {
   it("allows the panel to use 70% of an ultra-wide viewport without a pixel ceiling", () => {
@@ -35,5 +35,15 @@ describe("getPreviewPanelMaxWidth", () => {
 
   it("stays at the panel minimum even when the row is narrower than the reservation", () => {
     expect(getPreviewPanelMaxWidth(1_512, 300)).toBe(360);
+  });
+});
+
+describe("getPreviewPanelDefaultWidth", () => {
+  it("opens at half of a wide viewport", () => {
+    expect(getPreviewPanelDefaultWidth(2_561)).toBe(1_280);
+  });
+
+  it("keeps the 540px floor on narrow viewports", () => {
+    expect(getPreviewPanelDefaultWidth(1_000)).toBe(540);
   });
 });
