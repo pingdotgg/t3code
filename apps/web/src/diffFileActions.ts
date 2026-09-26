@@ -47,6 +47,10 @@ function repositoryRelativeWorkspaceSegments(
     .filter(Boolean);
 }
 
+/**
+ * Workspace-relative path for a diff path, or null when it lies outside the
+ * workspace. Returns "" when the path is the workspace root itself.
+ */
 export function resolveDiffPathForWorkspace(input: {
   readonly filePath: string;
   readonly workspaceRoot: string | undefined;
@@ -73,8 +77,8 @@ export function resolveDiffPathForWorkspace(input: {
   });
   if (!belongsToWorkspace) return null;
 
-  const relativeSegments = fileSegments.slice(workspaceSegments.length);
-  return relativeSegments.length > 0 ? relativeSegments.join("/") : null;
+  // The workspace root itself (a directory row in a repo-relative diff tree) is "".
+  return fileSegments.slice(workspaceSegments.length).join("/");
 }
 
 export function openDiffFilePrimaryAction({
