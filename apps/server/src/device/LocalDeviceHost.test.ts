@@ -4,9 +4,11 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
   HostProcessIsExecutable,
+  HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 
@@ -132,6 +134,54 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
     expect(environment.ANDROID_HOME).toBe("/sdk");
     expect(environment.HOME).toBe("/test/home");
   }).pipe(Effect.provide(NodePath.layer)),
+);
+
+it.effect(
+  "recovers an owned Linux runtime directory without overriding explicit environments",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const stat = yield* fs.stat(directory);
+      for (const [platform, uid, runtimeDir, type, owner, expected] of [
+        ["linux", 1000, undefined, "Directory", 1000, "/run/user/1000"],
+        ["linux", 1000, "/custom/runtime", "Directory", 1000, "/custom/runtime"],
+        ["linux", 1000, "", "Directory", 1000, ""],
+        ["linux", 1000, undefined, "Directory", 1001, undefined],
+        ["linux", 1000, undefined, "File", 1000, undefined],
+        ["linux", undefined, undefined, "Directory", 1000, undefined],
+        ["darwin", 1000, undefined, "Directory", 1000, undefined],
+        ["win32", 1000, undefined, "Directory", 1000, undefined],
+      ] as const) {
+        const environment = { PATH: "/usr/bin", XDG_RUNTIME_DIR: runtimeDir };
+        const result = yield* LocalDeviceHost.__testing.hubEnvironment(environment).pipe(
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(HostProcessUserId, uid),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              stat: (path) => {
+                expect(path).toBe("/run/user/1000");
+                return Effect.succeed({ ...stat, type, uid: Option.some(owner) });
+              },
+            }),
+          ),
+        );
+        expect(result.XDG_RUNTIME_DIR).toBe(expected);
+        expect(result.PATH).toBe("/usr/bin");
+        expect(result.FORCE_COLOR).toBe("0");
+        expect(result.NO_COLOR).toBe("1");
+        expect(environment.XDG_RUNTIME_DIR).toBe(runtimeDir);
+      }
+      const missing = yield* LocalDeviceHost.__testing
+        .hubEnvironment({})
+        .pipe(
+          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcessUserId, 1000),
+          Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        );
+      expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
