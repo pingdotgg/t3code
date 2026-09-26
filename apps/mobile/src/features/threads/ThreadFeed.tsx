@@ -36,6 +36,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
+import { normalizeWindowsMarkdownDestinations } from "@t3tools/client-runtime/markdown-windows-paths";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexFileCitationsAsMarkdown,
@@ -804,7 +805,9 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
+    const markdown = normalizeWindowsMarkdownDestinations(
+      renderCodexFileCitationsAsMarkdown(segment.markdown),
+    );
     return hasNativeSelectableMarkdownText() ? (
       <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}

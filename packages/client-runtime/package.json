@@ -47,6 +47,10 @@
       "types": "./src/markdownLinks.ts",
       "default": "./src/markdownLinks.ts"
     },
+    "./markdown-windows-paths": {
+      "types": "./src/markdownWindowsPaths.ts",
+      "default": "./src/markdownWindowsPaths.ts"
+    },
     "./media-reference": {
       "types": "./src/mediaReference.ts",
       "default": "./src/mediaReference.ts"
