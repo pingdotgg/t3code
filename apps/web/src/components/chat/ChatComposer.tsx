@@ -48,10 +48,16 @@ import {
   pastedTextDisposition,
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import {
+  USAGE_LIMITS_COMMAND,
+  formatUsageLimitSendBlock,
+  isUsageLimitsCommand,
+  usageLimitSendBlock,
+} from "@t3tools/shared/usageLimits";
 import {
   memo,
   type ComponentProps,
@@ -936,6 +942,7 @@ import {
   FileIcon,
   BotIcon,
   CircleAlertIcon,
+  GaugeIcon,
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
@@ -980,6 +987,7 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePanelAnimationSettings } from "../../panelAnimations";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -1931,18 +1939,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
-  const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
-    selectedModel,
-  );
-  const sendDisabledReason =
-    externalSendDisabledReason ??
-    (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
-    (activePendingProgress
-      ? attachmentBlockReason
-      : (attachmentBlockReason ??
-        (multipleModelSelections === null ? providerSendBlockReason : null)));
-  const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -2247,6 +2243,70 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  // Commands that never reach the provider must not sit behind the quota
+  // gate: `/feedback` uploads without spending a turn, and `/usage-limits`
+  // opens the local Limits panel. ChatView applies the same exemptions.
+  const nonTurnCommandDraft =
+    (props.onUsageLimitsCommand !== undefined &&
+      isUsageLimitsCommand(prompt) &&
+      multipleModelSelections === null) ||
+    (selectedProvider === "codex" &&
+      multipleModelSelections === null &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      composerSendState.sendableTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      parseCodexFeedbackCommand(composerSendState.trimmedPrompt) !== null);
+  // A provider whose reported quota for the selection is spent blocks the
+  // send until the window resets or the selection changes. The minute clock
+  // re-arms the check so a reset banner clears itself; its UTC-shaped string
+  // needs the offset restored before it parses as anything but local time.
+  const nowMinute = useNowMinute();
+  const usageLimitBlockReason = useMemo(() => {
+    if (nonTurnCommandDraft) return null;
+    const now = Date.parse(`${nowMinute}:00Z`);
+    const providerLocked = lockedProvider !== null && multipleModelSelections === null;
+    const blockFor = (entry: ProviderInstanceEntry | undefined, model: string): string | null => {
+      const block = usageLimitSendBlock(entry?.snapshot, model, now);
+      return block === null
+        ? null
+        : formatUsageLimitSendBlock(entry?.displayName ?? "This provider", block, now, {
+            providerLocked,
+          });
+    };
+    if (multipleModelSelections !== null) {
+      for (const selection of multipleModelSelections) {
+        const reason = blockFor(
+          providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId),
+          selection.model,
+        );
+        if (reason !== null) return reason;
+      }
+      return null;
+    }
+    return blockFor(selectedProviderEntry, selectedModel);
+  }, [
+    nowMinute,
+    nonTurnCommandDraft,
+    lockedProvider,
+    multipleModelSelections,
+    providerInstanceEntries,
+    selectedProviderEntry,
+    selectedModel,
+  ]);
+  const providerSendBlockReason =
+    multipleModelSelections === null
+      ? (getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel) ??
+        usageLimitBlockReason)
+      : usageLimitBlockReason;
+  const sendDisabledReason =
+    externalSendDisabledReason ??
+    (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
+    (activePendingProgress
+      ? attachmentBlockReason
+      : (attachmentBlockReason ?? providerSendBlockReason));
+  const isSendDisabled = sendDisabledReason !== null;
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
   // ------------------------------------------------------------------
@@ -5176,9 +5236,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         content: activityStackContent,
       }
     : null;
-  const bannerStackItems = activityStackItem
-    ? [activityStackItem, ...props.bannerItems]
-    : props.bannerItems;
+  const usageLimitBannerItem: ComposerBannerStackItem | null =
+    usageLimitBlockReason === null
+      ? null
+      : {
+          id: "usage-limit-block",
+          variant: "warning",
+          priority: "urgent",
+          icon: <GaugeIcon className="size-4" />,
+          title: "Out of tokens",
+          description: usageLimitBlockReason,
+        };
+  const bannerStackItems = [
+    ...(activityStackItem ? [activityStackItem] : []),
+    ...(usageLimitBannerItem ? [usageLimitBannerItem] : []),
+    ...props.bannerItems,
+  ];
   useEffect(() => {
     if (activeTasksProgress === null || activeTaskSteps === null) {
       setIsTasksDrawerOpen(false);

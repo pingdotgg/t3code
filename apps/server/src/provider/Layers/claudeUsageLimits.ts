@@ -75,6 +75,9 @@ function scopedWindow(
     label: `Weekly · ${displayName}`,
     windowDurationMins: WEEK_MINS,
     usedPercent: clampPercent(usedPercent),
+    // The bucket gates only the model the CLI named; the rest of the account
+    // still sends.
+    modelScope: displayName,
     ...(resetsAt ? { resetsAt } : {}),
   };
 }

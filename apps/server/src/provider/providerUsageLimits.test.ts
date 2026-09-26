@@ -49,6 +49,7 @@ describe("applyUsageLimitsUpdate", () => {
     expect(next).toEqual({
       checkedAt: "2026-09-03T12:00:05.000Z",
       windows: [{ ...session, usedPercent: 55 }, weekly],
+      sendGating: true,
     });
   });
 
@@ -74,6 +75,7 @@ describe("applyUsageLimitsUpdate", () => {
       checkedAt: "2026-09-03T12:00:05.000Z",
       windows: [{ ...session, usedPercent: 55 }, weekly],
       resetCredits,
+      sendGating: true,
     });
   });
 });

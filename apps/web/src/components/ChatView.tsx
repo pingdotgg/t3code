@@ -3,8 +3,10 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
+  formatUsageLimitSendBlock,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  usageLimitSendBlock,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
@@ -7799,7 +7801,12 @@ export default function ChatView(props: ChatViewProps) {
         setThreadError(threadIdForSend, `Provider for ${selection.model} is unavailable.`);
         return;
       }
-      const providerBlockReason = getAntigravitySendBlockReason(provider.snapshot, selection.model);
+      const usageBlock = usageLimitSendBlock(provider.snapshot, selection.model, Date.now());
+      const providerBlockReason =
+        getAntigravitySendBlockReason(provider.snapshot, selection.model) ??
+        (usageBlock === null
+          ? null
+          : formatUsageLimitSendBlock(provider.displayName, usageBlock, Date.now()));
       if (providerBlockReason) {
         setThreadError(threadIdForSend, providerBlockReason);
         return;
@@ -7833,6 +7840,29 @@ export default function ChatView(props: ChatViewProps) {
           interactionMode: sendInteractionMode,
         }).interactionMode,
       });
+    }
+
+    // Single-model sends gate on the composer's providerAvailable flag, which
+    // legitimately passes for drafts that turn out to be client-side commands
+    // like `/feedback`; re-read the quota here so a queued send cannot ride
+    // that exemption past a spent window.
+    if (multipleModelSelections === null) {
+      const provider = providerInstanceEntries.find(
+        (entry) => entry.instanceId === ctxSelectedModelSelection.instanceId,
+      );
+      const usageBlock =
+        provider === undefined
+          ? null
+          : usageLimitSendBlock(provider.snapshot, ctxSelectedModel, Date.now());
+      if (provider !== undefined && usageBlock !== null) {
+        setThreadError(
+          threadIdForSend,
+          formatUsageLimitSendBlock(provider.displayName, usageBlock, Date.now(), {
+            providerLocked: lockedProvider !== null,
+          }),
+        );
+        return;
+      }
     }
 
     sendInFlightRef.current = true;
@@ -7953,6 +7983,31 @@ export default function ChatView(props: ChatViewProps) {
       );
       abortQueuedReplay();
       return;
+    }
+    // Uploads and the dock transition give the quota window time to be spent
+    // by another client or an earlier send; re-read it before dispatching.
+    for (const selection of multipleModelSelections ?? [ctxSelectedModelSelection]) {
+      const provider = providerInstanceEntries.find(
+        (entry) => entry.instanceId === selection.instanceId,
+      );
+      const usageBlock =
+        provider === undefined
+          ? null
+          : usageLimitSendBlock(provider.snapshot, selection.model, Date.now());
+      if (provider !== undefined && usageBlock !== null) {
+        sendInFlightRef.current = false;
+        setThreadError(
+          threadIdForSend,
+          formatUsageLimitSendBlock(provider.displayName, usageBlock, Date.now(), {
+            providerLocked: lockedProvider !== null,
+          }),
+        );
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        abortQueuedReplay();
+        return;
+      }
     }
     beginLocalDispatch({
       preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
@@ -8698,6 +8753,10 @@ export default function ChatView(props: ChatViewProps) {
     phase,
     queueBlockedByPendingRequest,
     queueSendGate,
+    // A send held at the quota gate retries when the window resets (minute
+    // tick) or when a probe publishes fresh usage (snapshot identity).
+    nowMinute,
+    providerInstanceEntries,
   ]);
 
   // The row handlers are read from refs at call-time so their identity stays

@@ -29,7 +29,13 @@ export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
 }): ServerProviderUsageLimits {
-  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
+  return {
+    checkedAt: input.checkedAt,
+    windows: sortWindows(input.windows),
+    // Snapshots built here carry the send-gating contract fields, so clients
+    // may gate sends on them; snapshots without the flag predate it.
+    sendGating: true,
+  };
 }
 
 export function makeUnavailableUsageLimits(input: {
@@ -82,6 +88,17 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
+      // An update that does not re-state the scope or gating inherits them
+      // from the probed row it is refreshing.
+      ...(window.modelScope === undefined && existing?.modelScope !== undefined
+        ? { modelScope: existing.modelScope }
+        : {}),
+      ...(window.scopeLabel === undefined && existing?.scopeLabel !== undefined
+        ? { scopeLabel: existing.scopeLabel }
+        : {}),
+      ...(window.blocksSends === undefined && existing?.blocksSends !== undefined
+        ? { blocksSends: existing.blocksSends }
+        : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
@@ -104,7 +121,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.modelScope === b.modelScope &&
+    a.scopeLabel === b.scopeLabel &&
+    a.blocksSends === b.blocksSends
   );
 }
 

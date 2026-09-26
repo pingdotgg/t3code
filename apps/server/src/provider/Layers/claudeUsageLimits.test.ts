@@ -60,9 +60,11 @@ describe("claudeUsageResponseToLimits", () => {
             label: "Weekly · Fable",
             usedPercent: 73,
             windowDurationMins: 10080,
+            modelScope: "Fable",
             resetsAt: "2026-07-24T08:59:00.000Z",
           },
         ],
+        sendGating: true,
       },
     });
   });
@@ -161,6 +163,7 @@ describe("claudeRateLimitEventToUpdate", () => {
           label: "Weekly · Fable",
           usedPercent: 40,
           windowDurationMins: 10080,
+          modelScope: "Fable",
         },
       ],
     });

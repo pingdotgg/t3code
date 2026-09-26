@@ -70,6 +70,11 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(UsageResponse)),
     );
+    // Zen models ride the `opencode` upstream in the inventory
+    // (`opencode/<model>`), so the Go meters only gate that sub-provider's
+    // slugs — a spent Go window says nothing about a BYOK model on another
+    // upstream.
+    const scope = { modelScope: "opencode", scopeLabel: "Go" } as const;
     const windows: ServerProviderUsageWindow[] = [
       {
         id: "go_rolling",
@@ -77,6 +82,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         label: "Go · Session",
         windowDurationMins: 5 * 60,
         usedPercent: clampPercent(body.usage.rolling.percent),
+        ...scope,
         resetsAt: DateTime.formatIso(body.usage.rolling.resetsAt),
       },
       {
@@ -85,6 +91,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         label: "Go · Weekly",
         windowDurationMins: 7 * 24 * 60,
         usedPercent: clampPercent(body.usage.weekly.percent),
+        ...scope,
         resetsAt: DateTime.formatIso(body.usage.weekly.resetsAt),
       },
       {
@@ -92,6 +99,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         kind: "monthly",
         label: "Go · Monthly",
         usedPercent: clampPercent(body.usage.monthly.percent),
+        ...scope,
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
     ];

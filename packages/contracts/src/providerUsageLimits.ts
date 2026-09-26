@@ -24,6 +24,26 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /**
+   * The model an exhausted window blocks, named as the provider names it —
+   * Claude's `model_scoped` rows arrive as a `display_name`, and an upstream
+   * name like `opencode` scopes a window to that sub-provider's models.
+   * Absent windows block every selection on the account. Clients match it
+   * case-insensitively against the selected slug, name, shortName, aliases,
+   * and slug/name tokens.
+   */
+  modelScope: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The name the composer calls a scoped window's quota ("Fable", "Go") when
+   * `modelScope` is a match key rather than a display name.
+   */
+  scopeLabel: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * `false` marks a sub-meter that only informs, like Cursor's per-source
+   * split: it can sit at 100% while another meter still serves the
+   * selection. Absent means an exhausted window blocks sends.
+   */
+  blocksSends: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
@@ -57,6 +77,14 @@ export const ServerProviderUsageLimits = Schema.Struct({
       message: Schema.optional(TrimmedNonEmptyString),
     }),
   ),
+  /**
+   * Set on snapshots from a server that marks which windows gate sends
+   * (`modelScope`, `blocksSends`). Clients only block on those: a snapshot
+   * from an older server can carry windows that predate the scoping
+   * contract, so gating stays off rather than a stale or unscoped read
+   * blocking every model on the account.
+   */
+  sendGating: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 

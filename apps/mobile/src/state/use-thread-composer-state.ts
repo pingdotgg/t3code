@@ -29,7 +29,8 @@ import { composerContextSendBlockReason, reidentifyComposerContext } from "../li
 import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
-import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import { isModelSelectionUnavailable, providerDisplayLabel } from "../lib/modelOptions";
+import { formatUsageLimitSendBlock, usageLimitSendBlock } from "@t3tools/shared/usageLimits";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 import {
   convertPastedImagesToAttachments,
@@ -427,6 +428,22 @@ export function useThreadComposerState() {
           }),
       });
       return null;
+    }
+
+    // The composer's flag is a render-time check; this is the send-time one,
+    // covering a quota that was spent between the two. `/feedback` handled
+    // above never spends a turn, so it stays reachable while a limit holds.
+    if (provider !== undefined && selectedEnvironmentRuntime?.connectionState === "connected") {
+      const usageBlock = usageLimitSendBlock(provider, modelSelection.model, Date.now());
+      if (usageBlock !== null) {
+        Alert.alert(
+          "Out of tokens",
+          formatUsageLimitSendBlock(providerDisplayLabel(provider), usageBlock, Date.now(), {
+            providerLocked: true,
+          }),
+        );
+        return null;
+      }
     }
 
     const metadata = makeQueuedMessageMetadata();
