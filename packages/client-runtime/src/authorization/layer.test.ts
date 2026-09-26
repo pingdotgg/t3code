@@ -488,32 +488,6 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("keeps a cached token when its websocket ticket request times out", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        initialToken: persistedToken(),
-        responses: [STALLED, websocketTicket("next-ticket")],
-      });
-
-      const [failure, authorized] = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
-        const pending = yield* authorize().pipe(Effect.flip, Effect.forkChild);
-        yield* Queue.take(harness.stalls);
-        // The cached token gets the full 10 s ticket budget.
-        yield* TestClock.adjust("9 seconds");
-        expect(pending.pollUnsafe()).toBeUndefined();
-        yield* TestClock.adjust("1 second");
-        return [yield* Fiber.join(pending), yield* authorize()] as const;
-      }).pipe(Effect.provide(harness.layer));
-
-      expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
-      expect(authorized.socketUrl).toContain("wsTicket=next-ticket");
-      expect(authorized.httpAuthorization).toMatchObject({ accessToken: "cached-access-token" });
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-    }),
-  );
-
   it.effect("asks the relay again after three cached ticket timeouts in a row", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

@@ -478,10 +478,11 @@ export const make = Effect.gen(function* () {
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
-      // A timeout means a slow server, not a bad token. Keep the token so the next attempt
-      // reuses it instead of minting a new credential. After several timeouts in a row the
-      // endpoint may be gone, so drop the token and ask the relay again. The mint runs in the
-      // service scope, so it still lands if the setup deadline ends this attempt first.
+      // A timeout means a slow server, not a bad token. The relay returns the same hostname
+      // for an environment, so a new credential would only add load to that server. Keep the
+      // token and fail as transient so the supervisor retries it. After several timeouts in a
+      // row, drop the token and ask the relay again in case the endpoint changed. The mint runs
+      // in the service scope, so it still lands if the setup deadline ends this attempt first.
       if (cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError") {
         const accessToken = selected.token.accessToken;
         const previous = cachedTicketTimeouts.get(input.expectedEnvironmentId);
