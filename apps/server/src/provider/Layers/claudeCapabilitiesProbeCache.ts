@@ -4,7 +4,7 @@
  * the config directory, the working directory and the instance environment,
  * so instances that agree on those would spawn identical probes. This
  * service keeps one TTL cache for the whole server, keyed on those inputs,
- * so such instances share one probe per TTL instead of one each.
+ * so such instances share one successful probe per TTL instead of one each.
  *
  * @module provider/Layers/claudeCapabilitiesProbeCache
  */
@@ -13,6 +13,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 
@@ -55,10 +56,12 @@ class ProbeKey implements Equal.Equal {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const cache = yield* Cache.make({
+  // A failed probe (undefined) is not cached, so one instance's failure never
+  // stands in for its siblings' next check.
+  const cache = yield* Cache.makeWith((key: ProbeKey) => key.probe, {
     capacity: 256,
-    timeToLive: CAPABILITIES_PROBE_TTL,
-    lookup: (key: ProbeKey) => key.probe,
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) && exit.value !== undefined ? CAPABILITIES_PROBE_TTL : Duration.zero,
   });
 
   return {

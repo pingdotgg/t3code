@@ -76,6 +76,19 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       expect(message).toContain("then start a new thread");
     });
 
+    it.effect("separates capability probes for an unset and an explicit default home", () =>
+      Effect.gen(function* () {
+        // Same resolved home, but the CLI treats an explicit CLAUDE_CONFIG_DIR
+        // as a separate login.
+        const unset = yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath: "" });
+        const explicit = yield* makeClaudeCapabilitiesCacheKey({
+          binaryPath: "claude",
+          homePath: "~/.claude",
+        });
+        expect(unset).not.toBe(explicit);
+      }),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };

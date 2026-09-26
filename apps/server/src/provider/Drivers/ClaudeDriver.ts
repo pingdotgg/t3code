@@ -7,9 +7,9 @@
  *
  * Unlike Codex, the Claude snapshot probe may invoke a secondary probe
  * (`probeClaudeCapabilities`) to read Anthropic account + slash-command
- * metadata. That probe is cached server-wide by binary, resolved config
- * directory, cwd and instance environment, so instances that share all of
- * them share one probe while different accounts never share metadata.
+ * metadata. That probe is cached server-wide by binary, the CLAUDE_CONFIG_DIR
+ * the CLI receives, cwd and instance environment overrides, so only
+ * instances that would run an identical probe share its result.
  *
  * @module provider/Drivers/ClaudeDriver
  */

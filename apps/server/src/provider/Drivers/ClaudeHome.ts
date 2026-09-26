@@ -69,8 +69,11 @@ export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesC
     cwd?: string,
     environment?: NodeJS.ProcessEnv,
   ): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `${config.binaryPath}\0${resolvedHomePath}\0${cwd ?? ""}`;
+    // Key on the CLAUDE_CONFIG_DIR the probe actually receives, not the
+    // resolved home: with it unset the CLI uses its default login, and with it
+    // set to ~/.claude it uses a different keychain entry and .claude.json.
+    const configDir = (yield* makeClaudeEnvironment(config, environment)).CLAUDE_CONFIG_DIR ?? "";
+    return `${config.binaryPath}\0${configDir}\0${cwd ?? ""}`;
   },
 );
 
