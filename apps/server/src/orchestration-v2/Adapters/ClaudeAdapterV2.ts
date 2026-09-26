@@ -2463,8 +2463,6 @@ interface ActiveClaudeSubagent {
   // SendMessage that resumes the subagent. A new one means a new prompt.
   readonly runToolUseId: string | null;
   nextChildItemOrdinal: number;
-  progressItemOrdinal: number | null;
-  progressStartedAt: DateTime.Utc | null;
   resultItemOrdinal: number | null;
   // The subagent's latest assistant message routed into its child thread,
   // accumulated across the per-content-block snapshots that share one native
@@ -3552,8 +3550,6 @@ export function makeClaudeAdapterV2(
                 ? (input.toolUseId ?? null)
                 : (resumeToolUseId ?? existingSubagent.runToolUseId),
             nextChildItemOrdinal: existingSubagent?.nextChildItemOrdinal ?? 100,
-            progressItemOrdinal: existingSubagent?.progressItemOrdinal ?? null,
-            progressStartedAt: existingSubagent?.progressStartedAt ?? null,
             resultItemOrdinal: existingSubagent?.resultItemOrdinal ?? null,
             // Every task_started begins a new run of the subagent (including a
             // resume that bufferWakeMessage already pre-opened), so text from
@@ -3750,50 +3746,6 @@ export function makeClaudeAdapterV2(
               result: task.result,
             },
           });
-
-          const progress = task.progress?.trim();
-          if (
-            progress !== undefined &&
-            progress.length > 0 &&
-            (input.progress !== undefined || (lifecycleChanged && input.status !== "running"))
-          ) {
-            const progressNativeItemId = `${nativeItemId}:progress`;
-            const progressItemOrdinal =
-              subagent.progressItemOrdinal ?? ++subagent.nextChildItemOrdinal;
-            const progressStartedAt = subagent.progressStartedAt ?? now;
-            subagent.progressItemOrdinal = progressItemOrdinal;
-            subagent.progressStartedAt = progressStartedAt;
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId: progressNativeItemId,
-                }),
-                threadId: childThreadId,
-                runId: null,
-                nodeId: childRootNodeId,
-                providerThreadId: null,
-                providerTurnId: null,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: progressNativeItemId,
-                  strength: "strong",
-                },
-                parentItemId: null,
-                ordinal: progressItemOrdinal,
-                status: input.status,
-                title: "Subagent progress",
-                startedAt: progressStartedAt,
-                completedAt: input.status === "running" ? null : now,
-                updatedAt: now,
-                type: "reasoning",
-                text: progress,
-                streaming: input.status === "running",
-              },
-            });
-          }
 
           // A completed subagent's result is normally its final assistant
           // message, which is already in the child thread when its text was

@@ -2903,8 +2903,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
             payload: node({ id: childRootId, threadId: childId, runId: null, kind: "root_turn" }),
           },
           {
-            // Claude's live "Subagent progress" item in the child, as the
-            // adapter writes it while task_progress frames arrive.
+            // The subagent's live thinking in the child, still streaming.
             id: EventId.make("event:foundation-native-subagent:child-progress"),
             type: "turn-item.updated",
             threadId: childId,
@@ -2922,11 +2921,11 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
               ordinal: 101,
               type: "reasoning",
               status: "running",
-              title: "Subagent progress",
+              title: "Thinking",
               startedAt: now,
               completedAt: null,
               updatedAt: now,
-              text: "Running git diff --stat",
+              text: "Checking the diff.",
               streaming: true,
             },
           },

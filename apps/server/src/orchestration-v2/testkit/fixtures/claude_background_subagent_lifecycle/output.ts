@@ -200,6 +200,20 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
     "subagent thinking leaked into the parent thread",
   );
 
+  // A finished subagent's child thread holds only its own settled work.
+  // Claude's task_progress summary ("Running <step>") stays on the parent's
+  // subagent card; in the child it read as a step still running.
+  assert.equal(agentB?.progress, "Running Wait 90 seconds then print B_DONE");
+  for (const child of [agentAChild, agentBChild]) {
+    for (const item of child?.turnItems ?? []) {
+      assert.notInclude(["pending", "running", "waiting"], item.status, item.id);
+      assert.isFalse(
+        item.type === "reasoning" && item.title !== "Thinking",
+        `${item.id} is not the subagent's own thinking`,
+      );
+    }
+  }
+
   // Subagents appear in background_tasks_changed but never on the roster.
   assert.isFalse(
     result.domainEvents.some(
