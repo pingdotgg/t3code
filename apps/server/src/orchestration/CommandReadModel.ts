@@ -6,6 +6,7 @@ import {
   OrchestrationThread,
   OrchestrationThreadActivity,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -55,6 +56,12 @@ export const MAX_COMMAND_MESSAGES = 2_000;
 export const MAX_COMMAND_ACTIVITIES = 500;
 export const MAX_COMMAND_CHECKPOINTS = 500;
 export const MAX_COMMAND_PLANS = 200;
+
+/** Startup restores decision history only for live threads updated within this
+ * window of the newest thread activity. Older and archived threads start empty,
+ * as they did before this model existed, so boot memory follows recent work
+ * instead of every thread ever created. */
+export const COMMAND_HISTORY_RESTORE_WINDOW = Duration.days(7);
 
 /** Reduces activity bodies to the request facts used by the decider and retention. */
 export function toCommandActivity(

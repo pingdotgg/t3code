@@ -38,6 +38,7 @@ import {
 } from "@t3tools/contracts";
 import { legacyLinkedPullRequestOf } from "@t3tools/shared/threadPullRequests";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -51,6 +52,7 @@ import {
   CommandActivity,
   CommandCheckpoint,
   CommandMessage,
+  COMMAND_HISTORY_RESTORE_WINDOW,
   type CommandReadModel,
   MAX_COMMAND_MESSAGES,
   MAX_COMMAND_ACTIVITIES,
@@ -2438,25 +2440,31 @@ pending_approval_requests AS (
       );
 
   // Select metadata in SQLite so startup never materializes conversation bodies.
+  // Each query reads only threads updated since `cutoff` (see
+  // COMMAND_HISTORY_RESTORE_WINDOW).
   const listCommandMessages = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.String,
     Result: Schema.Struct({ ...CommandMessage.fields, threadId: ThreadId }),
-    execute: () => sql`
+    execute: (cutoff) => sql`
       SELECT message_id AS id, thread_id AS "threadId", turn_id AS "turnId",
         role, created_at AS "createdAt", updated_at AS "updatedAt"
       FROM (
         SELECT rowid AS insertion_order, message_id, thread_id, turn_id, role, created_at, updated_at,
           ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY rowid DESC) AS rank
         FROM projection_thread_messages
+        WHERE thread_id IN (
+          SELECT thread_id FROM projection_threads
+          WHERE deleted_at IS NULL AND archived_at IS NULL AND updated_at >= ${cutoff}
+        )
       )
       WHERE rank <= ${MAX_COMMAND_MESSAGES}
       ORDER BY thread_id, insertion_order
     `,
   });
   const listCommandCheckpoints = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.String,
     Result: Schema.Struct({ ...CommandCheckpoint.fields, threadId: ThreadId }),
-    execute: () => sql`
+    execute: (cutoff) => sql`
       SELECT thread_id AS "threadId", turn_id AS "turnId", checkpoint_turn_count AS "checkpointTurnCount",
         checkpoint_ref AS "checkpointRef", checkpoint_status AS status,
         assistant_message_id AS "assistantMessageId", completed_at AS "completedAt"
@@ -2464,27 +2472,35 @@ pending_approval_requests AS (
         SELECT thread_id, turn_id, checkpoint_turn_count, checkpoint_ref, checkpoint_status,
           assistant_message_id, completed_at,
           ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY checkpoint_turn_count DESC) AS rank
-        FROM projection_turns WHERE checkpoint_turn_count IS NOT NULL
+        FROM projection_turns
+        WHERE checkpoint_turn_count IS NOT NULL AND thread_id IN (
+          SELECT thread_id FROM projection_threads
+          WHERE deleted_at IS NULL AND archived_at IS NULL AND updated_at >= ${cutoff}
+        )
       )
       WHERE rank <= ${MAX_COMMAND_CHECKPOINTS}
       ORDER BY thread_id, checkpoint_turn_count
     `,
   });
   const listCommandActivities = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.String,
     Result: Schema.Struct({
       ...Struct.pick(CommandActivity.fields, ["id", "kind", "turnId", "createdAt"]),
       threadId: ThreadId,
       sequence: Schema.NullOr(NonNegativeInt),
       payload: Schema.fromJsonString(Schema.Unknown),
     }),
-    execute: () => sql`
+    execute: (cutoff) => sql`
       WITH recent AS (
         SELECT rowid AS activity_rowid, thread_id, activity_id, kind, sequence, created_at,
           ROW_NUMBER() OVER (
             PARTITION BY thread_id ORDER BY sequence DESC, created_at DESC, activity_id DESC
           ) AS rank
         FROM projection_thread_activities
+        WHERE thread_id IN (
+          SELECT thread_id FROM projection_threads
+          WHERE deleted_at IS NULL AND archived_at IS NULL AND updated_at >= ${cutoff}
+        )
       ), async_lifecycle AS (
         SELECT activity_id, kind,
           ROW_NUMBER() OVER (
@@ -2495,6 +2511,10 @@ pending_approval_requests AS (
         WHERE (kind = 'user-input.resolved' OR
           (kind = 'user-input.requested' AND json_extract(payload_json, '$.responseMode') = 'message'))
           AND json_type(payload_json, '$.requestId') = 'text'
+          AND thread_id IN (
+          SELECT thread_id FROM projection_threads
+          WHERE deleted_at IS NULL AND archived_at IS NULL AND updated_at >= ${cutoff}
+        )
       )
       SELECT a.activity_id AS id, a.thread_id AS "threadId", a.turn_id AS "turnId",
         a.kind, a.sequence, a.created_at AS "createdAt",
@@ -2759,11 +2779,26 @@ pending_approval_requests AS (
     sql
       .withTransaction(
         Effect.gen(function* () {
-          const [metadata, messages, activities, checkpoints] = yield* Effect.all([
-            getMetadataSnapshot(),
-            listCommandMessages(undefined),
-            listCommandActivities(undefined),
-            listCommandCheckpoints(undefined),
+          const metadata = yield* getMetadataSnapshot();
+          // Measured from the newest thread rather than the wall clock, so a
+          // server restarted after a long idle stretch still restores its latest work.
+          const newest = metadata.threads.reduce(
+            (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
+            "",
+          );
+          const cutoff =
+            newest === ""
+              ? newest
+              : DateTime.formatIso(
+                  DateTime.subtractDuration(
+                    DateTime.makeUnsafe(newest),
+                    COMMAND_HISTORY_RESTORE_WINDOW,
+                  ),
+                );
+          const [messages, activities, checkpoints] = yield* Effect.all([
+            listCommandMessages(cutoff),
+            listCommandActivities(cutoff),
+            listCommandCheckpoints(cutoff),
           ]);
           const messagesByThread = new Map<ThreadId, Array<typeof CommandMessage.Type>>();
           const activitiesByThread = new Map<ThreadId, Array<CommandActivity>>();

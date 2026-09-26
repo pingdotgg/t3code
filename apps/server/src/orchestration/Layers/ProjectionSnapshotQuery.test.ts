@@ -2134,6 +2134,74 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("restores command history only for live threads active in the last week", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_turns`;
+
+      yield* sql`
+        INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('project', 'Project', '/tmp/project', '[]', '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z')
+      `;
+      // "recent" is the newest thread; "idle" was last active 8 days before it.
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          created_at, updated_at, archived_at, deleted_at
+        )
+        VALUES
+          ('recent', 'project', 'Recent', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-04-20T00:00:00.000Z', NULL, NULL),
+          ('week-old', 'project', 'Week old', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-04-13T00:00:00.000Z', NULL, NULL),
+          ('idle', 'project', 'Idle', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-04-12T00:00:00.000Z', NULL, NULL),
+          ('archived', 'project', 'Archived', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-04-19T00:00:00.000Z', '2026-04-19T00:00:00.000Z', NULL),
+          ('deleted', 'project', 'Deleted', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-04-19T00:00:00.000Z', NULL, '2026-04-19T00:00:00.000Z')
+      `;
+      for (const threadId of ["recent", "week-old", "idle", "archived", "deleted"]) {
+        yield* sql`
+          INSERT INTO projection_thread_messages (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+          VALUES (${`${threadId}-message`}, ${threadId}, 'turn', 'user', 'hello', 0, '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z')
+        `;
+        yield* sql`
+          INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at, sequence)
+          VALUES (${`${threadId}-activity`}, ${threadId}, 'turn', 'approval', 'approval.requested', 'Approve',
+            json_object('requestId', ${`${threadId}-request`}), '2026-04-01T00:00:00.000Z', 1)
+        `;
+        yield* sql`
+          INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, completed_at,
+            checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json)
+          VALUES (${threadId}, 'turn', 'completed', '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:01.000Z',
+            1, 'ref', 'ready', '[]')
+        `;
+      }
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      const restored = Object.fromEntries(
+        commandReadModel.threads.map((thread) => [
+          thread.id,
+          [thread.messages.length, thread.activities.length, thread.checkpoints.length],
+        ]),
+      );
+      assert.deepStrictEqual(restored, {
+        recent: [1, 1, 1],
+        "week-old": [1, 1, 1],
+        idle: [0, 0, 0],
+        archived: [0, 0, 0],
+        deleted: [0, 0, 0],
+      });
+    }),
+  );
+
   it.effect("searches active user messages and canonical assistant outputs", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
