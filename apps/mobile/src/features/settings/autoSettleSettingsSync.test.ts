@@ -67,6 +67,24 @@ describe("auto-settle settings sync", () => {
     expect(updated.sourceControlWritingStyle).toEqual(target.settings.sourceControlWritingStyle);
   });
 
+  it("syncs differing scope only between servers supporting it", () => {
+    const target = {
+      environmentId: EnvironmentId.make("remote"),
+      label: "Remote",
+      settings: { ...reference.settings, sidebarAutoSettleScope: "without-pr" as const },
+      supportsScope: true,
+    };
+    expect(
+      planAutoSettleSettingsSync({ ...reference, supportsScope: true }, [target]).mismatches,
+    ).toEqual([target]);
+    expect(
+      planAutoSettleSettingsSync({ ...reference, supportsScope: true }, [
+        { ...target, supportsScope: false },
+      ]).mismatches,
+    ).toEqual([]);
+    expect(planAutoSettleSettingsSync(reference, [target]).mismatches).toEqual([]);
+  });
+
   it("does not compare the reference or a target without loaded settings", () => {
     const plan = planAutoSettleSettingsSync(reference, [
       { ...reference, label: "Reference" },

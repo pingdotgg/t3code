@@ -683,6 +683,7 @@ describe("ServerSettings thread settlement", () => {
   it("defaults merge settlement on and inactivity settlement to three days", () => {
     const settings = decodeServerSettings({});
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleScope).toBe("all");
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
   });
 
@@ -699,6 +700,13 @@ describe("ServerSettings thread settlement", () => {
         sidebarAutoSettleOnMerge: false,
       }),
     ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
+  });
+
+  it("accepts the linked-PR exclusion and rejects unknown scopes", () => {
+    expect(decodeServerSettingsPatch({ sidebarAutoSettleScope: "without-pr" })).toEqual({
+      sidebarAutoSettleScope: "without-pr",
+    });
+    expect(() => decodeServerSettingsPatch({ sidebarAutoSettleScope: "unknown" })).toThrow();
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {

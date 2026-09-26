@@ -29,6 +29,7 @@ function environment(
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
     projectOverrides?: boolean;
+    settlementScope?: boolean;
   } = {},
 ) {
   return {
@@ -43,7 +44,10 @@ function environment(
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
             environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
+              capabilities: {
+                projectSettingsOverrides: options.projectOverrides !== false,
+                threadAutoSettlementScope: options.settlementScope === true,
+              },
             },
           },
   };
@@ -148,6 +152,35 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it.each([all, project])(
+    "restores all-thread settlement on capable targets in a mixed-version scope ($kind)",
+    (scope) => {
+      const settings = { sidebarAutoSettleScope: "without-pr" as const };
+      const capable = environment("Laptop", { settlementScope: true, settings });
+      const legacy = environment("Server", { settings });
+      const plan = planScopedSettingsPatch(scope, [capable, legacy], {
+        sidebarAutoSettleAfterDays: 3,
+        sidebarAutoSettleScope: "all",
+      });
+      const updated = plan.serverWrites.map((write) => {
+        const patch =
+          scope.kind === "project"
+            ? Object.values(write.patch.projectSettingsOverrides ?? {})[0]
+            : write.patch;
+        return { environmentId: write.environmentId, patch };
+      });
+      expect(
+        updated.sort((left, right) => left.environmentId.localeCompare(right.environmentId)),
+      ).toEqual([
+        {
+          environmentId: capable.environmentId,
+          patch: { sidebarAutoSettleAfterDays: 3, sidebarAutoSettleScope: "all" },
+        },
+        { environmentId: legacy.environmentId, patch: { sidebarAutoSettleAfterDays: 3 } },
+      ]);
+    },
+  );
+
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {

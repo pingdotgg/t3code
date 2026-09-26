@@ -288,7 +288,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
-    searchTerms: ["sidebar inactivity days no activity automatically"],
+    searchTerms: [
+      "sidebar inactivity days no activity automatically all threads without linked PR pull request off",
+    ],
     requiresThreadAutoSettlement: true,
     scope: "project-defaults",
   },

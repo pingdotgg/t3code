@@ -13,6 +13,7 @@ import {
 } from "@t3tools/shared/projectSettings";
 
 import type { SettingsTarget } from "./settings-environment-filter";
+import * as Struct from "effect/Struct";
 
 export interface ScopedMobileSettingsTarget {
   readonly environment: SettingsTarget;
@@ -51,8 +52,15 @@ export function planMobileScopedSettingsPatch(
   projectSelected: boolean,
   patch: ServerSettingsPatch,
 ) {
+  const supportedPatch = (target: ScopedMobileSettingsTarget) =>
+    target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true
+      ? patch
+      : Struct.omit(patch, ["sidebarAutoSettleScope"]);
   if (!projectSelected) {
-    return targets.map((target) => ({ environmentId: target.environment.environmentId, patch }));
+    return targets.map((target) => ({
+      environmentId: target.environment.environmentId,
+      patch: supportedPatch(target),
+    }));
   }
   const keys = Object.keys(patch);
   if (
@@ -71,7 +79,7 @@ export function planMobileScopedSettingsPatch(
     const current =
       target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
     const next: Record<string, unknown> = { ...current };
-    for (const [key, value] of Object.entries(patch)) {
+    for (const [key, value] of Object.entries(supportedPatch(target))) {
       // A picker's "Inherit" sends null; for keys whose override cannot
       // store null that means remove the override.
       if (

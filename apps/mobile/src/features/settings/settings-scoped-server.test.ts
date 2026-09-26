@@ -55,17 +55,67 @@ describe("mobile usage-limit settings across environments", () => {
   );
 });
 
-function environment(environmentId: EnvironmentId, settings: ServerSettings): SettingsTarget {
+function environment(
+  environmentId: EnvironmentId,
+  settings: ServerSettings,
+  supportsScope = false,
+): SettingsTarget {
   return {
     environmentId,
     serverConfig: {
       settings,
-      environment: { capabilities: { projectSettingsOverrides: true } },
+      environment: {
+        capabilities: { projectSettingsOverrides: true, threadAutoSettlementScope: supportsScope },
+      },
     },
   } as SettingsTarget;
 }
 
 describe("mobile project settings scope", () => {
+  it.each([false, true])(
+    "filters settlement scope per server with project scope %s",
+    (projectSelected) => {
+      const capable = environment(firstId, DEFAULT_SERVER_SETTINGS, true);
+      const legacy = environment(secondId, DEFAULT_SERVER_SETTINGS);
+      const targets = resolveMobileSettingsTargets(
+        [capable, legacy],
+        projectSelected
+          ? [
+              { environmentId: firstId, id: firstProject },
+              { environmentId: secondId, id: secondProject },
+            ]
+          : null,
+      );
+      const writes = planMobileScopedSettingsPatch(targets, projectSelected, {
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleScope: "all",
+      });
+      expect(writes).toEqual([
+        {
+          environmentId: firstId,
+          patch: projectSelected
+            ? {
+                projectSettingsOverrides: {
+                  [firstProject]: {
+                    sidebarAutoSettleAfterDays: null,
+                    sidebarAutoSettleScope: "all",
+                  },
+                },
+              }
+            : { sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" },
+        },
+        {
+          environmentId: secondId,
+          patch: projectSelected
+            ? {
+                projectSettingsOverrides: { [secondProject]: { sidebarAutoSettleAfterDays: null } },
+              }
+            : { sidebarAutoSettleAfterDays: null },
+        },
+      ]);
+    },
+  );
+
   it("edits each checkout's own override without changing either environment default", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
