@@ -406,6 +406,17 @@ describe("acpRegistrySnapshotReadiness", () => {
       },
       message: 'Sign in in provider settings using "Log in with Grok".',
     });
+    // Live configuration from an earlier session does not hide the failed sign-in.
+    expect(
+      applyAcpRegistryLiveConfiguration(
+        snapshot,
+        { models: [], currentModelId: null, configOptions: [], supportsPlanMode: false },
+        [],
+      ),
+    ).toMatchObject({
+      status: "warning",
+      message: 'Sign in in provider settings using "Log in with Grok".',
+    });
   });
 
   it.effect("runs the disposable probe only after local inspection is ready", () =>

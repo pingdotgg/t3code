@@ -246,13 +246,18 @@ export function applyAcpRegistryLiveConfiguration(
   configuration: AcpRegistryLiveConfiguration,
   customModels: ReadonlyArray<string>,
 ): ServerProvider {
-  const { message: _staleProbeMessage, ...snapshot } = provider;
-  return {
-    ...snapshot,
-    status: provider.enabled ? "ready" : provider.status,
+  const configured = {
+    ...provider,
     showInteractionModeToggle: configuration.supportsPlanMode,
     models: modelsFromDiscovery(configuration, customModels),
   };
+  // A running session proves the agent starts, so it replaces the probe's
+  // status. It must not hide a later failed sign-in or local check.
+  if (!provider.enabled || !provider.installed || provider.auth.status === "unauthenticated") {
+    return configured;
+  }
+  const { message: _staleProbeMessage, ...snapshot } = configured;
+  return { ...snapshot, status: "ready" };
 }
 
 function applyAcpRegistryUrlAuthAction(
