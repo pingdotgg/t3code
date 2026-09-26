@@ -488,7 +488,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("asks the relay again after three cached ticket timeouts in a row", () =>
+  it.effect("asks the relay again after three timed-out cached ticket steps", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         initialToken: persistedToken(),
