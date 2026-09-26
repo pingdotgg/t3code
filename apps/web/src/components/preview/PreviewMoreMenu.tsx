@@ -52,6 +52,8 @@ interface Props {
   nativePictureInPicture: boolean;
   /** Toggles the optional native always-on-top preview window. */
   onNativePictureInPicture: () => void;
+  /** Opens the current page in the OS default browser. */
+  onOpenInBrowser: () => void;
   /** Environment the tab belongs to; scopes storage clearing to its partitions. */
   environmentId: EnvironmentId;
   /** Profile the tab was opened under, if the server recorded one. */
@@ -79,6 +81,7 @@ export function PreviewMoreMenu({
   onToggleDeviceToolbar,
   nativePictureInPicture,
   onNativePictureInPicture,
+  onOpenInBrowser,
   environmentId,
   profileId,
   profileName,
@@ -119,6 +122,9 @@ export function PreviewMoreMenu({
           {nativePictureInPicture
             ? "Close separate preview window"
             : "Open separate preview window"}
+        </MenuItem>
+        <MenuItem onClick={onOpenInBrowser} disabled={tabDisabled}>
+          Open in system browser
         </MenuItem>
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
