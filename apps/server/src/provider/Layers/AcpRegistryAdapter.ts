@@ -243,8 +243,11 @@ function acpRegistryElicitationQuestions(request: {
   const properties = unknownRecord(unknownRecord(request.requestedSchema)?.properties) ?? {};
   return Object.entries(properties).map(([id, property], index) => {
     const record = unknownRecord(property);
-    const enumValues = Array.isArray(record?.enum)
-      ? record.enum.filter((value): value is string => typeof value === "string")
+    // ACP multi-select fields are string arrays with their choices on `items`.
+    const isMultiSelect = record?.type === "array";
+    const choices = isMultiSelect ? unknownRecord(record?.items)?.enum : record?.enum;
+    const enumValues = Array.isArray(choices)
+      ? choices.filter((value): value is string => typeof value === "string")
       : [];
     const options =
       enumValues.length > 0
@@ -260,8 +263,9 @@ function acpRegistryElicitationQuestions(request: {
       header: nonEmptyText(record?.title, `Question ${index + 1}`),
       question: nonEmptyText(record?.description, nonEmptyText(request.message, "Answer")),
       options,
-      ...(options.length === 0 ? { allowCustomAnswer: true } : {}),
-      multiSelect: false,
+      // Fixed choices come from the agent's schema, so typed answers are off.
+      allowCustomAnswer: options.length === 0,
+      multiSelect: isMultiSelect && options.length > 0,
     };
   });
 }
@@ -274,7 +278,10 @@ function elicitationFieldTypes(requestedSchema: unknown): ReadonlyMap<string, un
   );
 }
 
-/** Answers arrive as picked labels or typed text; the agent's schema decides the value type. */
+/**
+ * Answers arrive as picked labels or typed text; the agent's schema decides
+ * the value type. An answer that does not fit its field's type is left out.
+ */
 function elicitationContent(
   answers: ProviderUserInputAnswers,
   fieldTypes: ReadonlyMap<string, unknown>,
@@ -283,15 +290,21 @@ function elicitationContent(
   for (const [key, value] of Object.entries(answers)) {
     if (!fieldTypes.has(key)) continue;
     const type = fieldTypes.get(key);
-    if (type === "boolean" && (value === "true" || value === "false")) {
-      content[key] = value === "true";
-    } else if (
-      (type === "number" || type === "integer") &&
-      typeof value === "string" &&
-      value.trim() !== "" &&
-      Number.isFinite(Number(value))
-    ) {
-      content[key] = Number(value);
+    if (type === "boolean") {
+      if (value === "true" || value === "false") content[key] = value === "true";
+    } else if (type === "number" || type === "integer") {
+      const number =
+        typeof value === "number"
+          ? value
+          : typeof value === "string" && value.trim() !== ""
+            ? Number(value)
+            : Number.NaN;
+      if (type === "integer" ? Number.isInteger(number) : Number.isFinite(number)) {
+        content[key] = number;
+      }
+    } else if (type === "array") {
+      const entries = Array.isArray(value) ? value : [value];
+      content[key] = entries.filter((entry): entry is string => typeof entry === "string");
     } else if (
       typeof value === "string" ||
       typeof value === "number" ||

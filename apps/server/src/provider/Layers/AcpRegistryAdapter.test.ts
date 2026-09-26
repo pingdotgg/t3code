@@ -340,10 +340,33 @@ function acpRegistryAdapterTests(
         return assert.fail(`Expected a question, got ${requested.type}`);
       }
       expect(requested.payload.questions).toMatchObject([
-        { id: "approved", header: "Approved", options: [{ label: "true" }, { label: "false" }] },
+        {
+          id: "approved",
+          header: "Approved",
+          options: [{ label: "true" }, { label: "false" }],
+          allowCustomAnswer: false,
+          multiSelect: false,
+        },
+        {
+          id: "color",
+          options: [{ label: "red" }, { label: "blue" }],
+          allowCustomAnswer: false,
+          multiSelect: false,
+        },
+        {
+          id: "tags",
+          options: [{ label: "a" }, { label: "b" }],
+          allowCustomAnswer: false,
+          multiSelect: true,
+        },
+        { id: "count", options: [], allowCustomAnswer: true, multiSelect: false },
       ]);
       yield* adapter.respondToUserInput(threadId, ApprovalRequestId.make(requested.requestId), {
         approved: "true",
+        color: "red",
+        tags: ["a"],
+        // A fraction does not fit an integer field, so it is left out.
+        count: "1.5",
       });
       yield* Fiber.join(turn);
       yield* adapter.stopSession(threadId);
@@ -351,7 +374,7 @@ function acpRegistryAdapterTests(
       const requests = yield* readRequestLog(requestLogPath);
       expect(requests.map((request) => request.result)).toContainEqual({
         action: "accept",
-        content: { approved: true },
+        content: { approved: true, color: "red", tags: ["a"] },
       });
     }).pipe(Effect.scoped, TestClock.withLive),
   );
