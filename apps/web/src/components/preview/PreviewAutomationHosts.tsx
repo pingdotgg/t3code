@@ -19,6 +19,7 @@ import {
   type PreviewRenderedViewportSize,
   type PreviewViewportSetting,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -273,7 +274,10 @@ const raisePreviewAutomationHostError = (
   throw error;
 };
 
-export function PreviewAutomationHosts() {
+export function PreviewAutomationHosts(props: {
+  readonly routeThreadRef?: ScopedThreadRef | null;
+}) {
+  const { routeThreadRef } = props;
   const { environments } = useEnvironments();
   if (!isElectron || !previewBridge?.automation) return null;
   return (
@@ -287,14 +291,22 @@ export function PreviewAutomationHosts() {
         <PreviewAutomationHost
           key={environment.environmentId}
           environmentId={environment.environmentId}
+          activeThreadId={
+            routeThreadRef?.environmentId === environment.environmentId
+              ? routeThreadRef.threadId
+              : undefined
+          }
         />
       ))}
     </>
   );
 }
 
-function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
-  const { environmentId } = props;
+function PreviewAutomationHost(props: {
+  readonly environmentId: EnvironmentId;
+  readonly activeThreadId: ThreadId | undefined;
+}) {
+  const { environmentId, activeThreadId } = props;
   const previewSessions = useActivePreviewSessions();
   const visibleRuntimeTabIds = useBrowserSurfaceStore(
     useShallow((state) =>
@@ -836,6 +848,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         environmentId,
         connectionId: automationConnectionId,
         focused: document.hasFocus() && document.visibilityState === "visible",
+        ...(activeThreadId === undefined ? {} : { activeThreadId }),
         liveTabs: liveTabs.map((tab) => ({
           ...tab,
           visible: tab.visible && document.visibilityState === "visible",
@@ -859,7 +872,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       window.removeEventListener("blur", report);
       document.removeEventListener("visibilitychange", report);
     };
-  }, [automationClientId, automationConnectionId, environmentId, focusAutomationHost, liveTabs]);
+  }, [
+    activeThreadId,
+    automationClientId,
+    automationConnectionId,
+    environmentId,
+    focusAutomationHost,
+    liveTabs,
+  ]);
 
   return null;
 }

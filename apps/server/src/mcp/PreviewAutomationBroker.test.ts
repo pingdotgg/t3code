@@ -850,6 +850,47 @@ it.effect("prefers a focused host over unrelated extra capabilities for a new se
   ),
 );
 
+it.effect("prefers a host showing the thread over a focused host showing another thread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connectionIds = new Map<string, string>();
+      for (const clientId of ["showing-thread", "focused-elsewhere"]) {
+        const requests = requestsFrom(yield* broker.connect(makeHost({ clientId })), (id) =>
+          connectionIds.set(clientId, id),
+        );
+        yield* Stream.runForEach(requests, (request) =>
+          broker.respond({
+            clientId,
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: clientId,
+          }),
+        ).pipe(Effect.forkScoped);
+      }
+      yield* Effect.yieldNow;
+      yield* broker.focusHost({
+        clientId: "showing-thread",
+        environmentId: scope.environmentId,
+        connectionId: connectionIds.get("showing-thread") ?? "",
+        focused: false,
+        activeThreadId: scope.threadId,
+      });
+      yield* broker.focusHost({
+        clientId: "focused-elsewhere",
+        environmentId: scope.environmentId,
+        connectionId: connectionIds.get("focused-elsewhere") ?? "",
+        focused: true,
+        activeThreadId: ThreadId.make("thread-2"),
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
+        "showing-thread",
+      );
+    }),
+  ),
+);
+
 it.effect("does not route new operations to legacy hosts that did not advertise support", () =>
   Effect.scoped(
     Effect.gen(function* () {
