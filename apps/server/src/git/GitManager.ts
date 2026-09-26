@@ -35,6 +35,7 @@ import {
   type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
   type ThreadId,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import {
   hasProjectSettingsOverrides,
@@ -95,7 +96,24 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
 
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
+  readonly modelSetting: NonNullable<TextGenerationError["modelSetting"]>;
   readonly style: SourceControlWritingStyleSettings;
+}
+
+function withTextGenerationContext(
+  error: TextGenerationError,
+  settings: SourceControlTextGenerationSettings,
+): TextGenerationError {
+  return new TextGenerationError({
+    operation: error.operation,
+    detail: error.detail,
+    ...(error.cause !== undefined ? { cause: error.cause } : {}),
+    modelSelection: {
+      instanceId: settings.modelSelection.instanceId,
+      model: settings.modelSelection.model,
+    },
+    modelSetting: settings.modelSetting,
+  });
 }
 
 export class GitManager extends Context.Service<
@@ -1877,7 +1895,10 @@ export const make = Effect.gen(function* () {
           ...(policy ? { policy } : {}),
           modelSelection: input.settings.modelSelection,
         })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        .pipe(
+          Effect.mapError((error) => withTextGenerationContext(error, input.settings)),
+          Effect.map((result) => sanitizeCommitMessage(result)),
+        );
 
       return {
         subject: generated.subject,
@@ -2057,17 +2078,19 @@ export const make = Effect.gen(function* () {
         ? Option.getOrUndefined(yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute))
         : undefined;
 
-    const generated = yield* textGeneration.generatePrContent({
-      cwd,
-      baseBranch,
-      headBranch: headContext.headBranch,
-      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-      ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-      ...(policy ? { policy } : {}),
-      modelSelection: settings.modelSelection,
-    });
+    const generated = yield* textGeneration
+      .generatePrContent({
+        cwd,
+        baseBranch,
+        headBranch: headContext.headBranch,
+        commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+        diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+        diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+        ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+        ...(policy ? { policy } : {}),
+        modelSelection: settings.modelSelection,
+      })
+      .pipe(Effect.mapError((error) => withTextGenerationContext(error, settings)));
 
     const bodyFile = path.join(
       tempDir,
@@ -2708,16 +2731,26 @@ export const make = Effect.gen(function* () {
             settings.sourceControlWriterModelSelection === null
               ? Effect.succeed({
                   modelSelection: settings.textGenerationModelSelection,
+                  modelSetting: "textGenerationModelSelection" as const,
                   style: settings.sourceControlWritingStyle,
                 })
               : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+                  Effect.map((providers) => {
+                    const modelSelection = ServerSettings.resolveSourceControlWriterModelSelection(
                       settings,
                       providers,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
+                    );
+                    return {
+                      modelSelection,
+                      // The resolver returns the chosen settings object unchanged, preserving
+                      // which picker supplied it even when both pickers name the same model.
+                      modelSetting:
+                        modelSelection === settings.sourceControlWriterModelSelection
+                          ? ("sourceControlWriterModelSelection" as const)
+                          : ("textGenerationModelSelection" as const),
+                      style: settings.sourceControlWritingStyle,
+                    };
+                  }),
                 ),
           ),
           Effect.mapError(
