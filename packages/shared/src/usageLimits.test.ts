@@ -18,11 +18,13 @@ import {
   collectLimitPools,
   displayLimitWindows,
   elapsedShare,
+  formatCountdown,
   formatResetsIn,
   limitsNotice,
   paceOf,
   providersWithLimits,
   remainingPercent,
+  runsOutAt,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -65,6 +67,29 @@ describe("pace", () => {
     expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
     expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
     expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
+  });
+
+  it("projects the window's average rate forward to when it runs dry", () => {
+    // 80% used in three hours leaves 20% for 45 minutes, well before the reset.
+    expect(runsOutAt({ ...window, usedPercent: 80 }, now)).toBe(now + 45 * 60_000);
+    expect(formatCountdown({ ...window, usedPercent: 80 }, now)).toBe("empty in 45m");
+    // 40% in three hours would last 4.5 more; exactly on the reset still lasts.
+    expect(runsOutAt(window, now)).toBeNull();
+    expect(runsOutAt({ ...window, usedPercent: 60 }, now)).toBeNull();
+    expect(formatCountdown(window, now)).toBe("resets in 2h 0m");
+  });
+
+  it("makes no projection for an idle, spent, or unmeasurable window", () => {
+    expect(runsOutAt({ ...window, usedPercent: 0 }, now)).toBeNull();
+    expect(runsOutAt({ ...window, usedPercent: 100 }, now)).toBeNull();
+    expect(
+      runsOutAt({ ...window, usedPercent: 80, windowDurationMins: undefined }, now),
+    ).toBeNull();
+    expect(runsOutAt({ ...window, usedPercent: 80, resetsAt: undefined }, now)).toBeNull();
+    // A reset further away than the window is long means the duration is stale.
+    expect(
+      runsOutAt({ ...window, usedPercent: 80, resetsAt: "2026-09-04T12:00:00.000Z" }, now),
+    ).toBeNull();
   });
 
   it("phrases the reset as a countdown", () => {

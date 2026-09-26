@@ -490,6 +490,35 @@ export function formatDuration(ms: number): string {
   return `${minutes}m`;
 }
 
+/**
+ * When the window runs dry if spending keeps its average rate so far, or null
+ * when it lasts until the reset, is already spent, or has no known length or
+ * reset. The rate is the window's own average, so a burst early in a long
+ * window counts for less as the window goes on.
+ */
+export function runsOutAt(window: ServerProviderUsageWindow, now: number): number | null {
+  const resetsAt = resetMillis(window);
+  if (resetsAt === null || window.windowDurationMins === undefined) return null;
+  const length = window.windowDurationMins * MINUTE;
+  const left = resetsAt - now;
+  if (length <= 0 || left <= 0 || left > length) return null;
+  const used = Math.max(0, Math.min(100, window.usedPercent));
+  if (used <= 0 || used >= 100) return null;
+  const runsOutIn = (100 - used) / (used / (length - left));
+  return runsOutIn < left ? now + runsOutIn : null;
+}
+
+/**
+ * The row's countdown: when it runs dry before the reset, that is the time
+ * that matters, so `empty in 1h 5m` replaces `resets in 3h 20m`.
+ */
+export function formatCountdown(window: ServerProviderUsageWindow, now: number): string | null {
+  const emptyAt = runsOutAt(window, now);
+  return emptyAt === null
+    ? formatResetsIn(window, now)
+    : `empty in ${formatDuration(emptyAt - now)}`;
+}
+
 /** `resets in 2h 13m`, or null when the window has no reset. */
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);

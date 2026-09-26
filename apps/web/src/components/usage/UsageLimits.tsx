@@ -10,11 +10,13 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import {
   elapsedShare,
+  formatCountdown,
   formatDuration,
   formatResetsIn,
   type LimitPace,
   paceOf,
   remainingPercent,
+  runsOutAt,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
@@ -96,9 +98,12 @@ function WindowBar({
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
+  const emptyAt = runsOutAt(window, now);
+  const projection =
+    emptyAt === null ? null : `At this rate, empty in ${formatDuration(emptyAt - now)}`;
   const summary = `${window.label}: ${remaining}% left${
     timeLeft === null ? "" : `, ${timeLeft}% of the window left`
-  }${resetsIn ? `, ${resetsIn}` : ""}`;
+  }${projection ? `, ${projection.toLowerCase()}` : ""}${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
     <Tooltip>
@@ -134,6 +139,9 @@ function WindowBar({
           </span>
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
+          ) : null}
+          {projection ? (
+            <span className="text-warning">{projection}, before it resets.</span>
           ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
@@ -173,7 +181,8 @@ export function LimitWindows({
     >
       {windows.map((window) => {
         const pace = paceOf(window, now);
-        const resetsIn = formatResetsIn(window, now);
+        const countdown = formatCountdown(window, now);
+        const runsDry = runsOutAt(window, now) !== null;
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
@@ -185,7 +194,9 @@ export function LimitWindows({
             <WindowBar color={color} window={window} now={now} />
             <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
               {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
+              <span className={runsDry ? "ms-auto shrink-0 text-warning" : "ms-auto shrink-0"}>
+                {countdown ?? ""}
+              </span>
             </span>
           </Fragment>
         );

@@ -11,10 +11,11 @@ import type {
 import {
   elapsedShare,
   formatDuration,
-  formatResetsIn,
+  formatCountdown,
   limitsNotice,
   paceOf,
   remainingPercent,
+  runsOutAt,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
@@ -55,7 +56,8 @@ function WindowRow(props: {
   const elapsed = elapsedShare(window, now);
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const pace = paceOf(window, now);
-  const resetsIn = formatResetsIn(window, now);
+  const countdown = formatCountdown(window, now);
+  const runsDry = runsOutAt(window, now) !== null;
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
@@ -88,10 +90,18 @@ function WindowRow(props: {
           />
         ) : null}
       </View>
-      {pace || resetsIn ? (
+      {pace || countdown ? (
         <View className="flex-row justify-between gap-3">
           <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>
-          <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
+          <Text
+            className={
+              runsDry
+                ? "text-xs tabular-nums text-amber-500"
+                : "text-xs tabular-nums text-foreground-tertiary"
+            }
+          >
+            {countdown ?? ""}
+          </Text>
         </View>
       ) : null}
     </View>
