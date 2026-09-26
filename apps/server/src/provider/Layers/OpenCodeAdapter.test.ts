@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -12,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as P from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -87,6 +89,11 @@ const runtimeMock = {
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     messageCalls: [] as Array<{ sessionID: string; messageID: string }>,
     messageFailures: 0,
+    recoveryRequestImplementation: null as
+      | ((operation: string, signal?: AbortSignal) => Promise<void>)
+      | null,
+    partDeleteFailureId: undefined as string | undefined,
+    partDeleteImplementation: null as (() => Promise<void>) | null,
     promptCalls: [] as Array<unknown>,
     commandCalls: [] as Array<Record<string, unknown>>,
     commandImplementation: null as
@@ -153,6 +160,9 @@ const runtimeMock = {
     this.state.revertCalls.length = 0;
     this.state.messageCalls.length = 0;
     this.state.messageFailures = 0;
+    this.state.recoveryRequestImplementation = null;
+    this.state.partDeleteFailureId = undefined;
+    this.state.partDeleteImplementation = null;
     this.state.promptCalls.length = 0;
     this.state.commandCalls.length = 0;
     this.state.commandImplementation = null;
@@ -349,7 +359,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
               : (runtimeMock.state.sessionChildrenById.get(sessionID) ?? []),
           };
         },
-        status: async () => {
+        status: async (_input?: unknown, options?: { signal?: AbortSignal }) => {
+          await runtimeMock.state.recoveryRequestImplementation?.(
+            "session.status",
+            options?.signal,
+          );
           runtimeMock.state.sessionStatusCalls += 1;
           if (runtimeMock.state.sessionStatusImplementation) {
             return await runtimeMock.state.sessionStatusImplementation();
@@ -405,10 +419,19 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           runtimeMock.state.summarizeCalls.push(input);
           return { data: true };
         },
-        messages: async ({ sessionID }: { sessionID: string }) => ({
-          data:
-            runtimeMock.state.forkMessagesBySession.get(sessionID) ?? runtimeMock.state.messages,
-        }),
+        messages: async (
+          { sessionID }: { sessionID: string },
+          options?: { signal?: AbortSignal },
+        ) => {
+          await runtimeMock.state.recoveryRequestImplementation?.(
+            "session.messages",
+            options?.signal,
+          );
+          return {
+            data:
+              runtimeMock.state.forkMessagesBySession.get(sessionID) ?? runtimeMock.state.messages,
+          };
+        },
         message: async ({ sessionID, messageID }: { sessionID: string; messageID: string }) => {
           runtimeMock.state.messageCalls.push({ sessionID, messageID });
           if (runtimeMock.state.messageFailures > 0) {
@@ -441,6 +464,29 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
               break;
             }
           }
+        },
+      },
+      part: {
+        delete: async (
+          {
+            sessionID,
+            messageID,
+            partID,
+          }: { sessionID: string; messageID: string; partID: string },
+          options?: { signal?: AbortSignal },
+        ) => {
+          await runtimeMock.state.recoveryRequestImplementation?.("part.delete", options?.signal);
+          await runtimeMock.state.partDeleteImplementation?.();
+          if (runtimeMock.state.partDeleteFailureId === partID)
+            throw new Error("part deletion failed");
+          const messages =
+            runtimeMock.state.forkMessagesBySession.get(sessionID) ?? runtimeMock.state.messages;
+          const message = messages.find((entry) => entry.info.id === messageID);
+          if (!message) throw new Error("Message not found");
+          message.parts = message.parts.filter(
+            (part) => !P.hasProperty(part, "id") || part.id !== partID,
+          );
+          return { data: true };
         },
       },
       event: {
@@ -1172,6 +1218,15 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         sessionId: "http://127.0.0.1:9999/session",
       });
 
+      runtimeMock.state.recoveryRequestImplementation = async (operation) => {
+        if (operation === "session.messages") throw new Error("History is unavailable");
+      };
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Continue in the replacement session",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "test/model"),
+      });
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -1310,6 +1365,270 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       });
 
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("sends HTML by path without a native file part", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-html");
+      yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
+      const input = '[Attached file "report.html" is saved at: /tmp/report.html]';
+      yield* adapter.sendTurn({
+        threadId,
+        input,
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "test/model"),
+        attachments: [
+          {
+            type: "file",
+            id: "thread-html-12345678-1234-1234-1234-123456789abc-html",
+            name: "report.html",
+            mimeType: "text/html",
+            sizeBytes: 100,
+          },
+        ],
+      });
+      const prompt = runtimeMock.state.promptCalls[0];
+      NodeAssert.ok(P.hasProperty(prompt, "parts"));
+      NodeAssert.deepEqual(prompt.parts, [{ type: "text", text: input }]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("recovers legacy text attachments on resume while preserving the conversation", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-legacy-html");
+      const sessionID = "ses_legacy_html";
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const savedPath = path.join(yield* fs.makeTempDirectoryScoped(), "report.html");
+      yield* fs.writeFileString(savedPath, "<h1>test</h1>");
+      const text = {
+        type: "text",
+        text: `[Attached file "report.html" is saved at: ${savedPath}]`,
+      };
+      const html = {
+        id: "prt_html",
+        messageID: "msg_file",
+        sessionID,
+        type: "file",
+        filename: "report.html",
+        mime: "text/html",
+        url: "data:text/html;base64,PGgxPnRlc3Q8L2gxPg==",
+      };
+      const sameName = {
+        ...html,
+        id: "prt_same_name",
+        url: "data:text/html;base64,b3RoZXIgZG9jdW1lbnQ=",
+      };
+      const image = { ...html, id: "prt_image", mime: "image/png", filename: "screenshot.png" };
+      const unowned = { ...html, id: "prt_unowned", filename: "other.html" };
+      const ignoredText = {
+        type: "text",
+        ignored: true,
+        text: '[Attached file "ignored.html" is saved at: /tmp/ignored.html]',
+      };
+      const ignored = { ...html, id: "prt_ignored", filename: "ignored.html" };
+      const assistant = {
+        info: { id: "msg_answer", role: "assistant" as const },
+        parts: [{ type: "text", text: "Previous answer" }],
+      };
+      runtimeMock.state.messages = [
+        assistant,
+        {
+          info: { id: "msg_file", role: "user" },
+          parts: [text, html, sameName, image, unowned, ignoredText, ignored],
+        },
+      ];
+      const session = yield* adapter.startSession({
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: sessionID },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Continue",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "test/model"),
+      });
+      NodeAssert.deepEqual(runtimeMock.state.messages.slice(0, 2), [
+        assistant,
+        {
+          info: { id: "msg_file", role: "user" },
+          parts: [text, sameName, image, unowned, ignoredText, ignored],
+        },
+      ]);
+      NodeAssert.partialDeepStrictEqual(runtimeMock.state.promptCalls, [
+        { sessionID, parts: [{ type: "text", text: "Continue" }] },
+      ]);
+      NodeAssert.deepEqual(session.resumeCursor, { schemaVersion: 1, sessionId: sessionID });
+      NodeAssert.deepEqual(runtimeMock.state.forkCalls, []);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("retries partial attachment recovery without submitting a poisoned prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-retry-html");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const text = {
+        type: "text",
+        text: '[Attached file "report.html" is saved at: /tmp/report.html]',
+      };
+      const html = {
+        id: "prt_html",
+        messageID: "msg_file",
+        sessionID,
+        type: "file",
+        filename: "report.html",
+        mime: "text/html",
+        url: NodeURL.pathToFileURL("/tmp/report.html").href,
+      };
+      const second = { ...html, id: "prt_second" };
+      runtimeMock.state.messages = [
+        { info: { id: "msg_file", role: "user" }, parts: [text, html, second] },
+      ];
+      yield* adapter.startSession({
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: sessionID },
+      });
+      const prompt = {
+        threadId,
+        input: "Continue",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "test/model"),
+      };
+      runtimeMock.state.sessionStatus = "busy";
+      const busy = yield* adapter.sendTurn(prompt).pipe(Effect.flip);
+      NodeAssert.equal(busy._tag, "ProviderAdapterValidationError");
+      NodeAssert.deepEqual(runtimeMock.state.messages[0]?.parts, [text, html, second]);
+      runtimeMock.state.sessionStatus = "idle";
+      runtimeMock.state.partDeleteFailureId = second.id;
+      const failed = yield* adapter.sendTurn(prompt).pipe(Effect.flip);
+      NodeAssert.equal(failed._tag, "ProviderAdapterRequestError");
+      NodeAssert.deepEqual(runtimeMock.state.messages[0]?.parts, [text, second]);
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
+      runtimeMock.state.partDeleteFailureId = undefined;
+      yield* adapter.sendTurn(prompt);
+      NodeAssert.deepEqual(runtimeMock.state.messages[0]?.parts, [text]);
+      NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  for (const operation of ["session.messages", "session.status", "part.delete"]) {
+    it.effect(`releases a stalled ${operation} recovery request so a later send can retry`, () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-timeout-html");
+        const sessionID = "ses_timeout_html";
+        const text = {
+          type: "text",
+          text: '[Attached file "report.html" is saved at: /tmp/report.html]',
+        };
+        runtimeMock.state.messages = [
+          {
+            info: { id: "msg_file", role: "user" },
+            parts: [
+              text,
+              {
+                id: "prt_html",
+                messageID: "msg_file",
+                sessionID,
+                type: "file",
+                filename: "report.html",
+                mime: "text/html",
+                url: NodeURL.pathToFileURL("/tmp/report.html").href,
+              },
+            ],
+          },
+        ];
+        yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: { schemaVersion: 1, sessionId: sessionID },
+        });
+        const started = promiseWithResolvers<void>();
+        let signal: AbortSignal | undefined;
+        runtimeMock.state.recoveryRequestImplementation = async (method, requestSignal) => {
+          if (method !== operation) return;
+          signal = requestSignal;
+          started.resolve(undefined);
+          await new Promise<void>((_resolve, reject) => {
+            requestSignal?.addEventListener("abort", () => reject(requestSignal.reason), {
+              once: true,
+            });
+          });
+        };
+        const input = {
+          threadId,
+          input: "Continue",
+          modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "test/model"),
+        };
+        const sending = yield* adapter.sendTurn(input).pipe(Effect.flip, Effect.forkChild);
+        yield* Effect.promise(() => started.promise);
+        yield* advanceTestClock(10_000);
+        const error = yield* Fiber.join(sending);
+        NodeAssert.equal(error._tag, "ProviderAdapterRequestError");
+        NodeAssert.equal(signal?.aborted, true);
+        NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
+        runtimeMock.state.recoveryRequestImplementation = null;
+        yield* adapter.sendTurn(input);
+        NodeAssert.deepEqual(runtimeMock.state.messages[0]?.parts, [text]);
+        NodeAssert.equal(runtimeMock.state.promptCalls.length, 1);
+        yield* adapter.stopSession(threadId);
+      }),
+    );
+  }
+
+  it.effect("stops attachment recovery when its session is closed", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-stop-html");
+      const sessionID = "ses_stop_html";
+      const text = {
+        type: "text",
+        text: '[Attached file "report.html" is saved at: /tmp/report.html]',
+      };
+      const html = {
+        id: "prt_html",
+        messageID: "msg_file",
+        sessionID,
+        type: "file",
+        filename: "report.html",
+        mime: "text/html",
+        url: NodeURL.pathToFileURL("/tmp/report.html").href,
+      };
+      const second = { ...html, id: "prt_second" };
+      runtimeMock.state.messages = [
+        { info: { id: "msg_file", role: "user" }, parts: [text, html, second] },
+      ];
+      yield* adapter.startSession({
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: sessionID },
+      });
+      const deleting = promiseWithResolvers<void>();
+      const release = promiseWithResolvers<void>();
+      runtimeMock.state.partDeleteImplementation = () => {
+        deleting.resolve(undefined);
+        return release.promise;
+      };
+      const send = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Continue",
+          modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "test/model"),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => deleting.promise);
+      yield* adapter.stopSession(threadId);
+      release.resolve(undefined);
+      NodeAssert.equal(Exit.hasInterrupts(yield* Fiber.await(send)), true);
+      NodeAssert.deepEqual(runtimeMock.state.messages[0]?.parts, [text, second]);
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
     }),
   );
 
