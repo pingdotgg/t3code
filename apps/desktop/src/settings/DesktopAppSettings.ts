@@ -57,8 +57,12 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-const MIN_MAIN_WINDOW_SIZE = {
-  width: 840,
+// Persist + BrowserWindow create floor. Electron sizes are DIP; 1536-wide
+// scaled desktops half-tile at 768, which the old 840 floor dropped on save.
+// First-open DEFAULT_MAIN_WINDOW_SIZE (1100×780) is the product default and
+// is unchanged.
+export const MIN_MAIN_WINDOW_SIZE = {
+  width: 600,
   height: 620,
 } as const;
 export const DesktopWindowBoundsSchema = Schema.Struct({

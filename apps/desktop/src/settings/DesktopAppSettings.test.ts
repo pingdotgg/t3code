@@ -283,7 +283,7 @@ describe("DesktopSettings", () => {
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowBounds: { x: 10, y: 20, width: 599, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         });
@@ -292,6 +292,20 @@ describe("DesktopSettings", () => {
         assert.isNull(loaded.mainWindowBounds);
         assert.isFalse(loaded.mainWindowMaximized);
         assert.equal(loaded.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("keeps half-screen snapped bounds that used to fall below the 840 floor", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          mainWindowBounds: { x: 0, y: 0, width: 768, height: 780 },
+        });
+
+        const loaded = yield* settings.load;
+        assert.deepEqual(loaded.mainWindowBounds, { x: 0, y: 0, width: 768, height: 780 });
       }),
     ),
   );
