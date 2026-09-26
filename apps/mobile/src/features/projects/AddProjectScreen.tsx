@@ -55,7 +55,7 @@ import { cn } from "../../lib/cn";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
-import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentQuery, useWarmEnvironmentQueryRevalidation } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -816,14 +816,17 @@ function FolderBrowser(props: {
     () => (browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null),
     [browsePath.directoryPath],
   );
-  const browseState = useEnvironmentQuery(
+  const browseAtom =
     browseInput === null
       ? null
       : filesystemEnvironment.browse({
           environmentId: props.environment.environmentId,
           input: browseInput,
-        }),
-  );
+        });
+  const browseState = useEnvironmentQuery(browseAtom);
+  // The browser unmounts with its screen while the browse atoms stay warm, so
+  // re-entering the add-project flow must revalidate against the filesystem.
+  useWarmEnvironmentQueryRevalidation(browseAtom);
   // A pinned repository folder does not exist yet, so filtering the listing by
   // it would empty the folder picker. Anything the user typed still filters.
   const pinnedDirectoryName = props.pinnedDirectoryName ?? "";
