@@ -204,6 +204,73 @@ describe("OtelEnvironment", () => {
         logs: "Unset",
         warnings: [T3_OFF],
       },
+      {
+        name: "an exporter of none turns off only its signal",
+        env: {
+          OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318",
+          OTEL_LOGS_EXPORTER: "none",
+        },
+        traces: "https://collector:4318/v1/traces",
+        metrics: "https://collector:4318/v1/metrics",
+        logs: "Off",
+        warnings: [],
+      },
+      {
+        name: "an exporter of none turns its signal off with no endpoint named",
+        env: { OTEL_METRICS_EXPORTER: " NONE " },
+        traces: "Unset",
+        metrics: "Off",
+        logs: "Unset",
+        warnings: [],
+      },
+      {
+        name: "an exporter of none leaves its signal's endpoint unread",
+        env: { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "not-a-url", OTEL_TRACES_EXPORTER: "none" },
+        traces: "Off",
+        metrics: "Unset",
+        logs: "Unset",
+        warnings: [],
+      },
+      {
+        name: "an exporter of otlp or blank is the default",
+        env: {
+          OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318",
+          OTEL_TRACES_EXPORTER: "OTLP",
+          OTEL_LOGS_EXPORTER: "  ",
+        },
+        traces: "https://collector:4318/v1/traces",
+        metrics: "https://collector:4318/v1/metrics",
+        logs: "https://collector:4318/v1/logs",
+        warnings: [],
+      },
+      {
+        name: "an exporter T3 Code does not have is ignored with a warning",
+        env: {
+          OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318",
+          OTEL_METRICS_EXPORTER: "prometheus",
+        },
+        traces: "https://collector:4318/v1/traces",
+        metrics: "https://collector:4318/v1/metrics",
+        logs: "https://collector:4318/v1/logs",
+        warnings: [
+          "OTEL_METRICS_EXPORTER names prometheus, which T3 Code does not export to, so it was ignored",
+        ],
+      },
+      {
+        name: "a list honors none and otlp and names what it ignored",
+        env: {
+          OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector:4318",
+          OTEL_TRACES_EXPORTER: "console,none",
+          OTEL_LOGS_EXPORTER: "otlp,console,otlpp",
+        },
+        traces: "Off",
+        metrics: "https://collector:4318/v1/metrics",
+        logs: "https://collector:4318/v1/logs",
+        warnings: [
+          "OTEL_TRACES_EXPORTER names console, which T3 Code does not export to, so it was ignored",
+          "OTEL_LOGS_EXPORTER names console, otlpp, which T3 Code does not export to, so they were ignored",
+        ],
+      },
     ])("$name", ({ env, traces, metrics, logs, warnings }) =>
       Effect.gen(function* () {
         const resolved = yield* load(env);
@@ -395,6 +462,25 @@ describe("OtelEnvironment", () => {
       );
     });
   });
+
+  it.effect("an exporter of none keeps the Settings endpoint from re-enabling its signal", () =>
+    Effect.gen(function* () {
+      const otel = yield* load({ OTEL_LOGS_EXPORTER: "none" });
+      const t3 = {
+        url: undefined,
+        export: { protocol: "http/json", headers: undefined, exportIntervalMs: 10_000 },
+      } as const;
+      assert.strictEqual(
+        OtelEnvironment.resolveSignalEndpoint(otel, "logs", t3, "http://settings:4318/v1/logs"),
+        undefined,
+      );
+      assert.strictEqual(
+        OtelEnvironment.resolveSignalEndpoint(otel, "traces", t3, "http://settings:4318/v1/traces")
+          ?.url,
+        "http://settings:4318/v1/traces",
+      );
+    }),
+  );
 
   describe("layerResourceAttributes", () => {
     it.effect.each([
