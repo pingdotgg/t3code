@@ -4,12 +4,12 @@ import {
   normalizeGitRemoteUrl,
 } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -19,6 +19,22 @@ const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Callers that know the repository changed pass `refresh: true`.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(10);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(5);
+
+// Lookup failures stay uncached so the next resolve retries them.
+class RepositoryIdentityLookupError extends Schema.TaggedError<RepositoryIdentityLookupError>()(
+  "RepositoryIdentityLookupError",
+  {
+    stage: Schema.Literals(["root", "remote"]),
+    cwd: Schema.String,
+    exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
+    timedOut: Schema.optional(Schema.Boolean),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Git ${this.stage} lookup failed in '${this.cwd}'`;
+  }
+}
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
@@ -111,19 +127,25 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
         env: { LC_ALL: "C" },
         timeoutBehavior: "timedOutResult",
       })
-      .pipe(Effect.option);
-    if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
+      .pipe(
+        Effect.mapError(
+          (cause) => new RepositoryIdentityLookupError({ stage: "root", cwd, cause }),
+        ),
+      );
+    if (topLevelResult.code !== 0) {
       // Remember git's "not a repository" verdict; retry timeouts and other failures.
-      if (
-        topLevelResult._tag === "Some" &&
-        /not a git repository/i.test(topLevelResult.value.stderr)
-      ) {
+      if (!topLevelResult.timedOut && /not a git repository/i.test(topLevelResult.stderr)) {
         return null;
       }
-      return yield* new Cause.NoSuchElementError("Git root lookup failed");
+      return yield* new RepositoryIdentityLookupError({
+        stage: "root",
+        cwd,
+        exitCode: topLevelResult.code,
+        timedOut: topLevelResult.timedOut,
+      });
     }
 
-    const candidate = topLevelResult.value.stdout.trim();
+    const candidate = topLevelResult.stdout.trim();
     return candidate.length > 0 ? candidate : null;
   },
 );
@@ -134,7 +156,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   cacheKey: string,
 ): Effect.fn.Return<
   RepositoryIdentity | null,
-  Cause.NoSuchElementError,
+  RepositoryIdentityLookupError,
   ProcessRunner.ProcessRunner
 > {
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -144,13 +166,22 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
       args: ["-C", cacheKey, "remote", "-v"],
       timeoutBehavior: "timedOutResult",
     })
-    .pipe(Effect.option);
-  if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
+    .pipe(
+      Effect.mapError(
+        (cause) => new RepositoryIdentityLookupError({ stage: "remote", cwd: cacheKey, cause }),
+      ),
+    );
+  if (remoteResult.code !== 0) {
     // A repository without remotes exits 0 with no output; failures retry.
-    return yield* new Cause.NoSuchElementError("Git remote lookup failed");
+    return yield* new RepositoryIdentityLookupError({
+      stage: "remote",
+      cwd: cacheKey,
+      exitCode: remoteResult.code,
+      timedOut: remoteResult.timedOut,
+    });
   }
 
-  const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
+  const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.stdout));
   return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
 });
 
@@ -164,7 +195,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const repositoryRootCache = yield* Cache.makeWith<
     string,
     string | null,
-    Cause.NoSuchElementError
+    RepositoryIdentityLookupError
   >(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
@@ -185,7 +216,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const repositoryIdentityCache = yield* Cache.makeWith<
     string,
     RepositoryIdentity | null,
-    Cause.NoSuchElementError
+    RepositoryIdentityLookupError
   >(
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
