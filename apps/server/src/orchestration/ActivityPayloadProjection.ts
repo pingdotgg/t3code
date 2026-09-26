@@ -152,6 +152,12 @@ function projectViewedImagePath(data: Record<string, unknown>): string | undefin
     return directPath;
   }
 
+  const item = asRecord(data.item);
+  const savedPath = item?.type === "imageGeneration" ? asTrimmedString(item.savedPath) : undefined;
+  if (savedPath && isWorkspaceImagePreviewPath(savedPath)) {
+    return savedPath;
+  }
+
   const toolName = asTrimmedString(data.toolName)?.toLowerCase();
   if (toolName !== "read" && toolName !== "read file") {
     return undefined;
