@@ -13,6 +13,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
 /** Shared DesktopUpdates test harness: a fully stubbed updater layer whose
@@ -49,6 +50,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   const installSteps: string[] = [];
+  let resetQuitPreparationCount = 0;
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -127,6 +129,29 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+
+  const desktopWindowLayer = Layer.succeed(DesktopWindow.DesktopWindow, {
+    createMain: Effect.die("unexpected window creation"),
+    ensureMain: Effect.die("unexpected window creation"),
+    revealOrCreateMain: Effect.die("unexpected window creation"),
+    activate: Effect.die("unexpected window activation"),
+    createMainIfBackendReady: Effect.die("unexpected window creation"),
+    showConnectingSplash: Effect.die("unexpected splash creation"),
+    handleBackendReady: () => Effect.die("unexpected backend-ready handling"),
+    handleBackendNotReady: Effect.die("unexpected backend-not-ready handling"),
+    flushMainWindowBounds: Effect.void,
+    setBackgroundModeEnabled: () => undefined,
+    isBackgroundModeEnabled: () => false,
+    prepareForQuit: () => undefined,
+    resetQuitPreparation: () => {
+      resetQuitPreparationCount += 1;
+    },
+    prepareCaptureReveal: Effect.void,
+    dispatchMenuAction: () => Effect.die("unexpected menu action"),
+    dispatchSnapShotEvent: () => Effect.die("unexpected snapshot event"),
+    zoomMain: () => Effect.die("unexpected window zoom"),
+    syncAppearance: Effect.die("unexpected appearance sync"),
+  } satisfies DesktopWindow.DesktopWindow["Service"]);
 
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
@@ -238,6 +263,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provide(fileSystemLayer),
     Layer.provideMerge(updaterLayer),
     Layer.provideMerge(windowLayer),
+    Layer.provideMerge(desktopWindowLayer),
     Layer.provideMerge(backendLayer),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(settingsLayer),
@@ -259,6 +285,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
     updateRestartMarkers,
+    resetQuitPreparationCount: () => resetQuitPreparationCount,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,

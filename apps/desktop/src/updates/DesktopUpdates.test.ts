@@ -624,6 +624,7 @@ describe("DesktopUpdates", () => {
 
           yield* Fiber.interrupt(installFiber);
           assert.equal(harness.updateRestartMarkers.size, 0);
+          assert.equal(harness.resetQuitPreparationCount(), 1);
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
@@ -655,6 +656,8 @@ describe("DesktopUpdates", () => {
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
         // The restarted old backend must release its tunnel on a later quit.
         assert.equal(harness.updateRestartMarkers.size, 0);
+        // Closing the window must hide to the tray again, not quit.
+        assert.equal(harness.resetQuitPreparationCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -724,6 +727,7 @@ describe("DesktopUpdates", () => {
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
         assert.equal((yield* updates.getState).errorContext, "install");
+        assert.equal(harness.resetQuitPreparationCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

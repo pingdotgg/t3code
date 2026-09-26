@@ -38,6 +38,10 @@ On a desktop host, open **Settings → Connections**, enable **Network access**,
 then create a pairing link using an address the other device can reach. Changing
 network access restarts the desktop app. You can turn it off in the same place.
 
+On Windows, closing the desktop window keeps T3 Code and its server running in the
+system tray so paired devices stay connected. Select the tray icon to reopen the
+window, or choose **Quit T3 Code** from its menu to stop both.
+
 For a command-line host, replace `<private-ip>` with the host's LAN or tailnet
 address:
 
