@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import {
+  resolveComposerArgumentHint,
   searchSlashCommandItems,
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
@@ -219,5 +220,36 @@ describe("searchSlashCommandItems", () => {
       "provider-slash-command:claudeAgent:compact",
       "skill:claudeAgent:unslop",
     ]);
+  });
+});
+
+describe("resolveComposerArgumentHint", () => {
+  const commands = [
+    { name: "compact", input: { hint: "<optional custom summarization instructions>" } },
+    { name: "clear" },
+    { name: "review", input: { hint: "<pr number>" } },
+  ];
+  const skills = [{ name: "review" }];
+
+  it("shows a command's hint while the prompt holds only the command", () => {
+    expect(resolveComposerArgumentHint("/compact ", commands, skills)).toBe(
+      "<optional custom summarization instructions>",
+    );
+  });
+
+  it("hides the hint once an argument is typed, and before the space", () => {
+    expect(resolveComposerArgumentHint("/compact keep the plan", commands, skills)).toBeNull();
+    expect(resolveComposerArgumentHint("/compact", commands, skills)).toBeNull();
+    expect(resolveComposerArgumentHint("/compact  ", commands, skills)).toBeNull();
+  });
+
+  it("shows nothing for commands without a hint or away from the prompt start", () => {
+    expect(resolveComposerArgumentHint("/clear ", commands, skills)).toBeNull();
+    expect(resolveComposerArgumentHint("please /compact ", commands, skills)).toBeNull();
+  });
+
+  it("uses the slash command's hint for a skill mention", () => {
+    expect(resolveComposerArgumentHint("$review ", commands, skills)).toBe("<pr number>");
+    expect(resolveComposerArgumentHint("$compact ", commands, skills)).toBeNull();
   });
 });

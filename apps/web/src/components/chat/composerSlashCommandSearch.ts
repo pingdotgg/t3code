@@ -1,3 +1,4 @@
+import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -26,6 +27,24 @@ export function slashCommandItemsForPromptPosition(
     return [...items];
   }
   return items.filter((item) => item.type !== "provider-slash-command");
+}
+
+/**
+ * The argument hint shown as ghost text while the prompt holds only a command
+ * and the space after it, such as `/compact ` from the slash menu. A skill is
+ * inserted as a `$name` mention; Claude also lists it as a slash command,
+ * which is where its hint comes from.
+ */
+export function resolveComposerArgumentHint(
+  prompt: string,
+  slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name">>,
+): string | null {
+  const match = /^([/$])(\S+) $/.exec(prompt);
+  if (!match) return null;
+  const [, sigil, name] = match;
+  if (sigil === "$" && !skills.some((skill) => skill.name === name)) return null;
+  return slashCommands.find((command) => command.name === name)?.input?.hint ?? null;
 }
 
 function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {

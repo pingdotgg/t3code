@@ -2168,6 +2168,13 @@ code {
   pointer-events: none;
 }
 
+/* Matches the empty-composer placeholder (`text-placeholder/75`). */
+.composer-argument-hint {
+  color: color-mix(in oklab, var(--color-placeholder) 75%, transparent);
+  user-select: none;
+  pointer-events: none;
+}
+
 /* Selected chips (node selection from arrowing into or clicking a chip). */
 .composer-tiptap .ProseMirror-selectednode {
   outline: 2px solid var(--ring);

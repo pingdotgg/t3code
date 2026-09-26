@@ -4,7 +4,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tip
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type {
   AssistantCitation,
@@ -121,6 +121,8 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  /** Ghost text after the prompt: what the command just typed expects next. */
+  argumentHint?: string | null;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -566,6 +568,51 @@ const ComposerMarkersExtension = Extension.create({
   },
 });
 
+type ArgumentHintState = { hint: string | null; decorations: DecorationSet };
+
+const ArgumentHintPluginKey = new PluginKey<ArgumentHintState>("composer-argument-hint");
+
+// Ghost text at the end of the prompt, set through transaction meta. Edits
+// only move it; the composer sends a new hint for the new text.
+const ComposerArgumentHintPlugin = new Plugin<ArgumentHintState>({
+  key: ArgumentHintPluginKey,
+  state: {
+    init: () => ({ hint: null, decorations: DecorationSet.empty }),
+    apply: (tr, previous) => {
+      const meta = tr.getMeta(ArgumentHintPluginKey) as string | null | undefined;
+      const hint = meta === undefined ? previous.hint : meta;
+      if (hint === previous.hint && !tr.docChanged) return previous;
+      return { hint, decorations: argumentHintDecorations(tr.doc, hint) };
+    },
+  },
+  props: {
+    decorations(state) {
+      return ArgumentHintPluginKey.getState(state)?.decorations;
+    },
+  },
+});
+
+function argumentHintDecorations(doc: ProseMirrorNode, hint: string | null): DecorationSet {
+  if (!hint) return DecorationSet.empty;
+  const widget = document.createElement("span");
+  widget.className = "composer-argument-hint";
+  widget.textContent = hint;
+  widget.setAttribute("aria-hidden", "true");
+  return DecorationSet.create(doc, [
+    Decoration.widget(Selection.atEnd(doc).from, widget, {
+      side: 1,
+      key: `argument-hint-${hint}`,
+    }),
+  ]);
+}
+
+const ComposerArgumentHintExtension = Extension.create({
+  name: "composer-argument-hint",
+  addProseMirrorPlugins() {
+    return [ComposerArgumentHintPlugin];
+  },
+});
+
 // Document model (markdown ⇄ ProseMirror) lives in ~/composer-rich-text-doc so
 // unit tests can round-trip it without a browser.
 // ── Editor component ───────────────────────────────────────────────────────
@@ -592,6 +639,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    argumentHint,
     containerClassName,
     className,
     placeholderClassName,
@@ -782,6 +830,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerCitationExtension,
         ComposerContextReferenceExtension,
         ComposerMarkersExtension,
+        ComposerArgumentHintExtension,
         ...(richText
           ? [
               ComposerCodeExtension,
@@ -1147,6 +1196,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       isApplyingControlledUpdateRef.current = false;
     });
   }, [cursor, editor, richText, skillLabelFor, value]);
+
+  // A layout effect, so the hint changes in the same paint as the text.
+  useLayoutEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.view.dispatch(editor.state.tr.setMeta(ArgumentHintPluginKey, argumentHint ?? null));
+  }, [argumentHint, editor]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
