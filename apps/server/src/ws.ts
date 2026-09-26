@@ -45,6 +45,8 @@ import {
   type OrchestrationShellStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
+  ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY,
+  OrchestrationThreadNotFoundError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
@@ -2320,9 +2322,17 @@ const makeWsRpcLayer = (
                 if (replayOnMissingSnapshot !== undefined) {
                   return replayOnMissingSnapshot;
                 }
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
+                const supportsThreadNotFoundError =
+                  input.capabilities?.includes(ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY) ===
+                    true || input.threadNotFoundError === true;
+                if (!supportsThreadNotFoundError) {
+                  return yield* new OrchestrationGetSnapshotError({
+                    message: `Thread ${input.threadId} was not found`,
+                    cause: input.threadId,
+                  });
+                }
+                return yield* new OrchestrationThreadNotFoundError({
+                  threadId: input.threadId,
                 });
               }
 

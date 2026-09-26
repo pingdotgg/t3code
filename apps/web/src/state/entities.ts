@@ -12,6 +12,7 @@ import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/c
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -108,20 +109,54 @@ export function useThreadDetail(ref: ScopedThreadRef | null): EnvironmentThread 
   );
 }
 
+export type ThreadDetailClassification =
+  | { readonly kind: "server-thread" }
+  | {
+      readonly kind: "local-draft";
+      readonly hasServerShell: boolean;
+    };
+
+export function classifyThreadDetail(input: {
+  readonly hasLocalDraft: boolean;
+  readonly hasServerShell: boolean;
+  readonly waitForShell?: boolean;
+}): ThreadDetailClassification {
+  return input.hasLocalDraft || input.waitForShell === true
+    ? { kind: "local-draft", hasServerShell: input.hasServerShell }
+    : { kind: "server-thread" };
+}
+
+/**
+ * Returns the detail ref for server threads and materialized drafts. A local
+ * draft stays unsubscribed until its server shell appears after the first send.
+ */
+export function resolveThreadDetailRef(
+  ref: ScopedThreadRef | null,
+  classification: ThreadDetailClassification,
+): ScopedThreadRef | null {
+  return ref !== null && (classification.kind === "server-thread" || classification.hasServerShell)
+    ? ref
+    : null;
+}
+
+export function useThreadDetailWhenReady(
+  ref: ScopedThreadRef | null,
+  classification: ThreadDetailClassification,
+): EnvironmentThread | null {
+  return useThreadDetail(resolveThreadDetailRef(ref, classification));
+}
+
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
   );
 }
 
-export function resolveThreadDetailRef(
+export function useThreadStatusWhenReady(
   ref: ScopedThreadRef | null,
-  options: {
-    shellExists: boolean;
-    waitForShell: boolean;
-  },
-): ScopedThreadRef | null {
-  return ref !== null && (!options.waitForShell || options.shellExists) ? ref : null;
+  classification: ThreadDetailClassification,
+): EnvironmentThreadStatus {
+  return useThreadStatus(resolveThreadDetailRef(ref, classification));
 }
 
 /** Detail collections composed with shell-authoritative thread/workspace metadata. */
@@ -137,12 +172,15 @@ export function useThread(
   },
 ): EnvironmentThread | null {
   const shell = useThreadShell(ref);
-  const detail = useThreadDetail(
-    resolveThreadDetailRef(ref, {
-      shellExists: shell !== null,
-      waitForShell: options?.waitForShell === true,
-    }),
+  const hasLocalDraft = useComposerDraftStore((store) =>
+    ref === null ? false : store.getDraftThreadByRef(ref) !== null,
   );
+  const classification = classifyThreadDetail({
+    hasLocalDraft,
+    hasServerShell: shell !== null,
+    waitForShell: options?.waitForShell === true,
+  });
+  const detail = useThreadDetailWhenReady(ref, classification);
   return useMemo(() => mergeEnvironmentThread(detail, shell), [detail, shell]);
 }
 
