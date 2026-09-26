@@ -114,6 +114,11 @@ const make = Effect.gen(function* () {
 
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
+  // Threads already told that checkpoints are unavailable for their workspace
+  // (for example a project folder a parent repository gitignores). The
+  // condition is permanent, so later turns skip quietly instead of recording
+  // another notice.
+  const checkpointUnsupportedNoticed = new Set<ThreadId>();
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -494,10 +499,16 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* checkpointStore.captureCheckpoint({
-        cwd: checkpointCwd,
-        checkpointRef: baselineCheckpointRef,
-      });
+      const captured = yield* checkpointStore
+        .captureCheckpoint({
+          cwd: checkpointCwd,
+          checkpointRef: baselineCheckpointRef,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchTag("VcsUnsupportedOperationError", () => Effect.succeed(false)),
+        );
+      if (!captured) return;
       yield* receiptBus.publish({
         type: "checkpoint.baseline.captured",
         threadId: thread.id,
@@ -705,10 +716,16 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* checkpointStore.captureCheckpoint({
-      cwd: checkpointCwd,
-      checkpointRef: baselineCheckpointRef,
-    });
+    const captured = yield* checkpointStore
+      .captureCheckpoint({
+        cwd: checkpointCwd,
+        checkpointRef: baselineCheckpointRef,
+      })
+      .pipe(
+        Effect.as(true),
+        Effect.catchTag("VcsUnsupportedOperationError", () => Effect.succeed(false)),
+      );
+    if (!captured) return;
     yield* receiptBus.publish({
       type: "checkpoint.baseline.captured",
       threadId,
@@ -984,14 +1001,18 @@ const make = Effect.gen(function* () {
       }
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
-          Effect.flatMap(nowIso, (createdAt) =>
-            appendCaptureFailureActivity({
+          Effect.flatMap(nowIso, (createdAt) => {
+            if (error._tag === "VcsUnsupportedOperationError") {
+              if (checkpointUnsupportedNoticed.has(event.threadId)) return Effect.void;
+              checkpointUnsupportedNoticed.add(event.threadId);
+            }
+            return appendCaptureFailureActivity({
               threadId: event.threadId,
               turnId,
               detail: error.message,
               createdAt,
-            }).pipe(Effect.catch(() => Effect.void)),
-          ),
+            }).pipe(Effect.catch(() => Effect.void));
+          }),
         ),
       );
       return;

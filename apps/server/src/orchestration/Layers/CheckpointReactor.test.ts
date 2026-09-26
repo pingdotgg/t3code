@@ -7,6 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 import {
   VcsProcessTimeoutError,
   VcsProcessSpawnError,
+  VcsUnsupportedOperationError,
   ProviderDriverKind,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -295,6 +296,7 @@ describe("CheckpointReactor", () => {
     readonly checkpointLookupFailure?: (
       cwd: string,
     ) => VcsProcessTimeoutError | VcsProcessSpawnError | undefined;
+    readonly checkpointCaptureFailure?: (cwd: string) => VcsUnsupportedOperationError | undefined;
     readonly workspaceRefresh?: (cwd: string) => Effect.Effect<void>;
     readonly hasSession?: boolean;
     readonly seedFilesystemCheckpoints?: boolean;
@@ -385,6 +387,10 @@ describe("CheckpointReactor", () => {
               hasCheckpointRef: (input) => {
                 const failure = options?.checkpointLookupFailure?.(input.cwd);
                 return failure ? Effect.fail(failure) : store.hasCheckpointRef(input);
+              },
+              captureCheckpoint: (input) => {
+                const failure = options?.checkpointCaptureFailure?.(input.cwd);
+                return failure ? Effect.fail(failure) : store.captureCheckpoint(input);
               },
             })),
           ),
@@ -1530,6 +1536,55 @@ describe("CheckpointReactor", () => {
         thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
       ).toBe(false);
     }),
+  );
+
+  effectIt.effect(
+    "records one notice when checkpoints are unsupported instead of failing every turn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            seedFilesystemCheckpoints: false,
+            checkpointCaptureFailure: () =>
+              new VcsUnsupportedOperationError({
+                operation: "test.capture",
+                kind: "git",
+                detail:
+                  "Checkpoint workspace is ignored by one of the repository's gitignore rules.",
+              }),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const emit = (type: "turn.started" | "turn.completed", turn: number) =>
+          harness.provider.emit({
+            type,
+            eventId: EventId.make(`${type}-unsupported-${turn}`),
+            provider: ProviderDriverKind.make("codex"),
+            createdAt,
+            threadId,
+            turnId: asTurnId(`turn-unsupported-${turn}`),
+            ...(type === "turn.completed" ? { payload: { state: "completed" } } : {}),
+          });
+        emit("turn.started", 1);
+        emit("turn.completed", 1);
+        yield* Effect.promise(harness.drain);
+        emit("turn.started", 2);
+        emit("turn.completed", 2);
+        yield* Effect.promise(harness.drain);
+        const thread = (yield* Effect.promise(harness.readModel)).threads[0];
+        const failures =
+          thread?.activities.filter((activity) => activity.kind === "checkpoint.capture.failed") ??
+          [];
+        expect(failures).toHaveLength(1);
+        expect(failures[0]?.payload).toMatchObject({
+          detail: expect.stringContaining("ignored"),
+        });
+        expect(thread?.activities.some((activity) => activity.kind === "checkpoint.captured")).toBe(
+          false,
+        );
+        expect(thread?.checkpoints).toEqual([]);
+      }),
   );
 
   effectIt.effect.each([

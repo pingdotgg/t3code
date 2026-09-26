@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -806,6 +807,26 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
 
       yield* Effect.gen(function* () {
+        // A project directory ignored by a parent repository cannot be staged by
+        // name (`git add -A -- .` exits 1 with "paths are ignored"), and forcing
+        // the add would stage caches and secrets the ignore rules exclude on
+        // purpose. Report checkpoints as unsupported so callers skip them
+        // instead of failing every turn.
+        const ignoreProbe = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["check-ignore", "-q", "--", "."],
+          allowNonZeroExit: true,
+        });
+        if (ignoreProbe.exitCode === 0) {
+          return yield* new VcsUnsupportedOperationError({
+            operation,
+            kind: "git",
+            detail:
+              "Checkpoint workspace is ignored by one of the repository's gitignore rules, so checkpoints are unavailable for this project.",
+          });
+        }
+
         const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
@@ -931,7 +952,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+        const stageFiles = (exclusions: ReadonlyArray<string>, updateOnly = false) =>
           execute({
             operation,
             cwd: input.cwd,
@@ -941,7 +962,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...durableWrite,
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
-              "-A",
+              updateOnly ? "-u" : "-A",
               "--",
               ".",
               ...exclusions,
@@ -989,7 +1010,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
                 }
-                if (exclusions.length === 0) return yield* error;
+                if (exclusions.length === 0) {
+                  // The directory itself is not ignored (see the probe above), but
+                  // `git add -A` still refuses a project directory that was ignored
+                  // after its files were tracked. `git add -u` stages those tracked
+                  // edits while leaving ignored files alone. Anything it cannot
+                  // stage fails the same way, so surface the original error then.
+                  if (error.retryable !== true) {
+                    const updated = yield* stageFiles([], true).pipe(
+                      Effect.as(true),
+                      Effect.orElseSucceed(() => false),
+                    );
+                    if (updated) {
+                      yield* Effect.logDebug(
+                        "checkpoint staging fell back to tracked files after add -A failed",
+                        { operation, cwd: input.cwd },
+                      );
+                      return yield* Effect.void;
+                    }
+                  }
+                  return yield* error;
+                }
                 return yield* stageFiles(exclusions);
               }).pipe(
                 // One budget covers discovery, queued Git admission, probes, and the staging retry.
