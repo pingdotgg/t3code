@@ -109,7 +109,7 @@ export class DesktopWslEnvironment extends Context.Service<
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     // Resolves the WSL distro's IPv4 address on the WSL vEthernet adapter
     // (e.g. "172.x.x.x"). The orchestrator uses this for the WSL backend's
-    // httpBaseUrl so the renderer can reach it without relying on wslhost's
+    // fallbackHttpBaseUrl so the renderer can reach it without relying on wslhost's
     // localhost→WSL automatic forwarding, which is flaky in practice
     // (the backend can be listening for 30+ seconds before wslhost starts
     // forwarding 127.0.0.1:port to WSL-side localhost).
