@@ -64,6 +64,7 @@ import {
   type AcpPlanUpdate,
   type AcpToolCallState,
 } from "../acp/AcpRuntimeModel.ts";
+import { acpAutoApprovalOptionId } from "../acp/AcpClientPolicy.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { acpT3McpServers, serveAcpMcpOverAcp } from "../acp/AcpT3Mcp.ts";
 import {
@@ -315,15 +316,6 @@ export function selectGrokPermissionOptionId(
     }
   }
   return undefined;
-}
-
-function selectAutoApprovedPermissionOption(
-  request: EffectAcpSchema.RequestPermissionRequest,
-): string | undefined {
-  return (
-    selectGrokPermissionOptionId(request, "acceptForSession") ??
-    selectGrokPermissionOptionId(request, "accept")
-  );
 }
 
 function completedStopReasonFromPromptResponse(
@@ -1155,7 +1147,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   if (input.runtimeMode === "full-access" || alreadyApproved) {
                     const autoApprovedOptionId =
                       input.runtimeMode === "full-access"
-                        ? selectAutoApprovedPermissionOption(params)
+                        ? acpAutoApprovalOptionId(params)
                         : selectGrokPermissionOptionId(params, "accept");
                     if (autoApprovedOptionId !== undefined) {
                       return {

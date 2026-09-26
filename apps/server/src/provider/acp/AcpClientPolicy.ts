@@ -259,6 +259,22 @@ export function acpMcpToolApprovalElicitationDisposition(
     : "allow";
 }
 
+/**
+ * The option T3 selects when policy approves a permission request without
+ * asking. A one-time grant comes first: an agent can keep `allow_always`
+ * grants across a session resume, so a thread later switched to Supervised
+ * would not ask again.
+ */
+export function acpAutoApprovalOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  for (const kind of ["allow_once", "allow_always"] as const) {
+    const optionId = request.options.find((option) => option.kind === kind)?.optionId.trim();
+    if (optionId) return optionId;
+  }
+  return undefined;
+}
+
 /** Disposition of a client-mediated `terminal/create` (Devin's client terminals). */
 export function acpClientExecuteDisposition(
   runtimePolicy: AcpRuntimePolicy,

@@ -8,6 +8,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodePath from "node:path";
 
 import {
+  acpAutoApprovalOptionId,
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
@@ -298,6 +299,24 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
         elicitationId: "elicitation-1",
         url: "https://example.com/login",
         _meta: { codex_approval_kind: "mcp_tool_call" },
+      }),
+    );
+  });
+});
+
+describe("acpAutoApprovalOptionId", () => {
+  it("grants once when the agent also offers an always grant", () => {
+    const always = { optionId: "always", name: "Always", kind: "allow_always" } as const;
+    const request = {
+      ...permissionRequest("execute"),
+      options: [always, { optionId: "once", name: "Once", kind: "allow_once" }],
+    } satisfies EffectAcpSchema.RequestPermissionRequest;
+    assert.equal(acpAutoApprovalOptionId(request), "once");
+    assert.equal(acpAutoApprovalOptionId({ ...request, options: [always] }), "always");
+    assert.isUndefined(
+      acpAutoApprovalOptionId({
+        ...request,
+        options: [{ optionId: "reject", name: "Reject", kind: "reject_once" }],
       }),
     );
   });

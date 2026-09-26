@@ -1000,7 +1000,8 @@ function cursorAdapterLiveTests(
             "outcome" in entry.result.outcome &&
             entry.result.outcome.outcome === "selected" &&
             "optionId" in entry.result.outcome &&
-            entry.result.outcome.optionId === "allow-always",
+            // A one-time grant, so a later switch to Supervised asks again.
+            entry.result.outcome.optionId === "allow-once",
         );
         assert.isDefined(permissionResponse);
 
