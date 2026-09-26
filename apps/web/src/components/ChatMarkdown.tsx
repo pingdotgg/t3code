@@ -1589,6 +1589,36 @@ function ChatMarkdownImage(props: {
   );
 }
 
+/** Inline players open the frame they show in the media dialog, ready to cite a region of it. */
+function withFrameCitation(
+  source: MediaActionSource,
+  src: string | null,
+  expand: ((preview: ExpandedImagePreview) => void) | undefined,
+): MediaActionSource {
+  if (!expand) return source;
+  return {
+    ...source,
+    onCiteFrame: (still) => {
+      // A media fragment opens the dialog's player paused on the cited moment.
+      const fragment = `#t=${still.seconds}`;
+      expand({
+        images: [
+          {
+            src: src === null ? null : src.replace(/#.*$/, "") + fragment,
+            name: source.name,
+            type: "video",
+            autoPlay: false,
+            srcFragment: fragment,
+            actionsSource: source,
+          },
+        ],
+        index: 0,
+        citeFrame: still,
+      });
+    },
+  };
+}
+
 function ChatMarkdownVideo(props: {
   readonly src: string | null;
   readonly alt: string;
@@ -1721,7 +1751,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         onRetry={refreshAssetUrl}
-        actionsSource={actionsSource}
+        actionsSource={withFrameCitation(actionsSource, src, props.onImageExpand)}
       />
     );
   }
@@ -3217,7 +3247,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             copyMarkdown={copyMarkdown}
             originalUrl={originalUrl}
             style={authoredSizeStyle}
-            actionsSource={actionsSource}
+            actionsSource={withFrameCitation(actionsSource, mediaSrc, imageExpand)}
           />
         );
       }

@@ -5,4 +5,5 @@ export type MediaActionId =
   | "copy-url"
   | "open-file"
   | "save"
-  | "copy-image";
+  | "copy-image"
+  | "cite-region";

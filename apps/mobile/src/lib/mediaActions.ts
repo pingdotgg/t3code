@@ -3,7 +3,7 @@ import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
 import type { MediaReference } from "@t3tools/client-runtime/media-reference";
 import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
-import { useEffect, useRef, useState } from "react";
+import { createContext, use, useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 
 import { useRefreshAssetUrl } from "../state/assets";
@@ -29,8 +29,25 @@ export type MediaActionsSource = {
     }
 );
 
-export function useMediaActions(source: MediaActionsSource | undefined, onOpenFile?: () => void) {
+/**
+ * Opens region selection for an image and cites it into the thread that owns the surface.
+ * Null outside a thread, where no composer can receive the crop.
+ */
+export const ImageCiteContext = createContext<((source: MediaActionsSource) => void) | null>(null);
+
+/** Images the native cropper can decode. An SVG has no pixels until something renders it. */
+function isCitableImageMimeType(mimeType: string): boolean {
+  const type = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return type.startsWith("image/") && type !== "image/svg+xml";
+}
+
+/** `onLeavePreview` closes the preview that hosts the menu before an action opens another view. */
+export function useMediaActions(
+  source: MediaActionsSource | undefined,
+  onLeavePreview?: () => void,
+) {
   const navigation = useNavigation();
+  const citeImage = use(ImageCiteContext);
   const refresh = useRefreshAssetUrl(
     source && "environmentId" in source ? source.environmentId : null,
     source && "resource" in source ? source.resource : null,
@@ -88,6 +105,18 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
   const actions: { id: MediaActionId; title: string; run: () => void; disabled?: boolean }[] =
     source
       ? [
+          ...(citeImage && isCitableImageMimeType(source.mimeType)
+            ? [
+                {
+                  id: "cite-region" as const,
+                  title: "Cite region",
+                  run: () => {
+                    onLeavePreview?.();
+                    citeImage(source);
+                  },
+                },
+              ]
+            : []),
           ...(reference?.kind === "file"
             ? [
                 {
@@ -121,7 +150,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
                   id: "open-file" as const,
                   title: "Open in file viewer",
                   run: () => {
-                    onOpenFile?.();
+                    onLeavePreview?.();
                     navigation.navigate("ThreadFile", {
                       environmentId: String(source.environmentId),
                       threadId: String(threadId),

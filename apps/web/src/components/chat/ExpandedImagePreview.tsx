@@ -35,6 +35,8 @@ export interface ExpandedImageItem {
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
+  /** Opens the selected video on this captured still (a data URL), ready to cite a region of it. */
+  citeFrame?: { readonly src: string; readonly seconds: number };
 }
 
 /** Wraps navigation in either direction, including offsets beyond a complete cycle. */

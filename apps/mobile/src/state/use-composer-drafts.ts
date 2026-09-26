@@ -40,7 +40,11 @@ import {
   registerComposerAttachmentUnusedHandler,
   retainComposerAttachmentFileForPreview,
 } from "../lib/composerAttachmentPreviewRetention";
-import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
+import type {
+  DraftComposerAttachment,
+  DraftComposerImageAttachment,
+  FileBackedComposerAttachment,
+} from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 import {
@@ -281,6 +285,25 @@ export function insertComposerDraftContext(
   });
   scheduleUnusedComposerAttachmentCleanup(inserted ? removed : (content.attachments ?? []));
   return inserted;
+}
+
+/**
+ * A cited image region: the crop's chip at the caret, followed by the user's comment as prose,
+ * so the agent reads the comment beside the part it describes. Returns false when the draft is
+ * full.
+ */
+export function insertComposerDraftImageCitation(
+  draftKey: string,
+  attachment: DraftComposerImageAttachment,
+  comment: string,
+): boolean {
+  const record = attachmentContextRecord(attachment);
+  const trimmed = comment.trim();
+  return insertComposerDraftContext(draftKey, {
+    text: `${formatComposerContextReference(record)}${trimmed ? ` ${trimmed}` : ""} `,
+    context: { version: 1, records: [record] },
+    attachments: [attachment],
+  });
 }
 
 function draftWithInsertedContext(

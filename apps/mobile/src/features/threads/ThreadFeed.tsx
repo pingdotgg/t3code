@@ -84,6 +84,8 @@ import {
   View,
 } from "react-native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { MediaActionsMenu } from "../../components/MediaActionsMenu";
+import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
 import { isPdfFile } from "../../lib/filePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/NativePresentation";
@@ -300,6 +302,16 @@ function MessageAttachmentImage(props: {
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
+  const actionsSource = useMemo<MediaActionsSource>(
+    () => ({
+      name: props.name,
+      mimeType: props.mimeType,
+      environmentId: props.environmentId,
+      resource,
+    }),
+    [props.environmentId, props.mimeType, props.name, resource],
+  );
+  const mediaActions = useMediaActions(actionsSource);
 
   if (uri === null) {
     return (
@@ -311,40 +323,40 @@ function MessageAttachmentImage(props: {
 
   return (
     <PresentationSource identifier={sourceIdentifier}>
-      <Pressable
-        accessibilityRole="imagebutton"
-        accessibilityLabel={`Open ${props.name}`}
-        onPress={() =>
-          // The viewer mints its own URL from the resource so the image survives a refresh.
-          props.onPressPreview({
-            kind: "image",
-            environmentId: props.environmentId,
-            resource,
-            name: props.name,
-            sourceIdentifier,
-            actionsSource: {
-              name: props.name,
-              mimeType: props.mimeType,
+      <MediaActionsMenu media={mediaActions}>
+        <Pressable
+          accessibilityRole="imagebutton"
+          accessibilityLabel={`Open ${props.name}`}
+          accessibilityHint={
+            mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+          }
+          onPress={() =>
+            // The viewer mints its own URL from the resource so the image survives a refresh.
+            props.onPressPreview({
+              kind: "image",
               environmentId: props.environmentId,
               resource,
-            },
-          })
-        }
-      >
-        <Image
-          source={{ uri }}
-          className={props.className}
-          resizeMode="cover"
-          onLoad={() => {
-            retriedImage.current = false;
-          }}
-          onError={() => {
-            if (retriedImage.current) return;
-            retriedImage.current = true;
-            void refreshAssetUrl();
-          }}
-        />
-      </Pressable>
+              name: props.name,
+              sourceIdentifier,
+              actionsSource,
+            })
+          }
+        >
+          <Image
+            source={{ uri }}
+            className={props.className}
+            resizeMode="cover"
+            onLoad={() => {
+              retriedImage.current = false;
+            }}
+            onError={() => {
+              if (retriedImage.current) return;
+              retriedImage.current = true;
+              void refreshAssetUrl();
+            }}
+          />
+        </Pressable>
+      </MediaActionsMenu>
     </PresentationSource>
   );
 }
