@@ -815,6 +815,38 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(target.webSocketBaseURL.absoluteString, "ws://192.168.1.7:18773/")
     }
 
+    func testLocalNetworkProbeRecognizesAddressesInsteadOfHostnamePrefixes() {
+        for host in [
+            "fc.example.com", "fd.example.com", "fe80.example.com",
+            "10.example.com", "192.168.example.com", "10.999.0.1",
+        ] {
+            XCTAssertFalse(LocalNetworkProbe.isLocalHost(host), host)
+        }
+        for host in [
+            "localhost", "studio.local", "10.0.0.1", "172.16.0.1", "172.31.255.255",
+            "192.168.1.1", "127.0.0.1", "169.254.1.1", "::1", "0:0:0:0:0:0:0:1",
+            "fc00::1", "[fd12::1]", "fe80::1%en0", "febf::1",
+        ] {
+            XCTAssertTrue(LocalNetworkProbe.isLocalHost(host), host)
+        }
+        for host in [
+            "172.15.255.255", "172.32.0.1", "8.8.8.8", "2001:db8::1",
+            "fbff::1", "fe7f::1", "fec0::1",
+        ] {
+            XCTAssertFalse(LocalNetworkProbe.isLocalHost(host), host)
+        }
+        let host = "fc.example.com"
+        let denied = NSError(
+            domain: NSURLErrorDomain,
+            code: URLError.notConnectedToInternet.rawValue,
+            userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: 13)]
+        )
+        XCTAssertEqual(
+            LocalNetworkProbe.classify(denied, host: host, isLocal: LocalNetworkProbe.isLocalHost(host)),
+            .unavailableHost(host)
+        )
+    }
+
     func testLocalNetworkProbeClassificationDistinguishesFailureModes() {
         XCTAssertTrue(LocalNetworkProbe.isLocalHost("192.168.20.4"))
         XCTAssertTrue(LocalNetworkProbe.isLocalHost("studio.local"))
