@@ -433,6 +433,48 @@ describe("ThreadPullRequestReactor", () => {
     ),
   );
 
+  it.effect("keeps the snapshot identity when a turn-end refresh fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const current = thread("refresh-failed");
+        let refreshes = 0;
+        let pullRequestOpened = false;
+        const fixture = yield* makeHarness({
+          threads: [current],
+          branchPullRequest: (_input, options) =>
+            Effect.sync(() => {
+              if (options?.refresh) pullRequestOpened = true;
+              return pullRequestOpened ? branchPullRequest() : null;
+            }),
+          // Only the turn-end refresh fails; the pre-save recheck succeeds.
+          resolveRepositoryIdentity: (_cwd, options) =>
+            Effect.sync(() =>
+              options?.refresh && refreshes++ === 0 ? null : project.repositoryIdentity,
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* fixture.start();
+          yield* fixture.publish({
+            type: "thread.unsettled",
+            sequence: 2,
+            eventId: EventId.make("unsettled"),
+            aggregateKind: "thread",
+            aggregateId: current.id,
+            occurredAt: NOW,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: { threadId: current.id, reason: "activity", updatedAt: NOW },
+          });
+          yield* Queue.take(fixture.reads);
+          yield* reactor.drain;
+          expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("uses live worktrees and falls back to the project for removed worktrees", () =>
     Effect.scoped(
       Effect.gen(function* () {
