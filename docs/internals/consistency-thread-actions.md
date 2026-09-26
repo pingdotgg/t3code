@@ -14,21 +14,35 @@ prior maintainer approval.
 Core coverage is rename, supported title regeneration, pin/unpin, settle/unsettle,
 snooze/wake, archive/unarchive and delete. Each action belongs to the opened
 thread's environment, including in split layouts and remote connections.
-Unsupported server capabilities must not become commands. A pending approval or
-queued input must retain the existing restrictions on hiding work.
+Unsupported server capabilities must not become commands. Preserve the distinct
+action policies at both entry points:
+
+- Manual Settle rejects starting or running sessions, queued turn starts, pending
+  approvals and native input callbacks. It may dismiss an idle thread’s unanswered
+  async questions without answering them or restarting the agent; automatic
+  settlement must not dismiss those questions.
+- Snooze permits a running session but rejects pending approvals, user-input
+  requests and queued turn starts. It changes visibility without stopping work.
+- Archive retains the existing guard against a running active turn; pending
+  requests and queued input do not independently block it.
+- Delete retains the shared destructive confirmation even with running or pending
+  work; this proposal adds no pending-work eligibility guard. Confirmation is an
+  explicit decision to delete the thread, not to answer its pending requests.
 
 Web and Electron already share the thread action menu between list and header.
-React Native conversation headers reuse the mutations and confirmations from
+React Native conversation headers should reuse the mutations and confirmations from
 [both list modes](../../apps/mobile/src/features/home/useThreadListActions.ts).
 iOS uses a native header menu; Android uses the existing header menu primitive.
-The conversation's Snooze action opens the existing date/duration sheet. A list
+The conversation's Snooze action should open the existing date/duration sheet. A list
 may offer quicker presets without changing the operation's meaning.
 
 Pin, settle and snooze keep the conversation open, with the corresponding inverse
 available. Archive and delete return to the thread list only after success and
 only if the originating conversation is still focused. Failure retains the
-conversation. Archived conversations offer Unarchive; permanent deletion retains
-the shared destructive confirmation and has no invented undo.
+conversation. Archived conversations offer Unarchive. Successful Unarchive keeps
+the conversation open if it is still focused; if the user has navigated away, it
+must not reopen or focus that conversation. Permanent deletion retains the shared
+destructive confirmation and has no invented undo.
 
 Arrangement is a list-specific operation. Git commands, terminal actions,
 new-thread-on-branch, and copy-reference shortcuts are purpose-based subsets, not
