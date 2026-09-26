@@ -1871,9 +1871,26 @@ const makeWsRpcLayer = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
-      // Publish and init add a remote or a repository the cached identity has not seen.
+      // Publish and init add a remote or a repository the cached identity has not
+      // seen. Re-emitting the project shell carries the new identity to clients.
       const refreshRepositoryIdentity = (cwd: string) =>
-        repositoryIdentityResolver.resolve(cwd, { refresh: true }).pipe(Effect.asVoid);
+        repositoryIdentityResolver.resolve(cwd, { refresh: true }).pipe(
+          Effect.andThen(projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(cwd)),
+          Effect.flatMap((project) =>
+            Option.isNone(project)
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const command = yield* normalizeDispatchCommand({
+                    type: "project.meta.update",
+                    commandId: yield* serverCommandId("repository-identity-refresh"),
+                    projectId: project.value.id,
+                  });
+                  yield* dispatchNormalizedCommand(command);
+                }),
+          ),
+          Effect.ignoreCause({ log: true }),
+          Effect.provideContext(normalizerContext),
+        );
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>

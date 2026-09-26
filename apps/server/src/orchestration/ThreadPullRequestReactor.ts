@@ -133,14 +133,15 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const snapshotProject = projects.get(first.projectId);
           if (snapshotProject === undefined) return finishBackfill(group);
-          // A finished turn may have added the remote this PR lives on.
+          // A finished turn may have added the remote this PR lives on. A failed
+          // refresh resolves to null, so keep the snapshot's identity then.
           const project = request.refresh
             ? {
                 ...snapshotProject,
-                repositoryIdentity: yield* repositoryIdentities.resolve(
-                  snapshotProject.workspaceRoot,
-                  { refresh: true },
-                ),
+                repositoryIdentity:
+                  (yield* repositoryIdentities.resolve(snapshotProject.workspaceRoot, {
+                    refresh: true,
+                  })) ?? snapshotProject.repositoryIdentity,
               }
             : snapshotProject;
           const repository = sourceControlRepositorySelector(project.repositoryIdentity);

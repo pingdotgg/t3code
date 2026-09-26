@@ -7649,6 +7649,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("re-emits the project after initializing its repository", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<string> = [];
+      const refreshedRoots: Array<string> = [];
+      const metaUpdateDispatched = yield* Deferred.make<void>();
+      const project = makeDefaultOrchestrationReadModel().projects[0]!;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }).pipe(
+                Effect.tap(() =>
+                  command.type === "project.meta.update"
+                    ? Deferred.succeed(metaUpdateDispatched, undefined)
+                    : Effect.void,
+                ),
+              ),
+          },
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.succeed(
+                workspaceRoot === project.workspaceRoot
+                  ? Option.some({ ...project, repositoryIdentity: null })
+                  : Option.none(),
+              ),
+          },
+          repositoryIdentityResolver: {
+            resolve: (cwd, options) =>
+              Effect.sync(() => {
+                if (options?.refresh) refreshedRoots.push(cwd);
+                return null;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsInit]({ cwd: project.workspaceRoot }),
+        ),
+      );
+      yield* Deferred.await(metaUpdateDispatched);
+      assert.deepEqual(refreshedRoots, [project.workspaceRoot]);
+      assert.deepEqual(dispatched, ["project.meta.update"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("records thread analytics only after a client command succeeds", () =>
     Effect.gen(function* () {
       const effects: string[] = [];
