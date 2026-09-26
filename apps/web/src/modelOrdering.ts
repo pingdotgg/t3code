@@ -55,18 +55,20 @@ export function sortModelsForProviderInstance<T extends ModelSlugItem>(
   return Arr.sort(models, Order.combineAll(orders));
 }
 
+/**
+ * Orders picker items. `favoriteOrder` ranks items by their key's position in
+ * the user's favorites list, which is how the favorites view is ordered.
+ */
 export function sortProviderModelItems<T extends ProviderModelItem>(
   items: ReadonlyArray<T>,
   options?: {
     readonly favoriteModelKeys?: ReadonlySet<string> | ReadonlyArray<string>;
     readonly groupFavorites?: boolean;
-    readonly instanceOrder?: ReadonlyArray<ProviderInstanceId>;
+    readonly favoriteOrder?: ReadonlyArray<string>;
   },
 ): T[] {
   const favoriteModelKeys = toSet(options?.favoriteModelKeys);
-  const instanceOrder = new Map(
-    Arr.map(options?.instanceOrder ?? [], (instanceId, index) => [instanceId, index] as const),
-  );
+  const favoriteOrder = rankByValue(options?.favoriteOrder ?? []);
   const originalOrder = rankByValue(
     Arr.map(items, (item) => providerModelKey(item.instanceId, item.slug)),
   );
@@ -78,9 +80,61 @@ export function sortProviderModelItems<T extends ProviderModelItem>(
           ),
         ]
       : []),
-    byOptionalRank((item) => instanceOrder.get(item.instanceId)),
+    byOptionalRank((item) => favoriteOrder.get(providerModelKey(item.instanceId, item.slug))),
     byOptionalRank((item) => originalOrder.get(providerModelKey(item.instanceId, item.slug))),
   ];
 
   return Arr.sort(items, Order.combineAll(orders));
+}
+
+export interface ModelFavorite {
+  readonly provider: ProviderInstanceId;
+  readonly model: string;
+}
+
+/**
+ * Moves the favorite at `from` to `to` within `visibleKeys`, the favorites
+ * view in display order. Only the favorites the view shows trade places;
+ * favorites it hides (a disabled provider, a locked thread) keep their slots.
+ */
+export function moveFavoriteModel<T extends ModelFavorite>(
+  favorites: ReadonlyArray<T>,
+  visibleKeys: ReadonlyArray<string>,
+  from: number,
+  to: number,
+): ReadonlyArray<T> {
+  if (from === to || !visibleKeys[from] || !visibleKeys[to]) return favorites;
+  const moved = [...visibleKeys];
+  moved.splice(to, 0, ...moved.splice(from, 1));
+  const visible = new Set(visibleKeys);
+  const favoriteByKey = new Map(
+    Arr.map(favorites, (favorite) => [
+      providerModelKey(favorite.provider, favorite.model),
+      favorite,
+    ]),
+  );
+  let next = 0;
+  return Arr.map(favorites, (favorite) =>
+    visible.has(providerModelKey(favorite.provider, favorite.model))
+      ? (favoriteByKey.get(moved[next++] ?? "") ?? favorite)
+      : favorite,
+  );
+}
+
+/**
+ * Replaces one provider instance's favorites. Kept favorites stay where the
+ * user ordered them, duplicates collapse to their first slot, and new ones go
+ * to the end.
+ */
+export function replaceInstanceFavorites(
+  favorites: ReadonlyArray<ModelFavorite>,
+  instanceId: ProviderInstanceId,
+  models: ReadonlyArray<string>,
+): ModelFavorite[] {
+  const added = new Set(models);
+  const kept = favorites.filter((favorite) => {
+    if (favorite.provider !== instanceId) return true;
+    return added.delete(favorite.model);
+  });
+  return [...kept, ...Arr.map([...added], (model) => ({ provider: instanceId, model }))];
 }
