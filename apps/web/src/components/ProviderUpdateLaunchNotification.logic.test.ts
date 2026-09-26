@@ -9,7 +9,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
-  buildLocalEnvironmentUpdateGroups,
+  buildEnvironmentUpdateGroups,
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
   collectProviderUpdateOutcomeSnapshots,
@@ -26,13 +26,13 @@ import {
   isProviderUpdateCandidate,
   isProviderSettingsUpdateCandidate,
   isTerminalProviderUpdatePhase,
-  localEnvironmentUpdateNotificationKey,
+  environmentUpdateNotificationKeys,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
   shouldShowPrimaryProviderUpdateToast,
-  type LocalEnvironmentProvidersInput,
-  type LocalEnvironmentUpdateGroup,
-  type LocalProviderUpdateOutcome,
+  type EnvironmentProvidersInput,
+  type EnvironmentUpdateGroup,
+  type ProviderUpdateOutcome,
   type ProviderUpdateCandidate,
   type ProviderUpdateSidebarPillView,
   type ProviderUpdateToastView,
@@ -669,10 +669,10 @@ describe("provider update launch notification logic", () => {
       isPrimary: boolean,
       snapshot: ServerProvider | null,
       environment = "env",
-    ): PromiseSettledResult<LocalProviderUpdateOutcome> => ({
+    ): PromiseSettledResult<ProviderUpdateOutcome> => ({
       status: "fulfilled",
       value: {
-        environmentId: environment as LocalProviderUpdateOutcome["environmentId"],
+        environmentId: environment as ProviderUpdateOutcome["environmentId"],
         isPrimary,
         driver: snapshot?.driver ?? driver("codex"),
         instanceId: snapshot?.instanceId ?? instanceId("codex"),
@@ -770,7 +770,7 @@ describe("provider update launch notification logic", () => {
         driver: driver("codex"),
         updateState: terminalState("succeeded", "Provider updated."),
       });
-      const results: PromiseSettledResult<LocalProviderUpdateOutcome>[] = [
+      const results: PromiseSettledResult<ProviderUpdateOutcome>[] = [
         fulfilledOutcome(true, primary),
         { status: "rejected", reason: new Error("WebSocket closed") },
       ];
@@ -785,8 +785,8 @@ describe("provider update launch notification logic", () => {
       input: {
         readonly environmentId: string;
         readonly providers: ReadonlyArray<ServerProvider>;
-      } & Partial<Omit<LocalEnvironmentProvidersInput, "environmentId" | "providers">>,
-    ): LocalEnvironmentProvidersInput => ({
+      } & Partial<Omit<EnvironmentProvidersInput, "environmentId" | "providers">>,
+    ): EnvironmentProvidersInput => ({
       environmentId: input.environmentId as EnvironmentId,
       label: input.label ?? input.environmentId,
       isPrimary: input.isPrimary ?? false,
@@ -795,7 +795,7 @@ describe("provider update launch notification logic", () => {
     });
 
     it("groups each environment's outdated one-click candidates", () => {
-      const result = buildLocalEnvironmentUpdateGroups([
+      const result = buildEnvironmentUpdateGroups([
         environment({
           environmentId: "env-windows",
           label: "Windows",
@@ -815,7 +815,7 @@ describe("provider update launch notification logic", () => {
     });
 
     it("flags settling while a secondary backend is still connecting", () => {
-      const result = buildLocalEnvironmentUpdateGroups([
+      const result = buildEnvironmentUpdateGroups([
         environment({
           environmentId: "env-windows",
           isPrimary: true,
@@ -832,7 +832,7 @@ describe("provider update launch notification logic", () => {
     });
 
     it("keeps only environments that have a one-click update on offer", () => {
-      const { groups } = buildLocalEnvironmentUpdateGroups([
+      const { groups } = buildEnvironmentUpdateGroups([
         environment({
           environmentId: "env-windows",
           isPrimary: true,
@@ -851,8 +851,33 @@ describe("provider update launch notification logic", () => {
       ]);
     });
 
-    it("keys the notification by environment, driver and latest version", () => {
-      const noUpdates = buildLocalEnvironmentUpdateGroups([
+    it("keeps a manual-only update on offer without a one-click trigger", () => {
+      const { groups } = buildEnvironmentUpdateGroups([
+        environment({
+          environmentId: "env-windows",
+          isPrimary: true,
+          providers: [provider({ driver: driver("claudeAgent"), canUpdate: false })],
+        }),
+      ]);
+      const group = groups[0]!;
+
+      expect(group.candidates).toEqual([]);
+      expect(group.manualCandidates.map((candidate) => candidate.driver)).toEqual(["claudeAgent"]);
+      expect(environmentGroupsWithUpdates(groups)).toHaveLength(1);
+      expect(environmentUpdateNotificationKeys(groups)).toEqual(["env-windows=claudeAgent:1.1.0"]);
+      expect(
+        resolveEnvironmentUpdateRowStatus({
+          group,
+          error: undefined,
+          result: undefined,
+          pill: null,
+          isPending: false,
+        }),
+      ).toEqual({ kind: "manual", text: "Claude from Settings" });
+    });
+
+    it("keys each update by environment, driver and latest version", () => {
+      const noUpdates = buildEnvironmentUpdateGroups([
         environment({
           environmentId: "env-windows",
           isPrimary: true,
@@ -861,9 +886,9 @@ describe("provider update launch notification logic", () => {
           ],
         }),
       ]);
-      expect(localEnvironmentUpdateNotificationKey(noUpdates.groups)).toBeNull();
+      expect(environmentUpdateNotificationKeys(noUpdates.groups)).toEqual([]);
 
-      const both = buildLocalEnvironmentUpdateGroups([
+      const both = buildEnvironmentUpdateGroups([
         environment({
           environmentId: "env-windows",
           isPrimary: true,
@@ -874,9 +899,12 @@ describe("provider update launch notification logic", () => {
           providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
         }),
       ]);
-      const key = localEnvironmentUpdateNotificationKey(both.groups);
-      expect(key).toContain("env-windows=codex:1.1.0");
-      expect(key).toContain("env-wsl=codex:1.1.0");
+      // One key per update, so an environment dropping out leaves the other
+      // environment's key (and any dismissal recorded against it) unchanged.
+      expect(environmentUpdateNotificationKeys(both.groups)).toEqual([
+        "env-windows=codex:1.1.0",
+        "env-wsl=codex:1.1.0",
+      ]);
     });
 
     it("labels environments by platform so they are distinguishable", () => {
@@ -935,10 +963,11 @@ describe("provider update launch notification logic", () => {
   });
 
   describe("resolveEnvironmentUpdateRowStatus", () => {
-    const group: LocalEnvironmentUpdateGroup = {
+    const group: EnvironmentUpdateGroup = {
       environmentId: "env-wsl" as EnvironmentId,
       label: "WSL",
       isPrimary: false,
+      manualCandidates: [],
       isSettling: false,
       candidates: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
       providers: [],

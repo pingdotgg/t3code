@@ -1,13 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { type ProviderInstanceId } from "@t3tools/contracts";
 
 import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
-import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -20,6 +18,7 @@ import {
   shouldShowPrimaryProviderUpdateToast,
   type ProviderUpdateToastView,
 } from "./ProviderUpdateLaunchNotification.logic";
+import { ProviderUpdateToastIcon } from "./ProviderUpdateToastIcon";
 import { hiddenToastActionProps, stackedThreadToast, toastManager } from "./ui/toast";
 import { useAtomCommand } from "../state/use-atom-command";
 
@@ -34,27 +33,6 @@ type ActiveProviderUpdateToast =
       readonly providerInstanceIds: ReadonlySet<ProviderInstanceId>;
       readonly providerCount: number;
     };
-
-function ProviderUpdateToastIcon({ provider }: { provider: ProviderDriverKind }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[provider];
-
-  if (!ProviderIcon) {
-    return (
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-        <DownloadIcon aria-hidden="true" className="size-4 text-success" strokeWidth={2.5} />
-      </span>
-    );
-  }
-
-  return (
-    <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-      <ProviderIcon aria-hidden="true" className="size-4" />
-      <span className="absolute -right-1 -bottom-1 inline-flex size-3 items-center justify-center rounded-full bg-popover">
-        <DownloadIcon aria-hidden="true" className="size-2.5 text-success" strokeWidth={2.5} />
-      </span>
-    </span>
-  );
-}
 
 function addProviderUpdateToast(input: {
   readonly view: ProviderUpdateToastView;
@@ -97,9 +75,8 @@ function addProviderUpdateToast(input: {
 }
 
 /**
- * The single-prompt provider update notification used when there is only one
- * local environment (no WSL backend). Non-WSL users see exactly this flow — the
- * per-environment split is gated behind WSL presence.
+ * The single-prompt provider update notification used when the primary is the
+ * user's only environment.
  */
 export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
@@ -112,12 +89,15 @@ export function ProviderUpdatePrimaryNotification() {
   const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();
 
-  // If this flow unmounts (e.g. a WSL backend appears and we switch to the
-  // per-environment popover), close any prompt it owns so it does not linger.
+  // If the user adds a secondary environment and the root switches to the
+  // per-environment popover, close any prompt this flow owns. Nobody answered
+  // it, so forget it was shown: when the secondary is removed again, this flow
+  // remounts and must be able to offer the same update once more.
   useEffect(() => {
     return () => {
       const activeToast = activeToastRef.current;
       if (activeToast?.kind === "prompt") {
+        seenProviderUpdateNotificationKeys.delete(activeToast.key);
         toastManager.close(activeToast.toastId);
       }
       activeToastRef.current = null;

@@ -1,28 +1,54 @@
-import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
-import type { ServerConfig } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import type {
+  ConnectionCatalogEntry,
+  EnvironmentConnectionPhase,
+} from "@t3tools/client-runtime/connection";
+import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { environmentSession } from "~/state/session";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import {
-  buildLocalEnvironmentUpdateGroups,
+  buildEnvironmentUpdateGroups,
   deriveEnvironmentDisplayLabel,
+  type EnvironmentProvidersInput,
   type EnvironmentUpdateConnectionState,
-  type LocalEnvironmentProvidersInput,
-  type LocalEnvironmentUpdateGroup,
+  type EnvironmentUpdateGroup,
 } from "./ProviderUpdateLaunchNotification.logic";
+import {
+  type ProviderOperateAccess,
+  resolveRemoteOperateAccess,
+} from "./settings/ProviderSettingsPanel.logic";
 
 /**
- * A local environment is either the same-origin primary backend or a
- * desktop-local secondary (the parallel WSL backend), which connects over
- * loopback with a bearer token and carries a `local:<backendInstanceId>`
- * connection id. SSH, relay, and other remote targets are excluded.
+ * Keep the primary and desktop-local backends in the set while they start so
+ * the existing settling grace still covers WSL. Remote environments join only
+ * after they are connected, have loaded a live config, and this client's
+ * session there may run updates: a read-only pairing would otherwise show an
+ * Update button whose every request the server rejects. This also prevents an
+ * offline remote's cached state from advertising an update it cannot run.
  */
-function isLocalConnectionTarget(target: ConnectionCatalogEntry["target"]): boolean {
-  return target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target);
+export function shouldIncludeProviderUpdateEnvironment(input: {
+  readonly target: ConnectionCatalogEntry["target"];
+  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly hasServerConfig: boolean;
+  readonly operateAccess: ProviderOperateAccess;
+}): boolean {
+  return (
+    input.target._tag === "PrimaryConnectionTarget" ||
+    isDesktopLocalConnectionTarget(input.target) ||
+    (input.connectionPhase === "connected" &&
+      input.hasServerConfig &&
+      input.operateAccess === "granted")
+  );
 }
 
-function normalizeConnectionState(phase: string | undefined): EnvironmentUpdateConnectionState {
+function normalizeConnectionState(
+  phase: EnvironmentConnectionPhase,
+): EnvironmentUpdateConnectionState {
   switch (phase) {
     case "connected":
       return "ready";
@@ -43,23 +69,73 @@ function normalizeConnectionState(phase: string | undefined): EnvironmentUpdateC
 }
 
 /**
- * Reactively enumerate the enabled local environments (the primary plus any
- * desktop-local secondary such as WSL) with each one's full provider list and a
- * flag for whether any is still connecting. Drives the launch popover's gating
- * and its per-environment update triggers.
+ * Operate access for each remote environment, from the scopes its
+ * `/api/auth/session` reports for this client. Primary and desktop-local
+ * backends are not looked up; they are always included.
  */
-export function useLocalEnvironmentUpdateGroups(): {
-  readonly groups: LocalEnvironmentUpdateGroup[];
+function useRemoteOperateAccess(
+  remoteEnvironmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyMap<EnvironmentId, ProviderOperateAccess> {
+  const key = remoteEnvironmentIds.join("\u0000");
+  const accessAtom = useMemo(
+    () =>
+      Atom.make((get) => {
+        const access = new Map<EnvironmentId, ProviderOperateAccess>();
+        for (const environmentId of key === "" ? [] : (key.split("\u0000") as EnvironmentId[])) {
+          const result = get(environmentSession.sessionStateAtom(environmentId));
+          access.set(
+            environmentId,
+            resolveRemoteOperateAccess({
+              session: Option.getOrNull(AsyncResult.value(result)),
+              isPending: result.waiting,
+              hasError: result._tag === "Failure",
+            }),
+          );
+        }
+        return access;
+      }),
+    [key],
+  );
+  return useAtomValue(accessAtom);
+}
+
+/**
+ * Reactively enumerate the primary, desktop-local backends, and connected
+ * remote environments with each one's provider list. Drives the launch
+ * popover's gating and its per-environment update triggers.
+ */
+export function useEnvironmentUpdateGroups(): {
+  readonly groups: EnvironmentUpdateGroup[];
   readonly isAnySettling: boolean;
 } {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
 
+  const remoteEnvironmentIds = useMemo(
+    () =>
+      environments
+        .filter(
+          (environment) =>
+            environment.entry.target._tag !== "PrimaryConnectionTarget" &&
+            !isDesktopLocalConnectionTarget(environment.entry.target),
+        )
+        .map((environment) => environment.environmentId),
+    [environments],
+  );
+  const remoteOperateAccess = useRemoteOperateAccess(remoteEnvironmentIds);
+
   return useMemo(() => {
-    const inputs: LocalEnvironmentProvidersInput[] = [];
+    const inputs: EnvironmentProvidersInput[] = [];
 
     for (const environment of environments) {
-      if (!isLocalConnectionTarget(environment.entry.target)) {
+      if (
+        !shouldIncludeProviderUpdateEnvironment({
+          target: environment.entry.target,
+          connectionPhase: environment.connection.phase,
+          hasServerConfig: environment.serverConfig !== null,
+          operateAccess: remoteOperateAccess.get(environment.environmentId) ?? "granted",
+        })
+      ) {
         continue;
       }
 
@@ -68,9 +144,9 @@ export function useLocalEnvironmentUpdateGroups(): {
 
       inputs.push({
         environmentId: environment.environmentId,
-        // Secondaries carry a meaningful label straight from the platform source
-        // (e.g. "WSL (Ubuntu)"). The primary's catalog label can be the account
-        // name, so fall back to its platform OS so the row reads "Windows"/"Linux".
+        // Secondaries carry a meaningful label straight from the connection
+        // catalog. The primary's label can be the account name, so fall back to
+        // its platform OS and keep the rows distinguishable.
         label: isPrimary
           ? deriveEnvironmentDisplayLabel({
               isWsl: false,
@@ -80,9 +156,8 @@ export function useLocalEnvironmentUpdateGroups(): {
             })
           : environment.label,
         isPrimary,
-        // The primary is the backend serving this renderer, so it is ready
-        // whenever its providers are available; secondaries report their live
-        // connection phase.
+        // The primary serves this renderer, so it is ready whenever its
+        // providers are available. Secondaries report their live phase.
         connectionState: isPrimary
           ? "ready"
           : normalizeConnectionState(environment.connection.phase),
@@ -93,6 +168,6 @@ export function useLocalEnvironmentUpdateGroups(): {
     // Primary first, then the rest in catalog order.
     inputs.sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary));
 
-    return buildLocalEnvironmentUpdateGroups(inputs);
-  }, [environments, primaryEnvironmentId]);
+    return buildEnvironmentUpdateGroups(inputs);
+  }, [environments, primaryEnvironmentId, remoteOperateAccess]);
 }

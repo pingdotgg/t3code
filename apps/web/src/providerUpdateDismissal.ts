@@ -19,15 +19,19 @@ export function useDismissedProviderUpdateNotificationKeys() {
 
   const dismissedKeySet = useMemo(() => new Set(dismissedKeys), [dismissedKeys]);
 
+  // Takes every key being declined in one call: each call writes from the same
+  // render's snapshot, so dismissing keys one at a time would keep only the last.
   const dismissNotificationKey = useCallback(
-    (key: string) => {
-      const trimmedKey = key.trim();
-      if (trimmedKey.length === 0 || dismissedKeySet.has(trimmedKey)) {
+    (...keys: ReadonlyArray<string>) => {
+      const newKeys = keys
+        .map((key) => key.trim())
+        .filter((key) => key.length > 0 && !dismissedKeySet.has(key));
+      if (newKeys.length === 0) {
         return;
       }
 
       setDismissals({
-        keys: [...dismissedKeys, trimmedKey],
+        keys: [...dismissedKeys, ...new Set(newKeys)],
       });
     },
     [dismissedKeySet, dismissedKeys, setDismissals],

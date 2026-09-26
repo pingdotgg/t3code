@@ -544,8 +544,8 @@ function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvi
 // ===========================================================================
 // Multi-environment provider updates
 //
-// With a desktop-local secondary backend present (the WSL backend alongside the
-// Windows primary), a provider update is applied across every local backend.
+// When more than one environment offers a provider update, each update stays
+// bound to the environment that reported it.
 // Each environment owns its own provider instances, so candidates and progress
 // are computed per environment and the dispatch targets that environment's
 // connection. These helpers are pure; the dispatch itself runs through the
@@ -553,12 +553,12 @@ function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvi
 // ===========================================================================
 
 /**
- * The settled result of dispatching a provider update to one local backend.
+ * The settled result of dispatching a provider update to one environment.
  * `provider` is the post-update snapshot of the targeted instance returned by
  * that backend (null when the backend did not report the targeted instance,
  * e.g. it does not have it installed).
  */
-export interface LocalProviderUpdateOutcome {
+export interface ProviderUpdateOutcome {
   readonly environmentId: EnvironmentId;
   readonly isPrimary: boolean;
   readonly driver: ProviderDriverKind;
@@ -591,15 +591,15 @@ export function firstRejectedProviderUpdateMessage(
 }
 
 /**
- * Reduce per-backend update outcomes to one representative snapshot per driver,
- * keeping the worst-case status across every local backend. Because the same
- * driver has a distinct instance id per environment, a secondary backend (e.g.
- * WSL) that *resolved* with a failed or unchanged provider would otherwise be
+ * Reduce per-environment update outcomes to one representative snapshot per driver,
+ * keeping the worst-case status across every environment. Because the same
+ * driver has a distinct instance id per environment, a secondary environment
+ * that resolved with a failed or unchanged provider would otherwise be
  * filtered out (its instance id is not the primary's) or collapsed behind the
  * primary's success — this surfaces it instead.
  */
 export function collectProviderUpdateOutcomeSnapshots(
-  results: ReadonlyArray<PromiseSettledResult<LocalProviderUpdateOutcome>>,
+  results: ReadonlyArray<PromiseSettledResult<ProviderUpdateOutcome>>,
 ): ServerProvider[] {
   const worstByDriver = new Map<ProviderDriverKind, ServerProvider>();
   for (const result of results) {
@@ -619,10 +619,9 @@ export function collectProviderUpdateOutcomeSnapshots(
 }
 
 /**
- * A human label that distinguishes local environments by platform (so the
- * popover shows "Windows" / "WSL" rather than the account name twice). WSL is
- * identified by its backend instance id; everything else falls back to the
- * reported OS, then the environment's own label.
+ * A human label that distinguishes desktop-local environments by platform, so
+ * the popover shows "Windows" and "WSL" rather than the account name twice.
+ * Remote environments already have a user-chosen label and do not use this.
  */
 export function deriveEnvironmentDisplayLabel(input: {
   readonly isWsl: boolean;
@@ -645,10 +644,10 @@ export function deriveEnvironmentDisplayLabel(input: {
   }
 }
 
-/** Connection state of a local environment, normalized across primary/secondary sources. */
+/** Connection state normalized across primary and secondary environments. */
 export type EnvironmentUpdateConnectionState = "connecting" | "ready" | "disconnected" | "error";
 
-export interface LocalEnvironmentProvidersInput {
+export interface EnvironmentProvidersInput {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPrimary: boolean;
@@ -656,80 +655,103 @@ export interface LocalEnvironmentProvidersInput {
   readonly providers: ReadonlyArray<ServerProvider>;
 }
 
-export interface LocalEnvironmentUpdateGroup {
+export interface EnvironmentUpdateGroup {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPrimary: boolean;
-  /** True while this environment's backend is still connecting (e.g. WSL booting). */
+  /** True while this environment's backend is still connecting, such as WSL booting. */
   readonly isSettling: boolean;
   /** Outdated, one-click-updatable providers in this environment. */
   readonly candidates: ProviderUpdateCandidate[];
+  /** Outdated providers whose installer is unproven, so they update from Settings. */
+  readonly manualCandidates: ProviderUpdateCandidate[];
   /** Full provider list for this environment, used to derive live update progress. */
   readonly providers: ReadonlyArray<ServerProvider>;
 }
 
 /**
- * Build one update group per local environment, pairing each environment's
+ * Build one update group per environment, pairing each environment's
  * outdated one-click candidates with its own provider list, and report whether
  * any environment is still settling (so the caller can defer the popover).
  */
-export function buildLocalEnvironmentUpdateGroups(
-  environments: ReadonlyArray<LocalEnvironmentProvidersInput>,
-): { groups: LocalEnvironmentUpdateGroup[]; isAnySettling: boolean } {
-  const groups = environments.map((environment) => ({
-    environmentId: environment.environmentId,
-    label: environment.label,
-    isPrimary: environment.isPrimary,
-    isSettling: environment.connectionState === "connecting",
-    candidates: collectProviderUpdateCandidates(environment.providers).filter((candidate) =>
-      canOneClickUpdateProviderCandidate(candidate, environment.providers),
-    ),
-    providers: environment.providers,
-  }));
+export function buildEnvironmentUpdateGroups(
+  environments: ReadonlyArray<EnvironmentProvidersInput>,
+): { groups: EnvironmentUpdateGroup[]; isAnySettling: boolean } {
+  const groups = environments.map((environment) => {
+    const updateCandidates = collectProviderUpdateCandidates(environment.providers);
+    return {
+      environmentId: environment.environmentId,
+      label: environment.label,
+      isPrimary: environment.isPrimary,
+      isSettling: environment.connectionState === "connecting",
+      candidates: updateCandidates.filter((candidate) =>
+        canOneClickUpdateProviderCandidate(candidate, environment.providers),
+      ),
+      manualCandidates: updateCandidates.filter(
+        (candidate) => !hasOneClickUpdateProviderCandidate(candidate, environment.providers),
+      ),
+      providers: environment.providers,
+    };
+  });
   const isAnySettling = environments.some(
     (environment) => environment.connectionState === "connecting",
   );
   return { groups, isAnySettling };
 }
 
-/** Groups that actually have a one-click update available, in display order (primary first). */
+/** Groups with an update on offer, one-click or manual, in display order (primary first). */
 export function environmentGroupsWithUpdates(
-  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
-): LocalEnvironmentUpdateGroup[] {
-  return groups.filter((group) => group.candidates.length > 0);
+  groups: ReadonlyArray<EnvironmentUpdateGroup>,
+): EnvironmentUpdateGroup[] {
+  return groups.filter((group) => group.candidates.length > 0 || group.manualCandidates.length > 0);
 }
 
 /**
- * Stable key over the set of (environment, driver, latest version) updates on
- * offer, so the popover is shown once per distinct set and re-shown when it
- * changes.
+ * One stable key per (environment, driver, latest version) update on offer.
+ * The popover tracks what it has shown and what the user declined per key, not
+ * per set, because remote environments come and go: a set-wide key would
+ * re-prompt for a declined update every time a different remote was connected.
  */
-export function localEnvironmentUpdateNotificationKey(
-  groups: ReadonlyArray<LocalEnvironmentUpdateGroup>,
-): string | null {
-  const parts = environmentGroupsWithUpdates(groups)
-    .map((group) => {
-      const providerParts = group.candidates
-        .map((candidate) => `${candidate.driver}:${candidate.versionAdvisory.latestVersion}`)
-        .toSorted()
-        .join(",");
-      return `${group.environmentId}=${providerParts}`;
-    })
+export function environmentUpdateNotificationKeys(
+  groups: ReadonlyArray<EnvironmentUpdateGroup>,
+): string[] {
+  return groups
+    .flatMap((group) =>
+      [...group.candidates, ...group.manualCandidates].map(
+        (candidate) =>
+          `${group.environmentId}=${candidate.driver}:${candidate.versionAdvisory.latestVersion}`,
+      ),
+    )
     .toSorted();
-  return parts.length > 0 ? parts.join("|") : null;
 }
 
-export type ProviderUpdateRowStatusKind = "idle" | "loading" | "success" | "failed" | "unchanged";
+export type ProviderUpdateRowStatusKind =
+  | "idle"
+  | "manual"
+  | "loading"
+  | "success"
+  | "failed"
+  | "unchanged";
 
 export interface ProviderUpdateRowStatus {
   readonly kind: ProviderUpdateRowStatusKind;
   readonly text: string;
 }
 
-function environmentProviderNames(group: LocalEnvironmentUpdateGroup): string {
-  return group.candidates
+function providerNames(candidates: ReadonlyArray<ProviderUpdateCandidate>): string {
+  return candidates
     .map((candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver)
     .join(", ");
+}
+
+/** "Codex" / "Claude from Settings" / "Codex · Claude from Settings". */
+function environmentProviderNames(group: EnvironmentUpdateGroup): string {
+  const oneClick = providerNames(group.candidates);
+  if (group.manualCandidates.length === 0) {
+    return oneClick;
+  }
+  const manual = `${providerNames(group.manualCandidates)} from Settings`;
+  return oneClick ? `${oneClick} · ${manual}` : manual;
 }
 
 /**
@@ -744,7 +766,7 @@ function environmentProviderNames(group: LocalEnvironmentUpdateGroup): string {
  * to its terminal status instead of pinning it on "Updating…".
  */
 export function resolveEnvironmentUpdateRowStatus(input: {
-  readonly group: LocalEnvironmentUpdateGroup;
+  readonly group: EnvironmentUpdateGroup;
   readonly error: string | undefined;
   readonly result: ProviderUpdateToastView | undefined;
   readonly pill: ProviderUpdateSidebarPillView | null;
@@ -782,5 +804,9 @@ export function resolveEnvironmentUpdateRowStatus(input: {
   if (input.result || input.isPending) {
     return { kind: "loading", text: "Updating…" };
   }
-  return { kind: "idle", text: environmentProviderNames(input.group) };
+  // With nothing to run from here, the row only points at Settings.
+  return {
+    kind: input.group.candidates.length > 0 ? "idle" : "manual",
+    text: environmentProviderNames(input.group),
+  };
 }

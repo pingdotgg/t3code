@@ -1,5 +1,13 @@
 import { CheckIcon } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import {
+  type MutableRefObject,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -10,16 +18,17 @@ import {
 import { cn } from "~/lib/utils";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useLocalEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
+import { useEnvironmentUpdateGroups } from "./ProviderUpdateLaunchNotification.environments";
 import {
   collectProviderUpdateOutcomeSnapshots,
+  type EnvironmentUpdateGroup,
   firstRejectedProviderUpdateMessage,
+  getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateSidebarPillView,
   isTerminalProviderUpdatePhase,
   resolveEnvironmentUpdateRowStatus,
-  type LocalEnvironmentUpdateGroup,
-  type LocalProviderUpdateOutcome,
+  type ProviderUpdateOutcome,
   type ProviderUpdateRowStatus,
   type ProviderUpdateRowStatusKind,
   type ProviderUpdateToastView,
@@ -34,7 +43,7 @@ type ProviderUpdateCommandResult = AtomCommandResult<
 
 /**
  * Map one targeted instance's update command result into the settled-outcome
- * shape the multi-backend reducers consume: a non-interrupted failure becomes a
+ * shape the multi-environment reducers consume: a non-interrupted failure becomes a
  * rejection carrying its message; a success carries the post-update snapshot of
  * the targeted instance (null when the backend did not report it).
  */
@@ -46,7 +55,7 @@ function toProviderUpdateOutcome(input: {
     readonly instanceId: ServerProvider["instanceId"];
   };
   readonly result: ProviderUpdateCommandResult;
-}): PromiseSettledResult<LocalProviderUpdateOutcome> {
+}): PromiseSettledResult<ProviderUpdateOutcome> {
   if (input.result._tag === "Failure") {
     if (isAtomCommandInterrupted(input.result)) {
       // An interrupted dispatch (e.g. superseded) is neither a success nor a
@@ -110,11 +119,28 @@ function EnvironmentUpdateRow({
   group,
   status,
   onUpdate,
+  solo,
 }: {
-  readonly group: LocalEnvironmentUpdateGroup;
+  readonly group: EnvironmentUpdateGroup;
   readonly status: ProviderUpdateRowStatus;
   readonly onUpdate: () => void;
+  /** The only environment listed: read like the single-prompt body, with the footer action as the trigger. */
+  readonly solo: boolean;
 }) {
+  if (solo) {
+    const atRest = status.kind === "idle" || status.kind === "manual";
+    return (
+      <span className={cn("text-muted-foreground", !atRest && rowToneClass(status.kind))}>
+        {atRest
+          ? getProviderUpdateInitialToastView({
+              updateProviders: [...group.candidates, ...group.manualCandidates],
+              oneClickProviders: group.candidates,
+            }).description
+          : status.text}
+      </span>
+    );
+  }
+
   let trailing: ReactNode;
   switch (status.kind) {
     case "loading":
@@ -131,6 +157,10 @@ function EnvironmentUpdateRow({
         </Button>
       );
       break;
+    case "manual":
+      // The footer's Settings action is the way in; no per-row trigger.
+      trailing = null;
+      break;
     default:
       trailing = (
         <Button size="xs" variant="outline" onClick={onUpdate}>
@@ -143,7 +173,13 @@ function EnvironmentUpdateRow({
   return (
     <div className="flex items-center justify-between gap-3 py-0.5">
       <div className="flex min-w-0 flex-col">
-        <span className="truncate font-medium text-foreground">{group.label}</span>
+        <span className="flex min-w-0 items-baseline gap-1.5">
+          <span className="truncate font-medium text-foreground">{group.label}</span>
+          {group.isPrimary ? (
+            // The primary's label is its OS, which another listed machine can share.
+            <span className="shrink-0 text-xs text-muted-foreground">This machine</span>
+          ) : null}
+        </span>
         <span className={cn("truncate text-xs", rowToneClass(status.kind))}>{status.text}</span>
       </div>
       <div className="shrink-0">{trailing}</div>
@@ -152,17 +188,19 @@ function EnvironmentUpdateRow({
 }
 
 /**
- * The launch popover's body when WSL is present: one row per local environment
- * (Windows + WSL), each with its own "update all" trigger that targets only
- * that environment's backend.
+ * The launch popover body for multi-environment clients. Each environment gets
+ * its own update trigger, and every command targets that environment's server.
  */
 export function ProviderUpdateEnvironmentRows({
   onInteract,
+  updateAllRef,
 }: {
   /** Called the first time the user triggers an update, so the host can stop refreshing the prompt. */
   readonly onInteract?: () => void;
+  /** Filled with a function that updates every environment still offering one, for the host's "Update all" action. */
+  readonly updateAllRef?: MutableRefObject<(() => void) | null>;
 }) {
-  const { groups } = useLocalEnvironmentUpdateGroups();
+  const { groups } = useEnvironmentUpdateGroups();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -266,9 +304,9 @@ export function ProviderUpdateEnvironmentRows({
       }, PENDING_EXPIRY_MS);
       try {
         // Dispatch each candidate's update to this environment's own backend and
-        // normalize every settled outcome into the multi-backend reducer shape.
+        // normalize every settled outcome into the multi-environment reducer shape.
         const results = await Promise.all(
-          targets.map(async (target): Promise<PromiseSettledResult<LocalProviderUpdateOutcome>> => {
+          targets.map(async (target): Promise<PromiseSettledResult<ProviderUpdateOutcome>> => {
             try {
               const result = await updateProvider({
                 environmentId,
@@ -358,6 +396,24 @@ export function ProviderUpdateEnvironmentRows({
     [clearPending, groupByEnvironment, onInteract, updateProvider],
   );
 
+  // "Update all" goes through the same per-environment path as the row
+  // buttons, so each environment keeps its own spinner, result, and guards.
+  useEffect(() => {
+    if (!updateAllRef) {
+      return;
+    }
+    updateAllRef.current = () => {
+      for (const group of groups) {
+        if (group.candidates.length > 0) {
+          void handleUpdate(group.environmentId);
+        }
+      }
+    };
+    return () => {
+      updateAllRef.current = null;
+    };
+  }, [groups, handleUpdate, updateAllRef]);
+
   const rows = groups
     .map((group) => ({
       group,
@@ -376,20 +432,29 @@ export function ProviderUpdateEnvironmentRows({
         isPending: pendingEnvironments.has(group.environmentId),
       }),
     }))
-    .filter(({ group, status }) => group.candidates.length > 0 || status.kind !== "idle");
+    .filter(
+      ({ group, status }) =>
+        group.candidates.length > 0 || group.manualCandidates.length > 0 || status.kind !== "idle",
+    );
 
   if (rows.length === 0) {
     return null;
   }
 
+  // With one environment listed there is nothing to tell apart, so the body
+  // reads like the single prompt. With several, the stacked toast body's
+  // `pr-5` under the close button is extended across so the row buttons share
+  // a right edge with the footer actions, and a divider closes the list.
+  const solo = rows.length === 1;
   return (
-    <div className="mt-0.5 flex flex-col gap-1">
+    <div className={cn("mt-0.5 flex flex-col gap-1", !solo && "-mr-5 border-b border-border pb-2")}>
       {rows.map(({ group, status }) => (
         <EnvironmentUpdateRow
           key={group.environmentId}
           group={group}
           status={status}
           onUpdate={() => handleUpdate(group.environmentId)}
+          solo={solo}
         />
       ))}
     </div>
