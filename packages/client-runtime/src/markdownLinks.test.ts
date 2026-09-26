@@ -146,6 +146,11 @@ describe("fileBasename", () => {
 
 describe("workspaceRelativeFilePath", () => {
   it.each([
+    ["/repo/project", "/repo/project", "."],
+    ["/repo/project/", "/repo/project/", "."],
+    ["/", "/", "."],
+    ["C:/USERS/mike/project", "c:/users/MIKE/project", "."],
+    ["C:/", "c:/", "."],
     ["/repo/project/src/main.ts", "/repo/project", "src/main.ts"],
     ["/repo/project/src/main.ts", "/repo/project/", "src/main.ts"],
     ["C:\\Users\\mike\\t3code\\apps\\web\\a.ts", "C:/Users/mike/t3code", "apps/web/a.ts"],
