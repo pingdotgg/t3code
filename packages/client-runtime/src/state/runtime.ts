@@ -482,6 +482,35 @@ export function followStreamInEnvironment<A, E, R>(
   );
 }
 
+/**
+ * Refreshes a query when `signal` changes, but only while something reads it.
+ * `Atom.makeRefreshOnSignal` subscribes to the signal, so a query that outlives its view on an
+ * idle TTL still re-runs on every change. Reading the signal as a dependency instead lets the
+ * registry re-run a mounted query right away and only mark an idle one stale, which then
+ * refreshes on its next read.
+ */
+const refreshOnSignalWhileRead =
+  (signal: Atom.Atom<unknown>) =>
+  <A>(self: Atom.Atom<A>): Atom.Atom<A> => {
+    // The signal value each registry's data was read under. Held outside the node because the
+    // registry can sweep this node while `self` keeps the data, and the rebuilt node must still
+    // see a change it missed.
+    const readUnder = new WeakMap<AtomRegistry.AtomRegistry, unknown>();
+    return Atom.transform(
+      self,
+      (get) => {
+        const current = get(signal);
+        get.subscribe(self, (value) => get.setSelf(value));
+        const changed =
+          readUnder.has(get.registry) && !Object.is(readUnder.get(get.registry), current);
+        readUnder.set(get.registry, current);
+        if (changed) get.refresh(self);
+        return get.once(self);
+      },
+      { initialValueTarget: self },
+    );
+  };
+
 export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<
@@ -565,7 +594,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     return (
       refreshTrigger === undefined
         ? intervalQuery
-        : intervalQuery.pipe(Atom.makeRefreshOnSignal(refreshTrigger))
+        : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger))
     ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
   });
   return (target) => family(environmentRpcKey(target));
