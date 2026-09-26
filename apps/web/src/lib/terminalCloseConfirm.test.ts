@@ -128,4 +128,15 @@ describe("terminal close confirmation", () => {
     await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(false);
     expect(persistClientSettingsUpdateMock).not.toHaveBeenCalled();
   });
+
+  it("still resolves true when confirmed with checkbox checked even if settings persistence fails", async () => {
+    confirmMock.mockImplementation(async (_msg, options: any) => {
+      options.checkbox?.onCheckedChange?.(true);
+      return true;
+    });
+    persistClientSettingsUpdateMock.mockRejectedValue(new Error("disk full"));
+
+    await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(true);
+    expect(isTerminalCloseConfirmPending()).toBe(false);
+  });
 });

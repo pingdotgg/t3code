@@ -48,10 +48,14 @@ export async function confirmTerminalClose(
       },
     );
     if (confirmed && dontAskAgain) {
-      await persistClientSettingsUpdate((settings) => ({
-        ...settings,
-        confirmTerminalClose: false,
-      }));
+      try {
+        await persistClientSettingsUpdate((settings) => ({
+          ...settings,
+          confirmTerminalClose: false,
+        }));
+      } catch {
+        // Preference persistence failure should not block terminal close when affirmative
+      }
     }
     return confirmed;
   } catch {
