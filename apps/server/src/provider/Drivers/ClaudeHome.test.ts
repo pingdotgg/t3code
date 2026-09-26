@@ -80,7 +80,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       Effect.gen(function* () {
         // Same resolved home, but the CLI treats an explicit CLAUDE_CONFIG_DIR
         // as a separate login.
-        const unset = yield* makeClaudeCapabilitiesCacheKey({ binaryPath: "claude", homePath: "" });
+        const { CLAUDE_CONFIG_DIR: _, ...withoutConfigDir } = process.env;
+        const unset = yield* makeClaudeCapabilitiesCacheKey(
+          { binaryPath: "claude", homePath: "" },
+          undefined,
+          withoutConfigDir,
+        );
         const explicit = yield* makeClaudeCapabilitiesCacheKey({
           binaryPath: "claude",
           homePath: "~/.claude",
