@@ -808,7 +808,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Request: Schema.Void,
     Result: ProjectionThreadPullRequestDbRowSchema.mapFields(
       Struct.assign({
-        projectId: ProjectId,
+        projectId: ProjectionThread.fields.projectId,
         settledOverride: ProjectionThread.fields.settledOverride,
         settledAt: ProjectionThread.fields.settledAt,
       }),
@@ -2828,18 +2828,15 @@ pending_approval_requests AS (
             ProjectionThreadPullRequests & { readonly pullRequests: Array<ThreadPullRequestLink> }
           >();
           for (const row of rows) {
-            const thread = threads.get(row.threadId);
-            if (thread !== undefined) {
-              thread.pullRequests.push(mapPullRequestRow(row));
-              continue;
-            }
-            threads.set(row.threadId, {
+            const thread = threads.get(row.threadId) ?? {
               id: row.threadId,
               projectId: row.projectId,
               settledOverride: row.settledOverride,
               settledAt: row.settledAt,
-              pullRequests: [mapPullRequestRow(row)],
-            });
+              pullRequests: [],
+            };
+            thread.pullRequests.push(mapPullRequestRow(row));
+            threads.set(row.threadId, thread);
           }
           return [...threads.values()];
         }),
