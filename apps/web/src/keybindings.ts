@@ -80,6 +80,31 @@ const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Slash: "/",
 };
 
+/** What a US layout types at the same positions with Shift held. */
+const US_SHIFTED_EVENT_CODE_KEYS: Readonly<Record<string, string>> = {
+  Backquote: "~",
+  Backslash: "|",
+  BracketLeft: "{",
+  BracketRight: "}",
+  Comma: "<",
+  Digit0: ")",
+  Digit1: "!",
+  Digit2: "@",
+  Digit3: "#",
+  Digit4: "$",
+  Digit5: "%",
+  Digit6: "^",
+  Digit7: "&",
+  Digit8: "*",
+  Digit9: "(",
+  Equal: "+",
+  Minus: "_",
+  Period: ">",
+  Quote: '"',
+  Semicolon: ":",
+  Slash: "?",
+};
+
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
   if (normalized === "esc") return "escape";
@@ -91,6 +116,27 @@ export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "cod
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
   return physicalKey ?? layoutKey;
+}
+
+/**
+ * The key a chord is recorded as. Where the layout types a character the US layout does not type
+ * at that position, that character: the German `#` key is saved as `#`, not as the US `\`.
+ * Matching still accepts the US name through `resolveEventKeys`, so default chords such as `mod+[`
+ * keep firing on every layout.
+ *
+ * A US layout keeps the key's own name (`mod+shift+[`, not `mod+shift+{`), so its labels and
+ * conflict checks still line up with the defaults. Option (macOS) and AltGr type a different
+ * character than the key's own (`“` for `[`), so a chord held with Alt keeps the key's name too.
+ */
+export function recordedShortcutKeyFromEvent(
+  event: Pick<ShortcutEventLike, "key" | "code" | "altKey">,
+): string {
+  const layoutKey = normalizeEventKey(event.key);
+  const code = event.code ?? "";
+  const typesUsCharacter =
+    layoutKey === EVENT_CODE_SHORTCUT_KEYS[code] || layoutKey === US_SHIFTED_EVENT_CODE_KEYS[code];
+  if (layoutKey.length === 1 && !event.altKey && !typesUsCharacter) return layoutKey;
+  return shortcutKeyFromEvent(event);
 }
 
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
