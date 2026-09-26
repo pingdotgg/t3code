@@ -6465,14 +6465,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
               <div role="status" aria-atomic="true" className="sr-only">
-                {composerSuggestionsVisible
+                {composerSuggestionsVisible && composerMenuItems.length === 0
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
                       ? "Finding pull request..."
                       : "Searching workspace files..."
-                    : composerMenuItems.length === 0
-                      ? composerMenuEmptyState
-                      : ""
+                    : composerMenuEmptyState
                   : ""}
               </div>
               {composerSuggestionsVisible && (
