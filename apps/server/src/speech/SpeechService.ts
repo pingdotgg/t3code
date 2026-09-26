@@ -505,14 +505,20 @@ export const make = Effect.gen(function* () {
       const fillerWordLanguage = language === "auto" ? undefined : language;
       yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
-          // Cancellation can arrive inside native compute. Kill the owned process before releasing the lease.
           if (!finished) {
-            controller.abort();
-            await loading?.catch(() => undefined);
-            await (loaded ?? model)?.dispose();
-            model = undefined;
-            loadedModelId = undefined;
-            loadedAcceleration = undefined;
+            try {
+              // Reset after the current feed settles so the loaded model can be reused.
+              // The native worker bounds that wait and falls back to process shutdown.
+              if (!loaded) throw new Error("Speech stream is not loaded.");
+              await loaded.reset();
+            } catch {
+              controller.abort();
+              await loading?.catch(() => undefined);
+              await (loaded ?? model)?.dispose();
+              model = undefined;
+              loadedModelId = undefined;
+              loadedAcceleration = undefined;
+            }
           }
           activeTranscriptions -= 1;
           if (activeOperation === released.promise) activeOperation = undefined;

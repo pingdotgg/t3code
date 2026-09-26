@@ -128,7 +128,30 @@ it("returns streaming previews and final text from an isolated process", async (
     });
     expect(await model.finish()).toBe("hello world");
     await model.begin("fr");
+    await model.reset();
+    await model.begin("fr");
     expect(await model.finish()).toBe("fr");
+  } finally {
+    await model.dispose();
+  }
+});
+
+it("waits for an active feed before resetting the stream", async () => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    streamingFixture(
+      "async () => { await new Promise((resolve) => setImmediate(resolve)); return { revision: 1, committedChanged: true, tentativeChanged: true }; }",
+    ),
+  );
+  try {
+    await model.begin();
+    const feeding = model.feed(new Float32Array([0.25]));
+    const resetting = model.reset();
+    await feeding;
+    await resetting;
+    await model.begin();
+    expect(await model.finish()).toBe("hello world");
   } finally {
     await model.dispose();
   }

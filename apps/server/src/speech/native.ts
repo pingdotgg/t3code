@@ -45,6 +45,11 @@ process.on("message", async (message) => {
       session.dispose();
       stream = session = undefined;
       process.send({ type: "t3-speech-reply", ok: true, text });
+    } else if (message.kind === "reset") {
+      stream.reset();
+      session.dispose();
+      stream = session = undefined;
+      process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "transcribe") {
       const result = await model.transcribe(message.pcm, message.options);
       process.send({ type: "t3-speech-reply", ok: true, text: result.text });
@@ -212,6 +217,23 @@ export async function loadNativeSpeechModel(
       const reply = await send({ kind: "finish" });
       if (typeof reply.text !== "string") throw new Error("Invalid speech stream response.");
       return reply.text;
+    },
+    reset: async () => {
+      const inFlight = pending?.promise;
+      if (inFlight) {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            inFlight.catch(() => undefined),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(() => reject(new Error("Speech feed did not stop.")), 1_000);
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      }
+      await send({ kind: "reset" });
     },
     transcribe: async (
       pcm: Float32Array,

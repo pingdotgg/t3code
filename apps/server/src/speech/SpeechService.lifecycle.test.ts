@@ -20,6 +20,7 @@ const native = vi.hoisted(() => ({
     text: { committed: "", tentative: "hello" },
   })),
   finish: vi.fn(async () => "hello"),
+  reset: vi.fn(async () => {}),
   dispose: vi.fn(),
   transcribe: vi.fn(async (_pcm: Float32Array, _options?: unknown) => ({ text: "hello" })),
 }));
@@ -348,21 +349,58 @@ it.effect("holds model ownership until the stream scope closes and preserves sil
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("disposes cancelled streams and allows another recording", () =>
+it.effect("resets cancelled streams and reuses the loaded model", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     yield* speech.startStream.pipe(Effect.scoped);
-    expect(native.dispose).toHaveBeenCalledOnce();
+    expect(native.reset).toHaveBeenCalledOnce();
+    expect(native.dispose).not.toHaveBeenCalled();
     yield* Effect.gen(function* () {
       const stream = yield* speech.startStream;
       yield* stream.feed(pcm());
       yield* stream.finish;
     }).pipe(Effect.scoped);
+    expect(loadNative).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("disposes a stream when resetting it fails", () =>
+  Effect.gen(function* () {
+    native.reset.mockRejectedValueOnce(new Error("reset failed"));
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.startStream.pipe(Effect.scoped);
+    expect(native.dispose).toHaveBeenCalledOnce();
+    yield* speech.startStream.pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("rejects invalid streaming audio and frees the model", () =>
+it.effect("reuses the model when a cancelled feed finishes during reset", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof native.feed>>>();
+    native.feed.mockImplementationOnce(() => {
+      started.resolve();
+      return pending.promise;
+    });
+    native.reset.mockImplementationOnce(async () => {
+      pending.resolve({ revision: 1, text: { committed: "", tentative: "hello" } });
+      await pending.promise;
+    });
+    const speech = yield* SpeechService.SpeechService;
+    yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      yield* stream.feed(pcm()).pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
+    }).pipe(Effect.scoped);
+    expect(native.reset).toHaveBeenCalledOnce();
+    expect(native.dispose).not.toHaveBeenCalled();
+    yield* speech.startStream.pipe(Effect.scoped);
+    expect(loadNative).toHaveBeenCalledOnce();
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("rejects invalid streaming audio and resets the stream", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     const result = yield* Effect.gen(function* () {
@@ -374,7 +412,8 @@ it.effect("rejects invalid streaming audio and frees the model", () =>
       byteLength: 3,
     });
     expect(native.feed).not.toHaveBeenCalled();
-    expect(native.dispose).toHaveBeenCalledOnce();
+    expect(native.reset).toHaveBeenCalledOnce();
+    expect(native.dispose).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer)),
 );
 it.effect("preserves a cancelled download during stream preparation", () =>
