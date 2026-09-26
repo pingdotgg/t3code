@@ -73,6 +73,8 @@ function harness(input?: {
   readonly refreshedTunnels?: ReadonlyMap<string, ManagedEndpointProvider.ManagedEndpointTunnel>;
   readonly skipTunnelId?: string;
   readonly cleanupMode?: RelayConfiguration.ManagedEndpointCleanupMode;
+  readonly legacyCleanupMode?: RelayConfiguration.ManagedEndpointCleanupMode;
+  readonly legacyTunnelGraceMinutes?: number;
 }) {
   const listRequests: ManagedEndpointProvider.ManagedEndpointTunnelListRequest[] = [];
   const deleted: string[] = [];
@@ -227,6 +229,10 @@ function harness(input?: {
     managedEndpointBaseDomain: "example.test",
     managedEndpointNamespace: input?.namespace ?? "prod",
     managedEndpointCleanupMode: input?.cleanupMode ?? "enabled",
+    legacyManagedEndpointCleanupMode: input?.legacyCleanupMode ?? "off",
+    ...(input?.legacyTunnelGraceMinutes === undefined
+      ? {}
+      : { legacyTunnelGraceMinutes: input.legacyTunnelGraceMinutes }),
   });
 
   return {
@@ -489,6 +495,141 @@ describe("ManagedEndpointReaper", () => {
     }).pipe(Effect.provide(state.layer));
   });
 
+  describe("legacy cleanup", () => {
+    const legacyTunnels = [
+      // Down for 10 days: inside the legacy grace period.
+      tunnel({
+        id: "legacy-recent",
+        suffix: "1111111111111111",
+        status: "down",
+        timestamp: "2026-08-15T12:00:00.000Z",
+      }),
+      // Down for 40 days: past it.
+      tunnel({
+        id: "legacy-old",
+        suffix: "2222222222222222",
+        status: "down",
+        timestamp: "2026-07-16T12:00:00.000Z",
+      }),
+      // Never connected, created 40 days ago.
+      tunnel({
+        id: "legacy-never",
+        suffix: "3333333333333333",
+        status: "inactive",
+        timestamp: "2026-07-16T12:00:00.000Z",
+      }),
+    ];
+    const legacyOwners = legacyTunnels.map((entry) =>
+      allocation({ tunnelId: entry.id!, recoveryEnabled: false }),
+    );
+
+    it.effect("leaves legacy tunnels alone while legacy cleanup is off", () => {
+      const state = harness({ tunnels: legacyTunnels, allocations: legacyOwners });
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MILLIS);
+        const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+        expect(yield* reaper.sweep).toMatchObject({
+          skippedLegacy: 3,
+          wouldDeleteLegacy: 0,
+          deletedLegacy: 0,
+        });
+        expect(state.deleted).toEqual([]);
+      }).pipe(Effect.provide(state.layer));
+    });
+
+    it.effect("counts legacy tunnels past the grace period in dry-run", () => {
+      const state = harness({
+        tunnels: legacyTunnels,
+        allocations: legacyOwners,
+        legacyCleanupMode: "dry-run",
+      });
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MILLIS);
+        const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+        expect(yield* reaper.sweep).toMatchObject({
+          legacyMode: "dry-run",
+          wouldDeleteLegacy: 2,
+          deletedLegacy: 0,
+          attempted: 0,
+        });
+        expect(state.deleted).toEqual([]);
+      }).pipe(Effect.provide(state.layer));
+    });
+
+    it.effect("deletes only legacy tunnels past the grace period", () => {
+      const state = harness({
+        tunnels: legacyTunnels,
+        allocations: legacyOwners,
+        legacyCleanupMode: "enabled",
+      });
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MILLIS);
+        const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+        expect(yield* reaper.sweep).toMatchObject({
+          wouldDeleteLegacy: 2,
+          deletedLegacy: 2,
+          deleted: 2,
+        });
+        expect([...state.deleted].sort()).toEqual(["legacy-never", "legacy-old"]);
+        // The release re-checks each tunnel against the 30-day cutoff, not
+        // the 5-minute cutoff used for recoverable tunnels.
+        for (const release of state.releases) {
+          expect(release.expectedInactiveBefore).toBe("2026-07-26T12:00:00.000Z");
+        }
+      }).pipe(Effect.provide(state.layer));
+    });
+
+    it.effect.each([
+      { stage: "canary", expected: 3 },
+      { stage: "prod", expected: 2 },
+    ] as const)(
+      "applies the grace-period override only off prod ($stage)",
+      ({ stage, expected }) => {
+        const stageLegacyTunnels = legacyTunnels.map((entry) => ({
+          ...entry,
+          name: entry.name!.replace(PREFIX, `t3coderelay-managedendpoint-${stage}-`),
+        }));
+        const state = harness({
+          namespace: stage,
+          tunnels: stageLegacyTunnels,
+          allocations: legacyOwners,
+          legacyCleanupMode: "dry-run",
+          // Ten minutes: the 10-day-old tunnel qualifies only if this applies.
+          legacyTunnelGraceMinutes: 10,
+        });
+        return Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MILLIS);
+          const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+          expect((yield* reaper.sweep).wouldDeleteLegacy).toBe(expected);
+        }).pipe(Effect.provide(state.layer));
+      },
+    );
+
+    it.effect("runs legacy cleanup while recoverable cleanup is off", () => {
+      const recoverable = tunnel({
+        id: "recoverable",
+        suffix: "4444444444444444",
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      });
+      const state = harness({
+        tunnels: [...legacyTunnels, recoverable],
+        allocations: [
+          ...legacyOwners,
+          allocation({ tunnelId: "recoverable", recoveryEnabled: true }),
+        ],
+        cleanupMode: "off",
+        legacyCleanupMode: "enabled",
+      });
+      return Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MILLIS);
+        const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+        expect(yield* reaper.sweep).toMatchObject({ wouldDelete: 0, deletedLegacy: 2 });
+        expect(state.deleted).not.toContain("recoverable");
+      }).pipe(Effect.provide(state.layer));
+    });
+  });
+
   it.effect("does not count a tunnel that was replaced before its release", () => {
     const state = harness({
       tunnels: [
@@ -696,11 +837,14 @@ describe("ManagedEndpointReaper", () => {
       const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
       expect(yield* reaper.sweep).toEqual({
         mode: "off",
+        legacyMode: "off",
         listRequests: 0,
         scanned: 0,
         attempted: 0,
         deleted: 0,
         wouldDelete: 0,
+        wouldDeleteLegacy: 0,
+        deletedLegacy: 0,
         skippedLegacy: 0,
         legacyOver7Days: 0,
         legacyOver30Days: 0,

@@ -134,6 +134,8 @@ Optional `production` environment variables:
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
 - `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
   `off`.
+- `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` with the same values, for tunnels whose host never registered
+  recovery. Missing and blank values use `off`.
 
 Required `production` environment secrets:
 
@@ -176,7 +178,7 @@ because those builds register recovery and replace a deleted tunnel after wake.
 
 1. Deploy the relay and migration with cleanup `off`.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
-   legacy and are never candidates.
+   legacy and are only candidates under the legacy switch below.
 3. Set `dry-run`, run a relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
    `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
    them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
@@ -192,6 +194,32 @@ deploy without force. Confirm the new `mode` on the next sweep span.
 
 To roll back, set cleanup to `off` and run a relay deploy before downgrading any host. Keep the
 recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
+
+### Legacy tunnel cleanup
+
+A legacy tunnel belongs to a host that never registered recovery, usually one that went offline
+before the recovery build shipped. `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` deletes these once Cloudflare
+reports them down, or never connected, for more than 30 days. It is independent of
+`RELAY_TUNNEL_CLEANUP_MODE`, and every other check still applies.
+
+A deleted legacy tunnel keeps its allocation, so its hostname is kept. When the host comes back:
+
+- On a build with recovery, the connector is rejected and the host requests a replacement tunnel at
+  the same hostname.
+- On an older build with a CLI link, startup provisions a new tunnel.
+- On an older build linked from web or mobile, the host stays offline until T3 Code on that computer
+  is updated.
+
+1. Run `vp run --filter t3code-relay tunnels:census` with a read-only Cloudflare token. It counts
+   tunnels in every relay stage. The reaper only sees its own stage's tunnels, so clean up the rest
+   by hand.
+2. Set the legacy mode to `dry-run`, deploy, and read `wouldDeleteLegacy`, `legacyOver30Days`,
+   `totalDown`, and `totalInactive` on the sweep spans for a day.
+3. Run the legacy steps of the disposable-host canary below.
+4. Before enabling, confirm the web and mobile builds that show the "update T3 Code on that computer"
+   message are live. Without them, a user whose older host lost its tunnel only sees it as offline.
+5. Set the legacy mode to `enabled`. One sweep deletes at most 100 tunnels, so a backlog of
+   20,000 takes about 17 hours. Watch `deletedLegacy`, `failed`, and `truncated`.
 
 ### Disposable-host canary
 
@@ -217,6 +245,19 @@ stage, test Cloudflare account, disposable host, and disposable T3 home. Keep pr
    restart.
 8. Resume the legacy child with `kill -CONT <legacy-pid>` and confirm its tunnel reconnects.
 9. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
+
+Legacy cleanup, on the same disposable stage:
+
+10. Set `RELAY_LEGACY_TUNNEL_GRACE_MINUTES=10` and the legacy mode to `dry-run`, then deploy. The
+    override shortens the 30-day grace period and is ignored on `prod`. Pause the legacy child again
+    and wait until Cloudflare reports it down for over ten minutes.
+11. Confirm the sweep counts it in `wouldDeleteLegacy`, then set the legacy mode to `enabled` and
+    deploy. Confirm the legacy tunnel is deleted and its allocation row remains.
+12. With the legacy host still on its old build, resume the child. A CLI-linked host provisions a
+    new tunnel on its next restart; a web- or mobile-linked host stays offline.
+13. Update that host to the current build and start it. Confirm it requests recovery and is
+    reachable at the same hostname.
+14. Remove `RELAY_LEGACY_TUNNEL_GRACE_MINUTES` from the disposable stage.
 
 ## Marketing site deployment
 
