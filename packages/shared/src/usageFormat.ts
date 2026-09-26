@@ -25,17 +25,24 @@ export function formatCount(value: number): string {
   return INTEGER.format(Math.round(value));
 }
 
+const TOKEN_UNITS = [
+  [1e3, "K"],
+  [1e6, "M"],
+  [1e9, "B"],
+] as const;
+
 /**
  * Compacts a token count to three significant figures with a unit suffix, so
  * columns of numbers line up at a glance (`19.9B`, `76.7M`, `804K`).
  */
 export function formatTokens(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1e12) return `${trim(value / 1e12)}T`;
-  if (abs >= 1e9) return `${trim(value / 1e9)}B`;
-  if (abs >= 1e6) return `${trim(value / 1e6)}M`;
-  if (abs >= 1e3) return `${trim(value / 1e3)}K`;
-  return INTEGER.format(Math.round(value));
+  if (Math.abs(Math.round(value)) < 1e3) return INTEGER.format(Math.round(value));
+  // Pick the unit after rounding, so 999,600 reads "1M" rather than "1000K".
+  for (const [size, suffix] of TOKEN_UNITS) {
+    const scaled = trim(value / size);
+    if (Math.abs(Number(scaled)) < 1e3) return `${scaled}${suffix}`;
+  }
+  return `${trim(value / 1e12)}T`;
 }
 
 function trim(value: number): string {

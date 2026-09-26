@@ -7,8 +7,24 @@ import {
   formatHourShort,
   formatPercent,
   formatRelativeHourShort,
+  formatTokens,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("formatTokens", () => {
+  it.each([
+    [999, "999"],
+    [999.6, "1K"],
+    [1_234, "1.23K"],
+    [999_499, "999K"],
+    [999_600, "1M"],
+    [12_345_678, "12.3M"],
+    [999_600_000, "1B"],
+    [-999_600, "-1M"],
+  ])("formats %s as %s", (value, expected) => {
+    expect(formatTokens(value)).toBe(expected);
+  });
+});
 
 describe("formatPercent", () => {
   it("distinguishes a small positive share from zero", () => {
