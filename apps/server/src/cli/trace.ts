@@ -13,11 +13,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 
 import * as ServerConfig from "../config.ts";
-import { toRotatedTracePaths, TraceFileReadError } from "../diagnostics/TraceDiagnostics.ts";
+import { streamTraceFileLines, toRotatedTracePaths } from "../diagnostics/TraceDiagnostics.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag, DurationFromString, traceFileConfig, traceMaxFilesConfig } from "./config.ts";
 
@@ -187,27 +186,9 @@ const traceSummaryCommand = Command.make("summary", {
         ? (yield* Clock.currentTimeMillis) - Duration.toMillis(flags.since.value)
         : undefined;
       const summarizer = makeTraceSpanSummary(sinceMs);
-      // Stream each file so only one chunk of text is in memory at a time.
       yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
-        (path) =>
-          fs.stream(path).pipe(
-            Stream.decodeText,
-            Stream.splitLines,
-            Stream.runForEachArray((lines) => Effect.sync(() => lines.forEach(summarizer.addLine))),
-            Effect.catchTags({
-              PlatformError: (cause) =>
-                cause.reason._tag === "NotFound"
-                  ? Effect.void
-                  : Effect.fail(
-                      new TraceFileReadError({
-                        traceFilePath: path,
-                        causeTag: cause.reason._tag,
-                        cause,
-                      }),
-                    ),
-            }),
-          ),
+        (path) => streamTraceFileLines(fs, path, summarizer.addLine),
         { discard: true },
       );
       const summary = summarizer.finish();
