@@ -59,6 +59,7 @@ import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../config.ts";
 import * as StorageCleanup from "../storageCleanup.ts";
+import { WorktreeSize } from "../storageCleanupSize.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -1555,6 +1556,15 @@ describe("storage cleanup", () => {
   );
 
   for (const protection of [
+    "preview-many",
+    "preview-days",
+    "never-settled",
+    "kept-active",
+    "unsettled-during-cleanup",
+    "preview-project-queued",
+    "preview-paused",
+    "preview-discovery",
+    "preview-activity",
     "none",
     "dirty",
     "ignored",
@@ -1568,6 +1578,9 @@ describe("storage cleanup", () => {
     "terminal-worktree",
     "recent",
     "merged",
+    "squash-merged",
+    "squash-extra",
+    "squash-stale",
     "unmerged",
     "unchanged",
     "unchanged-two-worktrees",
@@ -1632,10 +1645,52 @@ describe("storage cleanup", () => {
           const recent = DateTime.toDateUtc(DateTime.makeUnsafe(NOW));
           yield* fs.utimes(recentImage, recent, recent);
           const thread = makeThread("storage-thread", {
+            settledOverride:
+              protection === "never-settled" ||
+              protection === "merged" ||
+              protection === "unchanged"
+                ? null
+                : protection === "kept-active"
+                  ? "active"
+                  : "settled",
             branch: "feature",
             worktreePath,
-            latestUserMessageAt:
-              protection === "recent" ? "2026-08-26T00:00:00.000Z" : "2026-08-01T00:00:00.000Z",
+            latestUserMessageAt: [
+              "recent",
+              "squash-merged",
+              "squash-extra",
+              "squash-stale",
+              "unmerged",
+              "unchanged",
+            ].includes(protection)
+              ? "2026-08-26T00:00:00.000Z"
+              : "2026-08-01T00:00:00.000Z",
+            pullRequests:
+              protection === "merged" || protection.startsWith("squash-")
+                ? [
+                    {
+                      host: "example.test",
+                      repository: "owner/repo",
+                      number: 42,
+                      url: "https://example.test/owner/repo/pull/42",
+                      source: "manual",
+                      linkedAt: NOW,
+                      stack: null,
+                      snapshot: {
+                        state: "merged",
+                        title: "Merged fixture",
+                        ...(protection.startsWith("squash-")
+                          ? { headSha: (protection === "squash-extra" ? "c" : "a").repeat(40) }
+                          : {}),
+                        headBranch: "feature",
+                        baseBranch: "main",
+                        isDraft: false,
+                        updatedAt: NOW,
+                        syncedAt: NOW,
+                      },
+                    },
+                  ]
+                : [],
             ...(protection === "session"
               ? {
                   session: {
@@ -1650,7 +1705,20 @@ describe("storage cleanup", () => {
                 }
               : {}),
           });
-          const snapshotRead = yield* Deferred.make<void>();
+          const extraPreviewThreads =
+            protection === "preview-many"
+              ? Array.from({ length: 24 }, (_, index) => ({
+                  ...thread,
+                  id: ThreadId.make(`preview-thread-${index}`),
+                  projectId: ProjectId.make(`preview-project-${index}`),
+                  worktreePath: path.join(config.worktreesDir, `preview-${index}`),
+                }))
+              : [];
+          for (const extra of extraPreviewThreads) {
+            yield* fs.makeDirectory(extra.worktreePath);
+            yield* fs.writeFileString(path.join(extra.worktreePath, ".git"), "gitdir: /test/admin");
+          }
+          let snapshotRead = yield* Deferred.make<void>();
           const deletionStarted = yield* Deferred.make<void>();
           const deletionStopped = yield* Deferred.make<void>();
           if (protection !== "deleted-event") yield* Deferred.succeed(deletionStopped, undefined);
@@ -1658,7 +1726,10 @@ describe("storage cleanup", () => {
           const deleteRule = protection.startsWith("deleted");
           let tombstoned = deleteRule && protection !== "deleted-event";
           const removals: string[] = [];
-          const mergeRule = protection === "merged" || protection === "unmerged";
+          const mergeRule =
+            protection === "merged" ||
+            protection === "unmerged" ||
+            protection.startsWith("squash-");
           const unchangedRule =
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees" ||
@@ -1666,8 +1737,15 @@ describe("storage cleanup", () => {
             protection === "head-moved";
           let headReads = 0;
           let snapshotReads = 0;
+          let previewing = false;
           let defaultRefFetched = false;
           let fetches = 0;
+          let measuredBytes = 4096;
+          let pauseOnce = false;
+          const scanPaused = yield* Deferred.make<void>();
+          const scanReleased = yield* Deferred.make<void>();
+          const classificationEntered = yield* Deferred.make<void>();
+          const classificationReleased = yield* Deferred.make<void>();
           const settingsService = yield* ServerSettingsService.pipe(
             Effect.provide(
               ServerSettingsService.layerTest({
@@ -1691,14 +1769,18 @@ describe("storage cleanup", () => {
                 },
                 storageCleanup: {
                   worktreeAfterDays:
-                    deleteRule || mergeRule || unchangedRule || protection === "project-custom"
+                    deleteRule ||
+                    mergeRule ||
+                    unchangedRule ||
+                    protection === "project-custom" ||
+                    protection === "preview-activity"
                       ? null
                       : 8,
                   worktreeOnDelete: deleteRule && protection !== "deleted-project-custom",
                   worktreeOnMerge: mergeRule,
                   worktreeUnchanged: unchangedRule,
-                  browserArtifactsAfterDays: 8,
-                  logsAfterDays: 8,
+                  browserArtifactsAfterDays: protection === "preview-activity" ? null : 8,
+                  logsAfterDays: protection === "preview-activity" ? null : 8,
                 },
               }),
             ),
@@ -1706,12 +1788,34 @@ describe("storage cleanup", () => {
           const cleanup = yield* StorageCleanup.make.pipe(
             Effect.provide(
               Layer.mergeAll(
+                Layer.succeed(ServerConfig, config),
                 Layer.succeed(ServerSettingsService, settingsService),
+                Layer.succeed(WorktreeSize, {
+                  measure: () => Stream.succeed({ bytes: measuredBytes, done: true }),
+                }),
                 Layer.succeed(FileSystem.FileSystem, {
                   ...fs,
                   stat: (target) =>
                     fs.stat(target).pipe(
                       Effect.tap(() => {
+                        if (
+                          protection === "preview-discovery" &&
+                          target === path.join(worktreePath, ".git")
+                        ) {
+                          return Deferred.succeed(scanPaused, undefined).pipe(
+                            Effect.andThen(Deferred.await(scanReleased)),
+                          );
+                        }
+                        if (
+                          protection === "preview-paused" &&
+                          !pauseOnce &&
+                          target === path.join(worktreePath, ".git")
+                        ) {
+                          pauseOnce = true;
+                          return TestClock.setTime(Date.parse(NOW) + 31_000).pipe(
+                            Effect.andThen(Deferred.succeed(scanPaused, undefined)),
+                          );
+                        }
                         if (
                           !protection.startsWith("files-") ||
                           (target !== oldImage && target !== oldLog)
@@ -1729,6 +1833,7 @@ describe("storage cleanup", () => {
                     ),
                 }),
                 Layer.mock(ProjectionSnapshotQuery)({
+                  getThreadShellById: () => Effect.succeed(Option.some(thread)),
                   getDeletedWorktreeThreads: () =>
                     Effect.succeed(
                       tombstoned
@@ -1748,6 +1853,10 @@ describe("storage cleanup", () => {
                             },
                           ]
                         : [],
+                    ).pipe(
+                      Effect.map((entries) =>
+                        protection === "deleted" ? [...entries, ...entries] : entries,
+                      ),
                     ),
                   getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 2 }),
                   getShellSnapshot: () =>
@@ -1761,7 +1870,15 @@ describe("storage cleanup", () => {
                             protection === "deleted-project-custom"
                               ? []
                               : [makeProject(PROJECT_ID, config.baseDir)];
-                          const threads = tombstoned ? [] : [thread];
+                          const threads = tombstoned
+                            ? []
+                            : [
+                                protection === "unsettled-during-cleanup" && snapshotReads > 1
+                                  ? { ...thread, settledOverride: "active" as const }
+                                  : thread,
+                              ];
+                          if (protection === "shared")
+                            projects.push(makeProject(LINKED_PROJECT_ID, config.baseDir));
                           if (protection === "deleted-shared")
                             threads.push({ ...thread, id: ThreadId.make("surviving-thread") });
                           if (protection === "deleted-project")
@@ -1791,7 +1908,15 @@ describe("storage cleanup", () => {
                               worktreePath: secondWorktreePath,
                             });
                           }
-                          return makeSnapshot(threads, projects);
+                          return makeSnapshot(
+                            [...threads, ...extraPreviewThreads],
+                            [
+                              ...projects,
+                              ...extraPreviewThreads.map((extra) =>
+                                makeProject(extra.projectId, config.baseDir),
+                              ),
+                            ],
+                          );
                         }),
                       ),
                     ),
@@ -1803,6 +1928,7 @@ describe("storage cleanup", () => {
                               {
                                 ...thread,
                                 id: ThreadId.make("archived-sharing-thread"),
+                                projectId: LINKED_PROJECT_ID,
                                 archivedAt: NOW,
                               },
                             ]
@@ -1814,9 +1940,19 @@ describe("storage cleanup", () => {
                   invalidateStatus: () => Effect.void,
                   branchPullRequest: (_input, options) => {
                     assert.strictEqual(options?.refresh, true);
-                    return Effect.succeed(
-                      makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
-                    );
+                    return Effect.succeed({
+                      ...makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
+                      headRef: "feature",
+                      url: "https://example.test/owner/repo/pull/42",
+                      ...(protection.startsWith("squash-")
+                        ? {
+                            headSha: (protection === "squash-extra" || protection === "squash-stale"
+                              ? "c"
+                              : "a"
+                            ).repeat(40),
+                          }
+                        : {}),
+                    });
                   },
                 }),
                 Layer.mock(OrchestrationEngineService)({
@@ -1866,7 +2002,9 @@ describe("storage cleanup", () => {
                   resolveCommit: ({ revision }) =>
                     Effect.sync(() => {
                       if (revision !== "HEAD")
-                        return { commitSha: (defaultRefFetched ? "b" : "d").repeat(40) };
+                        return {
+                          commitSha: (defaultRefFetched || previewing ? "b" : "d").repeat(40),
+                        };
                       headReads++;
                       return {
                         commitSha:
@@ -1874,39 +2012,6 @@ describe("storage cleanup", () => {
                             ? "c".repeat(40)
                             : "a".repeat(40),
                       };
-                    }),
-                  statusDetailsLocal: (cwd) =>
-                    Effect.succeed({
-                      isRepo: true,
-                      hasOriginRemote: false,
-                      isDefaultBranch: false,
-                      branch: cwd === secondWorktreePath ? "feature-two" : "feature",
-                      upstreamRef: null,
-                      hasWorkingTreeChanges:
-                        protection === "dirty" || protection === "deleted-dirty",
-                      workingTree: { files: [], insertions: 0, deletions: 0 },
-                      hasUpstream: false,
-                      aheadCount: 0,
-                      behindCount: 0,
-                      aheadOfDefaultCount: 0,
-                    }),
-                  execute: (input) =>
-                    Effect.succeed({
-                      exitCode: ChildProcessSpawner.ExitCode(
-                        input.operation === "StorageCleanup.integratedBranch" &&
-                          (protection === "diverged" || input.args.at(-1) !== "b".repeat(40))
-                          ? 1
-                          : 0,
-                      ),
-                      stdout:
-                        protection === "ignored" || protection === "deleted-ignored"
-                          ? ".env\0"
-                          : protection === "ignored-directory"
-                            ? ".cache/\0"
-                            : "",
-                      stderr: "",
-                      stdoutTruncated: false,
-                      stderrTruncated: false,
                     }).pipe(
                       Effect.tap(() =>
                         (protection.startsWith("policy-") ||
@@ -1934,6 +2039,53 @@ describe("storage cleanup", () => {
                           : Effect.void,
                       ),
                     ),
+                  statusDetailsLocal: (cwd) =>
+                    Effect.gen(function* () {
+                      if (
+                        protection === "preview-days" ||
+                        protection === "preview-project-queued"
+                      ) {
+                        yield* Deferred.succeed(classificationEntered, undefined);
+                        yield* Deferred.await(classificationReleased);
+                      }
+                      return {
+                        isRepo: true,
+                        hasOriginRemote: false,
+                        isDefaultBranch: false,
+                        branch: cwd === secondWorktreePath ? "feature-two" : "feature",
+                        upstreamRef: null,
+                        hasWorkingTreeChanges:
+                          protection === "dirty" || protection === "deleted-dirty",
+                        workingTree: { files: [], insertions: 0, deletions: 0 },
+                        hasUpstream: false,
+                        aheadCount: 0,
+                        behindCount: 0,
+                        aheadOfDefaultCount: 0,
+                      };
+                    }),
+                  execute: (input) =>
+                    Effect.succeed({
+                      exitCode: ChildProcessSpawner.ExitCode(
+                        input.operation === "StorageCleanup.integratedBranch" &&
+                          (protection === "diverged" ||
+                            protection === "preview-days" ||
+                            protection === "never-settled" ||
+                            protection === "kept-active" ||
+                            protection.startsWith("squash-") ||
+                            input.args.at(-1) !== "b".repeat(40))
+                          ? 1
+                          : 0,
+                      ),
+                      stdout:
+                        input.operation === "StorageCleanup.remotes"
+                          ? "origin\n"
+                          : input.operation === "StorageCleanup.remoteUrl"
+                            ? "https://example.test/owner/repo.git\n"
+                            : "",
+                      stderr: "",
+                      stdoutTruncated: false,
+                      stderrTruncated: false,
+                    }),
                   removeWorktree: (input) => {
                     assert.strictEqual(input.force, false);
                     removals.push(input.path);
@@ -1973,9 +2125,332 @@ describe("storage cleanup", () => {
               ),
             ),
           );
+          const settledPreview = Effect.fn(function* (
+            input: Parameters<typeof cleanup.preview>[0],
+          ) {
+            yield* cleanup.preview(input);
+            yield* cleanup.drain;
+            return yield* cleanup.preview(input);
+          });
+          if (protection === "preview-discovery") {
+            const input = { projectId: null };
+            yield* cleanup.preview(input);
+            yield* Deferred.await(scanPaused);
+            const discovering = yield* cleanup.preview(input);
+            assert.strictEqual(discovering.scanning, true);
+            assert.strictEqual(discovering.total.folders, 0);
+            assert.deepStrictEqual(discovering.progress, { completed: 0, total: 3 });
+            yield* Deferred.succeed(scanReleased, undefined);
+            const finished = yield* settledPreview(input);
+            assert.strictEqual(finished.scanning, false);
+            assert.deepStrictEqual(finished.progress, { completed: 3, total: 3 });
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (protection === "preview-paused") {
+            assert.strictEqual((yield* cleanup.preview({ projectId: null })).scanning, true);
+            yield* Deferred.await(scanPaused);
+            // A later request renews interest and resumes both background workers.
+            const resumed = yield* cleanup.preview({ projectId: null });
+            assert.strictEqual(resumed.scanning, true);
+            assert.strictEqual(resumed.total.measured, 0);
+            const finished = yield* settledPreview({ projectId: null });
+            assert.strictEqual(finished.scanning, false);
+            assert.strictEqual(finished.total.measured, 1);
+            assert.isAbove(finished.total.bytes, 0);
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (protection === "preview-activity") {
+            const input = { projectId: null };
+            yield* cleanup.start();
+            yield* cleanup.drain;
+            const first = yield* settledPreview(input);
+            yield* fs.writeFile(path.join(worktreePath, "new-file"), new Uint8Array(8192));
+            measuredBytes += 8192;
+            const revision = yield* cleanup.revisions.pipe(
+              Stream.drop(1),
+              Stream.runHead,
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            yield* PubSub.publish(domainEvents, {
+              type: "thread.reverted",
+              sequence: 2,
+              eventId: EventId.make("storage-thread-reverted"),
+              aggregateKind: "thread",
+              aggregateId: thread.id,
+              occurredAt: NOW,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: { threadId: thread.id, turnCount: 0 },
+            });
+            yield* Fiber.join(revision);
+            const refreshed = yield* settledPreview(input);
+            assert.isAbove(refreshed.total.bytes, first.total.bytes);
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (protection === "preview-project-queued") {
+            yield* cleanup.preview({ projectId: null });
+            yield* Deferred.await(classificationEntered);
+            const input = { projectId: PROJECT_ID };
+            yield* cleanup.preview(input);
+            // Wait on scan revisions, not the blocked classification worker.
+            const updates = yield* cleanup.revisions.pipe(
+              Stream.mapEffect(() => cleanup.preview(input)),
+              Stream.filter((preview) => preview.progress !== undefined),
+              Stream.take(1),
+              Stream.runCollect,
+            );
+            const discovering = Array.from(updates)[0]!;
+            assert.strictEqual(discovering.scanning, true);
+            assert.strictEqual(discovering.progress?.total, 3);
+            assert.isBelow(discovering.progress!.completed, 3);
+            yield* Deferred.succeed(classificationReleased, undefined);
+            const finished = yield* settledPreview(input);
+            assert.strictEqual(finished.scanning, false);
+            assert.deepStrictEqual(finished.progress, { completed: 3, total: 3 });
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (protection === "preview-days") {
+            previewing = true;
+            const input = { projectId: null };
+            yield* cleanup.preview(input);
+            yield* Deferred.await(classificationEntered);
+            const reads = snapshotReads;
+            const classifying = yield* cleanup.preview(input);
+            assert.strictEqual(classifying.progress?.total, 3);
+            assert.isBelow(classifying.progress!.completed, 3);
+            for (const inactiveAfterDays of [1, 8, 30, 60, 8, 60]) {
+              assert.strictEqual(
+                (yield* cleanup.preview({ ...input, inactiveAfterDays })).scanning,
+                true,
+              );
+            }
+            for (let index = 0; index < 7; index++) {
+              yield* cleanup.preview({ ...input, refreshKey: `queued-${index}` });
+            }
+            const busy = yield* cleanup
+              .preview({ ...input, refreshKey: "overflow" })
+              .pipe(Effect.flip);
+            assert.strictEqual(busy._tag, "StorageCleanupPreviewBusy");
+            yield* Deferred.succeed(classificationReleased, undefined);
+            yield* cleanup.drain;
+            const readsAfterRefreshes = snapshotReads;
+            assert.strictEqual(readsAfterRefreshes, reads + 7, "only bounded refreshes are queued");
+            for (const inactiveAfterDays of [1, 60, 8, 60]) {
+              const result = yield* cleanup.preview({ ...input, inactiveAfterDays });
+              assert.strictEqual(result.scanning, false);
+              assert.strictEqual(result.total.measured, 1);
+              assert.strictEqual(
+                result.categories.find((category) => category.kind === "inactive")?.folders,
+                inactiveAfterDays === 60 ? 0 : 1,
+              );
+            }
+            yield* cleanup.drain;
+            assert.strictEqual(
+              snapshotReads,
+              readsAfterRefreshes,
+              "settled days changes must not queue scans",
+            );
+            const recovered = yield* settledPreview({ ...input, refreshKey: "overflow" });
+            assert.strictEqual(recovered.scanning, false);
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (protection === "preview-many") {
+            const input = { projectId: null };
+            const pending = yield* cleanup.preview(input);
+            assert.strictEqual(pending.scanning, true);
+            assert.strictEqual(pending.total.measured, 0);
+            assert.strictEqual(pending.progress, undefined);
+            const first = yield* settledPreview(input);
+            assert.strictEqual(first.scanning, false);
+            assert.strictEqual(first.total.measured, 25);
+            assert.strictEqual(first.total.folders, 25);
+            assert.strictEqual(first.projectCount, 25);
+            assert.deepStrictEqual(first.progress, { completed: 75, total: 75 });
+            const reads = snapshotReads;
+            assert.deepStrictEqual(yield* settledPreview(input), first);
+            assert.strictEqual(snapshotReads, reads, "cached summaries must not rescan worktrees");
+            const scoped = yield* settledPreview({
+              ...input,
+              projectId: extraPreviewThreads[0]!.projectId,
+            });
+            assert.strictEqual(scoped.total.folders, 1);
+            assert.strictEqual(scoped.projectCount, 1);
+            yield* fs.writeFile(path.join(worktreePath, "new-file"), new Uint8Array(8192));
+            measuredBytes += 8192;
+            assert.strictEqual((yield* settledPreview(input)).total.bytes, first.total.bytes);
+            const refreshed = yield* settledPreview({ ...input, refreshKey: "manual-refresh" });
+            assert.isAbove(refreshed.total.bytes, first.total.bytes);
+            assert.strictEqual(refreshed.scanning, false);
+            assert.deepStrictEqual(
+              yield* settledPreview({ ...input, refreshKey: "manual-refresh" }),
+              refreshed,
+            );
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (
+            [
+              "none",
+              "never-settled",
+              "kept-active",
+              "dirty",
+              "ignored",
+              "shared",
+              "session",
+              "recent",
+              "project-off",
+              "deleted",
+              "deleted-provider",
+              "unchanged",
+              "merged",
+              "squash-merged",
+              "squash-extra",
+              "squash-stale",
+              "unmerged",
+            ].includes(protection)
+          ) {
+            previewing = true;
+            const before = yield* settingsService.getSettings;
+            const input = { projectId: null };
+            const preview = yield* settledPreview(input);
+            const removable = [
+              "none",
+              "ignored",
+              "deleted",
+              "project-off",
+              "recent",
+              "unchanged",
+              "merged",
+              "unmerged",
+            ].includes(protection);
+            const category =
+              protection === "deleted"
+                ? "deleted"
+                : protection === "squash-extra"
+                  ? "kept"
+                  : protection === "merged" ||
+                      protection === "squash-merged" ||
+                      protection === "squash-stale"
+                    ? "merged"
+                    : removable
+                      ? "unchanged"
+                      : "kept";
+            assert.strictEqual(
+              preview.categories.find((entry) => entry.kind === category)?.folders,
+              1,
+            );
+            assert.strictEqual(preview.total.folders, 1);
+            assert.strictEqual(preview.total.measured, 1);
+            assert.strictEqual(
+              preview.categories.reduce((sum, category) => sum + category.folders, 0),
+              preview.total.folders,
+            );
+            assert.strictEqual(
+              preview.categories.reduce((sum, category) => sum + category.bytes, 0),
+              preview.total.bytes,
+            );
+            assert.strictEqual(preview.unavailable, 0);
+            assert.deepStrictEqual(removals, []);
+            assert.strictEqual(yield* fs.exists(worktreePath), true);
+            assert.deepStrictEqual(yield* settingsService.getSettings, before);
+            const reads = snapshotReads;
+            assert.deepStrictEqual(yield* settledPreview(input), preview);
+            assert.strictEqual(snapshotReads, reads);
+            if (protection === "shared") {
+              for (const projectId of [PROJECT_ID, LINKED_PROJECT_ID]) {
+                const scoped = yield* settledPreview({ projectId });
+                assert.deepStrictEqual(scoped.total, preview.total);
+                assert.strictEqual(
+                  scoped.categories.find((entry) => entry.kind === "kept")?.folders,
+                  1,
+                );
+              }
+              assert.deepStrictEqual(removals, []);
+            }
+            if (protection === "none") {
+              assert.ok(preview.total.bytes > 0);
+              assert.strictEqual(
+                preview.categories.find((category) => category.kind === "unchanged")?.folders,
+                1,
+                "Git classification takes precedence even when only age-based cleanup is enabled",
+              );
+              assert.deepStrictEqual(
+                (yield* cleanup.preview({ ...input, inactiveAfterDays: null })).categories,
+                preview.categories,
+                "disabled rules still show matching storage",
+              );
+              const drafted = yield* cleanup.preview({ ...input, inactiveAfterDays: 60 });
+              assert.strictEqual(drafted.scanning, false);
+              yield* cleanup.drain;
+              assert.strictEqual(snapshotReads, reads, "draft retention reuses classification");
+              assert.strictEqual(
+                drafted.categories.find((category) => category.kind === "inactive")?.folders,
+                0,
+              );
+              assert.strictEqual(
+                drafted.categories.find((category) => category.kind === "unchanged")?.folders,
+                1,
+              );
+              assert.deepStrictEqual(
+                yield* settingsService.getSettings,
+                before,
+                "previewing a draft never saves its rule",
+              );
+              assert.deepStrictEqual(removals, [], "previewing a draft never starts cleanup");
+              assert.deepStrictEqual(
+                yield* settledPreview(input),
+                preview,
+                "discard returns to the saved retention preview",
+              );
+              yield* settingsService.updateSettings({ storageCleanup: { worktreeAfterDays: 60 } });
+              const updated = yield* settledPreview(input);
+              assert.strictEqual(
+                updated.categories.find((category) => category.kind === "inactive")?.folders,
+                0,
+              );
+              assert.strictEqual(
+                updated.categories.find((category) => category.kind === "unchanged")?.folders,
+                1,
+              );
+              assert.ok(snapshotReads > reads, "rule changes invalidate the cached classification");
+              yield* settingsService.updateSettings({ storageCleanup: { worktreeAfterDays: 8 } });
+              const otherProject = yield* settledPreview({
+                ...input,
+                projectId: ProjectId.make("other-project"),
+              });
+              assert.strictEqual(otherProject.total.folders, 0);
+            }
+            assert.strictEqual(fetches, 0, "previews do not fetch or alter Git refs");
+            previewing = false;
+            headReads = 0;
+            snapshotReads = 0;
+            snapshotRead = yield* Deferred.make<void>();
+          }
+          const revisionBefore = yield* cleanup.revisions.pipe(Stream.runHead);
           yield* cleanup.start();
           yield* Deferred.await(snapshotRead);
           yield* cleanup.drain;
+          const revisionAfter = yield* cleanup.revisions.pipe(Stream.runHead);
+          assert.notDeepEqual(
+            revisionAfter,
+            revisionBefore,
+            "cleanup publishes completion after its worker drains",
+          );
+          if (protection === "none") {
+            const refreshed = yield* settledPreview({ projectId: null });
+            assert.strictEqual(
+              refreshed.total.folders,
+              0,
+              "completion invalidates the pre-cleanup usage cache",
+            );
+          }
           if (protection === "deleted-event") {
             assert.strictEqual(yield* fs.exists(worktreePath), true);
             tombstoned = true;
@@ -1998,6 +2473,9 @@ describe("storage cleanup", () => {
             yield* cleanup.drain;
           }
           const removed =
+            protection === "ignored" ||
+            protection === "ignored-directory" ||
+            protection === "deleted-ignored" ||
             protection === "project-custom" ||
             protection === "deleted-project-custom" ||
             protection === "none" ||
@@ -2007,6 +2485,7 @@ describe("storage cleanup", () => {
             protection === "files-disabled" ||
             protection === "files-extended" ||
             protection === "merged" ||
+            protection === "squash-merged" ||
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees";
           assert.strictEqual(yield* fs.exists(worktreePath), !removed);
@@ -2018,7 +2497,10 @@ describe("storage cleanup", () => {
                 ? [worktreePath]
                 : [],
           );
-          assert.strictEqual(fetches, mergeRule || unchangedRule ? 1 : 0);
+          assert.strictEqual(
+            fetches,
+            protection === "squash-merged" ? 0 : mergeRule || unchangedRule ? 1 : 0,
+          );
           assert.strictEqual(thread.worktreePath, worktreePath);
           assert.strictEqual(thread.branch, "feature");
           assert.strictEqual(yield* fs.exists(oldImage), protection.startsWith("files-"));

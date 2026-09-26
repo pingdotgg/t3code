@@ -384,7 +384,7 @@ export const makeOrchestrationIntegrationHarness = (
     );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
       Layer.provideMerge(
-        Layer.succeed(StorageCleanup.StorageCleanup, {
+        Layer.mock(StorageCleanup.StorageCleanup)({
           start: () => Effect.void,
           drain: Effect.void,
         }),

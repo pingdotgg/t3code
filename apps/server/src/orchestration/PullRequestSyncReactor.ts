@@ -1,4 +1,4 @@
-import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
   type PullRequestSummary,
@@ -44,6 +44,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     state: summary.state,
     title: summary.title,
     headBranch: summary.headBranch,
+    ...(summary.headSha ? { headSha: summary.headSha } : {}),
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
     updatedAt: summary.updatedAt,
@@ -64,6 +65,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.state === right.state &&
     left.title === right.title &&
     left.headBranch === right.headBranch &&
+    left.headSha === right.headSha &&
     left.baseBranch === right.baseBranch &&
     left.isDraft === right.isDraft &&
     left.updatedAt === right.updatedAt &&
@@ -134,11 +136,21 @@ export const make = Effect.gen(function* () {
   const requested = new Map<string, number>();
   let requestGeneration = 0;
   const retryStacks = new Set<string>();
+  // Some providers omit head SHAs even on fresh reads. Do not poll a terminal PR
+  // forever for evidence it cannot supply; explicit refreshes still retry it.
+  const mergedWithoutHeadEvidence = new Set<string>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
-    if (entries.every((entry) => entry.link.snapshot?.state === "merged")) return false;
+    if (entries.every((entry) => entry.link.snapshot?.state === "merged")) {
+      const last = lastSyncedAt.get(key);
+      return (
+        !mergedWithoutHeadEvidence.has(key) &&
+        entries.some((entry) => !entry.link.snapshot?.headSha) &&
+        (last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS)
+      );
+    }
     if (entries.some((entry) => entry.link.snapshot?.state === "open" && isUnsettled(entry.thread)))
       return true;
     // Closed requests can reopen on the host, including after the thread settles.
@@ -159,7 +171,41 @@ export const make = Effect.gen(function* () {
 
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of threads) {
-      for (const link of visibleThreadPullRequests(thread.pullRequests)) {
+      const links = [...visibleThreadPullRequests(thread.pullRequests)];
+      const legacy = thread.branchPullRequest;
+      const identity = legacy ? parseChangeRequestUrl(legacy.url) : null;
+      if (
+        legacy &&
+        identity &&
+        !thread.pullRequests.some((link) => threadPullRequestKeysEqual(link, identity))
+      ) {
+        yield* Effect.gen(function* () {
+          const uuid = yield* crypto.randomUUIDv4;
+          yield* engine.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`server:legacy-pr-link:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            host: identity.host,
+            repository: identity.repository,
+            number: identity.number,
+            url: legacy.url,
+            source: "agent",
+          });
+          links.push({
+            ...identity,
+            url: legacy.url,
+            source: "agent",
+            linkedAt: nowIso,
+            snapshot: null,
+            stack: null,
+          });
+        }).pipe(
+          Effect.catchCause(
+            logSkipped("legacy pull request link skipped", { threadId: thread.id }),
+          ),
+        );
+      }
+      for (const link of links) {
         const key = threadPullRequestKeyOf(link);
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
@@ -169,6 +215,8 @@ export const make = Effect.gen(function* () {
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const key of mergedWithoutHeadEvidence)
+      if (!groups.has(key)) mergedWithoutHeadEvidence.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     // Layers auto-linked this sweep, so two links of one thread that share a
@@ -242,8 +290,22 @@ export const make = Effect.gen(function* () {
         number: first.link.number,
       };
       const generation = requested.get(key);
-      if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      const needsHeadEvidence = entries.some(
+        (entry) =>
+          entry.link.snapshot === null ||
+          (entry.link.snapshot.state === "merged" && !entry.link.snapshot.headSha),
+      );
+      if (generation !== undefined || needsHeadEvidence)
+        yield* pullRequests.invalidate({ reference: ref });
+      const summary = yield* pullRequests.summary(
+        needsHeadEvidence ? { ...ref, allowStale: false } : ref,
+        { recoverTransientFailure: false },
+      );
+      if (needsHeadEvidence && summary.state === "merged" && !summary.headSha) {
+        mergedWithoutHeadEvidence.add(key);
+      } else {
+        mergedWithoutHeadEvidence.delete(key);
+      }
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         generation !== undefined ||

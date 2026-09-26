@@ -68,19 +68,41 @@ Open **Settings → Storage** to enable automatic cleanup on one machine or all 
 environments. Policies are off by default and run on the server at startup, when changed, and
 hourly. Offline machines keep their existing policies.
 
+The storage summary shows space used by worktrees, broken down by cleanup category. Each folder
+is counted once, in order: deleted threads, merged, no unique commits, then settled threads.
+The settled-thread category uses the project's retention period, or 8 days when the rule is off. Protected worktrees appear
+under Other worktrees. Categories show matching storage even when their cleanup rules are off.
+A worktree can be removed by any enabled rule it matches, regardless of its displayed category.
+Edit the rules, then choose **Save cleanup rules** to apply them. Cleanup can start as soon as you
+save. **Discard** cancels unsaved edits; existing saved rules continue running.
+Changing the selected scope or leaving Storage discards unsaved edits.
+
+The summary follows the selected machines and project scope, just like the cleanup rules.
+Offline machines and machines without storage reporting are excluded and listed separately.
+Projects on different machines count as separate checkouts. Estimates use local branch references
+and synced pull request information. Large scans may be partial; cleanup checks eligibility again
+before removing folders.
+
 Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
 Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
 manually. Custom applies separate worktree rules to the selected project or checkout. Browser
 captures and log retention remain machine-wide.
 
-Worktrees can be removed after a chosen number of inactive days, after merging, or when they
-have no commits beyond the default branch. Only T3-managed worktrees are eligible. Active
-sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
-prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
-Merge cleanup requires the commits to be included in the remote default branch, so squash merges
-may need the inactivity rule instead.
+Worktrees can be removed when their threads are settled and have had no activity for the chosen
+number of days, after merging, or when they have no commits beyond the default branch.
+The settled-thread rule uses the same settled status as the sidebar, including automatic and
+manual settlement. Keeping a thread active prevents this rule from removing its worktree;
+merge and no-unique-commits rules remain independent. Only T3-managed worktrees are eligible. Active
+sessions, shared worktrees, tracked changes, and untracked files that Git does not ignore prevent
+removal. Ignored files are removed with the worktree, including dependency installs, `.env` files,
+and local data. Branches and thread history stay; starting another turn recreates the checkout,
+but does not restore ignored files.
+Merge cleanup supports squash merges when the host confirms the worktree’s current commit was
+the merged pull request’s head. Commits added afterward remain protected unless already included
+in the target branch. Without that host evidence, cleanup requires commit ancestry in the target
+branch. Pull requests use their target repository and branch, including upstream repositories for forks.
 
-Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
+Enable **Remove worktrees left by deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.

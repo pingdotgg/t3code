@@ -31,6 +31,11 @@ The main checkout defaults to `~/.t3/dev/userdata`. An explicit `--home-dir` win
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
+Storage measurements require the native helper from this checkout. Build it with
+`cargo build --release --locked --manifest-path native/resource-monitor/Cargo.toml`
+(Rust 1.95 or newer), and rebuild after changing its Rust code. The dev server discovers
+the release binary automatically; packaged releases already include it.
+
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
 different preference when needed.

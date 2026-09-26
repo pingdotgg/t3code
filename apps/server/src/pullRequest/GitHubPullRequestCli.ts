@@ -1785,6 +1785,7 @@ export const make = Effect.gen(function* () {
             title: detail.title,
             url: detail.url,
             headBranch: detail.headBranch,
+            ...(detail.headSha ? { headSha: detail.headSha } : {}),
             baseBranch: detail.baseBranch,
             state: detail.state,
             updatedAt: detail.updatedAt,

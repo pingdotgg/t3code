@@ -912,6 +912,18 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const storageCleanupRevisions = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:storage-cleanup-revisions",
+    tag: WS_METHODS.subscribeStorageCleanup,
+    idleTtlMs: 0,
+  });
+  const storageRevisionAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) =>
+      Option.getOrNull(
+        AsyncResult.value(get(storageCleanupRevisions({ environmentId, input: {} }))),
+      ),
+    ).pipe(Atom.withLabel(`environment-data:server:storage-revision:${environmentId}`)),
+  );
   const usagePricesAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const overrides = get(settingsValueAtom(environmentId))?.usagePriceOverrides ?? {};
@@ -1022,6 +1034,13 @@ export function createServerEnvironmentAtoms<R, E>(
     removeProviderInstallation: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
+    }),
+    storageUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:storage-usage",
+      tag: WS_METHODS.serverPreviewStorageCleanup,
+      idleTtlMs: 0,
+      staleTimeMs: 0,
+      refreshTrigger: ({ environmentId }) => storageRevisionAtom(environmentId),
     }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",

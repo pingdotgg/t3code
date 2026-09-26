@@ -23,6 +23,8 @@ export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 
 export const ChangeRequest = Schema.Struct({
+  /** Immutable PR head observed by the host; absent when the provider cannot supply it. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   provider: SourceControlProviderKind,
   number: PositiveInt,
   title: TrimmedNonEmptyString,

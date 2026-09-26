@@ -159,6 +159,7 @@ interface HarnessOptions {
   readonly onDispatch?: (command: SyncCommand | LinkCommand) => Effect.Effect<void>;
   readonly invalidate?: PullRequestService["Service"]["invalidate"];
   readonly snapshot: OrchestrationShellSnapshot;
+  readonly archivedSnapshot?: OrchestrationShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
@@ -213,7 +214,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       listThreadsWithPullRequests: () =>
         Queue.offer(snapshotReads, undefined).pipe(
           Effect.andThen(Ref.get(snapshots)),
-          Effect.map((snapshot) => snapshot.threads),
+          Effect.map((snapshot) =>
+            [...snapshot.threads, ...(options.archivedSnapshot?.threads ?? [])].filter(
+              (thread) => thread.archivedAt === null || thread.worktreePath !== null,
+            ),
+          ),
         ),
       getShellSnapshot: () =>
         Ref.update(shellSnapshotReads, (count) => count + 1).pipe(
@@ -332,6 +337,49 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+  it.effect("isolates a failed legacy link and retries it on the next sweep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        let failLegacy = true;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("legacy", {
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 1,
+                url: "https://github.com/owner/repository/pull/1",
+              },
+              pullRequests: [makeLink(2)],
+            }),
+            makeThread("other", { pullRequests: [makeLink(3)] }),
+          ]),
+          onDispatch: (command) =>
+            command.type === "thread.pull-request.link" && failLegacy
+              ? Effect.die("legacy link rejected")
+              : Effect.void,
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const syncedNumbers = () =>
+            Ref.get(fixture.syncCommands).pipe(
+              Effect.map((commands) => commands.map((command) => command.number).sort()),
+            );
+          assert.deepStrictEqual(yield* syncedNumbers(), [2, 3]);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number).sort(),
+            [2, 3],
+          );
+          failLegacy = false;
+          yield* sweepAgain(fixture, reactor);
+          assert.include(yield* syncedNumbers(), 1);
+          assert.strictEqual((yield* Ref.get(fixture.linkCommands)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -494,6 +542,7 @@ describe("PullRequestSyncReactor", () => {
               host: "github.com",
               repository: "owner/repository",
               number: 42,
+              allowStale: false,
             },
           ]);
           assert.deepStrictEqual(
@@ -660,7 +709,9 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            makeThread("merged", { pullRequests: [makeLink(1, { state: "merged" })] }),
+            makeThread("merged", {
+              pullRequests: [makeLink(1, { state: "merged", headSha: "a".repeat(40) })],
+            }),
           ]),
         });
 
@@ -886,3 +937,117 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 });
+
+for (const legacy of [false, true]) {
+  it.effect(
+    `backfills merged head evidence (${legacy ? "legacy link" : "existing snapshot"})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const sha = "a".repeat(40);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread(
+                "backfill",
+                legacy
+                  ? {
+                      branchPullRequest: {
+                        projectId: PROJECT_ID,
+                        repository: "owner/repository",
+                        number: 1,
+                        url: "https://github.com/owner/repository/pull/1",
+                      },
+                    }
+                  : { pullRequests: [makeLink(1, { state: "merged" })] },
+              ),
+            ]),
+            summary: (input) =>
+              Effect.succeed(
+                makeSummary(input, {
+                  state: "merged",
+                  headSha: input.allowStale === false ? sha : undefined,
+                  mergedAt: NOW,
+                }),
+              ),
+          });
+          yield* Effect.gen(function* () {
+            yield* startAndSweep(fixture);
+            const commands = yield* Ref.get(fixture.syncCommands);
+            assert.strictEqual(commands[0]?.snapshot.headSha, sha);
+            assert.strictEqual(commands[0]?.snapshot.state, "merged");
+            assert.strictEqual((yield* Ref.get(fixture.linkCommands)).length, legacy ? 1 : 0);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+}
+
+it.effect(
+  "syncs archived worktree PRs while leaving archived threads without worktrees alone",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          archivedSnapshot: makeSnapshot([
+            makeThread("archived-worktree", {
+              archivedAt: NOW,
+              worktreePath: "/worktree",
+              pullRequests: [makeLink(1)],
+            }),
+            makeThread("archived-local", { archivedAt: NOW, pullRequests: [makeLink(2)] }),
+          ]),
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            [1],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+);
+
+it.effect("stops automatic head-evidence retries after a fresh merged response omits the SHA", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          makeThread("azure-merged", {
+            pullRequests: [
+              makeLink(
+                1,
+                { state: "merged" },
+                {
+                  host: "dev.azure.com",
+                  repository: "org/project/repo",
+                  url: "https://dev.azure.com/org/project/_git/repo/pullrequest/1",
+                },
+              ),
+            ],
+          }),
+        ]),
+        summary: (input) =>
+          Effect.succeed(makeSummary(input, { state: "merged", headSha: undefined })),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        for (let minute = 0; minute < 31; minute++) yield* sweepAgain(fixture, reactor);
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        yield* reactor.requestSync({
+          host: "dev.azure.com",
+          repository: "org/project/repo",
+          number: 1,
+        });
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  ),
+);

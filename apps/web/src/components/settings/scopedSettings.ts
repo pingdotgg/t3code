@@ -161,7 +161,7 @@ export function scopedSettingsSource(
         : "environment";
 }
 
-interface ScopedServerWrite {
+export interface ScopedServerWrite {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly patch: ServerSettingsPatch;
