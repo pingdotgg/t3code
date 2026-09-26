@@ -18,14 +18,16 @@ function tokens(value: unknown): number {
 }
 
 /**
- * Maps Cursor's tiered names (`cursor-grok-4.6-high-fast`,
- * `claude-fable-5-1-thinking-high`) to the base model's rate-table key.
+ * Maps Cursor's tiered and version-first names (`cursor-grok-4.6-high-fast`,
+ * `claude-4.5-sonnet-thinking`) to the base model's rate-table key.
  * Grok resolves through xAI's first-party entry, which has no bare alias.
  */
 export function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")
-    .replace(/(?:-thinking)?(?:-(?:none|minimal|low|medium|high|xhigh|max))?(?:-fast)?$/, "");
+    .replace(/(?:-(?:thinking|none|minimal|low|medium|high|xhigh|max|fast))+$/, "");
+  const claude = /^claude-(\d+(?:\.\d+)*)-(opus|sonnet|haiku)$/.exec(base);
+  if (claude) return `claude-${claude[2]}-${claude[1]!.replaceAll(".", "-")}`;
   return base.startsWith("grok-") ? `xai/${base}` : base;
 }
 

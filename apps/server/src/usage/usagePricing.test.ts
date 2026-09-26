@@ -70,6 +70,31 @@ describe("usage pricing", () => {
     });
   });
 
+  it("prices Cursor's version-first Claude names at the canonical model rate", () => {
+    const table = parseRateTable({
+      "claude-sonnet-4-5": rate(3e-6, 0.3e-6),
+      "claude-opus-4-6": rate(5e-6, 0.5e-6),
+      "claude-haiku-4-5": rate(1e-6, 0.1e-6),
+    });
+
+    for (const [model, costUsd, savingsUsd] of [
+      ["claude-4.5-sonnet", 21.3, 2.7],
+      ["claude-4.5-sonnet-thinking", 21.3, 2.7],
+      ["claude-4.6-opus-high-thinking", 35.5, 4.5],
+      ["claude-opus-4-6-high-thinking", 35.5, 4.5],
+      ["claude-4.5-haiku", 7.1, 0.9],
+    ] as const) {
+      const usage = { ...record(model), rateModel: cursorRateModel(model) };
+      expect(priceUsage(table, usage).costSource).toBe("modelPriced");
+      expect(priceUsage(table, usage).costUsd).toBeCloseTo(costUsd);
+      expect(cacheSavingsUsd(table, usage)).toBeCloseTo(savingsUsd);
+      expect(priceUsage(table, { ...usage, reportedCostUsd: 0.25 })).toEqual({
+        costUsd: 0.25,
+        costSource: "providerReported",
+      });
+    }
+  });
+
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
     const table = parseRateTable({});
     const overrides = createOverrideRateTable({
