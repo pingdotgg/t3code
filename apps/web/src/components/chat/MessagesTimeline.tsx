@@ -205,6 +205,7 @@ import {
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import { ToolGroupDisclosureIcon } from "./ToolGroupDisclosureIcon";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -3345,6 +3346,8 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const fallbackName =
+    row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind);
   return (
     <button
       type="button"
@@ -3354,14 +3357,19 @@ function WorkGroupToggleTimelineRow({
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <ToolActivityIconView
-          icon={row.toolIcon}
-          fallbackName={
-            row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
-          }
-          className="size-4 shrink-0 stroke-2"
-          muted
-        />
+        {row.toolIcon === undefined && fallbackName === "terminal" ? (
+          <ToolGroupDisclosureIcon
+            expanded={row.expanded}
+            className="size-4 shrink-0 stroke-2 opacity-70 light:brightness-60"
+          />
+        ) : (
+          <ToolActivityIconView
+            icon={row.toolIcon}
+            fallbackName={fallbackName}
+            className="size-4 shrink-0 stroke-2"
+            muted
+          />
+        )}
       </span>
       <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
       <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
