@@ -55,6 +55,7 @@ function allocation(input: {
     origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
     updatedAt: "2026-08-25T11:00:00.000Z",
     generation: 1,
+    tunnelReleasedAt: null,
     recoveryEnabled: input.recoveryEnabled,
   };
 }
@@ -295,6 +296,8 @@ describe("ManagedEndpointReaper", () => {
         failed: 0,
       });
       expect(state.deleted).toEqual(["down-1", "inactive-1"]);
+      // A host that registered recovery gets a new tunnel on its own.
+      expect(state.releases.some((release) => release.markReleased === true)).toBe(false);
       expect(state.releases.map((request) => request.expectedTunnelId)).toEqual([
         "down-1",
         "inactive-1",
@@ -581,6 +584,8 @@ describe("ManagedEndpointReaper", () => {
           deleted: 2,
         });
         expect([...state.deleted].sort()).toEqual(["legacy-never", "legacy-old"]);
+        // A legacy host needs an update to recover, so its user is told why.
+        expect(state.releases.every((release) => release.markReleased === true)).toBe(true);
         // The release re-checks each tunnel against the 30-day cutoff, not
         // the 5-minute cutoff used for recoverable tunnels.
         for (const release of state.releases) {

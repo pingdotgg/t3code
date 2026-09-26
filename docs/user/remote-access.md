@@ -164,6 +164,11 @@ and keeps the same address. When the host starts again or wakes, T3 Connect
 creates a replacement tunnel on its own. You do not need to pair again. Cleanup
 usually runs five to ten minutes after the tunnel goes down.
 
+T3 Connect also removes the tunnel of an environment running an older version of
+T3 Code once it has been offline for 30 days. That environment shows a message
+asking you to update. Start T3 Code on that computer and update it to the latest
+version; it reconnects at the same address without pairing again.
+
 On a command-line host, `t3 connect unlink` disables exposure while retaining
 your login; `t3 connect logout` also clears that login. Background-service
 [removal](./background-service.md#manage-the-service) is separate.
