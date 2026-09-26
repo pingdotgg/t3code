@@ -2,13 +2,18 @@ import type { DraftId } from "~/composerDraftStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
+import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
-import { selectProjectGroupingSettings } from "~/logicalProject";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "~/logicalProject";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
@@ -56,6 +61,7 @@ export function DraftHeroHeadline({
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+  const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
 
   const environmentLabelById = useMemo(
     () =>
@@ -131,6 +137,79 @@ export function DraftHeroHeadline({
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
+  const activeProject =
+    activeProjectRef === null
+      ? null
+      : (projects.find(
+          (project) =>
+            project.environmentId === activeProjectRef.environmentId &&
+            project.id === activeProjectRef.projectId,
+        ) ?? null);
+  const scratchTargetEnvironmentId = scratchEnvironmentId(
+    activeProjectRef?.environmentId ?? primaryEnvironmentId,
+  );
+  const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  const isScratchDraft =
+    activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
+
+  // The picker can change the draft's target while Scratch is still being
+  // opened; a stale continuation must not retarget it again.
+  const latestTargetRef = useRef({ draftId, activeProjectKey, scratchTargetEnvironmentId });
+  useEffect(() => {
+    latestTargetRef.current = { draftId, activeProjectKey, scratchTargetEnvironmentId };
+  }, [activeProjectKey, scratchTargetEnvironmentId, draftId]);
+  // Project selection changes the target of the open draft in place. The
+  // prompt stays in the same composer session, so the sidebar only gets a
+  // draft row if the user later navigates away.
+  const selectProject = (project: (typeof projects)[number], logicalProjectKey: string) => {
+    if (!draftId) {
+      return;
+    }
+    latestTargetRef.current = {
+      draftId,
+      activeProjectKey: logicalProjectKey,
+      scratchTargetEnvironmentId: project.environmentId,
+    };
+    const currentDraft = getComposerDraft(draftId);
+    setLogicalProjectDraftThreadId(
+      logicalProjectKey,
+      scopeProjectRef(project.environmentId, project.id),
+      draftId,
+    );
+    if (!hasExplicitComposerModelSelection(currentDraft)) {
+      applyStickyState(draftId);
+      const environmentSettings = environments.find(
+        (environment) => environment.environmentId === project.environmentId,
+      )?.serverConfig?.settings;
+      const defaultModelSelection = environmentSettings
+        ? resolveProjectSettings(environmentSettings, project.id, project).settings
+            .defaultModelSelection
+        : project.defaultModelSelection;
+      if (defaultModelSelection) {
+        setModelSelection(draftId, defaultModelSelection, {
+          replaceOptions: true,
+        });
+      }
+    }
+  };
+  const startScratch = async (): Promise<boolean> => {
+    if (scratchTargetEnvironmentId === null || isScratchDraft) {
+      return false;
+    }
+    const requested = { draftId, activeProjectKey, scratchTargetEnvironmentId };
+    const project = await openScratchProject(scratchTargetEnvironmentId);
+    const latest = latestTargetRef.current;
+    if (
+      !project ||
+      latest.draftId !== requested.draftId ||
+      latest.activeProjectKey !== requested.activeProjectKey ||
+      latest.scratchTargetEnvironmentId !== requested.scratchTargetEnvironmentId
+    ) {
+      return false;
+    }
+    selectProject(project, deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings));
+    return true;
+  };
 
   const projectSelector = shouldShowProjectMenu ? (
     <Menu>
@@ -143,6 +222,7 @@ export function DraftHeroHeadline({
             // mid-sentence and baffle screen-reader users.
             <MenuTrigger
               render={<InlineButton tone="picker" />}
+              data-draft-project-trigger=""
               className="pointer-events-auto max-w-64 align-baseline"
             />
           }
@@ -161,34 +241,7 @@ export function DraftHeroHeadline({
             if (!entry || value === activeProjectKey) {
               return;
             }
-            const project = entry.targetProject;
-            if (!draftId) {
-              return;
-            }
-            // Project selection changes the target of the open draft in
-            // place. The prompt stays in the same composer session, so the
-            // sidebar only gets a draft row if the user later navigates away.
-            const currentDraft = getComposerDraft(draftId);
-            setLogicalProjectDraftThreadId(
-              entry.group.projectKey,
-              scopeProjectRef(project.environmentId, project.id),
-              draftId,
-            );
-            if (!hasExplicitComposerModelSelection(currentDraft)) {
-              applyStickyState(draftId);
-              const environmentSettings = environments.find(
-                (environment) => environment.environmentId === project.environmentId,
-              )?.serverConfig?.settings;
-              const defaultModelSelection = environmentSettings
-                ? resolveProjectSettings(environmentSettings, project.id, project).settings
-                    .defaultModelSelection
-                : project.defaultModelSelection;
-              if (defaultModelSelection) {
-                setModelSelection(draftId, defaultModelSelection, {
-                  replaceOptions: true,
-                });
-              }
-            }
+            selectProject(entry.targetProject, entry.group.projectKey);
           }}
         >
           {projectPickerEntries.map(({ group }) => {
@@ -214,7 +267,7 @@ export function DraftHeroHeadline({
             );
           })}
         </MenuRadioGroup>
-        <MenuSeparator />
+        {projectPickerEntries.length > 0 ? <MenuSeparator /> : null}
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
           New project
@@ -241,18 +294,43 @@ export function DraftHeroHeadline({
       ? `${activeProjectDisplayName ?? "Choose a project"} to start`
       : "Add a project to start";
 
+  // One click into Scratch, phrased as the alternative to the question above
+  // it. Focus moves to the project picker once this line has gone.
+  const orStartInScratch =
+    scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (
+      <InlineButton
+        tone="muted"
+        className="pointer-events-auto"
+        onClick={() =>
+          void startScratch().then((started) => {
+            if (started) {
+              document.querySelector<HTMLElement>("[data-draft-project-trigger]")?.focus();
+            }
+          })
+        }
+      >
+        or start in Scratch
+      </InlineButton>
+    ) : null;
+
   return (
-    <h1
-      aria-label={headingLabel}
-      className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
-    >
-      {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
-      ) : canChooseProject ? (
-        <>{projectSelector} to start</>
-      ) : (
-        <>Add a project to start</>
+    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
+      <h1
+        aria-label={headingLabel}
+        className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
+      >
+        {hasResolvedProject ? (
+          <>What should we build in {projectSelector}?</>
+        ) : canChooseProject ? (
+          <>{projectSelector} to start</>
+        ) : (
+          <>Add a project to start</>
+        )}
+      </h1>
+      {/* Reserved wherever Scratch exists so the heading does not move when the line goes. */}
+      {scratchWorkspaceRoot === null ? null : (
+        <p className="mt-2 flex h-6 items-center text-sm">{orStartInScratch}</p>
       )}
-    </h1>
+    </div>
   );
 }

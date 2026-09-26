@@ -178,6 +178,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -1773,7 +1774,130 @@ const makeWsRpcLayer = (
           return yield* runBootstrap;
         });
 
-      const dispatchNormalizedCommand = (
+      const path = yield* Path.Path;
+      // Scratch threads run in a plain folder under the data dir. Inside a
+      // checkout (a dev worktree's .t3, a dotfiles home) that folder would
+      // inherit the repo's git status and checkpoints, so it is only offered
+      // when the data dir is outside any work tree. Detection failures and
+      // defects fail closed and hide the folder, never the config.
+      // Probed once per connection: a negative VCS detection is not cached.
+      // An interrupt stays an interrupt, so a config load cancelled mid-probe
+      // invalidates the cache and the next load probes again.
+      const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
+        yield* Effect.cachedInvalidateWithTTL(
+          gitWorkflow.isRepository(config.baseDir).pipe(
+            Effect.map((isRepository) =>
+              isRepository ? undefined : path.resolve(config.baseDir, "scratch"),
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),
+            ),
+          ),
+          Duration.infinity,
+        );
+      const resolveScratchWorkspaceRoot = cachedScratchWorkspaceRoot.pipe(
+        Effect.onInterrupt(() => invalidateScratchWorkspaceRoot),
+      );
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      // Each Scratch thread gets its own folder under the Scratch root, named
+      // from its date, first words, and id. It rides in worktreePath like any
+      // thread that runs outside its project root, so the provider, terminal,
+      // and file tree all use it. Threads that already name a folder keep it.
+      const scratchThreadFolder = (input: {
+        readonly threadId: ThreadId;
+        readonly projectId: ProjectId;
+        readonly worktreePath: string | null;
+        readonly createdAt: string;
+        readonly text: string;
+      }): Effect.Effect<string | null, OrchestrationDispatchCommandError> =>
+        Effect.gen(function* () {
+          if (input.worktreePath !== null) return null;
+          const scratchRoot = yield* resolveScratchWorkspaceRoot;
+          if (scratchRoot === undefined) return null;
+          const project = yield* projectionSnapshotQuery.getProjectShellById(input.projectId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to look up the thread's project.",
+                  cause,
+                }),
+            ),
+          );
+          if (
+            Option.isNone(project) ||
+            normalizeProjectPathForComparison(project.value.workspaceRoot) !==
+              normalizeProjectPathForComparison(scratchRoot)
+          ) {
+            return null;
+          }
+          // Only [a-z0-9] reaches the name, so it stays one path segment
+          // inside the Scratch root. A short id is tried first; a taken name
+          // falls back to the full id so two threads never share a folder.
+          const words = input.text
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter(Boolean)
+            .slice(0, 5);
+          const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const folderFor = (idPart: string) =>
+            path.join(
+              scratchRoot,
+              [input.createdAt.slice(0, 10), ...words, idPart].filter(Boolean).join("-"),
+            );
+          const shortFolder = folderFor(id.slice(0, 8));
+          const shortTaken = yield* fileSystem.exists(shortFolder).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to check the Scratch thread folder.",
+                  cause,
+                }),
+            ),
+          );
+          const folder = shortTaken ? folderFor(id) : shortFolder;
+          yield* fileSystem.makeDirectory(folder, { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to create the Scratch thread folder.",
+                  cause,
+                }),
+            ),
+          );
+          return folder;
+        });
+      const withScratchThreadFolder = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<OrchestrationCommand, OrchestrationDispatchCommandError> => {
+        if (command.type === "thread.create") {
+          return scratchThreadFolder({ ...command, text: command.title }).pipe(
+            Effect.map((worktreePath) =>
+              worktreePath === null ? command : { ...command, worktreePath },
+            ),
+          );
+        }
+        if (command.type !== "thread.turn.start") return Effect.succeed(command);
+        const bootstrap = command.bootstrap;
+        const createThread = bootstrap?.createThread;
+        if (bootstrap === undefined || createThread === undefined) return Effect.succeed(command);
+        return scratchThreadFolder({
+          ...createThread,
+          threadId: command.threadId,
+          text: command.message.text,
+        }).pipe(
+          Effect.map((worktreePath) =>
+            worktreePath === null
+              ? command
+              : {
+                  ...command,
+                  bootstrap: { ...bootstrap, createThread: { ...createThread, worktreePath } },
+                },
+          ),
+        );
+      };
+
+      const dispatchPreparedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
         const dispatchEffect =
@@ -1802,6 +1926,83 @@ const makeWsRpcLayer = (
           );
       };
 
+      const dispatchNormalizedCommand = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
+        withScratchThreadFolder(command).pipe(Effect.flatMap(dispatchPreparedCommand));
+
+      // One Scratch project per environment, created the first time a client
+      // asks. Two clients racing the create both reach dispatch; the loser's
+      // duplicate-root rejection resolves to the project the winner made.
+      // The folder is (re)made on every call so a deleted Scratch still runs.
+      const ensureScratchProject = Effect.gen(function* () {
+        const workspaceRoot = yield* resolveScratchWorkspaceRoot;
+        if (workspaceRoot === undefined) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: "Scratch is not available on this environment.",
+          });
+        }
+        yield* fileSystem.makeDirectory(workspaceRoot, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationDispatchCommandError({
+                message: "Failed to create the Scratch folder.",
+                cause,
+              }),
+          ),
+        );
+        const findScratchProjectId = projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(workspaceRoot)
+          .pipe(
+            Effect.map(Option.map((project) => project.id)),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to look up the Scratch project.",
+                  cause,
+                }),
+            ),
+          );
+        const existingProjectId = yield* findScratchProjectId;
+        if (Option.isSome(existingProjectId)) {
+          return { projectId: existingProjectId.value };
+        }
+        const projectId = ProjectId.make(yield* randomUUID);
+        return yield* Effect.gen(function* () {
+          const command = yield* normalizeDispatchCommand({
+            type: "project.create",
+            commandId: yield* serverCommandId("scratch-project-create"),
+            projectId,
+            title: "Scratch",
+            workspaceRoot,
+            createdAt: yield* nowIso,
+          });
+          yield* dispatchNormalizedCommand(command);
+          // A dashed chat bubble in neutral gray marks Scratch. Set once at
+          // create, so a user's own icon choice is never overwritten.
+          yield* dispatchNormalizedCommand(
+            yield* normalizeDispatchCommand({
+              type: "project.meta.update",
+              commandId: yield* serverCommandId("scratch-project-icon"),
+              projectId,
+              projectIcon: { kind: "lucide", name: "message-square-dashed", color: "gray" },
+            }),
+          );
+          return { projectId };
+        }).pipe(
+          Effect.catch((error) =>
+            findScratchProjectId.pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.fail(error),
+                  onSome: (racedProjectId) => Effect.succeed({ projectId: racedProjectId }),
+                }),
+              ),
+            ),
+          ),
+        );
+      });
+
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
@@ -1816,6 +2017,7 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
+          const scratchWorkspaceRoot = yield* resolveScratchWorkspaceRoot;
           const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
             externalLauncher.resolveAvailableEditors(),
           );
@@ -1864,6 +2066,7 @@ const makeWsRpcLayer = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
+            ...(scratchWorkspaceRoot === undefined ? {} : { scratchWorkspaceRoot }),
           };
         });
 
@@ -3017,6 +3220,10 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "source-control" },
           ),
+        [WS_METHODS.projectsEnsureScratch]: () =>
+          observeRpcEffect(WS_METHODS.projectsEnsureScratch, ensureScratchProject, {
+            "rpc.aggregate": "orchestration",
+          }),
         [WS_METHODS.projectCloneCancel]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectCloneCancel,

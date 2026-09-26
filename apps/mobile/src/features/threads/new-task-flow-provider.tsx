@@ -79,6 +79,7 @@ import {
   setPendingConnectionError,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -452,7 +453,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ),
     [selectedEnvironmentServerConfig?.settings, selectedProject, t3ProjectFile],
   );
-  const defaultWorkspaceMode: WorkspaceMode = projectSettings.settings.defaultThreadEnvMode;
+  // Scratch is a plain folder, so a worktree default would leave it unsendable.
+  const defaultWorkspaceMode: WorkspaceMode =
+    selectedProject !== null &&
+    isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot)
+      ? "local"
+      : projectSettings.settings.defaultThreadEnvMode;
   // While the file read is pending and nothing above it decided, the
   // resolved default is provisional. Nothing may write it into the draft
   // during that window (the auto-branch effect does), or the frozen interim

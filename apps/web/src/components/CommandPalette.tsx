@@ -47,6 +47,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
   MonitorIcon,
@@ -95,6 +96,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { useScratchProject } from "../hooks/useScratchProject";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
@@ -708,6 +710,7 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -1782,6 +1785,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    });
+  }
+
+  const scratchTargetEnvironmentId = scratchEnvironmentId(
+    currentProjectEnvironmentId ?? primaryEnvironmentId,
+  );
+  if (scratchTargetEnvironmentId !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-scratch-thread",
+      searchTerms: ["new thread", "scratch", "no project", "without project", "chat"],
+      title: "New thread in Scratch",
+      icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.newScratch",
+      run: () => startScratchThread(scratchTargetEnvironmentId),
     });
   }
 
