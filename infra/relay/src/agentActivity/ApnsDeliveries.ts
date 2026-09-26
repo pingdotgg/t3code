@@ -47,16 +47,15 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
-  newlyTerminalRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
+import { shouldUpdateLiveActivity } from "./liveActivityUpdateThrottle.ts";
 export {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
 } from "./agentActivityAlerts.ts";
 
-const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 // How long a just-armed card may sit with an empty aggregate before an end is
 // warranted; covers the gap between arming on send and the environment's
 // first publish reaching the relay.
@@ -143,6 +142,12 @@ const decodeRelayAgentAwarenessPreferencesJson = Schema.decodeUnknownOption(
 );
 const decodeSignedApnsDeliveryJob = Schema.decodeUnknownEffect(SignedApnsDeliveryJob);
 
+/**
+ * Decode a stored Live Activity aggregate JSON payload.
+ *
+ * @param value - Serialized aggregate, if any
+ * @returns The aggregate, or null when missing or invalid
+ */
 function parseAggregate(value: string | null): RelayAgentActivityAggregateState | null {
   if (!value) {
     return null;
@@ -150,52 +155,14 @@ function parseAggregate(value: string | null): RelayAgentActivityAggregateState 
   return Option.getOrNull(decodeRelayAgentActivityAggregateStateJson(value));
 }
 
+/**
+ * Decode a device's awareness preference JSON payload.
+ *
+ * @param value - Serialized preferences
+ * @returns The preferences, or null when invalid
+ */
 function parsePreferences(value: string): RelayAgentAwarenessPreferences | null {
   return Option.getOrNull(decodeRelayAgentAwarenessPreferencesJson(value));
-}
-
-function aggregateNeedsAttention(aggregate: RelayAgentActivityAggregateState): boolean {
-  return aggregate.activities.some(
-    (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
-  );
-}
-
-function shouldUpdateLiveActivity(input: {
-  readonly previousAggregate: RelayAgentActivityAggregateState | null;
-  readonly nextAggregate: RelayAgentActivityAggregateState;
-  readonly lastDeliveryAt: string | null;
-  readonly nowMs: number;
-}): boolean {
-  if (!input.previousAggregate) {
-    return true;
-  }
-  if (JSON.stringify(input.previousAggregate) === JSON.stringify(input.nextAggregate)) {
-    return false;
-  }
-  if (input.previousAggregate.activeCount !== input.nextAggregate.activeCount) {
-    return true;
-  }
-  if (aggregateNeedsAttention(input.nextAggregate)) {
-    return true;
-  }
-  // A thread finishing must never be throttled away: when a completion and a
-  // new start land in the same window, activeCount is unchanged and the Done
-  // transition (and its alert) would otherwise be suppressed.
-  if (newlyTerminalRows(input.previousAggregate, input.nextAggregate, true).length > 0) {
-    return true;
-  }
-  const lastDeliveryAtMs =
-    input.lastDeliveryAt === null
-      ? null
-      : Option.match(DateTime.make(input.lastDeliveryAt), {
-          onNone: () => Number.NaN,
-          onSome: (dt) => dt.epochMilliseconds,
-        });
-  return (
-    lastDeliveryAtMs === null ||
-    Number.isNaN(lastDeliveryAtMs) ||
-    input.nowMs - lastDeliveryAtMs >= MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS
-  );
 }
 
 // Completions replayed long after the fact (server restarts republish every

@@ -146,6 +146,12 @@ const target: LiveActivities.TargetRow = {
   last_live_activity_delivery_at: null,
 };
 
+/**
+ * Test layer: capture delivery attempts and queued APNs jobs for assertions.
+ *
+ * @param input - Sinks and optional overrides for rows, config, and HTTP
+ * @returns Layer providing ApnsDeliveries and its test doubles
+ */
 function makeLayer(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
@@ -254,6 +260,100 @@ function makeLayer(input: {
       ),
     ),
   );
+}
+
+/**
+ * Send starting then running four seconds later and assert both
+ * `live_activity_update` jobs, with phase running / Working on the second.
+ *
+ * @param input - Aggregates and the queued-job sink for assertions
+ */
+function* sendStartingThenRunningLiveActivityUpdates(input: {
+  readonly startingAggregate: RelayAgentActivityAggregateState;
+  readonly runningAggregate: RelayAgentActivityAggregateState;
+  readonly queuedJobs: Array<SignedApnsDeliveryJob>;
+}) {
+  const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const first = yield* deliveries.sendForTarget({
+    target,
+    aggregate: input.startingAggregate,
+    nowMs: 0,
+  });
+  expect(first?.kind).toBe("live_activity_update");
+
+  const second = yield* deliveries.sendForTarget({
+    target: {
+      ...target,
+      last_aggregate_json: JSON.stringify(input.startingAggregate),
+      last_live_activity_delivery_at: "1970-01-01T00:00:00.000Z",
+    },
+    aggregate: input.runningAggregate,
+    nowMs: 4_000,
+  });
+
+  expect(second?.kind).toBe("live_activity_update");
+  expect(input.queuedJobs).toMatchObject([
+    {
+      payload: {
+        kind: "live_activity_update",
+        target: {
+          token: "activity-token",
+        },
+      },
+    },
+    {
+      payload: {
+        kind: "live_activity_update",
+        target: {
+          token: "activity-token",
+        },
+        aggregate: {
+          activities: [{ phase: "running", status: "Working" }],
+        },
+      },
+    },
+  ]);
+}
+
+/**
+ * Regression for starting→running inside the 15s Live Activity throttle:
+ * both updates must queue, and the second payload is the running aggregate.
+ *
+ * @returns Effect that drives both deliveries and asserts the queued jobs
+ */
+function queuesLiveActivityUpdateOnStartingToRunningPhaseChange() {
+  const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+  const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+  const startingAggregate: RelayAgentActivityAggregateState = {
+    ...aggregate,
+    activities: [
+      {
+        ...aggregate.activities[0]!,
+        phase: "starting",
+        status: "Connecting",
+      },
+    ],
+  };
+  const runningAggregate: RelayAgentActivityAggregateState = {
+    ...startingAggregate,
+    updatedAt: "1970-01-01T00:00:04.000Z",
+    activities: [
+      {
+        ...startingAggregate.activities[0]!,
+        phase: "running",
+        status: "Working",
+        updatedAt: "1970-01-01T00:00:04.000Z",
+      },
+    ],
+  };
+
+  return Effect.gen(
+    sendStartingThenRunningLiveActivityUpdates.bind(undefined, {
+      startingAggregate,
+      runningAggregate,
+      queuedJobs,
+    }),
+  ).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
 }
 
 describe("ApnsDeliveries", () => {
@@ -621,6 +721,222 @@ describe("ApnsDeliveries", () => {
     },
   );
 
+  it.effect("throttles timestamp-only changes while an activity already awaits input", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const waitingAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "waiting_for_input",
+          status: "Input",
+        },
+      ],
+    };
+    const laterWaitingAggregate: RelayAgentActivityAggregateState = {
+      ...waitingAggregate,
+      updatedAt: "1970-01-01T00:00:04.000Z",
+      activities: [
+        {
+          ...waitingAggregate.activities[0]!,
+          updatedAt: "1970-01-01T00:00:04.000Z",
+        },
+      ],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(waitingAggregate),
+          last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
+        },
+        aggregate: laterWaitingAggregate,
+        nowMs: 5_000,
+      });
+
+      expect(result).toBeNull();
+      expect(queuedJobs).toEqual([]);
+      expect(attempts).toEqual([]);
+    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+  });
+
+  it.effect("throttles ordering-only changes while an activity already awaits input", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const waitingRow = {
+      ...aggregate.activities[0]!,
+      phase: "waiting_for_input" as const,
+      status: "Input",
+    };
+    const runningRow = {
+      ...aggregate.activities[0]!,
+      threadId: "thread-2" as RelayAgentActivityState["threadId"],
+      threadTitle: "Other thread",
+      phase: "running" as const,
+      status: "Working",
+    };
+    const waitingAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 2,
+      activities: [waitingRow, runningRow],
+    };
+    const reorderedAggregate: RelayAgentActivityAggregateState = {
+      ...waitingAggregate,
+      activities: [runningRow, waitingRow],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(waitingAggregate),
+          last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
+        },
+        aggregate: reorderedAggregate,
+        nowMs: 5_000,
+      });
+
+      expect(result).toBeNull();
+      expect(queuedJobs).toEqual([]);
+      expect(attempts).toEqual([]);
+    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+  });
+
+  it.effect("queues an update when a new thread awaits input while another already does", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    const waitingRow = {
+      ...aggregate.activities[0]!,
+      phase: "waiting_for_input" as const,
+      status: "Input",
+    };
+    const runningRow = {
+      ...aggregate.activities[0]!,
+      threadId: "thread-2" as RelayAgentActivityState["threadId"],
+      threadTitle: "Other thread",
+      phase: "running" as const,
+      status: "Working",
+    };
+    const newWaitingRow = {
+      ...aggregate.activities[0]!,
+      threadId: "thread-3" as RelayAgentActivityState["threadId"],
+      threadTitle: "New waiting thread",
+      phase: "waiting_for_input" as const,
+      status: "Input",
+      updatedAt: "1970-01-01T00:00:04.000Z",
+    };
+    const previousAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 2,
+      activities: [waitingRow, runningRow],
+    };
+    const nextAggregate: RelayAgentActivityAggregateState = {
+      ...previousAggregate,
+      updatedAt: "1970-01-01T00:00:04.000Z",
+      activities: [waitingRow, newWaitingRow],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(previousAggregate),
+          last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
+        },
+        aggregate: nextAggregate,
+        nowMs: 5_000,
+      });
+
+      expect(result?.kind).toBe("live_activity_update");
+      expect(queuedJobs).toMatchObject([
+        {
+          payload: {
+            kind: "live_activity_update",
+            target: {
+              token: "activity-token",
+            },
+            aggregate: {
+              activities: [
+                { phase: "waiting_for_input", threadId: "thread" },
+                { phase: "waiting_for_input", threadId: "thread-3" },
+              ],
+            },
+          },
+        },
+      ]);
+    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+  });
+
+  it.effect(
+    "queues an update when a waiting thread leaves while another still awaits input",
+    () => {
+      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+      const waitingRow = {
+        ...aggregate.activities[0]!,
+        phase: "waiting_for_input" as const,
+        status: "Input",
+      };
+      const otherWaitingRow = {
+        ...aggregate.activities[0]!,
+        threadId: "thread-2" as RelayAgentActivityState["threadId"],
+        threadTitle: "Other thread",
+        phase: "waiting_for_input" as const,
+        status: "Input",
+      };
+      const replacementRunningRow = {
+        ...aggregate.activities[0]!,
+        threadId: "thread-3" as RelayAgentActivityState["threadId"],
+        threadTitle: "Replacement thread",
+        phase: "running" as const,
+        status: "Working",
+      };
+      const previousAggregate: RelayAgentActivityAggregateState = {
+        ...aggregate,
+        activeCount: 2,
+        activities: [waitingRow, otherWaitingRow],
+      };
+      const nextAggregate: RelayAgentActivityAggregateState = {
+        ...previousAggregate,
+        updatedAt: "1970-01-01T00:00:04.000Z",
+        activities: [waitingRow, replacementRunningRow],
+      };
+
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        const result = yield* deliveries.sendForTarget({
+          target: {
+            ...target,
+            last_aggregate_json: JSON.stringify(previousAggregate),
+            last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
+          },
+          aggregate: nextAggregate,
+          nowMs: 5_000,
+        });
+
+        expect(result?.kind).toBe("live_activity_update");
+        expect(queuedJobs).toMatchObject([
+          {
+            payload: {
+              kind: "live_activity_update",
+              aggregate: {
+                activities: [
+                  { phase: "waiting_for_input", threadId: "thread" },
+                  { phase: "running", threadId: "thread-3" },
+                ],
+              },
+            },
+          },
+        ]);
+      }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    },
+  );
+
   it.effect(
     "throttles updates for changed aggregates with stable counts and no pending attention",
     () => {
@@ -648,6 +964,11 @@ describe("ApnsDeliveries", () => {
         expect(queuedJobs).toEqual([]);
       }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
     },
+  );
+
+  it.effect(
+    "queues an update when phase changes from starting to running inside the throttle window",
+    queuesLiveActivityUpdateOnStartingToRunningPhaseChange,
   );
 
   it.effect("queues an end for an active Live Activity when Live Activities are disabled", () => {
