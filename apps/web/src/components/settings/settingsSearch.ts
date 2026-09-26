@@ -616,6 +616,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser-profiles",
   },
   {
+    id: "browser-homepage",
+    title: "Browser homepage",
+    to: "/settings/integrations",
+    searchTerms: ["preview new tab start page default url"],
+  },
+  {
     id: "browser-default-viewport",
     title: "Default browser viewport",
     to: "/settings/integrations",

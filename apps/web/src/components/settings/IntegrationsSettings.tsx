@@ -38,6 +38,7 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
@@ -854,6 +855,55 @@ function DeviceIntegrationControls({
   );
 }
 
+function BrowserHomepageSetting({ disabled }: { readonly disabled: boolean }) {
+  const homepage = useClientSettings((settings) => settings.browserHomepageUrl);
+  const updateSettings = useUpdatePrimarySettings();
+
+  // Stored normalized so the field shows exactly what new tabs open.
+  const commit = (next: string) => {
+    if (next.trim().length === 0) {
+      updateSettings({ browserHomepageUrl: "" });
+      return;
+    }
+    try {
+      updateSettings({ browserHomepageUrl: normalizePreviewUrl(next) });
+    } catch {
+      toastManager.add({
+        type: "error",
+        title: "Invalid homepage",
+        description: "Enter an http or https URL, such as localhost:3000.",
+      });
+    }
+  };
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-homepage")}
+      description="Page new browser tabs open at. Leave empty for a blank tab."
+      resetAction={
+        !disabled && homepage !== "" ? (
+          <SettingResetButton
+            label="browser homepage"
+            onClick={() => updateSettings({ browserHomepageUrl: "" })}
+          />
+        ) : null
+      }
+      control={
+        <DraftInput
+          nativeInput
+          size="sm"
+          className="w-full sm:w-56"
+          aria-label="Browser homepage"
+          placeholder="localhost:3000"
+          disabled={disabled}
+          value={homepage}
+          onCommit={commit}
+        />
+      }
+    />
+  );
+}
+
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
   const updateSettings = useUpdatePrimarySettings();
@@ -1431,6 +1481,7 @@ export function IntegrationsSettingsPanel() {
   const previewDefaults = (
     <>
       <BrowserProfilesSetting disabled={previewDefaultsDisabled} />
+      <BrowserHomepageSetting disabled={previewDefaultsDisabled} />
       <BrowserViewportSetting disabled={previewDefaultsDisabled} />
       <BrowserZoomSetting disabled={previewDefaultsDisabled} />
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />

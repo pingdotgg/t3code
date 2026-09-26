@@ -86,6 +86,19 @@ describe("openPreviewSession", () => {
     expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual(["https://t3.chat/"]);
   });
 
+  it("opens an explicit URL instead of the homepage", async () => {
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, browserHomepageUrl: "example.com" });
+    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
+
+    await openPreviewSession({
+      openPreview: ({ input }) => open(input),
+      threadRef,
+      url: "t3.chat",
+    });
+
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ url: "t3.chat" }));
+  });
+
   it("returns failures without mutating preview state", async () => {
     const failure = new Error("preview unavailable");
 

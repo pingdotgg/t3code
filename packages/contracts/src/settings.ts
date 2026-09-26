@@ -323,6 +323,11 @@ export const ClientSettingsSchema = Schema.Struct({
   browserDefaultAppearance: PreviewAppearancePreference.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PREVIEW_APPEARANCE)),
   ),
+  /**
+   * URL a browser tab opened by the user starts at. Stored as typed; an empty
+   * or non-http(s) value opens a blank tab.
+   */
+  browserHomepageUrl: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   browserRecordingFrameRate: BrowserRecordingFrameRate.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_RECORDING_FRAME_RATE)),
   ),
@@ -1579,6 +1584,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
   browserDefaultAppearance: Schema.optionalKey(PreviewAppearancePreference),
+  browserHomepageUrl: Schema.optionalKey(Schema.String),
   browserRecordingFrameRate: Schema.optionalKey(BrowserRecordingFrameRate),
   browserRecordingShowKeyPresses: Schema.optionalKey(Schema.Boolean),
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),

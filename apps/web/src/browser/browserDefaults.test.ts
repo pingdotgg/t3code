@@ -21,6 +21,7 @@ const withDefaultProfile = (browserDefaultProfileId: string) => {
     browserAutoShowFloatingPreview: true,
     browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
     browserDefaultProfileId,
+    browserHomepageUrl: "",
   };
   return getBrowserDefaults();
 };

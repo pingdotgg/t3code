@@ -58,6 +58,40 @@ describe("addBrowserSurface", () => {
     });
   });
 
+  it("opens new tabs at the configured homepage", async () => {
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      browserHomepageUrl: "localhost:5173",
+    });
+    const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
+      AsyncResult.success(snapshot("tab-1")),
+    );
+
+    await addBrowserSurface({ threadRef, openPreview: ({ input }) => openPreview(input) });
+
+    expect(openPreview).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      url: "http://localhost:5173/",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: DEFAULT_BROWSER_PROFILE_ID,
+    });
+  });
+
+  it("opens a blank tab when the homepage is not an http(s) URL", async () => {
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, browserHomepageUrl: "file:///etc" });
+    const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
+      AsyncResult.success(snapshot("tab-1")),
+    );
+
+    await addBrowserSurface({ threadRef, openPreview: ({ input }) => openPreview(input) });
+
+    expect(openPreview).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: DEFAULT_BROWSER_PROFILE_ID,
+    });
+  });
+
   it("creates another preview session when a browser tab is already active", async () => {
     const first = snapshot("tab-1");
     const second = snapshot("tab-2");

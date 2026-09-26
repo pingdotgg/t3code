@@ -21,6 +21,7 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import { normalizePreviewUrl } from "@t3tools/shared/preview";
 
 import {
   ensureClientSettingsHydrated,
@@ -37,6 +38,17 @@ export interface BrowserDefaults {
   readonly autoShowFloatingPreview: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
   readonly profileId: string;
+  /** Normalized homepage, or null when unset or not an http(s) URL. */
+  readonly homepageUrl: string | null;
+}
+
+function resolveHomepageUrl(raw: string): string | null {
+  if (raw.trim().length === 0) return null;
+  try {
+    return normalizePreviewUrl(raw);
+  } catch {
+    return null;
+  }
 }
 
 const toBrowserDefaults = (settings: {
@@ -46,6 +58,7 @@ const toBrowserDefaults = (settings: {
   readonly browserAutoShowFloatingPreview: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
+  readonly browserHomepageUrl: string;
 }): BrowserDefaults => {
   const profiles = resolveBrowserProfiles(settings.browserProfiles);
   return {
@@ -65,6 +78,7 @@ const toBrowserDefaults = (settings: {
         (profile) =>
           profile.id === settings.browserDefaultProfileId && profile.kind !== "incognito",
       )?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    homepageUrl: resolveHomepageUrl(settings.browserHomepageUrl),
   };
 };
 

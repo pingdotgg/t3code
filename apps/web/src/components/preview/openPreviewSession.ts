@@ -23,6 +23,7 @@ interface OpenPreviewSessionInput<E> {
     readonly input: PreviewOpenInput;
   }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
+  /** Omit to open the configured homepage, or a blank tab when none is set. */
   url?: string;
   /** Overrides the configured default; automation passes an explicit size. */
   viewport?: PreviewViewportSetting;
@@ -41,11 +42,12 @@ export async function openPreviewSession<E>(
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  const url = input.url ?? defaults.homepageUrl ?? undefined;
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
-      ...(input.url === undefined ? {} : { url: input.url }),
+      ...(url === undefined ? {} : { url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
     },
@@ -55,10 +57,10 @@ export async function openPreviewSession<E>(
   }
   const snapshot = result.value;
   applyPreviewServerSnapshot(input.threadRef, snapshot);
-  if (input.url !== undefined) {
+  if (url !== undefined) {
     rememberPreviewUrl(
       input.threadRef,
-      snapshot.navStatus._tag === "Idle" ? input.url : snapshot.navStatus.url,
+      snapshot.navStatus._tag === "Idle" ? url : snapshot.navStatus.url,
     );
   }
   return result;
