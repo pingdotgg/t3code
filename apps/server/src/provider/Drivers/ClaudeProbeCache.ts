@@ -71,6 +71,8 @@ export const make = Effect.gen(function* () {
             return { probe, timeToLive: PROBE_TTL };
           }
           const repeat = MutableHashSet.has(failing, input);
+          // Bounded like the cache. A clear costs each input one early retry.
+          if (MutableHashSet.size(failing) >= MAX_CACHED_PROBES) MutableHashSet.clear(failing);
           MutableHashSet.add(failing, input);
           return { probe, timeToLive: repeat ? PROBE_TTL : FIRST_FAILURE_TTL };
         }),
