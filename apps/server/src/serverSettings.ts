@@ -50,6 +50,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   applyServerSettingsPatch,
@@ -319,30 +320,75 @@ function restoreUsedProviders(
   };
 }
 
+/** Keep the stored text-generation selection when its instance is enabled; otherwise fall back. */
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
     ? settings
     : fallbackTextGenerationProvider(settings);
 }
 
+/** First custom-model slug from the instance config, else the legacy provider list. */
+function firstConfiguredCustomModelSlug(
+  instanceConfig: unknown,
+  legacyCustomModels: unknown,
+): string | undefined {
+  if (instanceConfig !== null && typeof instanceConfig === "object") {
+    const value = (instanceConfig as { customModels?: unknown }).customModels;
+    if (Array.isArray(value)) {
+      return readCustomModelEntries(value)[0]?.slug;
+    }
+  }
+  return readCustomModelEntries(legacyCustomModels)[0]?.slug;
+}
+
+/** True when this driver is the first enabled instance or legacy provider. */
+function isEnabledTextGenerationFallback(
+  settings: ServerSettings,
+  driver: string,
+  provider: { readonly enabled: boolean; readonly customModels?: unknown },
+): boolean {
+  const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+  return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
+}
+
+/** Prefer the enabled instance's default or custom model when the stored selection is unusable. */
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
   // Same precedence as isModelSelectionProviderEnabled: an explicit provider
   // instance wins over the legacy providers map, which decodes to defaults
   // (codex enabled) when the Providers UI has only written providerInstances.
-  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
-    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-  });
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
-  if (!fallback) {
+  let fallbackEntry:
+    | [string, { readonly enabled: boolean; readonly customModels?: unknown }]
+    | undefined;
+  for (const entry of Object.entries(settings.providers)) {
+    if (isEnabledTextGenerationFallback(settings, entry[0], entry[1])) {
+      fallbackEntry = entry;
+      break;
+    }
+  }
+  if (!fallbackEntry) {
     return settings;
+  }
+  const fallback = ProviderDriverKind.make(fallbackEntry[0]);
+  const instanceId = ProviderInstanceId.make(fallback);
+  // Use the instance's already-configured thread default or custom model.
+  // Product slugs such as claude-haiku-4-5 stay last-resort only.
+  const defaultSelection = settings.defaultModelSelection;
+  if (defaultSelection?.instanceId === instanceId) {
+    return {
+      ...settings,
+      textGenerationModelSelection: defaultSelection,
+    };
   }
 
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
+      instanceId,
       model:
+        firstConfiguredCustomModelSlug(
+          settings.providerInstances[instanceId]?.config,
+          fallbackEntry[1].customModels,
+        ) ??
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
         DEFAULT_MODEL_BY_PROVIDER[fallback] ??
         DEFAULT_TEXT_GENERATION_MODEL,

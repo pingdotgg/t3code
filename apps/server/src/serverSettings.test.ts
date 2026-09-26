@@ -77,6 +77,80 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
     `;
   });
 
+/** Falls back to Claude Haiku when Codex is disabled and nothing else is configured. */
+const skipsDisabledProviderInstanceForTextGenerationFallback = () =>
+  Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+    // The Providers UI writes providerInstances only, so the legacy providers
+    // map decodes to defaults where codex is enabled and listed first.
+    yield* fileSystem.writeFileString(
+      serverConfig.settingsPath,
+      '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}}}',
+    );
+
+    const settings = yield* serverSettings.getSettings;
+
+    assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+    assert.equal(settings.textGenerationModelSelection.model, "claude-haiku-4-5");
+  }).pipe(Effect.provide(makeServerSettingsLayer()));
+
+/** Reuses defaultModelSelection when it belongs to the fallback instance. */
+const usesInstanceDefaultModelWhenFallingBackForTextGeneration = () =>
+  Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+    yield* fileSystem.writeFileString(
+      serverConfig.settingsPath,
+      '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}},"defaultModelSelection":{"instanceId":"claudeAgent","model":"z-ai/glm-5.3-flash","options":[{"id":"effort","value":"low"}]}}',
+    );
+
+    const settings = yield* serverSettings.getSettings;
+
+    assert.deepEqual(
+      settings.textGenerationModelSelection,
+      createModelSelection(ProviderInstanceId.make("claudeAgent"), "z-ai/glm-5.3-flash", [
+        { id: "effort", value: "low" },
+      ]),
+    );
+  }).pipe(Effect.provide(makeServerSettingsLayer()));
+
+/** Uses the fallback instance's customModels list when no matching default is set. */
+const usesConfiguredCustomModelWhenFallingBackForTextGeneration = () =>
+  Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+    yield* fileSystem.writeFileString(
+      serverConfig.settingsPath,
+      '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}},"claudeAgent":{"driver":"claudeAgent","config":{"customModels":["z-ai/glm-5.3-flash"]}}}}',
+    );
+
+    const settings = yield* serverSettings.getSettings;
+
+    assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+    assert.equal(settings.textGenerationModelSelection.model, "z-ai/glm-5.3-flash");
+  }).pipe(Effect.provide(makeServerSettingsLayer()));
+
+/** Uses the legacy providers.customModels list when instance config has none. */
+const usesLegacyCustomModelWhenFallingBackForTextGeneration = () =>
+  Effect.gen(function* () {
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+    yield* fileSystem.writeFileString(
+      serverConfig.settingsPath,
+      '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}},"providers":{"claudeAgent":{"customModels":["z-ai/glm-5.3-flash"]}}}',
+    );
+
+    const settings = yield* serverSettings.getSettings;
+
+    assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+    assert.equal(settings.textGenerationModelSelection.model, "z-ai/glm-5.3-flash");
+  }).pipe(Effect.provide(makeServerSettingsLayer()));
+
 it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
@@ -659,22 +733,24 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("skips a disabled provider instance when picking the text generation fallback", () =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      // The Providers UI writes providerInstances only, so the legacy providers
-      // map decodes to defaults where codex is enabled and listed first.
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}}}',
-      );
+  it.effect(
+    "skips a disabled provider instance when picking the text generation fallback",
+    skipsDisabledProviderInstanceForTextGenerationFallback,
+  );
 
-      const settings = yield* serverSettings.getSettings;
+  it.effect(
+    "uses the instance default model when falling back for text generation",
+    usesInstanceDefaultModelWhenFallingBackForTextGeneration,
+  );
 
-      assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  it.effect(
+    "uses a configured custom model when falling back for text generation",
+    usesConfiguredCustomModelWhenFallingBackForTextGeneration,
+  );
+
+  it.effect(
+    "uses a legacy custom model when falling back for text generation",
+    usesLegacyCustomModelWhenFallingBackForTextGeneration,
   );
 
   it.effect("keeps unused providers disabled in existing sparse settings files", () =>
