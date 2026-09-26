@@ -261,10 +261,10 @@ public final class FeatureAttachmentUploadCoordinator {
         result: Result<FeatureUploadedAttachmentReference?, any Error>
     ) async {
         runningTokens.remove(token)
-        guard jobs[key]?.token == token, jobs[key]?.state == .uploading else {
-            startQueuedJobs()
-            return
-        }
+        // Free the slot before awaiting draft persistence so the next transfer
+        // is not held up by a slow save.
+        startQueuedJobs()
+        guard jobs[key]?.token == token, jobs[key]?.state == .uploading else { return }
         switch result {
         case let .failure(error):
             fail(key: key, token: token, error: error)
@@ -276,7 +276,6 @@ public final class FeatureAttachmentUploadCoordinator {
                 reference: reference
             )
         }
-        startQueuedJobs()
     }
 
     private func persistThenPublish(
