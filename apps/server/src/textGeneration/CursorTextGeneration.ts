@@ -52,6 +52,24 @@ function cursorSdkResultDetail(result: RunResult): string {
 }
 
 /**
+ * The SDK throws this when `sandboxOptions.enabled` is set and local sandboxing
+ * is unavailable. That happens on hosts that cannot launch `cursorsandbox`, and
+ * also after an unsandboxed run caches "unsupported" for the process.
+ */
+function cursorSandboxUnsupported(cause: unknown): boolean {
+  const seen = new Set<object>();
+  let current = cause;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error && current.message.includes("sandboxing is not supported")) {
+      return true;
+    }
+    current = Reflect.get(current, "cause");
+  }
+  return false;
+}
+
+/**
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
  */
@@ -121,14 +139,30 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           enableAgentRetries: true,
         },
       } satisfies AgentOptions;
+      const createCursorAgent = (sandboxEnabled: boolean) =>
+        Effect.tryPromise((signal) =>
+          Agent.create(
+            sandboxEnabled
+              ? agentOptions
+              : {
+                  ...agentOptions,
+                  local: {
+                    ...agentOptions.local,
+                    sandboxOptions: { enabled: false },
+                  },
+                },
+          ).then((agent) => {
+            if (signal.aborted) agent.close();
+            return agent;
+          }),
+        );
 
       const request = Effect.gen(function* () {
+        // Prefer the sandbox. When the SDK refuses it, the empty temp directory
+        // and empty setting sources still keep this run off the user's project.
         const agent = yield* Effect.acquireRelease(
-          Effect.tryPromise((signal) =>
-            Agent.create(agentOptions).then((agent) => {
-              if (signal.aborted) agent.close();
-              return agent;
-            }),
+          createCursorAgent(true).pipe(
+            Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
           ),
           (agent) =>
             Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(
