@@ -1,3 +1,4 @@
+import { usePreviewedLayoutSetting } from "../hooks/useInterfaceLayout";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -268,7 +269,7 @@ function ContrastAppearanceSync() {
     document.documentElement.dataset.diffColorScheme = diffColorScheme;
   }, [diffColorScheme]);
 
-  const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const chatWidth = usePreviewedLayoutSetting("chatWidth");
   useEffect(() => {
     document.documentElement.dataset.chatWidth = chatWidth;
   }, [chatWidth]);

@@ -101,16 +101,16 @@ export function matchPreset(settings: PresetSettings): PresetId | null {
   return match?.id ?? null;
 }
 
-/**
- * Elements the preset would hide that are showing now, as
- * `surface:element` keys, so hovering a preset can mark them in place.
- */
-export function elementsPresetHides(preset: Preset, current: InterfaceLayout): string[] {
-  return SURFACE_IDS.flatMap((surface) => {
-    const now = resolveSurfaceLayout(surface, current).hidden;
-    const next = resolveSurfaceLayout(surface, preset.settings.interfaceLayout).hidden;
-    return [...next].filter((id) => !now.has(id)).map((id) => `${surface}:${id}`);
-  });
+/** Resolve a transient preview without changing the saved settings. */
+export function resolvePresetPreview<K extends keyof PresetSettings>(
+  key: K,
+  current: PresetSettings[K],
+  active: boolean,
+  previewId: PresetId | null,
+): PresetSettings[K] {
+  return active
+    ? (PRESETS.find((preset) => preset.id === previewId)?.settings[key] ?? current)
+    : current;
 }
 
 /** Shown and total element counts for a surface, for the fine-tune summaries. */

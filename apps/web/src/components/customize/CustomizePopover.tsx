@@ -179,12 +179,17 @@ function PresetCard({
   onApply: () => void;
 }) {
   const setPreview = useCustomizeInterfaceStore((store) => store.setPreviewPresetId);
+  const previewing = useCustomizeInterfaceStore((store) => store.previewPresetId === preset.id);
   return (
     <button
       type="button"
+      data-previewing={previewing || undefined}
       data-preset={preset.id}
       aria-pressed={selected}
-      onClick={onApply}
+      onClick={() => {
+        onApply();
+        setPreview(null);
+      }}
       onPointerEnter={() => setPreview(preset.id)}
       onPointerLeave={() => setPreview(null)}
       onFocus={() => setPreview(preset.id)}
@@ -201,7 +206,7 @@ function PresetCard({
         {selected ? <CheckIcon aria-hidden className="size-3.5 text-primary" /> : null}
       </span>
       <span className="block truncate px-1 text-xs text-muted-foreground">
-        {preset.description}
+        {previewing ? "Preview · click to apply" : preset.description}
       </span>
     </button>
   );
@@ -427,7 +432,10 @@ export function CustomizePopover({
         section?.querySelector<HTMLElement>("[data-preset]");
       target?.focus({ preventScroll: true });
     });
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      useCustomizeInterfaceStore.getState().setPreviewPresetId(null);
+    };
   }, [returnFocusTo]);
   const presetSettings = useClientSettings((settings) => ({
     interfaceLayout: settings.interfaceLayout,

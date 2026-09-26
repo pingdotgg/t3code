@@ -1,3 +1,4 @@
+import { usePreviewedLayoutSetting } from "../../hooks/useInterfaceLayout";
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -240,7 +241,6 @@ import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
-import { useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -939,7 +939,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     null,
   );
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
-  const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const chatWidth = usePreviewedLayoutSetting("chatWidth");
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,

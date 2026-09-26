@@ -1,20 +1,12 @@
 import { useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useState } from "react";
 
-import { useClientSetting } from "../../hooks/useSettings";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
-import type { Rect } from "./customizeEdit.logic";
 import { CustomizeEditLayer } from "./CustomizeEditLayer";
 import { type EditSurface, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
 import { CustomizePopover } from "./CustomizePopover";
-import { elementsPresetHides, PRESETS } from "./customizePresets";
-import {
-  readSelectorRect,
-  readVisibleRect,
-  SURFACE_SELECTORS,
-  useLiveMeasure,
-} from "./customizeTargets";
+import { readSelectorRect, SURFACE_SELECTORS, useLiveMeasure } from "./customizeTargets";
 import { useCustomizeActions } from "./useCustomizeActions";
 
 const ENTER_DURATION_MS = 200;
@@ -22,12 +14,6 @@ const POPOVER_WIDTH = 384;
 const MARGIN = 12;
 /** Below this width the popover becomes a sheet along the bottom edge. */
 const SHEET_MAX_WIDTH = 720;
-/** Enough marks to cover a full sidebar without measuring the whole list. */
-const MAX_PREVIEW_MARKS = 80;
-/** Veils an element a preset would hide while keeping it faintly readable. */
-const HATCH =
-  "repeating-linear-gradient(135deg, color-mix(in srgb, var(--background) 85%, transparent) 0 5px, color-mix(in srgb, var(--background) 60%, transparent) 5px 9px)";
-
 function measureAnchors() {
   return {
     sidebar: readSelectorRect(SURFACE_SELECTORS.sidebar),
@@ -46,43 +32,6 @@ function popoverPlacement(anchors: ReturnType<typeof measureAnchors>): CSSProper
     composer !== null && composer.left < left + POPOVER_WIDTH && composer.right > left;
   const bottom = overlapsComposer ? composer.top - MARGIN : viewport.height - MARGIN;
   return { left, top, width: POPOVER_WIDTH, maxHeight: Math.max(240, bottom - top) };
-}
-
-/** Hatches what the hovered preset would hide, wherever it shows on screen. */
-function PresetPreviewMarks() {
-  const previewId = useCustomizeInterfaceStore((store) => store.previewPresetId);
-  const layout = useClientSetting("interfaceLayout");
-  const preset = PRESETS.find((candidate) => candidate.id === previewId) ?? null;
-  const marks = useLiveMeasure((): Rect[] => {
-    if (!preset) return [];
-    const rects: Rect[] = [];
-    for (const key of elementsPresetHides(preset, layout)) {
-      for (const element of document.querySelectorAll(`[data-customize-element="${key}"]`)) {
-        const rect = readVisibleRect(element);
-        if (rect) rects.push(rect);
-        if (rects.length >= MAX_PREVIEW_MARKS) return rects;
-      }
-    }
-    return rects;
-  }, previewId);
-  if (!preset) return null;
-  return (
-    <div aria-hidden className="contents">
-      {marks.map((rect) => (
-        <div
-          key={`${rect.left}:${rect.top}`}
-          className="pointer-events-none fixed z-[104] rounded-md border border-dashed border-primary/60"
-          style={{
-            backgroundImage: HATCH,
-            left: rect.left - 2,
-            top: rect.top - 2,
-            width: rect.right - rect.left + 4,
-            height: rect.bottom - rect.top + 4,
-          }}
-        />
-      ))}
-    </div>
-  );
 }
 
 /** Escape steps back out of editing, then closes; ⌘Z undoes the last change. */
@@ -191,7 +140,6 @@ export function CustomizeInterfaceOverlay({
   const sheet = anchors.viewport.width < SHEET_MAX_WIDTH;
   return (
     <div data-customize-interface className="contents">
-      <PresetPreviewMarks />
       <CustomizePopover
         returnFocusTo={lastEdited}
         onDone={close}

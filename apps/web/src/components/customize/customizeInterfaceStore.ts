@@ -114,7 +114,7 @@ type CustomizeInterfaceStore = {
   composerPreview: ComposerPreview;
   /** The surface being edited in place, or null while the presets popover shows. */
   editing: EditSurface | null;
-  /** A preset under the pointer, whose changes are marked on the live UI. */
+  /** A preset under the pointer, temporarily rendered by the live UI. */
   previewPresetId: PresetId | null;
   open: () => void;
   close: () => void;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { moveSurfaceElement, setSurfaceElementHidden } from "../../interfaceLayout";
-import { elementsPresetHides, matchPreset, PRESETS, surfaceVisibility } from "./customizePresets";
+import { resolvePresetPreview, matchPreset, PRESETS, surfaceVisibility } from "./customizePresets";
 
 const preset = (id: string) => PRESETS.find((candidate) => candidate.id === id)!;
 
@@ -22,20 +22,20 @@ describe("matchPreset", () => {
   });
 });
 
-describe("elementsPresetHides", () => {
-  it("lists only elements that are showing now", () => {
-    const current = setSurfaceElementHidden({}, "threadRow", "project", true);
-    expect(elementsPresetHides(preset("minimal"), current)).toEqual([
-      "threadRow:branch",
-      "threadRow:terminal",
-      "threadRow:environment",
-      "composerToolbar:traits",
-      "chatHeader:scripts",
-    ]);
-  });
-
-  it("hides nothing for the standard layout", () => {
-    expect(elementsPresetHides(preset("balanced"), {})).toEqual([]);
+describe("resolvePresetPreview", () => {
+  it("uses every preset value only while the mode is active", () => {
+    const current = { ...preset("balanced").settings, chatWidth: "wide" as const };
+    for (const candidate of PRESETS) {
+      for (const key of ["interfaceLayout", "chatWidth", "contextWindowMeterEnabled"] as const) {
+        expect(resolvePresetPreview(key, current[key], true, candidate.id)).toBe(
+          candidate.settings[key],
+        );
+        expect(resolvePresetPreview(key, current[key], false, candidate.id)).toBe(current[key]);
+        expect(resolvePresetPreview(key, current[key], true, null)).toBe(current[key]);
+      }
+    }
+    expect(current.chatWidth).toBe("wide");
+    expect(current.interfaceLayout).toEqual({});
   });
 });
 

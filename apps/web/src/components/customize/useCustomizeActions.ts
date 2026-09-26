@@ -80,12 +80,14 @@ export function useCustomizeActions() {
   }, []);
 
   const undo = useCallback(() => {
+    useCustomizeInterfaceStore.getState().setPreviewPresetId(null);
     const previous = useCustomizeInterfaceStore.getState().popHistory();
     if (previous) restore(previous);
   }, [restore]);
 
   const revert = useCallback(() => {
     const store = useCustomizeInterfaceStore.getState();
+    store.setPreviewPresetId(null);
     if (store.snapshot) restore(store.snapshot);
     store.clearHistory();
   }, [restore]);
