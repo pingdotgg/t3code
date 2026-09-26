@@ -151,6 +151,8 @@ export function workEntryIsVisibleInGroup(
     (expandedToolGroupEntry &&
       (entry.toolLifecycleStatus === "inProgress" ||
         entry.sourceActivityKind === "task.progress")) ||
+    // A stopped call is an outcome ("Stopped sleep"), not an empty row.
+    entry.toolLifecycleStatus === "stopped" ||
     !workEntryIndicatesToolNeutralStatus(entry)
   );
 }
