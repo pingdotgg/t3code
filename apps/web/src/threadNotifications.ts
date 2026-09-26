@@ -1,3 +1,4 @@
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import completionUrl from "./assets/notification-completion.mp3";
@@ -17,6 +18,26 @@ export function hasNotificationSound(mode: NotificationMode) {
 
 export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
+}
+
+const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
+const TAG_HASH_PRIME = 0x100000001b3n;
+const TAG_HASH_MASK = 0xffffffffffffffffn;
+
+/**
+ * Windows silently drops renderer notifications when the tag plus origin
+ * exceeds the platform toast budget (electron/electron#40433), and the raw
+ * `environmentId:threadId` composite is 73 characters. Digest the pair so
+ * environment and thread uniqueness survive within a short tag.
+ */
+export function threadNotificationTag(environmentId: EnvironmentId, threadId: ThreadId): string {
+  const key = `${environmentId}:${threadId}`;
+  let hash = TAG_HASH_OFFSET_BASIS;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= BigInt(key.charCodeAt(index));
+    hash = (hash * TAG_HASH_PRIME) & TAG_HASH_MASK;
+  }
+  return hash.toString(16).padStart(16, "0");
 }
 
 let originalFavicon: HTMLLinkElement | undefined;

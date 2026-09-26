@@ -18,6 +18,7 @@ import {
   hasNotificationSound,
   playNotificationSound,
   setNotificationBadge,
+  threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
@@ -32,11 +33,14 @@ export function ThreadNotificationCoordinator() {
   const pending = useRef(
     new Map<string, { environmentId: EnvironmentId; notification: Notification }>(),
   );
-  const onNotification = useCallback((environmentId: EnvironmentId, notification: Notification) => {
-    pending.current.get(notification.tag)?.notification.close();
-    pending.current.set(notification.tag, { environmentId, notification });
-    setNotificationBadge(pending.current.size);
-  }, []);
+  const onNotification = useCallback(
+    (environmentId: EnvironmentId, tag: string, notification: Notification) => {
+      pending.current.get(tag)?.notification.close();
+      pending.current.set(tag, { environmentId, notification });
+      setNotificationBadge(pending.current.size);
+    },
+    [],
+  );
 
   useEffect(() => {
     const activeIds = new Set(environments.map(({ environmentId }) => environmentId));
@@ -92,7 +96,7 @@ function EnvironmentNotifications({
   onNotification,
 }: {
   environmentId: EnvironmentId;
-  onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
+  onNotification: (environmentId: EnvironmentId, tag: string, notification: Notification) => void;
 }) {
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const mode = useClientSettings((settings) => settings.notificationMode);
@@ -194,12 +198,13 @@ function EnvironmentNotifications({
       )
         continue;
       try {
+        const tag = threadNotificationTag(environmentId, thread.id);
         const notification = new Notification(title, {
           body: thread.title,
-          tag: `${environmentId}:${thread.id}`,
+          tag,
           silent: true,
         });
-        onNotification(environmentId, notification);
+        onNotification(environmentId, tag, notification);
         notification.addEventListener("click", () => {
           notification.close();
           window.focus();
