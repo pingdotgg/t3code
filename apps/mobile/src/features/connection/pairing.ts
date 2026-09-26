@@ -1,4 +1,5 @@
 import { readHostedPairingRequest } from "@t3tools/shared/remote";
+import { isT3ConnectionCode, peekT3ConnectionCodeKind } from "@t3tools/shared/t3ConnectionCode";
 import * as Schema from "effect/Schema";
 
 const MOBILE_PAIRING_URL_PARAM = "pairingUrl";
@@ -27,6 +28,20 @@ export class PairingQrPayloadEmptyError extends Schema.TaggedError<PairingQrPayl
   }
 }
 
+/**
+ * Guidance for a `t3c://` connection code entered where a pairing URL belongs;
+ * null for everything else. Those codes are redeemed by the desktop app (which
+ * runs the Tailcat tunnel), so the message points there instead of calling the
+ * input an invalid URL.
+ */
+export function unsupportedPairingInputMessage(input: string): string | null {
+  const trimmed = input.trim();
+  if (!isT3ConnectionCode(trimmed)) return null;
+  return peekT3ConnectionCodeKind(trimmed) === "tailcat"
+    ? "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat."
+    : "This is a T3 connection code, not a pairing URL. Use it in the desktop app.";
+}
+
 export function buildPairingUrl(host: string, code: string): string {
   const h = host.trim();
   const c = code.trim();
@@ -45,6 +60,8 @@ export function buildPairingUrl(host: string, code: string): string {
 export function parsePairingUrl(url: string): { host: string; code: string } {
   const trimmed = url.trim();
   if (!trimmed) return { host: "", code: "" };
+  // Keep a pasted connection code intact so the guidance error matches what the user sees.
+  if (isT3ConnectionCode(trimmed)) return { host: trimmed, code: "" };
 
   try {
     const parsed = new URL(trimmed);
@@ -75,7 +92,6 @@ export function extractPairingUrlFromQrPayload(payload: string): string {
   if (!trimmed) {
     throw new PairingQrPayloadEmptyError({});
   }
-
   try {
     const url = new URL(trimmed);
     if (url.protocol === "t3code:") {

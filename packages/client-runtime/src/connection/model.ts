@@ -38,11 +38,25 @@ export class SshConnectionTarget extends Schema.TaggedClass<SshConnectionTarget>
   },
 ) {}
 
+/**
+ * A remote environment reached through a desktop-managed Tailcat forward. The
+ * logical endpoint (tailcat address + remote port) lives in the profile; the
+ * loopback port the forwarder binds is runtime state and never persisted.
+ */
+export class TailcatConnectionTarget extends Schema.TaggedClass<TailcatConnectionTarget>()(
+  "TailcatConnectionTarget",
+  {
+    ...ConnectionTargetBase,
+    connectionId: Schema.String,
+  },
+) {}
+
 export const ConnectionTarget = Schema.Union([
   PrimaryConnectionTarget,
   BearerConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  TailcatConnectionTarget,
 ]);
 export type ConnectionTarget = typeof ConnectionTarget.Type;
 
@@ -50,6 +64,7 @@ export const PersistedConnectionTarget = Schema.Union([
   BearerConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  TailcatConnectionTarget,
 ]);
 export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
 
@@ -64,6 +79,7 @@ export const ConnectionTransientReason = Schema.Literals([
   "endpoint-unavailable",
   "relay-unavailable",
   "remote-unavailable",
+  "tailcat-unavailable",
 ]);
 export type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
 

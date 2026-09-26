@@ -24,6 +24,7 @@ import {
   type CliAuthLocationFlags,
   DurationFromString,
   resolveCliAuthConfig,
+  jsonFlag,
 } from "./config.ts";
 
 const runWithEnvironmentAuth = <A, E>(
@@ -54,11 +55,6 @@ const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription("TTL, for example `5m`, `1h`, `30d`, or `15 minutes`."),
   Flag.optional,
-);
-
-const jsonFlag = Flag.Boolean("json").pipe(
-  Flag.withDescription("Emit JSON instead of human-readable output."),
-  Flag.withDefault(false),
 );
 
 const labelFlag = Flag.String("label").pipe(

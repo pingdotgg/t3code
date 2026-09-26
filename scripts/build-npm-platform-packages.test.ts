@@ -136,6 +136,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         "t3.exe",
         "client",
         "resource-monitor",
+        "tailcat",
         "node_modules",
       ]);
       assert.equal(linuxManifest.preferUnplugged, true);

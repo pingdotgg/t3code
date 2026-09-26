@@ -3,6 +3,8 @@ import {
   type AuthEnvironmentScope,
   type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
+  type DesktopTailcatEnvironmentBootstrap,
+  type TailcatConnectionCodePayload,
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -55,6 +57,44 @@ export class PrimaryEnvironmentAuth extends Context.Service<
     readonly bearerToken: Effect.Effect<Option.Option<string>, ConnectionAttemptError>;
   }
 >()("@t3tools/client-runtime/platform/capabilities/PrimaryEnvironmentAuth") {}
+
+export interface PreparedTailcatEnvironment {
+  readonly bootstrap: DesktopTailcatEnvironmentBootstrap;
+}
+
+export interface ProvisionedTailcatEnvironment extends PreparedTailcatEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly bearerToken: string;
+}
+
+/**
+ * The platform's Tailcat transport. Desktop implements it with a managed
+ * forwarder in the main process; web and mobile report it as unsupported,
+ * because a browser or phone has no process to run tailcat in.
+ */
+export class TailcatEnvironmentGateway extends Context.Service<
+  TailcatEnvironmentGateway,
+  {
+    /**
+     * Establishes a temporary forward for a pasted code and pairs with T3 auth.
+     * Onboarding owns this unique connection id and disconnects it after pairing;
+     * saved environments use their canonical connection id through `prepare`.
+     */
+    readonly provision: (input: {
+      readonly payload: TailcatConnectionCodePayload;
+      readonly connectionId: string;
+    }) => Effect.Effect<ProvisionedTailcatEnvironment, ConnectionAttemptError>;
+    /** Ensures a live forward exists for a saved environment. */
+    readonly prepare: (input: {
+      readonly connectionId: string;
+      readonly expectedEnvironmentId: EnvironmentId;
+      readonly address: string;
+      readonly remotePort: number;
+    }) => Effect.Effect<PreparedTailcatEnvironment, ConnectionAttemptError>;
+    readonly disconnect: (connectionId: string) => Effect.Effect<void, ConnectionAttemptError>;
+  }
+>()("@t3tools/client-runtime/platform/capabilities/TailcatEnvironmentGateway") {}
 
 export class SshEnvironmentGateway extends Context.Service<
   SshEnvironmentGateway,

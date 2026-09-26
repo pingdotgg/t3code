@@ -37,6 +37,10 @@ const hostFlag = Flag.String("host").pipe(
   Flag.withDescription("Host/interface to bind (for example 127.0.0.1, 0.0.0.0, or a Tailnet IP)."),
   Flag.optional,
 );
+export const jsonFlag = Flag.Boolean("json").pipe(
+  Flag.withDescription("Emit JSON instead of human-readable output."),
+  Flag.withDefault(false),
+);
 export const baseDirFlag = Flag.String("base-dir").pipe(
   Flag.withDescription(
     "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
@@ -79,6 +83,12 @@ const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
 const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
+  Flag.optional,
+);
+const tailcatFlag = Flag.Boolean("tailcat").pipe(
+  Flag.withDescription(
+    "Enable Tailcat remote access: serve this backend through an encrypted Tailcat tunnel and print a connection code.",
+  ),
   Flag.optional,
 );
 
@@ -162,6 +172,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tailcatEnabled: Config.Boolean("T3CODE_TAILCAT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -197,6 +211,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly tailcatEnabled?: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -231,6 +246,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  tailcatEnabled: tailcatFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -274,6 +290,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      tailcatEnabled: flags.tailcatEnabled ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -381,6 +398,13 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const tailcatEnabled = Option.getOrUndefined(
+      resolveOptionPrecedence(
+        normalizedFlags.tailcatEnabled ?? Option.none(),
+        Option.fromUndefinedOr(env.tailcatEnabled),
+      ),
+    );
+    const tailcatBinaryPath = bootstrap?.tailcatBinaryPath;
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -458,6 +482,8 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      tailcatEnabled,
+      tailcatBinaryPath,
     };
 
     return config;

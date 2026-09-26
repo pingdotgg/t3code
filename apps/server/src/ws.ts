@@ -132,6 +132,7 @@ import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/Atta
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -578,6 +579,7 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const tailcatRemoteAccess = yield* TailcatRemoteAccess.TailcatRemoteAccess;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
         afterSequence: number,
         headSequence: number,
@@ -3781,6 +3783,41 @@ const makeWsRpcLayer = (
               ),
             ),
             { "rpc.aggregate": "server" },
+          ),
+        // Tailcat remote access: the Tailcat listener this environment exposes.
+        [WS_METHODS.tailcatSubscribeRemoteAccess]: (_input) =>
+          observeRpcStream(WS_METHODS.tailcatSubscribeRemoteAccess, tailcatRemoteAccess.changes, {
+            "rpc.aggregate": "tailcat",
+          }),
+        [WS_METHODS.tailcatSetRemoteAccessEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatSetRemoteAccessEnabled,
+            tailcatRemoteAccess.setEnabled(input.enabled),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatCreateConnectionCode]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatCreateConnectionCode,
+            tailcatRemoteAccess.createConnectionCode(input),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatRevokeTrustedPeer]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatRevokeTrustedPeer,
+            tailcatRemoteAccess.revokeTrustedPeer(input.peerId),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatRenameTrustedPeer]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatRenameTrustedPeer,
+            tailcatRemoteAccess.renameTrustedPeer(input),
+            { "rpc.aggregate": "tailcat" },
+          ),
+        [WS_METHODS.tailcatRegenerateIdentity]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.tailcatRegenerateIdentity,
+            tailcatRemoteAccess.regenerateIdentity,
+            { "rpc.aggregate": "tailcat" },
           ),
       });
     }),

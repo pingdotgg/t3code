@@ -5,7 +5,10 @@ import {
   extractPairingUrlFromQrPayload,
   PairingQrPayloadEmptyError,
   parsePairingUrl,
+  unsupportedPairingInputMessage,
 } from "./pairing";
+
+const TAILCAT_CODE = "t3c://tailcat/eyJ2IjoxfQ";
 
 describe("buildPairingUrl", () => {
   it("uses HTTP for a schemeless IP address", () => {
@@ -60,5 +63,26 @@ describe("parsePairingUrl", () => {
       host: "https://desktop.tailnet.ts.net",
       code: "pairing-token",
     });
+  });
+});
+
+describe("unsupportedPairingInputMessage", () => {
+  it("guides Tailcat codes to the desktop app", () => {
+    expect(unsupportedPairingInputMessage(`  ${TAILCAT_CODE} `)).toBe(
+      "This is a Tailcat connection code. Paste it in the desktop app under Add environment → Tailcat.",
+    );
+    expect(unsupportedPairingInputMessage("t3c://mystery/abc")).toBe(
+      "This is a T3 connection code, not a pairing URL. Use it in the desktop app.",
+    );
+  });
+
+  it("leaves pairing urls and hosts alone", () => {
+    expect(unsupportedPairingInputMessage("https://remote.example.com/#token=abc")).toBeNull();
+    expect(unsupportedPairingInputMessage("192.168.1.100:3773")).toBeNull();
+    expect(unsupportedPairingInputMessage("")).toBeNull();
+  });
+
+  it("keeps a pasted connection code intact instead of mangling it into a host", () => {
+    expect(parsePairingUrl(TAILCAT_CODE)).toEqual({ host: TAILCAT_CODE, code: "" });
   });
 });

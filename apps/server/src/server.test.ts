@@ -10,6 +10,8 @@ import {
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
+  TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT,
+  TailcatRemoteAccessError,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
@@ -26,6 +28,7 @@ import {
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
+  type TailcatRemoteAccessState,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
@@ -58,6 +61,7 @@ import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -72,6 +76,7 @@ import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -110,6 +115,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
+import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import {
   isThreadDetailEvent,
   resolveAvailableEditorsForConfig,
@@ -556,6 +562,7 @@ const buildAppUnderTest = (options?: {
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartup.ServerRuntimeStartup["Service"]>;
     serverEnvironment?: Partial<ServerEnvironment.ServerEnvironment["Service"]>;
+    tailcatRemoteAccess?: Partial<TailcatRemoteAccess.TailcatRemoteAccess["Service"]>;
     repositoryIdentityResolver?: Partial<
       RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]
     >;
@@ -608,6 +615,8 @@ const buildAppUnderTest = (options?: {
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      tailcatEnabled: undefined,
+      tailcatBinaryPath: undefined,
       ...options?.config,
     };
     const layerConfig = ServerConfig.layer(config);
@@ -763,6 +772,13 @@ const buildAppUnderTest = (options?: {
       Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
     );
 
+    // Defaults support auth/bootstrap; subscription tests provide stateful services.
+    const tailcatRemoteAccessLayer = Layer.mock(TailcatRemoteAccess.TailcatRemoteAccess)({
+      readyEndpoint: Effect.succeed(Option.none()),
+      recordTrustedPeer: () => Effect.void,
+      start: () => Effect.void,
+      ...options?.layers?.tailcatRemoteAccess,
+    });
     const servedRoutesLayer = HttpRouter.serve(
       // Viewed-file marks for a host that keeps none of its own are rows, so the routes want a
       // database. Its own, in memory: nothing here shares a table with the auth store.
@@ -1075,7 +1091,7 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
-      Layer.provide(resourceTelemetryLayer),
+      Layer.provide(Layer.mergeAll(resourceTelemetryLayer, tailcatRemoteAccessLayer)),
       Layer.provide(UsageService.layerTest),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
@@ -1245,8 +1261,8 @@ const buildAppUnderTest = (options?: {
       Layer.provide(layerConfig),
     );
 
-    yield* Layer.build(appLayer);
-    return config;
+    const context = yield* Layer.build(appLayer);
+    return { ...config, auth: Context.get(context, EnvironmentAuth.EnvironmentAuth) };
   });
 
 const parseSessionCookieFromWsUrl = (
@@ -1370,6 +1386,7 @@ const exchangeAccessToken = (
   options?: {
     readonly headers?: Record<string, string>;
     readonly scope?: string;
+    readonly tailcatNodeKey?: string;
     readonly clientMetadata?: {
       readonly label?: string;
       readonly deviceType?: string;
@@ -1398,6 +1415,7 @@ const exchangeAccessToken = (
           ? { client_device_type: options.clientMetadata.deviceType }
           : {}),
         ...(options?.clientMetadata?.os ? { client_os: options.clientMetadata.os } : {}),
+        ...(options?.tailcatNodeKey ? { client_tailcat_node_key: options.tailcatNodeKey } : {}),
       }).toString(),
     });
     const body = yield* responseJsonEffect<{
@@ -2426,6 +2444,57 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const state = (yield* response.json) as { readonly authenticated: boolean };
         assert.equal(state.authenticated, false);
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects Tailcat pairing and revokes its session when peer persistence fails", () =>
+    Effect.gen(function* () {
+      const persistenceFails = yield* Ref.make(true);
+      const { auth } = yield* buildAppUnderTest({
+        layers: {
+          tailcatRemoteAccess: {
+            recordTrustedPeer: () =>
+              Ref.get(persistenceFails).pipe(
+                Effect.flatMap((fails) =>
+                  fails
+                    ? new TailcatRemoteAccessError({
+                        code: "unknown",
+                        message: "Could not persist peer trust",
+                      })
+                    : Effect.void,
+                ),
+              ),
+          },
+        },
+      });
+      const grant = yield* auth.createPairingLink({
+        subject: TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT,
+        scopes: AuthStandardClientScopes,
+      });
+      const options = {
+        scope: AuthStandardClientScopes.join(" "),
+        tailcatNodeKey: "nodekey:9ab555a4a588b75d2054adb683db82461bb6c707d43e8ba39439f8eb1e821503",
+      };
+
+      const failed = yield* exchangeAccessToken(grant.credential, options);
+      assert.equal(failed.response.status, 500);
+      assert.equal(failed.body.reason, "access_token_issuance_failed");
+      assert.isUndefined(failed.body.access_token);
+      assert.deepEqual(yield* auth.listSessions(), []);
+      const reused = yield* exchangeAccessToken(grant.credential, options);
+      assert.equal(reused.response.status, 401);
+
+      yield* Ref.set(persistenceFails, false);
+      const replacement = yield* auth.createPairingLink({
+        subject: TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT,
+        scopes: AuthStandardClientScopes,
+      });
+      const paired = yield* exchangeAccessToken(replacement.credential, options);
+      assert.equal(paired.response.status, 200);
+      assert.equal(typeof paired.body.access_token, "string");
+      const sessions = yield* auth.listSessions();
+      assert.equal(sessions.length, 1);
+      assert.equal(sessions[0]?.subject, TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -6699,6 +6768,59 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
         assert.deepEqual(calls, ["start", "cancel:old-operation", "cancel:install-operation"]);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("streams the Tailcat snapshot once before subsequent updates", () =>
+    Effect.gen(function* () {
+      const updatedAt = "2026-01-01T00:00:00.000Z";
+      const nextUpdatedAt = "2026-01-01T00:00:01.000Z";
+      const tailcat = yield* SubscriptionRef.make<TailcatRemoteAccessState>({
+        enabled: false,
+        status: "disabled",
+        address: null,
+        remotePort: null,
+        pairingOpen: false,
+        trustedPeers: [],
+        runtime: null,
+        identityFingerprint: null,
+        lastError: null,
+        updatedAt,
+      });
+      const replayed = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          tailcatRemoteAccess: {
+            state: SubscriptionRef.get(tailcat),
+            changes: SubscriptionRef.changes(tailcat).pipe(
+              Stream.tap(() => Deferred.succeed(replayed, undefined)),
+            ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const firstReceived = yield* Deferred.make<void>();
+            const received = yield* client[WS_METHODS.tailcatSubscribeRemoteAccess]({}).pipe(
+              Stream.map((state) => state.updatedAt),
+              Stream.orDie,
+              Stream.tap(() => Deferred.succeed(firstReceived, undefined)),
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Deferred.await(firstReceived);
+            yield* Deferred.await(replayed);
+            yield* SubscriptionRef.update(tailcat, (state) => ({
+              ...state,
+              updatedAt: nextUpdatedAt,
+            }));
+            assert.deepEqual(yield* Fiber.join(received), [updatedAt, nextUpdatedAt]);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>

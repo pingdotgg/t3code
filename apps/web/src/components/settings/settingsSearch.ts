@@ -65,6 +65,8 @@ export interface SettingsSearchItem {
    */
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Its row only renders when the primary server can serve itself over Tailcat. */
+  readonly requiresTailcatRemoteAccess?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -76,6 +78,7 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly hasTailcatRemoteAccess?: boolean;
 }
 
 /**
@@ -792,6 +795,32 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "tailcat-remote-access",
+    title: "Remote access via Tailcat",
+    to: "/settings/connections",
+    searchTerms: [
+      "tailcat remote access wireguard tunnel relay derp enable disable address runtime identity regenerate headless t3 serve",
+    ],
+    localBackendManagementOnly: true,
+    requiresTailcatRemoteAccess: true,
+  },
+  {
+    id: "tailcat-connection-code",
+    title: "Connection code",
+    to: "/settings/connections",
+    searchTerms: ["tailcat create code pair another device single use expires"],
+    localBackendManagementOnly: true,
+    requiresTailcatRemoteAccess: true,
+  },
+  {
+    id: "tailcat-trusted-devices",
+    title: "Trusted devices",
+    to: "/settings/connections",
+    searchTerms: ["tailcat node key fingerprint rename revoke last seen paired devices"],
+    localBackendManagementOnly: true,
+    requiresTailcatRemoteAccess: true,
+  },
+  {
     id: "connections-environment",
     title: "This machine",
     to: "/settings/connections",
@@ -803,7 +832,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: [
+      "add pair backend host code ssh config agent tunnel saved t3 connect tailcat connection code",
+    ],
   },
   {
     id: "load-balancing",
@@ -963,7 +994,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
-      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
+      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresTailcatRemoteAccess || availability.hasTailcatRemoteAccess),
   );
 }
 

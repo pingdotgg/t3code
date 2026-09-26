@@ -26,6 +26,8 @@ This document covers the unified release workflow for stable and nightly desktop
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds the platform-independent JS (server bundle, web client, Electron main) once in the `build_bundle` job and hands it to every platform job as the `js-bundle` artifact; the platform jobs only package it, so no runner rebuilds it.
+- Stages the pinned Tailcat runtime (`native/tailcat/manifest.json`) on every platform job before
+  packaging; see [Tailcat runtime pin](#tailcat-runtime-pin).
 - Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle (the Windows jobs also wait for the same-arch Linux job, whose CLI archive they embed as the WSL runtime):
   - macOS `arm64` DMG
   - macOS `x64` DMG
@@ -372,6 +374,7 @@ break:
   `node_modules/` with the Linux node-pty binary, and must not carry a loose
   server bundle (`bin.mjs`).
 - The external Windows resource monitor is absent.
+- The external Windows Tailcat runtime (`resources/tailcat/win32-<arch>/tailcat.exe`) is absent.
 - The unpacked Windows application contains more than 80 files.
 
 Cross-architecture Windows builds retain every structural and extracted-sidecar
@@ -381,6 +384,43 @@ for each release target must exercise the primary native-load probe.
 NSIS differential packaging remains enabled. A sidecar layout transition can
 produce a larger one-time download; subsequent small releases retain their
 blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
+
+## Tailcat runtime pin
+
+T3 Code bundles the Tailcat CLI pinned by `native/tailcat/manifest.json`; `native/tailcat/README.md`
+covers provenance and the staged layout. The release workflow never resolves a "latest" Tailcat:
+
+- Every `release-desktop.yml` job runs `node scripts/fetch-tailcat.ts --platform <key>` before the
+  artifact build. Linux and Windows download the pinned release archive and verify its SHA-256
+  against the manifest before opening it. The macOS jobs pass `--build-from-source`: upstream
+  publishes no macOS archive, so the script clones the pinned tag, refuses to build unless the
+  commit matches the manifest, and compiles with the Go version the manifest names
+  (`actions/setup-go`). The staged directory is cached on the manifest hash, and the script
+  re-verifies a cached binary instead of trusting it.
+- The same job ships that binary twice: the desktop artifact carries it in
+  `resources/tailcat/<platform-key>/`, and `scripts/build-cli-archive.ts` stages it at
+  `tailcat/<platform-key>/` beside the executable, so each CLI archive, the npm platform package
+  built from it, and the WSL runtime inside the Windows installer hold only their own platform's
+  Tailcat. A binary is roughly 16-18 MB uncompressed (about 7 MB compressed). On macOS the archive
+  signs it with the same identity as the native addons.
+- CI validates the manifest on every pull request (`node scripts/fetch-tailcat.ts --verify
+--manifest-only`): schema, one pin per platform key, and version-consistent URLs.
+
+To bump the pin:
+
+1. `node scripts/fetch-tailcat.ts --update <version>` downloads the new archives, records their
+   digests (cross-checked against upstream's `checksums.txt`), resolves the tag's commit, refreshes
+   `native/tailcat/LICENSE`, rewrites the manifest, and prints a field-by-field summary. Review it
+   against the upstream release notes.
+2. Check `TAILCAT_COMPATIBLE_RANGE` in `packages/tailcat/src/manifest.ts` and run the opt-in
+   `T3CODE_TAILCAT_E2E=1 vp test run packages/tailcat/src/runtime.e2e.test.ts`.
+3. Open a PR with `native/tailcat/manifest.json` (and `LICENSE` if it changed). The next release
+   fetches the new version; no workflow edits are needed.
+
+Troubleshooting: a `TailcatDistError` in a build log means a runner staged a binary that does not
+match the manifest (usually a stale cache after a pin bump); the message names the platform key and
+the fetch command. `TailcatSourceBuildError: commit-mismatch` means upstream moved the tag; re-pin
+with `--update` only after understanding why.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 

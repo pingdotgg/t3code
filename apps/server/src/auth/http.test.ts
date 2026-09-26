@@ -16,6 +16,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as TailcatRemoteAccess from "../tailcat/TailcatRemoteAccess.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./http.ts";
@@ -44,6 +45,8 @@ const environmentAuthLayer = EnvironmentAuth.layer.pipe(
 );
 const routesLayer = HttpApiBuilder.layer(AuthTestApi).pipe(
   Layer.provide(authHttpApiLayer),
+  // The token route can record Tailcat trust; nothing here pairs over Tailcat.
+  Layer.provide(Layer.mock(TailcatRemoteAccess.TailcatRemoteAccess)({})),
   Layer.provide(environmentAuthenticatedAuthLayer),
   Layer.provideMerge(environmentAuthLayer),
   Layer.provide(configLayer),

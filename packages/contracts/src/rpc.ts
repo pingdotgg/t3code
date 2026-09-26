@@ -16,6 +16,15 @@ import {
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  TailcatConnectionCodeResult,
+  TailcatCreateConnectionCodeInput,
+  TailcatRemoteAccessError,
+  TailcatRemoteAccessState,
+  TailcatRenameTrustedPeerInput,
+  TailcatSetRemoteAccessEnabledInput,
+  TailcatTrustedPeerIdInput,
+} from "./tailcat.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -428,6 +437,14 @@ export const WS_METHODS = {
   projectCloneCancel: "projectClone.cancel",
   projectCloneRetry: "projectClone.retry",
   subscribeProjectClones: "subscribeProjectClones",
+
+  // Tailcat remote access (this environment serving itself over Tailcat)
+  tailcatSubscribeRemoteAccess: "tailcat.subscribeRemoteAccess",
+  tailcatSetRemoteAccessEnabled: "tailcat.setRemoteAccessEnabled",
+  tailcatCreateConnectionCode: "tailcat.createConnectionCode",
+  tailcatRevokeTrustedPeer: "tailcat.revokeTrustedPeer",
+  tailcatRenameTrustedPeer: "tailcat.renameTrustedPeer",
+  tailcatRegenerateIdentity: "tailcat.regenerateIdentity",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1391,6 +1408,48 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const TailcatRpcError = Schema.Union([TailcatRemoteAccessError, EnvironmentAuthorizationError]);
+
+export const WsTailcatSubscribeRemoteAccessRpc = Rpc.make(WS_METHODS.tailcatSubscribeRemoteAccess, {
+  payload: Schema.Struct({}),
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+  stream: true,
+});
+
+export const WsTailcatSetRemoteAccessEnabledRpc = Rpc.make(
+  WS_METHODS.tailcatSetRemoteAccessEnabled,
+  {
+    payload: TailcatSetRemoteAccessEnabledInput,
+    success: TailcatRemoteAccessState,
+    error: TailcatRpcError,
+  },
+);
+
+export const WsTailcatCreateConnectionCodeRpc = Rpc.make(WS_METHODS.tailcatCreateConnectionCode, {
+  payload: TailcatCreateConnectionCodeInput,
+  success: TailcatConnectionCodeResult,
+  error: TailcatRpcError,
+});
+
+export const WsTailcatRevokeTrustedPeerRpc = Rpc.make(WS_METHODS.tailcatRevokeTrustedPeer, {
+  payload: TailcatTrustedPeerIdInput,
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+});
+
+const WsTailcatRenameTrustedPeerRpc = Rpc.make(WS_METHODS.tailcatRenameTrustedPeer, {
+  payload: TailcatRenameTrustedPeerInput,
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+});
+
+const WsTailcatRegenerateIdentityRpc = Rpc.make(WS_METHODS.tailcatRegenerateIdentity, {
+  payload: Schema.Struct({}),
+  success: TailcatRemoteAccessState,
+  error: TailcatRpcError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1536,4 +1595,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsTailcatSubscribeRemoteAccessRpc,
+  WsTailcatSetRemoteAccessEnabledRpc,
+  WsTailcatCreateConnectionCodeRpc,
+  WsTailcatRevokeTrustedPeerRpc,
+  WsTailcatRenameTrustedPeerRpc,
+  WsTailcatRegenerateIdentityRpc,
 );

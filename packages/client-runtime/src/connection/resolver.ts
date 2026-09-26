@@ -15,6 +15,7 @@ import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
+  TailcatConnectionProfile,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
@@ -34,6 +35,7 @@ import type {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  TailcatConnectionTarget,
 } from "./model.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -54,6 +56,7 @@ export class ConnectionResolver extends Context.Service<
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
+const isTailcatProfile = Schema.is(TailcatConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 
 function primarySocketUrl(
@@ -102,21 +105,28 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   });
 });
 
-const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
-  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
-  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-
-  return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
-    entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
-  ) {
+/**
+ * The saved profile and bearer token of a target that paired once and keeps
+ * the issued session: plain bearer targets, and Tailcat targets whose base
+ * URLs come from the forward instead of the profile.
+ */
+const resolveSavedBearerPairing = <Profile extends { readonly environmentId: string }>(
+  credentials: ConnectionCredentialStore.ConnectionCredentialStore["Service"],
+  entry: ConnectionCatalogEntry & {
+    readonly target: BearerConnectionTarget | TailcatConnectionTarget;
+  },
+  isProfile: (profile: unknown) => profile is Profile,
+  profileKind: string,
+) =>
+  Effect.gen(function* () {
     const target = entry.target;
     const profile = yield* Effect.fromOption(entry.profile, () =>
       profileMissingError(target.connectionId),
     );
-    if (!isBearerProfile(profile)) {
+    if (!isProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not a bearer connection.`,
+        detail: `Connection profile ${target.connectionId} is not ${profileKind} connection.`,
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -136,11 +146,28 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
+    return { profile, bearerToken: credential.token };
+  });
+
+const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
+    entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
+  ) {
+    const target = entry.target;
+    const { profile, bearerToken } = yield* resolveSavedBearerPairing(
+      credentials,
+      entry,
+      isBearerProfile,
+      "a bearer",
+    );
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: profile.httpBaseUrl,
       wsBaseUrl: profile.wsBaseUrl,
-      bearerToken: credential.token,
+      bearerToken,
       connectionMethod: "direct",
     });
     return {
@@ -237,12 +264,57 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   });
 });
 
+/**
+ * Tailcat targets pair once and keep the issued bearer session, like a plain
+ * bearer target. Each connection attempt only has to re-establish the
+ * forward, which the platform gateway owns, and then authorize through it.
+ */
+const makeTailcatBroker = Effect.fn("clientRuntime.connection.broker.makeTailcat")(function* () {
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const tailcat = yield* ClientCapabilities.TailcatEnvironmentGateway;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.tailcat")(function* (
+    entry: ConnectionCatalogEntry & { readonly target: TailcatConnectionTarget },
+  ) {
+    const target = entry.target;
+    const { profile, bearerToken } = yield* resolveSavedBearerPairing(
+      credentials,
+      entry,
+      isTailcatProfile,
+      "a Tailcat",
+    );
+    const prepared = yield* tailcat.prepare({
+      connectionId: target.connectionId,
+      expectedEnvironmentId: target.environmentId,
+      address: profile.address,
+      remotePort: profile.remotePort,
+    });
+    const authorized = yield* remote.authorizeBearer({
+      expectedEnvironmentId: target.environmentId,
+      httpBaseUrl: prepared.bootstrap.httpBaseUrl,
+      wsBaseUrl: prepared.bootstrap.wsBaseUrl,
+      bearerToken,
+      connectionMethod: "tailcat",
+    });
+    return {
+      environmentId: authorized.environmentId,
+      label: authorized.label,
+      httpBaseUrl: authorized.httpBaseUrl,
+      socketUrl: authorized.socketUrl,
+      httpAuthorization: authorized.httpAuthorization,
+      target,
+    } satisfies PreparedConnection;
+  });
+});
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const primary = yield* makePrimaryBroker();
   const bearer = yield* makeBearerBroker();
   const relay = yield* makeRelayBroker();
   const ssh = yield* makeSshBroker();
+  const tailcat = yield* makeTailcatBroker();
   const httpClient = yield* HttpClient.HttpClient;
 
   const prepare = Effect.fn("clientRuntime.connection.broker.prepare")(function* (
@@ -263,6 +335,8 @@ export const make = Effect.gen(function* () {
           return relay(target);
         case "SshConnectionTarget":
           return ssh({ ...entry, target });
+        case "TailcatConnectionTarget":
+          return tailcat({ ...entry, target });
       }
     })();
     const descriptor = yield* fetchRemoteEnvironmentDescriptor({

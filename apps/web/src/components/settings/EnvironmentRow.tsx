@@ -14,7 +14,8 @@ export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): str
 
 /**
  * How this client reaches a machine, printed first in every environment row so
- * T3 Connect, SSH, WSL, and plain remote links are told apart without a legend.
+ * T3 Connect, SSH, WSL, Tailcat, and plain remote links are told apart without a
+ * legend.
  */
 export function environmentTransportLabel(environment: EnvironmentPresentation): string {
   const { entry } = environment;
@@ -28,6 +29,7 @@ export function environmentTransportLabel(environment: EnvironmentPresentation):
   ) {
     return `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`;
   }
+  if (entry.target._tag === "TailcatConnectionTarget") return "Tailcat";
   return environment.displayUrl ?? "Remote link";
 }
 

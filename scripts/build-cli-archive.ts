@@ -12,6 +12,7 @@
  *   t3 | t3.exe          the single-executable
  *   client/              web app served by the server
  *   resource-monitor/    per-platform Rust helper, same paths as the npm package
+ *   tailcat/             pinned Tailcat runtime for this platform (tailcat/<platform-key>/)
  *   node_modules/        runtime externals (node-pty, msgpackr-extract, fff)
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -39,6 +40,7 @@ import {
   createStageWorkspaceConfig,
   resolveFffNativeDependencies,
   STAGE_INSTALL_ARGS,
+  stageTailcat,
 } from "./build-desktop-artifact.ts";
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
@@ -313,7 +315,8 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
         entry.endsWith(".node") ||
         entry.endsWith(".dylib") ||
         entry.endsWith("spawn-helper") ||
-        entry.endsWith("t3-resource-monitor"),
+        entry.endsWith("t3-resource-monitor") ||
+        entry.endsWith("/tailcat"),
     )
     .map((entry) => path.join(input.contentDir, entry));
 
@@ -509,6 +512,12 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
   yield* stageWebClient(webClient, path.join(contentDir, "client"));
   yield* fs.copy(resourceMonitorDir, path.join(contentDir, "resource-monitor"));
+  yield* stageTailcat({
+    repoRoot,
+    stageResourcesDir: contentDir,
+    platform: input.platform,
+    arch: input.arch,
+  });
   yield* stageRuntimeExternals({
     repoRoot,
     stageDir: contentDir,

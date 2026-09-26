@@ -119,6 +119,12 @@ export const bootstrapRemoteBearerSession = Effect.fn(
   readonly credential: string;
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
+  /**
+   * This client's Tailcat node key. The server only honors it when the
+   * credential came from a Tailcat connection code, and then lists this device
+   * with its session so it can be renamed or revoked.
+   */
+  readonly clientTailcatNodeKey?: string;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
@@ -134,6 +140,9 @@ export const bootstrapRemoteBearerSession = Effect.fn(
         requested_token_type: AuthAccessTokenType,
         ...(input.scopes ? { scope: encodeOAuthScope(input.scopes) } : {}),
         ...clientMetadataTokenExchangeFields(input.clientMetadata),
+        ...(input.clientTailcatNodeKey
+          ? { client_tailcat_node_key: input.clientTailcatNodeKey }
+          : {}),
       },
     }),
   );

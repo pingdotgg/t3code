@@ -2,7 +2,7 @@
 
 Each connection joins a client to one environment over HTTP and WebSocket. The
 environment owns providers, execution, files, and durable state. Direct access,
-Tailscale, SSH, and T3 Connect change how the client reaches that server; they do
+Tailscale, SSH, Tailcat, and T3 Connect change how the client reaches that server; they do
 not introduce another execution model. See
 [remote access](../user/remote-access.md) for setup.
 
@@ -51,6 +51,14 @@ renderer uses the forwarded endpoint through the shared connection runtime.
 launcher owns it; a server it discovered already running must survive a client
 disconnect. Reconnection restores the forward before opening the application
 transport.
+
+Tailcat is the other desktop-managed tunnel. Desktop main runs the bundled Tailcat
+client and owns the local forward; the renderer authorizes through it like any
+bearer endpoint. A saved Tailcat connection persists the logical endpoint, the
+peer's Tailcat address and the server's port, never the local forward port, which
+is chosen anew for each forward. The tunnel decides reachability only; access is
+ordinary T3 auth, starting with redeeming a connection code. See
+[Tailcat](./tailcat.md).
 
 Remote servers can outlive several client releases. Clients must use advertised
 capabilities and handle their absence, rather than assume their own version

@@ -19,6 +19,7 @@ import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
+  TailcatConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
 } from "./catalog.ts";
@@ -29,6 +30,7 @@ import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  TailcatConnectionTarget,
   type ConnectionTarget,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -80,6 +82,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
+  readonly prepareTailcat?: ClientCapabilities.TailcatEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
 }) => {
   const profiles = new Map(
@@ -181,6 +184,14 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     ),
     Layer.succeed(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization, remote),
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
+    Layer.succeed(
+      ClientCapabilities.TailcatEnvironmentGateway,
+      ClientCapabilities.TailcatEnvironmentGateway.of({
+        provision: () => Effect.die("unused"),
+        prepare: options?.prepareTailcat ?? (() => Effect.die("unused")),
+        disconnect: () => Effect.void,
+      }),
+    ),
   );
 
   return Effect.succeed(ConnectionResolver.layer.pipe(Layer.provide(dependencies)));
@@ -423,6 +434,50 @@ describe("ConnectionResolver", () => {
       ).toContain("wsTicket=bearer");
       expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
       expect(yield* Ref.get(connectionMethods)).toEqual(["ssh"]);
+    }),
+  );
+
+  it.effect("opens the saved Tailcat connection with its canonical id and paired credential", () =>
+    Effect.gen(function* () {
+      const connectionId = `tailcat:${ENVIRONMENT_ID}`;
+      const target = new TailcatConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Tailcat",
+        connectionId,
+      });
+      const profile = new TailcatConnectionProfile({
+        connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "Tailcat",
+        address: `tc${"a".repeat(40)}`,
+        remotePort: 3773,
+      });
+      const preparedIds: Array<string> = [];
+      const brokerLayer = yield* makeDependencies({
+        credentials: [[connectionId, new BearerConnectionCredential({ token: "paired-bearer" })]],
+        prepareTailcat: (input) =>
+          Effect.sync(() => {
+            preparedIds.push(input.connectionId);
+            return {
+              bootstrap: {
+                connectionId: input.connectionId,
+                address: input.address,
+                remotePort: input.remotePort,
+                localPort: 4010,
+                httpBaseUrl: "http://127.0.0.1:4010",
+                wsBaseUrl: "ws://127.0.0.1:4010",
+                clientNodeKey: `nodekey:${"ab".repeat(32)}`,
+              },
+            };
+          }),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const prepared = yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+
+      expect(preparedIds).toEqual([connectionId]);
+      expect(prepared.httpBaseUrl).toBe("http://127.0.0.1:4010");
+      expect(prepared.httpAuthorization).toEqual({ _tag: "Bearer", token: "paired-bearer" });
     }),
   );
 

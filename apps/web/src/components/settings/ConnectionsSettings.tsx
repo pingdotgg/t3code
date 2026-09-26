@@ -3,8 +3,10 @@ import {
   EllipsisIcon,
   PlusIcon,
   QrCodeIcon,
+  RadioTowerIcon,
   TerminalIcon,
 } from "lucide-react";
+import { formatAbsoluteTimestamp } from "~/timestampFormat";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
 import {
@@ -77,6 +79,12 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import { TailcatConnectForm } from "./TailcatConnectForm";
+import {
+  TailcatEnvironmentDetailsDialog,
+  useTailcatEnvironmentSubtitle,
+} from "./TailcatEnvironmentDetails";
+import { TailcatRemoteAccessRow } from "./TailcatRemoteAccessSection";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -156,6 +164,10 @@ import {
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
+import {
+  isDesktopTailcatAvailable,
+  refreshDesktopTailcatDiagnostics,
+} from "~/state/desktopTailcat";
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import {
   type EnvironmentPresentation,
@@ -183,6 +195,9 @@ import {
 } from "../../keybindings";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
+/** How a new saved environment is added: pairing link, desktop SSH, or a Tailcat connection code. */
+type SavedBackendMode = "remote" | "ssh" | "tailcat";
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -191,19 +206,6 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 // neither can collide with a real distro name.
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
-
-const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatAccessTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return accessTimestampFormatter.format(parsed);
-}
 
 const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: AuthEnvironmentScope;
@@ -732,7 +734,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     if (credential) copyPairingValue(credential, "code");
   }, [copyPairingValue, credential]);
 
-  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
+  const expiresAbsolute = formatAbsoluteTimestamp(pairingLink.expiresAt);
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
   const selectedQrOption = selectQrEndpointOption(
@@ -755,7 +757,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
-              tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
+              tooltipText={`Link created at ${formatAbsoluteTimestamp(pairingLink.createdAt)}`}
               dotClassName="bg-warning"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
@@ -984,7 +986,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
       ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
       : "Connected"
     : lastConnectedAt
-      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
+      ? `Last connected at ${formatAbsoluteTimestamp(lastConnectedAt)}`
       : "Not connected yet.";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
@@ -1533,8 +1535,16 @@ function SavedBackendListRow({
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
+  const tailcatProfile =
+    environment.entry.target._tag === "TailcatConnectionTarget" &&
+    Option.isSome(environment.entry.profile) &&
+    environment.entry.profile.value._tag === "TailcatConnectionProfile"
+      ? environment.entry.profile.value
+      : null;
+  const tailcatSubtitle = useTailcatEnvironmentSubtitle(tailcatProfile?.connectionId ?? null);
+  const [tailcatDetailsOpen, setTailcatDetailsOpen] = useState(false);
   const subtitleText = [
-    environmentTransportLabel(environment),
+    tailcatSubtitle ?? environmentTransportLabel(environment),
     resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
@@ -1635,6 +1645,16 @@ function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {tailcatProfile ? (
+            <MenuItem
+              onClick={() => {
+                refreshDesktopTailcatDiagnostics(tailcatProfile.connectionId);
+                setTailcatDetailsOpen(true);
+              }}
+            >
+              Tailcat details…
+            </MenuItem>
+          ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -1644,6 +1664,17 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {tailcatProfile ? (
+        <TailcatEnvironmentDetailsDialog
+          open={tailcatDetailsOpen}
+          onOpenChange={setTailcatDetailsOpen}
+          environmentId={environmentId}
+          environmentLabel={environment.label}
+          profile={tailcatProfile}
+          removing={isRemoving}
+          onRemove={() => onRemove(environment)}
+        />
+      ) : null}
     </EnvironmentRow>
   );
 }
@@ -1949,7 +1980,7 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
-  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
+  const [savedBackendMode, setSavedBackendMode] = useState<SavedBackendMode>("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
@@ -1999,6 +2030,9 @@ export function ConnectionsSettings() {
     DesktopServerExposureState["mode"] | null
   >(null);
   const primaryServerConfig = primaryEnvironment?.serverConfig ?? null;
+  const supportsTailcatRemoteAccess =
+    primaryServerConfig?.environment.capabilities.tailcatRemoteAccess === true;
+  const isDesktopTailcatReady = isDesktopTailcatAvailable();
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
@@ -2594,12 +2628,15 @@ export function ConnectionsSettings() {
   }, []);
 
   const renderConnectionModeCard = (input: {
-    readonly mode: "remote" | "ssh";
+    readonly mode: SavedBackendMode;
     readonly title: string;
     readonly description: string;
     readonly icon?: ReactNode;
+    /** Shown but inert, with the reason under the description (e.g. "Desktop app required"). */
+    readonly unavailableReason?: string;
   }) => {
     const selected = savedBackendMode === input.mode;
+    const unavailable = input.unavailableReason !== undefined;
     return (
       <button
         type="button"
@@ -2607,8 +2644,9 @@ export function ConnectionsSettings() {
         className={cn(
           "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
           selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
+          unavailable && "opacity-60",
         )}
-        disabled={isAddingSavedBackend}
+        disabled={isAddingSavedBackend || unavailable}
         onClick={() => {
           setSavedBackendMode(input.mode);
         }}
@@ -2630,10 +2668,28 @@ export function ConnectionsSettings() {
           <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
             {input.description}
           </span>
+          {input.unavailableReason ? (
+            <span className="mt-1 block text-2xs text-muted-foreground/70">
+              {input.unavailableReason}
+            </span>
+          ) : null}
         </span>
       </button>
     );
   };
+  const renderTailcatModeBody = () => (
+    <TailcatConnectForm
+      mode="add"
+      onConnected={() => {
+        setSavedBackendError(null);
+        setAddBackendDialogOpen(false);
+      }}
+    />
+  );
+  const renderTailcatRemoteAccessRow = () =>
+    supportsTailcatRemoteAccess && primaryEnvironmentId !== null ? (
+      <TailcatRemoteAccessRow environmentId={primaryEnvironmentId} />
+    ) : null;
 
   const renderRemoteFields = () => (
     <div className="space-y-3">
@@ -3353,12 +3409,14 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                {renderTailcatRemoteAccessRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             ) : canManageLocalBackend ? (
               <>
                 {renderDisabledNetworkAccessRow()}
+                {renderTailcatRemoteAccessRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>
             ) : null}
@@ -3713,7 +3771,12 @@ export function ConnectionsSettings() {
                 </DialogHeader>
                 <DialogPanel>
                   <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div
+                      className={cn(
+                        "grid gap-3",
+                        desktopBridge ? "sm:grid-cols-3" : "sm:grid-cols-2",
+                      )}
+                    >
                       {renderConnectionModeCard({
                         mode: "remote",
                         title: "Remote link",
@@ -3729,9 +3792,23 @@ export function ConnectionsSettings() {
                             icon: <TerminalIcon aria-hidden className="size-4" />,
                           })
                         : null}
+                      {renderConnectionModeCard({
+                        mode: "tailcat",
+                        title: "Tailcat",
+                        description:
+                          "Paste a connection code from the other machine. Tunnels with relay fallback, no VPN account.",
+                        icon: <RadioTowerIcon aria-hidden className="size-4" />,
+                        ...(isDesktopTailcatReady
+                          ? {}
+                          : { unavailableReason: "Desktop app required" }),
+                      })}
                     </div>
                     <AnimatedHeight>
-                      {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                      {savedBackendMode === "ssh"
+                        ? renderSshFields()
+                        : savedBackendMode === "tailcat"
+                          ? renderTailcatModeBody()
+                          : renderRemoteModeBody()}
                     </AnimatedHeight>
                   </div>
                 </DialogPanel>

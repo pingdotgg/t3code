@@ -21,6 +21,7 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
+    "@t3tools/tailcat": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "dbus-next": "0.10.2",
     "effect": "catalog:",

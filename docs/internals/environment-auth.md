@@ -13,6 +13,13 @@ or relay-management authority. Creating another pairing link requires both
 [auth handlers](../../apps/server/src/auth/http.ts) enforce this at issuance;
 client labels and device metadata have no authorization role.
 
+The one client-supplied exchange parameter with an effect is
+`client_tailcat_node_key`. When the redeemed credential is a Tailcat connection
+code, the exchange records that key as a paired Tailcat device linked to the new
+session, so the device can be listed, renamed, and revoked. It grants no scopes
+and is ignored for every other credential. See
+[Tailcat](./tailcat.md).
+
 The access read model contains pairing metadata, never recoverable pairing
 secrets. Only the creation response returns the raw credential. Otherwise read
 access to the connections list would become a way to acquire another client's

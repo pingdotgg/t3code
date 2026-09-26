@@ -63,6 +63,14 @@ export interface IssuedBearerSession {
   readonly expiresAt: DateTime.Utc;
 }
 
+/** A completed bootstrap exchange with the facts callers need beyond the wire result. */
+export interface BootstrapCredentialExchange {
+  readonly result: AuthAccessTokenResult;
+  readonly sessionId: AuthSessionId;
+  /** Subject of the redeemed grant, which names what kind of pairing it was. */
+  readonly grantSubject: string;
+}
+
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
@@ -445,6 +453,18 @@ export class EnvironmentAuth extends Context.Service<
       AuthAccessTokenResult,
       ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
     >;
+    /** Same exchange, also reporting which grant was consumed and the session it made. */
+    readonly exchangeBootstrapCredential: (
+      credential: string,
+      requestedScopes: ReadonlyArray<AuthEnvironmentScope> | undefined,
+      requestMetadata: AuthClientMetadata,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<
+      BootstrapCredentialExchange,
+      ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
+    >;
     readonly createPairingLink: (input?: {
       readonly ttl?: Duration.Duration;
       readonly label?: string;
@@ -801,46 +821,52 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
-    (credential, requestedScopes, requestMetadata, input) =>
-      resolveBootstrapGrant(credential, input).pipe(
-        Effect.flatMap((grant) =>
-          Effect.gen(function* () {
-            const grantedScopes = requestedScopes ?? grant.scopes;
-            if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
-              return yield* new ServerAuthScopeNotGrantedError({});
-            }
-            return yield* sessions
-              .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                subject: grant.subject,
-                scopes: grantedScopes,
-                ...(input?.proofKeyThumbprint
-                  ? {
-                      proofKeyThumbprint: input.proofKeyThumbprint,
-                      ttl: Duration.hours(1),
-                    }
-                  : {}),
-                // Desktop restarts forget the previous bearer token. Replace
-                // its session, including stale entries left by older versions.
-                replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
-                client: {
-                  ...requestMetadata,
-                  ...(grant.label ? { label: grant.label } : {}),
-                },
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                ),
-              );
-          }),
-        ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
+  const exchangeBootstrapCredential: EnvironmentAuth["Service"]["exchangeBootstrapCredential"] = (
+    credential,
+    requestedScopes,
+    requestMetadata,
+    input,
+  ) =>
+    resolveBootstrapGrant(credential, input).pipe(
+      Effect.flatMap((grant) =>
+        Effect.gen(function* () {
+          const grantedScopes = requestedScopes ?? grant.scopes;
+          if (!grantedScopes.every((scope) => grant.scopes.includes(scope))) {
+            return yield* new ServerAuthScopeNotGrantedError({});
+          }
+          const session = yield* sessions
+            .issue({
+              method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+              subject: grant.subject,
+              scopes: grantedScopes,
+              ...(input?.proofKeyThumbprint
+                ? {
+                    proofKeyThumbprint: input.proofKeyThumbprint,
+                    ttl: Duration.hours(1),
+                  }
+                : {}),
+              // Desktop restarts forget the previous bearer token. Replace
+              // its session, including stale entries left by older versions.
+              replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+              client: {
+                ...requestMetadata,
+                ...(grant.label ? { label: grant.label } : {}),
+              },
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
+              ),
+            );
+          return { grant, session };
+        }),
+      ),
+      Effect.flatMap(({ grant, session }) =>
+        DateTime.now.pipe(
+          Effect.map(
+            (now) =>
+              ({
+                result: {
                   access_token: session.token,
                   issued_token_type: AuthAccessTokenType,
                   token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
@@ -851,10 +877,20 @@ export const make = Effect.gen(function* () {
                     ),
                   ),
                   scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
-            ),
+                } satisfies AuthAccessTokenResult,
+                sessionId: session.sessionId,
+                grantSubject: grant.subject,
+              }) satisfies BootstrapCredentialExchange,
           ),
         ),
+      ),
+      Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredential"),
+    );
+
+  const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
+    (credential, requestedScopes, requestMetadata, input) =>
+      exchangeBootstrapCredential(credential, requestedScopes, requestMetadata, input).pipe(
+        Effect.map((exchange) => exchange.result),
         Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
       );
 
@@ -1100,6 +1136,7 @@ export const make = Effect.gen(function* () {
     getSessionState,
     createBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
+    exchangeBootstrapCredential,
     createPairingLink,
     issuePairingCredential,
     issueStartupPairingCredential,

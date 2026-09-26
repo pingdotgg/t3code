@@ -5,7 +5,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
-import { useEnvironments } from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePrimarySessionState } from "~/environments/primary";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
@@ -18,6 +18,8 @@ import {
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
+  // Tailcat remote access is managed on the primary server only.
+  const primaryCapabilities = usePrimaryEnvironment()?.serverConfig?.environment.capabilities;
   const primarySessionState = usePrimarySessionState();
   const localEnvironmentDisabled = isLocalEnvironmentDisabled();
   const desktopWsl = useEnvironmentQuery(
@@ -59,6 +61,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         }),
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
+        hasTailcatRemoteAccess: primaryCapabilities?.tailcatRemoteAccess === true,
       }),
     [
       canManageLocalBackend,
@@ -66,6 +69,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
       desktopWsl.error,
       environments,
       localEnvironmentDisabled,
+      primaryCapabilities,
       scopeSearch.machine,
     ],
   );

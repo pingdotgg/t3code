@@ -64,3 +64,11 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Attachment inventory | The ordered image records shown as thumbnails above the prose, including images with no inline references.                          |
 
 See [composer context references](./composer-context-references.md) for the contract and lifecycle.
+
+## Remote transports
+
+| Term            | Meaning                                                                                                                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tailcat         | The bundled point-to-point tunnel CLI that exposes a server's loopback listener to other devices. A transport only; T3 auth runs unchanged inside it.                                                                            |
+| Connection code | A `t3c://tailcat/…` string a server issues so another device can add it as an environment. It carries the Tailcat address, the server port, and a single-use, five-minute pairing token, never a private key or reusable secret. |
+| Trusted peer    | A device (Tailcat node key) that redeemed a connection code, recorded with the sessions it created; revoking it revokes those sessions.                                                                                          |

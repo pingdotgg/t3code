@@ -30,6 +30,7 @@ import {
   PrimaryConnectionRegistration,
   RelayConnectionRegistration,
   SshConnectionProfile,
+  TailcatConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
 } from "./catalog.ts";
@@ -43,6 +44,7 @@ import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  TailcatConnectionTarget,
   type ConnectionTarget,
   type PreparedConnection,
   type SupervisorConnectionState,
@@ -126,6 +128,18 @@ const SSH_PROFILE = new SshConnectionProfile({
   label: SSH_CONNECTION.label,
   target: SSH_TARGET,
 });
+const TAILCAT_CONNECTION = new TailcatConnectionTarget({
+  environmentId: EnvironmentId.make("environment-tailcat"),
+  label: "Tailcat environment",
+  connectionId: "tailcat:environment-tailcat",
+});
+const TAILCAT_PROFILE = new TailcatConnectionProfile({
+  connectionId: TAILCAT_CONNECTION.connectionId,
+  environmentId: TAILCAT_CONNECTION.environmentId,
+  label: TAILCAT_CONNECTION.label,
+  address: `tc${"a".repeat(40)}`,
+  remotePort: 3773,
+});
 
 const CACHED_SNAPSHOT: OrchestrationShellSnapshot = {
   snapshotSequence: 1,
@@ -187,6 +201,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ]),
   );
   const disconnectedSshTargets = yield* Ref.make<ReadonlyArray<DesktopSshEnvironmentTarget>>([]);
+  const disconnectedTailcatConnections = yield* Ref.make<ReadonlyArray<string>>([]);
 
   const storedDisabled = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(options?.initialDisabled ?? []),
@@ -364,6 +379,12 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     prepare: () => Effect.die(new Error("SSH preparation is not used.")),
     disconnect: (target) => Ref.update(disconnectedSshTargets, (current) => [...current, target]),
   });
+  const tailcatGateway = ClientCapabilities.TailcatEnvironmentGateway.of({
+    provision: () => Effect.die(new Error("Tailcat provisioning is not used.")),
+    prepare: () => Effect.die(new Error("Tailcat preparation is not used.")),
+    disconnect: (connectionId) =>
+      Ref.update(disconnectedTailcatConnections, (current) => [...current, connectionId]),
+  });
   const driver = ConnectionDriver.ConnectionDriver.of({
     connect: (entry, reportProgress) =>
       Effect.gen(function* () {
@@ -408,6 +429,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
         Layer.succeed(ClientCapabilities.SshEnvironmentGateway, sshGateway),
+        Layer.succeed(ClientCapabilities.TailcatEnvironmentGateway, tailcatGateway),
         Layer.succeed(Connectivity.Connectivity, connectivity),
         Layer.succeed(
           ConnectionWakeups.ConnectionWakeups,
@@ -434,6 +456,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     storedRemoteTokens,
     storedDisabled,
     disconnectedSshTargets,
+    disconnectedTailcatConnections,
     networkStatus,
   };
 });
@@ -1062,6 +1085,36 @@ describe("EnvironmentRegistry", () => {
 
         expect(yield* Ref.get(harness.disconnectedSshTargets)).toEqual([SSH_TARGET]);
         expect((yield* Ref.get(harness.storedTargets)).has(SSH_CONNECTION.environmentId)).toBe(
+          true,
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("switching a Tailcat environment off stops its forwarder", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TAILCAT_CONNECTION], [TAILCAT_PROFILE]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          TAILCAT_CONNECTION.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        yield* registry.setEnabled(TAILCAT_CONNECTION.environmentId, false);
+        yield* awaitConnectionState(
+          registry,
+          TAILCAT_CONNECTION.environmentId,
+          (state) => state.phase === "available",
+        );
+
+        expect(yield* Ref.get(harness.disconnectedTailcatConnections)).toEqual([
+          TAILCAT_CONNECTION.connectionId,
+        ]);
+        expect((yield* Ref.get(harness.storedTargets)).has(TAILCAT_CONNECTION.environmentId)).toBe(
           true,
         );
       }).pipe(Effect.provide(harness.layer));

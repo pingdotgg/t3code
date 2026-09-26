@@ -36,6 +36,14 @@ import {
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { stageTailcatDist } from "./lib/tailcat-dist.ts";
+import {
+  TAILCAT_DIST_RELATIVE_PATH,
+  TAILCAT_MANIFEST_RELATIVE_PATH,
+  readTailcatManifest,
+  tailcatExecutableName,
+  type TailcatPlatformKey,
+} from "./lib/tailcat-manifest.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -129,6 +137,27 @@ export function resolveResourceMonitorRustTargets(
 
 export function resourceMonitorExecutableName(platform: typeof BuildPlatform.Type): string {
   return platform === "win" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+}
+
+/**
+ * Tailcat runtime directories a build ships. The runtime resolves
+ * `resources/tailcat/<platform-key>/` by the running process's arch, so a
+ * universal macOS app carries both darwin keys instead of a lipo'd binary.
+ */
+export function resolveTailcatPlatformKeys(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): ReadonlyArray<TailcatPlatformKey> {
+  if (platform === "mac") {
+    if (arch === "universal") {
+      return ["darwin-arm64", "darwin-x64"];
+    }
+    return [arch === "arm64" ? "darwin-arm64" : "darwin-x64"];
+  }
+  if (platform === "linux") {
+    return [arch === "arm64" ? "linux-arm64" : "linux-x64"];
+  }
+  return [arch === "arm64" ? "win32-arm64" : "win32-x64"];
 }
 
 const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
@@ -709,6 +738,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "tailcat-missing",
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
   "file-limit-exceeded",
@@ -734,6 +764,9 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     }
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
+    }
+    if (this.reason === "tailcat-missing") {
+      return "Windows packaged payload is missing the Tailcat runtime executable.";
     }
     if (this.reason === "wsl-runtime-missing") {
       return "Windows packaged payload is missing the WSL runtime archive or SHA-256 sidecar.";
@@ -1069,6 +1102,12 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  // Fetched by `node scripts/fetch-tailcat.ts` and staged per platform key
+  // (see stageTailcat); the runtime looks in resources/tailcat/<platform-key>/.
+  {
+    from: "apps/desktop/prod-resources/tailcat",
+    to: "tailcat",
   },
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
@@ -2305,6 +2344,45 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
+/**
+ * Copies the fetched Tailcat runtime for every platform key this build ships
+ * into `<stageResourcesDir>/tailcat/<platform-key>/`: `resources/tailcat/` in
+ * the desktop app and the archive root in a CLI archive
+ * (scripts/build-cli-archive.ts), both places `bundledTailcatCandidates` in
+ * packages/tailcat looks. Binaries are staged by
+ * `node scripts/fetch-tailcat.ts`, never downloaded or built here, and each one
+ * is verified against native/tailcat/manifest.json first so a stale dist after
+ * a pin bump fails the build with the fetch command instead of shipping the
+ * previous version. On macOS, electron-builder's signing pass (osx-sign) signs
+ * every extension-less file below Contents/, which covers `tailcat` exactly
+ * like `t3-resource-monitor`; the companion provenance.json and LICENSE.txt
+ * keep their extensions so they are not handed to codesign.
+ */
+export const stageTailcat = Effect.fn("stageTailcat")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+}) {
+  const path = yield* Path.Path;
+  const manifest = yield* readTailcatManifest(
+    path.join(input.repoRoot, TAILCAT_MANIFEST_RELATIVE_PATH),
+  );
+  const distRoot = path.join(input.repoRoot, TAILCAT_DIST_RELATIVE_PATH);
+  const destinationRoot = path.join(input.stageResourcesDir, "tailcat");
+  for (const platformKey of resolveTailcatPlatformKeys(input.platform, input.arch)) {
+    const provenance = yield* stageTailcatDist({
+      distRoot,
+      platformKey,
+      manifest,
+      destinationRoot,
+    });
+    yield* Effect.log(
+      `[tailcat] Staged tailcat ${provenance.version} for ${platformKey} (${provenance.origin.kind}).`,
+    );
+  }
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -3217,6 +3295,16 @@ export const validateWindowsPackagedPayload = Effect.fn(
     });
   }
 
+  const tailcatPlatformKey = resolveTailcatPlatformKeys("win", input.targetArch)[0]!;
+  const tailcatRelativePath = `tailcat/${tailcatPlatformKey}/${tailcatExecutableName(tailcatPlatformKey)}`;
+  if (!(yield* isFile(path.join(resourcesDir, ...tailcatRelativePath.split("/"))))) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "tailcat-missing",
+      packagedAppDir,
+      missingFiles: [tailcatRelativePath],
+    });
+  }
+
   const wslArchivePath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_NAME);
   const wslArchiveHashPath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_HASH_NAME);
   const [hasWslArchive, hasWslArchiveHash] = yield* Effect.all([
@@ -3592,6 +3680,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     platform: options.platform,
     arch: options.arch,
     verbose: options.verbose,
+  });
+  yield* stageTailcat({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
   });
 
   yield* assertPlatformBuildResources(

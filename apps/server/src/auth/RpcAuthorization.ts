@@ -1,6 +1,7 @@
 import {
   type DeviceListInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -169,6 +170,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
+  // Tailcat remote access is administrative: it changes who can reach this
+  // server at the transport layer.
+  [WS_METHODS.tailcatSubscribeRemoteAccess]: AuthAccessReadScope,
+  [WS_METHODS.tailcatSetRemoteAccessEnabled]: AuthAccessWriteScope,
+  [WS_METHODS.tailcatCreateConnectionCode]: AuthAccessWriteScope,
+  [WS_METHODS.tailcatRevokeTrustedPeer]: AuthAccessWriteScope,
+  [WS_METHODS.tailcatRenameTrustedPeer]: AuthAccessWriteScope,
+  [WS_METHODS.tailcatRegenerateIdentity]: AuthAccessWriteScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 

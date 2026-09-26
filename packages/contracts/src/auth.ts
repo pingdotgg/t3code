@@ -192,6 +192,12 @@ export const AuthTokenExchangeRequest = Schema.Struct({
   client_label: Schema.optionalKey(TrimmedNonEmptyString),
   client_device_type: Schema.optionalKey(AuthClientMetadataDeviceType),
   client_os: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * The client's Tailcat node public key. Only honored when the pairing
+   * credential was issued as a Tailcat connection code; the server then lists
+   * the device under that key with the session it issued.
+   */
+  client_tailcat_node_key: Schema.optionalKey(TrimmedNonEmptyString),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthTokenExchangeRequest = typeof AuthTokenExchangeRequest.Type;
 

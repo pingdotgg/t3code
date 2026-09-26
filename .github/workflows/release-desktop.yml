@@ -180,6 +180,35 @@ jobs:
           toolchain: stable
           targets: ${{ inputs.rust_target }}
 
+      - name: Cache Tailcat runtime
+        id: tailcat_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native/tailcat/dist/${{ inputs.resource_key }}
+          key: tailcat-${{ inputs.resource_key }}-${{ hashFiles('native/tailcat/manifest.json') }}
+
+      # Upstream publishes no macOS Tailcat archive, so the macOS jobs compile
+      # the pinned tag with the Go toolchain the manifest names.
+      - name: Resolve Tailcat Go version
+        if: inputs.platform == 'mac' && steps.tailcat_cache.outputs.cache-hit != 'true'
+        id: tailcat_go
+        shell: bash
+        run: echo "version=$(node -p "require('./native/tailcat/manifest.json').source.goVersion")" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        if: inputs.platform == 'mac' && steps.tailcat_cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ steps.tailcat_go.outputs.version }}
+          cache: false
+
+      # Verifies a cached runtime against the manifest and only downloads or
+      # builds when nothing valid is staged. The desktop app and the CLI
+      # archive both ship this copy.
+      - name: Fetch Tailcat runtime
+        shell: bash
+        run: node scripts/fetch-tailcat.ts --platform "${{ inputs.resource_key }}"${{ inputs.platform == 'mac' && ' --build-from-source' || '' }}
+
       - name: Download relay client tracing config
         if: inputs.relay_client_tracing
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

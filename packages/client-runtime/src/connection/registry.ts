@@ -20,6 +20,7 @@ import {
   type PrimaryConnectionRegistration,
   SshConnectionProfile,
   connectionRegistrationCatalogEntry,
+  connectionTargetConnectionId,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -162,16 +163,40 @@ export const make = Effect.gen(function* () {
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
+  const tailcat = yield* ClientCapabilities.TailcatEnvironmentGateway;
+  /**
+   * Stops what a connection rides on outside its RPC session: a managed SSH
+   * backend and its tunnel, or a Tailcat forwarder. Failures are only logged;
+   * the entry is already removed or switched off.
+   */
+  const releaseOwnedTransport = (entry: Pick<ConnectionCatalogEntry, "target" | "profile">) => {
+    const { target, profile } = entry;
+    const release =
+      target._tag === "SshConnectionTarget" &&
+      Option.isSome(profile) &&
+      isSshConnectionProfile(profile.value)
+        ? ssh.disconnect(profile.value.target)
+        : target._tag === "TailcatConnectionTarget"
+          ? tailcat.disconnect(target.connectionId)
+          : Effect.void;
+    return release.pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Could not stop the environment's transport.", {
+          environmentId: target.environmentId,
+          error,
+        }),
+      ),
+      Effect.ignore,
+    );
+  };
   const persistedTargets = yield* storage.list;
   const disabledEnvironmentIds = new Set(yield* storage.listDisabled);
   const initialEntries = new Map(
     yield* Effect.forEach(
       persistedTargets,
       Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (target) {
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
+        const connectionId = connectionTargetConnectionId(target);
+        const profile = connectionId !== null ? yield* profiles.get(connectionId) : Option.none();
         return [
           target.environmentId,
           {
@@ -664,10 +689,8 @@ export const make = Effect.gen(function* () {
           });
         }
         const target = (yield* getEntry(environmentId)).target;
-        const profile =
-          target._tag === "BearerConnectionTarget" || target._tag === "SshConnectionTarget"
-            ? yield* profiles.get(target.connectionId)
-            : Option.none();
+        const connectionId = connectionTargetConnectionId(target);
+        const profile = connectionId !== null ? yield* profiles.get(connectionId) : Option.none();
 
         yield* githubRoutingPermissions.forget(environmentId);
         yield* registrations.remove(target);
@@ -697,21 +720,7 @@ export const make = Effect.gen(function* () {
           { concurrency: "unbounded", discard: true },
         );
 
-        if (
-          target._tag === "SshConnectionTarget" &&
-          Option.isSome(profile) &&
-          isSshConnectionProfile(profile.value)
-        ) {
-          yield* ssh.disconnect(profile.value.target).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("Could not disconnect the managed SSH environment.", {
-                environmentId,
-                error,
-              }),
-            ),
-            Effect.ignore,
-          );
-        }
+        yield* releaseOwnedTransport({ target, profile });
       }),
     );
   });
@@ -785,23 +794,10 @@ export const make = Effect.gen(function* () {
         } else if (enabled) {
           yield* createServiceScope(next);
         }
-        // The supervisor only owns the RPC session. A managed SSH backend and
-        // its tunnel outlive it, so switching off tears those down as well.
-        if (
-          !enabled &&
-          entry.target._tag === "SshConnectionTarget" &&
-          Option.isSome(entry.profile) &&
-          isSshConnectionProfile(entry.profile.value)
-        ) {
-          yield* ssh.disconnect(entry.profile.value.target).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("Could not disconnect the switched-off SSH environment.", {
-                environmentId,
-                error,
-              }),
-            ),
-            Effect.ignore,
-          );
+        // The supervisor only owns the RPC session, so switching off also stops
+        // the transport it rode on.
+        if (!enabled) {
+          yield* releaseOwnedTransport(entry);
         }
       }),
     );

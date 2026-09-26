@@ -36,3 +36,19 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
   execute: (input: { readonly target: DesktopSshEnvironmentTarget; readonly label?: string }) =>
     ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerSsh(input))),
 });
+
+/**
+ * Pairs a `t3c://tailcat/...` connection code: the desktop forwarder is
+ * started, the one-time credential is redeemed, and the environment is saved
+ * (or re-saved under the same environment id when re-pairing).
+ */
+export const connectTailcatEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:connect-tailcat",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly code: string }) => input.code.trim(),
+  },
+  execute: (input: { readonly code: string; readonly label?: string }) =>
+    ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.registerTailcat(input))),
+});

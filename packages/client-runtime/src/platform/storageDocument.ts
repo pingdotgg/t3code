@@ -6,6 +6,7 @@ import {
   type ConnectionRegistration,
   ConnectionCredential,
   ConnectionProfile,
+  connectionTargetConnectionId,
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
@@ -59,23 +60,12 @@ export function removeCatalogValue<A>(
   return values.filter((value) => key(value) !== removedKey);
 }
 
-function connectionIdOf(target: ConnectionTarget): string | null {
-  switch (target._tag) {
-    case "PrimaryConnectionTarget":
-    case "RelayConnectionTarget":
-      return null;
-    case "BearerConnectionTarget":
-    case "SshConnectionTarget":
-      return target.connectionId;
-  }
-}
-
 function removeConnectionMetadata(
   document: ConnectionCatalogDocument,
   target: ConnectionTarget,
   removeRemoteToken: boolean,
 ): ConnectionCatalogDocument {
-  const connectionId = connectionIdOf(target);
+  const connectionId = connectionTargetConnectionId(target);
   return {
     ...document,
     targets: removeCatalogValue(
@@ -127,6 +117,7 @@ export function registerConnectionInCatalog(
     case "RelayConnectionRegistration":
       return next;
     case "BearerConnectionRegistration":
+    case "TailcatConnectionRegistration":
       return {
         ...next,
         profiles: replaceCatalogValue(

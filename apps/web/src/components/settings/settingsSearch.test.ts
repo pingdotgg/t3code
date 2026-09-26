@@ -158,9 +158,13 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
+      hasTailcatRemoteAccess: false,
     });
 
     const gatedIds = new Set<string>([
+      "tailcat-remote-access",
+      "tailcat-connection-code",
+      "tailcat-trusted-devices",
       "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",
@@ -230,6 +234,7 @@ describe("searchSettings", () => {
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
+      hasTailcatRemoteAccess: false,
     });
 
     expect(searchSettings("auto-settle", available).map((item) => item.id)).toEqual([
@@ -237,6 +242,34 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
     ]);
+  });
+
+  it("shows Tailcat settings only when the server advertises them", () => {
+    const base = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: false,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: true,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const withTailcat = filterAvailableSettingsSearchItems({
+      ...base,
+      hasTailcatRemoteAccess: true,
+    });
+    expect(searchSettings("tailcat", withTailcat).map((item) => item.id)).toEqual([
+      "tailcat-remote-access",
+      "tailcat-connection-code",
+      "tailcat-trusted-devices",
+      "remote-environments",
+    ]);
+
+    const withoutTailcat = filterAvailableSettingsSearchItems({
+      ...base,
+      hasTailcatRemoteAccess: false,
+    });
+    expect(searchSettings("trusted devices", withoutTailcat)).toEqual([]);
   });
 
   it("finds keybinding commands by label, command id, and default key", () => {
