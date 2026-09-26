@@ -47,10 +47,9 @@ export function tailcatRuntimeLabel(runtime: TailcatRuntimeInfo | null): string 
 }
 
 /**
- * What the connection-code card shows for the code it issued. The listener
- * reports an open pairing window while any unredeemed code is live, so once the
- * window has opened for this code, its closing before expiry means it was
- * redeemed.
+ * What the connection-code card shows for the code it issued. The server
+ * reports `pairingOpen` while any unredeemed code is live, so once that turned
+ * on for this code, turning off before expiry means the code was redeemed.
  */
 export function issuedConnectionCodeStatus(input: {
   readonly expiresAtMs: number;

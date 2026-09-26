@@ -40,7 +40,7 @@ import * as DesktopTailcatIdentity from "./DesktopTailcatIdentity.ts";
  *
  * Failure policy: a forward that exits on its own is restarted with jittered
  * exponential backoff; a forward that starts but never passes the readiness
- * probe (typical for "not trusted yet" or "server offline") fails the
+ * probe (typical when the server is offline or its Tailcat access is off) fails the
  * `ensure` call so the connection supervisor in the client can decide, and the
  * probe result is kept for diagnostics.
  */
@@ -206,7 +206,7 @@ export const make = Effect.gen(function* () {
             isDesktopTailcatEnvironmentError(error)
               ? new DesktopTailcatEnvironmentError({
                   code: error.code,
-                  detail: `${error.detail} The environment may be offline, or this device is not trusted yet: redeem a fresh connection code.`,
+                  detail: `${error.detail} The environment may be offline, have Tailcat access turned off, or have a new Tailcat identity (redeem a fresh connection code).`,
                 })
               : new DesktopTailcatEnvironmentError({
                   code: failureCodeOf(error),

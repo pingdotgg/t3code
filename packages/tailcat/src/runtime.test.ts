@@ -26,7 +26,6 @@ import { TAILCAT_COMPATIBLE_RANGE, TAILCAT_PINNED_VERSION } from "./manifest.ts"
 import {
   TAILCAT_PROCESS_STOP_GRACE,
   TAILCAT_SERVE_READY_TIMEOUT,
-  type TailcatAllowPolicy,
   type TailcatExecutableResolution,
   TailcatRuntime,
   layer as tailcatRuntimeLayer,
@@ -484,8 +483,7 @@ describe("TailcatRuntime identity generation", () => {
 });
 
 describe("TailcatRuntime.serve", () => {
-  const allow: TailcatAllowPolicy = { _tag: "keys", nodeKeys: [NODE_KEY] };
-  const serveInput = { keyPath: SERVER_KEY, localPort: 3773, allow };
+  const serveInput = { keyPath: SERVER_KEY, localPort: 3773 };
 
   it.effect("publishes the address from the JSON listen line", () => {
     const tailcat = fakeTailcat({
@@ -497,20 +495,13 @@ describe("TailcatRuntime.serve", () => {
       const handle = yield* runtime.serve(serveInput);
       expect(handle.address).toBe(ADDRESS);
       expect(handle.localPort).toBe(3773);
-      expect(handle.allow).toEqual(allow);
       expect(handle.pid).toBe(4242);
       expect(yield* handle.isRunning).toBe(true);
 
       const serve = spawnFor(tailcat, "serve");
       assert(serve !== undefined);
       expect(serve.command).toBe(BUNDLED);
-      expect(serve.args).toEqual([
-        "--json",
-        `--key=${SERVER_KEY}`,
-        "serve",
-        `--allow=${NODE_KEY}`,
-        "3773",
-      ]);
+      expect(serve.args).toEqual(["--json", `--key=${SERVER_KEY}`, "serve", "3773"]);
       expect(serve.options.stdin).toBe("ignore");
       expect(serve.options.killSignal).toBe("SIGTERM");
     }).pipe(Effect.provide(runtimeLayer(tailcat)));

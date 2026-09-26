@@ -137,14 +137,10 @@ describe("desktop Tailcat pairing", () => {
       expect(error.reason).toBe("tailcat-unavailable");
       expect(error.detail).toBe("Not yet.");
     }
-    const unmarked = tailcatPreparationError(
-      new Error("The environment may be offline, or this device is not trusted yet."),
-    );
+    const unmarked = tailcatPreparationError(new Error("The environment may be offline."));
     expect(unmarked._tag).toBe("ConnectionTransientError");
     expect(unmarked.reason).toBe("tailcat-unavailable");
-    expect(unmarked.detail).toBe(
-      "The environment may be offline, or this device is not trusted yet.",
-    );
+    expect(unmarked.detail).toBe("The environment may be offline.");
   });
 
   it("blocks on configuration problems that a retry cannot fix", () => {

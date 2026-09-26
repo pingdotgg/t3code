@@ -6,7 +6,7 @@ desktop or headless server on one machine can be reached from the T3 Code deskto
 another machine by pasting one code.
 
 Use it when the machines are on different networks, when you cannot install Tailscale, or
-when you want a connection that is trusted per device instead of per network.
+when you want to pair each device individually instead of opening up a whole network.
 
 ## What you need
 
@@ -26,9 +26,8 @@ when you want a connection that is trusted per device instead of per network.
 
 A connection code is single use and expires after five minutes. It carries a one-time
 pairing credential, so treat it like a pairing URL: share it with one device, then let it
-expire. Creating a code opens a short pairing window during which any Tailcat device can
-reach the server to redeem a code; the window closes as soon as the code is used or
-expires, after which only trusted devices can connect.
+expire. Each device that redeems a code appears under **Trusted devices** on the card,
+where you can rename or revoke it.
 
 Headless servers do the same from the command line:
 
@@ -59,8 +58,8 @@ Connect for those.
 
 Every device that redeems a connection code becomes a trusted device on the server. The
 Remote access card lists them with the time they were added and last seen. You can rename
-a device, or revoke it. Revoking removes its transport access and signs it out at the same
-time. To let it back in, create a new connection code and connect again.
+a device, or revoke it. Revoking signs it out. To let it back in, create a new connection
+code and connect again.
 
 If you suspect the server's Tailcat identity leaked, use **Regenerate identity**. The
 server gets a new address, every existing connection code stops working, and every saved
@@ -71,9 +70,10 @@ Tailcat environment on other devices needs a fresh code.
 - **Status shows Unavailable.** The bundled Tailcat build could not start. The card shows
   the reason. Reinstalling T3 Code restores the bundled binary; advanced users can point
   the server at their own build with the `T3CODE_TAILCAT_BINARY` environment variable.
-- **The other machine says "not trusted or offline".** Either the server is off, remote
-  access is disabled, or the device was revoked. Create a fresh connection code on the
-  server and connect again.
+- **The other machine says the environment may be offline.** The server is off, remote
+  access is disabled, or its Tailcat identity was regenerated. Create a fresh connection code
+  on the server and use **Re-pair** in **Tailcat details…**. A revoked device is signed out
+  and needs a fresh code too.
 - **The connection shows Relay instead of Direct.** Both sides could not find a direct
   path, so traffic goes through an encrypted relay. It still works; it is just slower.
   Use **Probe** in **Tailcat details…**, in the saved environment's menu, to re-check the path

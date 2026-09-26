@@ -56,26 +56,23 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 /**
  * TailcatRemoteAccess makes this environment reachable over Tailcat.
  *
- * It owns one `tailcat serve` child that fronts the server's loopback listener,
- * the server's Tailcat identity (a key file in the secrets directory, so the
- * address is stable across restarts), and the list of trusted peers. Tailcat's
- * CLI takes its allowlist at startup, so the listener is restarted whenever the
- * trusted set changes:
- *
- *   - locked:  `--allow=<trusted node keys>` (or `none` while nobody is trusted)
- *   - open:    no allowlist while a connection code is active, so a new device
- *              can reach the T3 pairing endpoint; T3 auth still gates everything
+ * It owns one `tailcat serve` child that fronts the server's loopback listener
+ * and the server's Tailcat identity (a key file in the secrets directory, so the
+ * address is stable across restarts). Tailcat is only a transport: the listener
+ * admits any Tailcat node, and T3 pairing and sessions gate everything exactly
+ * as on any other network path. Tailcat reads an allowlist only at startup, so
+ * gating by node key would restart the listener, dropping every tunnel, on each
+ * pairing.
  *
  * Pairing over Tailcat is the ordinary T3 pairing flow. The token exchange that
- * consumes a connection code reports the client's node key here, which adds it
- * to the trusted set; the next relock only admits trusted keys.
+ * consumes a connection code reports the client's node key here, which records
+ * the device with its session so it can be listed, renamed, and revoked.
  */
 
 const isTailcatRemoteAccessError = Schema.is(TailcatRemoteAccessError);
 
 export const TAILCAT_REMOTE_ACCESS_STATE_FILE = "tailcat-remote-access.json";
 export const TAILCAT_SERVER_IDENTITY_FILE = "tailcat-server-identity.private.json";
-const RELOCK_DEBOUNCE = Duration.millis(1_500);
 const EXPIRY_GRACE = Duration.seconds(1);
 
 const PersistedTailcatRemoteAccess = Schema.Struct({
@@ -156,19 +153,6 @@ const INITIAL_RUNTIME_STATE: RuntimeState = {
   lastError: null,
   runtime: null,
 };
-
-function allowPolicyEquals(
-  left: TailcatRuntime.TailcatAllowPolicy,
-  right: TailcatRuntime.TailcatAllowPolicy,
-): boolean {
-  if (left._tag !== right._tag) return false;
-  if (left._tag === "keys" && right._tag === "keys") {
-    const a = [...left.nodeKeys].sort();
-    const b = [...right.nodeKeys].sort();
-    return a.length === b.length && a.every((key, index) => key === b[index]);
-  }
-  return true;
-}
 
 function failureOf(
   error: TailcatRuntimeError | TailcatRemoteAccessError,
@@ -296,9 +280,9 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * The pairing window is derived, never stored: it is open exactly while an
-   * unconsumed, unexpired connection code exists. Expiry does not emit a store
-   * event, so a timer re-evaluates at the earliest expiry.
+   * Whether an unconsumed, unexpired connection code exists, for the UI. It is
+   * derived, never stored; expiry does not emit a store event, so a timer
+   * re-evaluates at the earliest expiry.
    */
   const refreshPairingWindow = Effect.gen(function* () {
     const active = yield* listActiveConnectionCodes;
@@ -336,18 +320,6 @@ export const make = Effect.gen(function* () {
     yield* Effect.logInfo("Tailcat listener stopped.", { pid: current.running.handle.pid });
   });
 
-  const desiredAllowPolicy = Effect.gen(function* () {
-    const saved = yield* Ref.get(persisted);
-    const current = yield* Ref.get(runtimeState);
-    if (current.pairingOpen) {
-      return { _tag: "all" } as const satisfies TailcatRuntime.TailcatAllowPolicy;
-    }
-    return {
-      _tag: "keys",
-      nodeKeys: saved.trustedPeers.map((peer) => peer.nodeKey),
-    } as const satisfies TailcatRuntime.TailcatAllowPolicy;
-  });
-
   const scheduleRetry = (failures: number) =>
     Effect.gen(function* () {
       yield* disarmTimer(retryTimer);
@@ -377,7 +349,7 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  const startServe = (allow: TailcatRuntime.TailcatAllowPolicy, localPort: number) =>
+  const startServe = (localPort: number) =>
     Effect.gen(function* () {
       yield* Ref.update(runtimeState, (state) => ({
         ...state,
@@ -396,7 +368,7 @@ export const make = Effect.gen(function* () {
         ),
       );
       const scope = yield* Scope.make("sequential");
-      const handle = yield* runtime.serve({ keyPath: identityPath, localPort, allow }).pipe(
+      const handle = yield* runtime.serve({ keyPath: identityPath, localPort }).pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
       );
@@ -409,12 +381,7 @@ export const make = Effect.gen(function* () {
         failures: 0,
         lastError: null,
       }));
-      yield* Effect.logInfo("Tailcat listener ready.", {
-        pid: handle.pid,
-        localPort,
-        allow: allow._tag,
-        trustedPeerCount: allow._tag === "keys" ? allow.nodeKeys.length : null,
-      });
+      yield* Effect.logInfo("Tailcat listener ready.", { pid: handle.pid, localPort });
       // Watch for an unexpected exit. A stop we initiated replaces `running`
       // first, so only the still-current handle schedules a restart.
       yield* handle.exit.pipe(
@@ -460,17 +427,10 @@ export const make = Effect.gen(function* () {
       }));
       return;
     }
-    const allow = yield* desiredAllowPolicy;
-    if (current.running !== null && allowPolicyEquals(current.running.handle.allow, allow)) {
+    if (current.running !== null) {
       return;
     }
-    if (current.running !== null) {
-      yield* Effect.logInfo("Tailcat allowlist changed; restarting the listener.", {
-        allow: allow._tag,
-      });
-      yield* stopRunning;
-    }
-    yield* startServe(allow, current.localPort).pipe(
+    yield* startServe(current.localPort).pipe(
       Effect.catch((error) =>
         isTailcatRuntimeError(error) || isTailcatRemoteAccessError(error)
           ? recordFailure(error)
@@ -482,8 +442,7 @@ export const make = Effect.gen(function* () {
   const reconcileLoop = Effect.gen(function* () {
     for (;;) {
       yield* Queue.take(signals);
-      // Coalesce bursts (a consumed code plus its recorded peer arrive together).
-      yield* Effect.sleep(RELOCK_DEBOUNCE);
+      // One pass covers every signal queued so far.
       yield* Queue.clear(signals);
       yield* refreshPairingWindow;
       yield* reconcile;
@@ -564,9 +523,6 @@ export const make = Effect.gen(function* () {
       pairingToken: issued.credential,
       expiresAt,
     };
-    // The window opens through the pairing-link change stream; nudge it so the
-    // listener reopens without waiting for the debounce to notice on its own.
-    yield* signalReconcile;
     yield* Effect.logInfo("Tailcat connection code issued.", {
       pairingLinkId: issued.id,
       expiresAt,
@@ -639,7 +595,6 @@ export const make = Effect.gen(function* () {
       fingerprint: tailcatNodeKeyFingerprint(input.nodeKey),
       label,
     });
-    yield* signalReconcile;
     yield* publish;
   }, persistedLock.withPermits(1));
 
@@ -667,7 +622,6 @@ export const make = Effect.gen(function* () {
       fingerprint: tailcatNodeKeyFingerprint(peer.nodeKey),
       revokedSessions: peer.sessionIds.length,
     });
-    yield* signalReconcile;
     return yield* publish;
   }, persistedLock.withPermits(1));
 
@@ -747,7 +701,7 @@ export const make = Effect.gen(function* () {
     readyEndpoint: Effect.gen(function* () {
       const current = yield* Ref.get(runtimeState);
       const saved = yield* Ref.get(persisted);
-      // Only while the listener is up (or bouncing for a relock): a failed or
+      // Only while the listener is up (or restarting after a crash): a failed or
       // unavailable listener must not be advertised in codes.
       const serving = current.status === "ready" || current.status === "restarting";
       return saved.enabled && serving && current.address !== null && current.localPort !== null

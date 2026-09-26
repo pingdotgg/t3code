@@ -45,8 +45,6 @@ const SERVER_FINGERPRINT = "7ea7·7163·ff32";
 const PEER_NODE_KEY: TailcatNodeKey =
   "nodekey:9ab555a4a588b75d2054adb683db82461bb6c707d43e8ba39439f8eb1e821503";
 const LOCAL_PORT = 3773;
-/** Mirrors the service's relock debounce: one adjust lets a pending reconcile run. */
-const RELOCK_DEBOUNCE = Duration.millis(1_500);
 /** Ceiling of the first-failure restart backoff (1s base plus 25% jitter). */
 const FIRST_RETRY_BACKOFF_MAX = Duration.millis(1_250);
 const RUNTIME_INFO: TailcatRuntimeInfo = {
@@ -68,7 +66,6 @@ interface FakeServe {
   readonly options: {
     readonly keyPath: string;
     readonly localPort: number;
-    readonly allow: TailcatRuntime.TailcatAllowPolicy;
   };
   /** Complete this to simulate the listener process dying. */
   readonly exit: Deferred.Deferred<Option.Option<number>>;
@@ -124,7 +121,6 @@ const fakeRuntimeLayer = Layer.unwrap(
             pid: nextPid++,
             address: SERVER_ADDRESS,
             localPort: options.localPort,
-            allow: options.allow,
             exit: Deferred.await(exit),
             isRunning: Ref.get(running),
             recentOutput: Effect.succeed([`listening on 127.0.0.1:${options.localPort}`]),
@@ -220,7 +216,6 @@ const startEnabled = Effect.gen(function* () {
   const ready = yield* watchState((state) => state.status === "ready");
   yield* service.start({ localPort: LOCAL_PORT });
   const enabled = yield* service.setEnabled(true);
-  yield* TestClock.adjust(RELOCK_DEBOUNCE);
   const serve = yield* Queue.take(fake.serves);
   const state = yield* Fiber.join(ready);
   return { enabled, serve, state };
@@ -295,11 +290,10 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
     Effect.gen(function* () {
       const service = yield* TailcatRemoteAccess.TailcatRemoteAccess;
       const fake = yield* FakeTailcat;
-      const reconcileAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(RELOCK_DEBOUNCE);
-      const reconciled = yield* watchState((state) => Date.parse(state.updatedAt) >= reconcileAt);
+      // `start` publishes nothing itself; the first publish is its reconcile pass.
+      const reconciled = yield* watchState(() => true);
 
       yield* service.start({ localPort: LOCAL_PORT });
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
       const state = yield* Fiber.join(reconciled);
 
       expect(state).toMatchObject({
@@ -318,7 +312,7 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
     }).pipe(Effect.provide(makeTestLayer())),
   );
 
-  it.effect("enabling creates the identity once and serves a locked listener", () =>
+  it.effect("enabling creates the identity once and serves the listener", () =>
     Effect.gen(function* () {
       const service = yield* TailcatRemoteAccess.TailcatRemoteAccess;
       const fake = yield* FakeTailcat;
@@ -328,13 +322,12 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
 
       const { enabled, serve, state } = yield* startEnabled;
 
-      // setEnabled answers immediately; the listener comes up after the debounce.
+      // setEnabled answers immediately; the listener comes up on the next reconcile pass.
       expect(enabled.enabled).toBe(true);
       expect(enabled.status).toBe("disabled");
       expect(serve.options).toEqual({
         keyPath: path.join(config.secretsDir, TailcatRemoteAccess.TAILCAT_SERVER_IDENTITY_FILE),
         localPort: LOCAL_PORT,
-        allow: { _tag: "keys", nodeKeys: [] },
       });
       expect(yield* Ref.get(fake.identityGenerations)).toBe(1);
       expect(yield* fileSystem.exists(serve.options.keyPath)).toBe(true);
@@ -356,83 +349,81 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
     }).pipe(Effect.provide(makeTestLayer())),
   );
 
-  it.effect("a connection code carries a one-time pairing token and opens the listener", () =>
-    Effect.gen(function* () {
-      const service = yield* TailcatRemoteAccess.TailcatRemoteAccess;
-      const fake = yield* FakeTailcat;
-      const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
-      const { serve: locked } = yield* startEnabled;
+  it.effect(
+    "a connection code carries a one-time pairing token without restarting the listener",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* TailcatRemoteAccess.TailcatRemoteAccess;
+        const fake = yield* FakeTailcat;
+        const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
+        const { serve: listener } = yield* startEnabled;
 
-      const opened = yield* watchState((state) => state.pairingOpen && state.status === "ready");
-      const issuedAt = yield* Clock.currentTimeMillis;
-      const result = yield* service.createConnectionCode({});
-      const payload = decodeTailcatConnectionCode(result.code);
+        const opened = yield* watchState((state) => state.pairingOpen && state.status === "ready");
+        const issuedAt = yield* Clock.currentTimeMillis;
+        const result = yield* service.createConnectionCode({});
+        const payload = decodeTailcatConnectionCode(result.code);
 
-      expect(result.code.startsWith("t3c://tailcat/")).toBe(true);
-      expect(payload).toEqual(result.payload);
-      expect(payload).toMatchObject({
-        v: 1,
-        transport: "tailcat",
-        address: SERVER_ADDRESS,
-        port: LOCAL_PORT,
-        environmentId: ENVIRONMENT_ID,
-        name: DESCRIPTOR.label,
-        serverVersion: DESCRIPTOR.serverVersion,
-        expiresAt: result.expiresAt,
-      });
-      expect(Date.parse(result.expiresAt) - issuedAt).toBe(
-        TAILCAT_CONNECTION_CODE_DEFAULT_TTL_SECONDS * 1_000,
-      );
-      const link = (yield* pairingLinks.listActive()).find(
-        (candidate) => candidate.id === result.pairingLinkId,
-      );
-      expect(link?.subject).toBe(TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT);
+        expect(result.code.startsWith("t3c://tailcat/")).toBe(true);
+        expect(payload).toEqual(result.payload);
+        expect(payload).toMatchObject({
+          v: 1,
+          transport: "tailcat",
+          address: SERVER_ADDRESS,
+          port: LOCAL_PORT,
+          environmentId: ENVIRONMENT_ID,
+          name: DESCRIPTOR.label,
+          serverVersion: DESCRIPTOR.serverVersion,
+          expiresAt: result.expiresAt,
+        });
+        expect(Date.parse(result.expiresAt) - issuedAt).toBe(
+          TAILCAT_CONNECTION_CODE_DEFAULT_TTL_SECONDS * 1_000,
+        );
+        const link = (yield* pairingLinks.listActive()).find(
+          (candidate) => candidate.id === result.pairingLinkId,
+        );
+        expect(link?.subject).toBe(TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT);
 
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
-      const open = yield* Queue.take(fake.serves);
-      const state = yield* Fiber.join(opened);
+        const state = yield* Fiber.join(opened);
 
-      expect(open.options.allow).toEqual({ _tag: "all" });
-      expect(yield* locked.isRunning).toBe(false);
-      expect(state.address).toBe(SERVER_ADDRESS);
+        // The listener already admits any Tailcat node, so tunnels stay up.
+        expect(yield* listener.isRunning).toBe(true);
+        expect(yield* Queue.size(fake.serves)).toBe(0);
+        expect(state.address).toBe(SERVER_ADDRESS);
 
-      // Pairing lists no longer carry credentials, so redeem the code's token to
-      // prove it is the credential of the link the service reported.
-      if (payload.pairingToken === undefined) throw new Error("Expected a pairing token");
-      const grant = yield* pairingLinks.consume(payload.pairingToken);
-      expect(grant.id).toBe(result.pairingLinkId);
-      expect(grant.subject).toBe(TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT);
-    }).pipe(Effect.provide(makeTestLayer())),
+        // Pairing lists no longer carry credentials, so redeem the code's token to
+        // prove it is the credential of the link the service reported.
+        if (payload.pairingToken === undefined) throw new Error("Expected a pairing token");
+        const grant = yield* pairingLinks.consume(payload.pairingToken);
+        expect(grant.id).toBe(result.pairingLinkId);
+        expect(grant.subject).toBe(TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT);
+      }).pipe(Effect.provide(makeTestLayer())),
   );
 
-  it.effect("relocks the listener once the connection code expires", () =>
+  it.effect("reports the pairing window closed once the connection code expires", () =>
     Effect.gen(function* () {
       const service = yield* TailcatRemoteAccess.TailcatRemoteAccess;
       const fake = yield* FakeTailcat;
-      yield* startEnabled;
+      const { serve: listener } = yield* startEnabled;
+      const opened = yield* watchState((state) => state.pairingOpen);
       yield* service.createConnectionCode({ ttlSeconds: 60 });
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
-      const open = yield* Queue.take(fake.serves);
-      expect(open.options.allow).toEqual({ _tag: "all" });
+      yield* Fiber.join(opened);
 
       const closed = yield* watchState((state) => !state.pairingOpen && state.status === "ready");
-      // Past the code's expiry (plus the service's grace second), then the debounce.
+      // Past the code's expiry, plus the service's grace second.
       yield* TestClock.adjust(Duration.seconds(61));
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
-      const relocked = yield* Queue.take(fake.serves);
       const state = yield* Fiber.join(closed);
 
-      expect(relocked.options.allow).toEqual({ _tag: "keys", nodeKeys: [] });
-      expect(yield* open.isRunning).toBe(false);
       expect(state.pairingOpen).toBe(false);
+      expect(yield* listener.isRunning).toBe(true);
+      expect(yield* Queue.size(fake.serves)).toBe(0);
     }).pipe(Effect.provide(makeTestLayer())),
   );
 
-  it.effect("trusted peers are persisted, admitted on relock, and revocable", () =>
+  it.effect("paired devices are persisted and revocable without restarting the listener", () =>
     Effect.gen(function* () {
       const service = yield* TailcatRemoteAccess.TailcatRemoteAccess;
       const fake = yield* FakeTailcat;
-      const { serve: locked } = yield* startEnabled;
+      const { serve: listener } = yield* startEnabled;
       const sessionId = AuthSessionId.make("session-julius-iphone");
 
       yield* service.recordTrustedPeer({
@@ -450,19 +441,13 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
       });
       expect((yield* readPersistedState).trustedPeers).toEqual([peer]);
 
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
-      const admitting = yield* Queue.take(fake.serves);
-      expect(admitting.options.allow).toEqual({ _tag: "keys", nodeKeys: [PEER_NODE_KEY] });
-      expect(yield* locked.isRunning).toBe(false);
-
       const revoked = yield* service.revokeTrustedPeer(peer.id);
       expect(revoked.trustedPeers).toEqual([]);
       expect((yield* readPersistedState).trustedPeers).toEqual([]);
 
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
-      const relocked = yield* Queue.take(fake.serves);
-      expect(relocked.options.allow).toEqual({ _tag: "keys", nodeKeys: [] });
-      expect(yield* admitting.isRunning).toBe(false);
+      // Revoking ends the device's T3 sessions; other devices keep their tunnels.
+      expect(yield* listener.isRunning).toBe(true);
+      expect(yield* Queue.size(fake.serves)).toBe(0);
 
       const missing = yield* Effect.flip(service.revokeTrustedPeer(peer.id));
       expect(missing.code).toBe("unknown");
@@ -487,11 +472,9 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
         (state) => state.status === "ready" && state.lastError === null,
       );
       yield* TestClock.adjust(FIRST_RETRY_BACKOFF_MAX);
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
-      const second = yield* Queue.take(fake.serves);
+      yield* Queue.take(fake.serves);
       const readyState = yield* Fiber.join(restarted);
 
-      expect(second.options.allow).toEqual({ _tag: "keys", nodeKeys: [] });
       expect(readyState.address).toBe(SERVER_ADDRESS);
       // The identity file survived the restart, so no new address was minted.
       expect(yield* Ref.get(fake.identityGenerations)).toBe(1);
@@ -508,7 +491,6 @@ it.layer(NodeServices.layer)("TailcatRemoteAccess", (it) => {
       const returned = yield* service.setEnabled(false);
       expect(returned.enabled).toBe(false);
 
-      yield* TestClock.adjust(RELOCK_DEBOUNCE);
       const state = yield* Fiber.join(disabled);
 
       expect(state).toMatchObject({

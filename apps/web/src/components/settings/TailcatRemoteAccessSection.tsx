@@ -276,8 +276,8 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
   });
   const [isToggling, setIsToggling] = useState(false);
   const [isCreatingCode, setIsCreatingCode] = useState(false);
-  // `windowOpened` records that the listener reported the pairing window open
-  // for this code, so the card can tell a redeemed code from a new one.
+  // `windowOpened` records that the server reported this code as active, so the
+  // card can tell a redeemed code from a new one.
   const [issuedCode, setIssuedCode] = useState<{
     readonly result: TailcatConnectionCodeResult;
     readonly windowOpened: boolean;
@@ -463,7 +463,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
               </Badge>
               {state.pairingOpen ? (
                 <Badge variant="info" size="sm">
-                  Pairing window open
+                  Code active
                 </Badge>
               ) : null}
               {runtimeLabel ? (
@@ -558,8 +558,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
                   {trustedDevicesSetting.title}
                 </h4>
                 <p className="text-xs text-muted-foreground">
-                  Devices that redeemed a connection code. Only these can reach the listener outside
-                  a pairing window.
+                  Devices that redeemed a connection code. Revoking one ends its sessions here.
                 </p>
               </div>
               {state.trustedPeers.length === 0 ? (

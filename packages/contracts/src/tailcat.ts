@@ -21,9 +21,8 @@ import {
 const TAILCAT_CONNECTION_CODE_VERSION = 1 as const;
 
 /**
- * Pairing links minted for Tailcat connection codes carry this subject. The
- * server relaxes its Tailcat allowlist only while such a link is active, and
- * only a token exchange that consumed one of them may register a trusted peer.
+ * Pairing links minted for Tailcat connection codes carry this subject. Only a
+ * token exchange that consumed one of them may record a paired Tailcat device.
  */
 export const TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT = "tailcat-connection-code" as const;
 
@@ -129,7 +128,7 @@ export const TailcatRemoteAccessState = Schema.Struct({
   status: TailcatServeStatus,
   address: Schema.NullOr(TailcatAddress),
   remotePort: Schema.NullOr(PortSchema),
-  /** True while a connection code is active and unknown peers may reach the listener. */
+  /** True while an unredeemed, unexpired connection code exists. */
   pairingOpen: Schema.Boolean,
   trustedPeers: Schema.Array(TailcatTrustedPeer),
   runtime: Schema.NullOr(TailcatRuntimeInfo),

@@ -335,7 +335,7 @@ describe("DesktopTailcatEnvironment", () => {
       assert.instanceOf(error, DesktopTailcatEnvironment.DesktopTailcatEnvironmentError);
       assert.equal(error.code, "remote-unavailable");
       assert.isTrue(error.message.startsWith("[tailcat:remote-unavailable] "));
-      assert.include(error.message, "not trusted");
+      assert.include(error.message, "may be offline");
       assert.include(error.message, "offline");
       // The failed attempt's forwarder went down with its scope.
       assert.equal(harness.forwards.length, 1);

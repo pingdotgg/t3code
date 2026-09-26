@@ -121,8 +121,8 @@ export const bootstrapRemoteBearerSession = Effect.fn(
   readonly clientMetadata?: AuthClientPresentationMetadata;
   /**
    * This client's Tailcat node key. The server only honors it when the
-   * credential came from a Tailcat connection code, and then keeps admitting
-   * this device at the transport layer after the pairing window closes.
+   * credential came from a Tailcat connection code, and then lists this device
+   * with its session so it can be renamed or revoked.
    */
   readonly clientTailcatNodeKey?: string;
   readonly timeoutMs?: number;

@@ -17,7 +17,7 @@ const ADDRESS = `tc${"a".repeat(40)}`;
 describe("issuedConnectionCodeStatus", () => {
   const live = { expiresAtMs: 2_000, nowMs: 1_000 };
 
-  it("stays live until the pairing window has opened and closed again", () => {
+  it("stays live until the server has reported the code active and then inactive", () => {
     expect(
       issuedConnectionCodeStatus({ ...live, pairingWindowOpened: false, pairingOpen: false }),
     ).toBe("live");

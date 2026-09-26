@@ -66,10 +66,6 @@ export const TAILCAT_PING_DEFAULT_TIMEOUT = Duration.seconds(8);
 export const TAILCAT_PROCESS_STOP_GRACE = Duration.seconds(2);
 export const TAILCAT_RECENT_OUTPUT_LINES = 40;
 
-export type TailcatAllowPolicy =
-  | { readonly _tag: "all" }
-  | { readonly _tag: "keys"; readonly nodeKeys: ReadonlyArray<TailcatNodeKey> };
-
 export interface TailcatExecutableResolution {
   /** Explicit developer override (`T3CODE_TAILCAT_BINARY`), checked first. */
   readonly overridePath?: string | undefined;
@@ -92,7 +88,6 @@ export interface TailcatProcessHandle {
 export interface TailcatServeHandle extends TailcatProcessHandle {
   readonly address: TailcatAddress;
   readonly localPort: number;
-  readonly allow: TailcatAllowPolicy;
 }
 
 export interface TailcatForwardHandle extends TailcatProcessHandle {
@@ -146,11 +141,13 @@ export class TailcatRuntime extends Context.Service<
     readonly readClientPublicKey: (options: {
       readonly keyPath: string;
     }) => Effect.Effect<TailcatNodeKey, TailcatIdentityError>;
-    /** Exposes a local port; the process lives as long as the current Scope. */
+    /**
+     * Exposes a local port to any Tailcat node; T3 auth gates what they can do.
+     * The process lives as long as the current Scope.
+     */
     readonly serve: (options: {
       readonly keyPath: string;
       readonly localPort: number;
-      readonly allow: TailcatAllowPolicy;
     }) => Effect.Effect<TailcatServeHandle, TailcatServeError, Scope.Scope>;
     /**
      * Forwards a reserved loopback port to a remote port. Resolves once the
@@ -244,17 +241,6 @@ export function parseTailcatPong(line: string, measuredAt: string): TailcatPathP
     latencyMs,
     measuredAt,
   };
-}
-
-export function tailcatAllowFlag(policy: TailcatAllowPolicy): ReadonlyArray<string> {
-  switch (policy._tag) {
-    case "all":
-      return [];
-    case "keys":
-      return policy.nodeKeys.length === 0
-        ? ["--allow=none"]
-        : [`--allow=${policy.nodeKeys.join(",")}`];
-  }
 }
 
 const isPortInUseOutput = (lines: ReadonlyArray<string>): boolean =>
@@ -687,16 +673,9 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
   const serve: TailcatRuntime["Service"]["serve"] = Effect.fn("TailcatRuntime.serve")(function* ({
     keyPath,
     localPort,
-    allow,
   }) {
     const runtime = yield* resolve;
-    const args = [
-      "--json",
-      `--key=${keyPath}`,
-      "serve",
-      ...tailcatAllowFlag(allow),
-      String(localPort),
-    ];
+    const args = ["--json", `--key=${keyPath}`, "serve", String(localPort)];
     const spawned = yield* spawnLongRunning({
       executablePath: runtime.executablePath,
       args,
@@ -760,7 +739,6 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
       ...processHandle(spawned),
       address,
       localPort,
-      allow,
     } satisfies TailcatServeHandle;
   });
 

@@ -203,7 +203,7 @@ it.layer(NodeServices.layer)("t3 remote tailcat", (it) => {
           assert.include(status, "Enabled: yes");
           assert.include(status, "Status: ready");
           assert.include(status, `Address: ${TAILCAT_ADDRESS}`);
-          assert.include(status, "Pairing window: closed");
+          assert.include(status, "Connection code: none active");
           assert.include(status, "Runtime: bundled 1.4.0 (pinned 1.4.0) at /opt/t3/tailcat");
           assert.include(status, "Trusted peers: 1");
           assert.include(status, "Last error: none");

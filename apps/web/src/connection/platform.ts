@@ -226,7 +226,7 @@ export function parseTailcatBridgeError(cause: unknown): {
 /**
  * Maps a forwarder failure onto the connection error model. Missing or
  * incompatible runtimes block with an install hint; anything about the remote
- * side (not trusted yet, offline, timed out) is transient so the supervisor
+ * side (offline, access turned off, timed out) is transient so the supervisor
  * keeps retrying once the other machine is reachable again.
  */
 export function tailcatPreparationError(cause: unknown): ConnectionAttemptError {
@@ -298,7 +298,7 @@ const ensureDesktopTailcatEnvironment = Effect.fn("web.connectionPlatform.tailca
  * Redeems a pasted connection code: start the forward, learn which
  * environment answers through it, then trade the one-time credential for a
  * bearer session while presenting this device's Tailcat key so the remote
- * server keeps admitting it after the pairing window closes.
+ * server lists this device among its paired Tailcat devices.
  */
 const provisionDesktopTailcatEnvironment = Effect.fn(
   "web.connectionPlatform.tailcat.provisionDesktop",

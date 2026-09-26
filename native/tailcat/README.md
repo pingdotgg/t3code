@@ -84,7 +84,7 @@ on `PATH` also works, and `T3CODE_TAILCAT_BINARY=/path/to/tailcat` overrides bot
    `LICENSE`, rewrites `manifest.json`, and prints a field-by-field summary of what changed.
 2. Review the upstream changelog. Tailcat makes no CLI stability promises; check
    `packages/tailcat/src/runtime.ts` for the flags and output T3 relies on (`--json`, `--key`,
-   `serve --allow`, `forward <local>:<remote>`, `genkey --client`, `printpub`, `ping`).
+   `serve`, `forward <local>:<remote>`, `genkey --client`, `printpub`, `ping`).
 3. Bump `TAILCAT_COMPATIBLE_RANGE` in `packages/tailcat/src/manifest.ts` if the major or minor
    changed, then run the opt-in real-binary test:
    `T3CODE_TAILCAT_E2E=1 vp test run packages/tailcat/src/runtime.e2e.test.ts`.

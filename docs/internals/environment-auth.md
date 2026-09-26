@@ -15,9 +15,9 @@ client labels and device metadata have no authorization role.
 
 The one client-supplied exchange parameter with an effect is
 `client_tailcat_node_key`. When the redeemed credential is a Tailcat connection
-code, the exchange records that key as a trusted Tailcat peer linked to the new
-session, so the device can still reach the listener after the pairing window
-closes. It grants no scopes and is ignored for every other credential. See
+code, the exchange records that key as a paired Tailcat device linked to the new
+session, so the device can be listed, renamed, and revoked. It grants no scopes
+and is ignored for every other credential. See
 [Tailcat](./tailcat.md).
 
 The access read model contains pairing metadata, never recoverable pairing

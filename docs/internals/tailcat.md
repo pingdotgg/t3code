@@ -6,8 +6,8 @@ Tailcat is a transport underneath T3, never a trust boundary of its own. A T3 se
 its loopback HTTP/WebSocket listener through `tailcat serve`; a client runs `tailcat forward`
 and gets `http://127.0.0.1:<port>`, which then goes through the ordinary descriptor fetch,
 pairing, session, and RPC path. Everything T3 already knows about auth and scopes applies
-unchanged. The only thing Tailcat adds is _who may open a tunnel at all_, and T3 drives that
-allowlist from its own pairing state.
+unchanged, and the listener admits any Tailcat node: T3 auth, not the tunnel, decides what a
+device may do.
 
 ## Pieces
 
@@ -45,9 +45,9 @@ staged into the desktop `extraResources` and each CLI archive. Bumping the pin i
 `TailcatRemoteAccess` owns one `tailcat serve` child at a time.
 
 ```text
-disabled ──enable──▶ starting ──listenAddr──▶ ready ──allowlist change──▶ restarting ──▶ ready
+disabled ──enable──▶ starting ──listenAddr──▶ ready
     ▲                    │                       │
-    └──────disable───────┴──── exit / error ─────┴──▶ error ──backoff──▶ starting
+    └──────disable───────┴──── exit / error ─────┴──▶ error ──backoff──▶ restarting ──▶ ready
                                                           (permanent) ──▶ unavailable
 ```
 
@@ -56,20 +56,20 @@ disabled ──enable──▶ starting ──listenAddr──▶ ready ──al
   `regenerateIdentity` replaces it (new address, every saved connection elsewhere breaks by
   design).
 - **Enable state** is persisted in `<stateDir>/tailcat-remote-access.json` together with the
-  trusted peers. `t3 serve --tailcat` sets it; the Settings toggle sets it too. The listener
+  paired devices. `t3 serve --tailcat` sets it; the Settings toggle sets it too. The listener
   starts once the HTTP server has bound, using the real loopback port, and never binds anything
   but `127.0.0.1` itself: Tailcat is the only thing that reaches that port from outside.
-- **Allowlist** is derived, never edited by hand: while an unconsumed, unexpired connection code
-  exists the listener runs with `--allow` open (pairing window); otherwise it runs with exactly
-  the trusted peers' node keys (or `--allow=none` when there are none). Tailcat evaluates the
-  allowlist only at startup, so every change restarts the child. Existing forwards do not
-  survive that restart; clients reconnect through the connection supervisor, which re-creates
-  the forward.
-- **Trust** is recorded during the ordinary `/oauth/token` exchange: when the redeemed bootstrap
-  credential was issued as a Tailcat connection code and the client sent its node key
-  (`client_tailcat_node_key`), the key becomes a trusted peer linked to the session it created.
-  Revoking the peer revokes those sessions and relocks the listener; a plain session revocation
-  leaves transport trust in place until the peer is revoked.
+- **No allowlist.** The listener runs without `--allow`, so any Tailcat node can open a tunnel
+  and reach what T3 serves without a session (the environment descriptor and the pairing and
+  token endpoints), the same as a client on the LAN with network access enabled. Tailcat reads
+  `--allow` only at startup, so gating by node key restarts the child, and drops every tunnel,
+  whenever a device pairs or a code lapses. An earlier revision did that; each pairing then
+  disconnected every other device until its forward was replaced, tens of seconds per restart.
+- **Paired devices** are recorded during the ordinary `/oauth/token` exchange: when the redeemed
+  bootstrap credential was issued as a Tailcat connection code and the client sent its node key
+  (`client_tailcat_node_key`), the key is recorded with the session it created, so the device
+  can be listed, renamed, and revoked. Revoking it revokes those sessions; the key carries no
+  access of its own.
 - **Failures** are typed (`TailcatFailureCode`), kept as `lastError`, and retried with jittered
   exponential backoff (1s → 30s). A missing, non-executable, or incompatible binary is
   permanent (`unavailable`) and stops retrying until settings change.
@@ -108,28 +108,26 @@ for five minutes; they never contain a reusable credential or a private key. Par
 
 ## Threat model
 
-Assets: the server's Tailcat private key (stable address, reachable by trusted peers), the
-client's private key (transport access to every server that trusts it), pairing tokens,
-session tokens, and the allowlist.
+Assets: the server's Tailcat private key (its stable address), the client's private key, pairing
+tokens, and session tokens.
 
-| Threat                                      | Mitigation                                                                                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Attacker learns the Tailcat address         | Locked mode: connections from unknown node keys never complete a handshake. Address alone grants nothing.                |
-| Attacker obtains a connection code          | Single use, five-minute TTL, revocable from the pairing-links list; consuming it needs the code before the owner does.   |
-| Attacker connects during the pairing window | The window is open only while a code is unconsumed; they still need a valid pairing credential to get a session.         |
-| Stolen client private key                   | Transport access only; T3 sessions are separate. Revoke the trusted peer on each server; regenerate the client identity. |
-| Stolen server private key                   | Attacker can impersonate the server address. `regenerateIdentity` rotates it; the identity file is 0600 in a 0700 dir.   |
-| Compromised or malicious Tailcat binary     | Pinned version, checksums verified at build time, no runtime downloads, version check at startup, override is opt-in.    |
-| Server accidentally exposed on 0.0.0.0      | Tailcat serves the loopback listener; enabling Tailcat never changes the bind host.                                      |
-| Secrets in logs or diagnostics              | Runtime output is redacted (`redactTailcatOutputLine`), codes are redacted, private keys are never read into logs.       |
-| Relay (DERP) observing traffic              | Tailcat's transport is end-to-end encrypted; the relay sees ciphertext. T3 auth runs inside it.                          |
+| Threat                                  | Mitigation                                                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Attacker learns the Tailcat address     | They reach only the unauthenticated surface (descriptor, pairing, token exchange), like a LAN client; sessions still need T3 credentials. |
+| Attacker obtains a connection code      | Single use, five-minute TTL, revocable from the pairing-links list; consuming it needs the code before the owner does.                    |
+| Stolen client private key               | Grants nothing by itself; T3 sessions are separate. Revoke the device's sessions; regenerate the client identity.                         |
+| Stolen server private key               | Attacker can impersonate the server address. `regenerateIdentity` rotates it; the identity file is 0600 in a 0700 dir.                    |
+| Compromised or malicious Tailcat binary | Pinned version, checksums verified at build time, no runtime downloads, version check at startup, override is opt-in.                     |
+| Server accidentally exposed on 0.0.0.0  | Tailcat serves the loopback listener; enabling Tailcat never changes the bind host.                                                       |
+| Secrets in logs or diagnostics          | Runtime output is redacted (`redactTailcatOutputLine`), codes are redacted, private keys are never read into logs.                        |
+| Relay (DERP) observing traffic          | Tailcat's transport is end-to-end encrypted; the relay sees ciphertext. T3 auth runs inside it.                                           |
 
 Out of scope: a compromised machine on either end, and DoS against the DERP relays.
 
 ## Diagnostics and observability
 
-Structured logs: `Tailcat listener ready/stopped`, `Tailcat allowlist changed`, `Trusted a
-Tailcat peer`, `Tailcat forward ready/exited`, all with pids, ports, and fingerprints, never
+Structured logs: `Tailcat listener ready/stopped`, `Tailcat peer trusted/revoked`,
+`Tailcat forward ready/exited`, all with pids, ports, and fingerprints, never
 keys. Spans: `TailcatRuntime.*`, `TailcatRemoteAccess.*`, `desktop.ipc.tailcatEnvironment.*`.
 The UI's "Copy diagnostics" gathers `TailcatRemoteAccessState` (server) or
 `TailcatConnectionDiagnostics` (client), both secret-free by construction. No usage metrics
@@ -138,10 +136,10 @@ are collected for Tailcat beyond the existing connection-method analytics dimens
 
 ## Known upstream limitations (Tailcat v0.5.0)
 
-- `--allow` is read once at startup; changing trust restarts the listener and drops tunnels.
+- `--allow` is read once at startup, which is why T3 does not gate the listener by node key.
 - An existing `forward` process stays alive but stops passing traffic after the remote
-  `serve` restarts; readiness probes and restarts handle this.
-- Denied clients time out silently; T3 surfaces that as "not trusted or offline".
+  `serve` restarts (a crash or a regenerated identity); readiness probes and restarts handle
+  this.
 - Upstream releases ship Linux and Windows only; macOS is built from the pinned source.
 - Without `--fixed-region` the address changes with the chosen relay region; the server
   identity always uses a fixed region.

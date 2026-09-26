@@ -56,9 +56,9 @@ Tailcat is the other desktop-managed tunnel. Desktop main runs the bundled Tailc
 client and owns the local forward; the renderer authorizes through it like any
 bearer endpoint. A saved Tailcat connection persists the logical endpoint, the
 peer's Tailcat address and the server's port, never the local forward port, which
-is chosen anew for each forward. The tunnel decides reachability only: trust comes
-from redeeming a connection code, and the server's listener admits just the node
-keys that did. See [Tailcat](./tailcat.md).
+is chosen anew for each forward. The tunnel decides reachability only; access is
+ordinary T3 auth, starting with redeeming a connection code. See
+[Tailcat](./tailcat.md).
 
 Remote servers can outlive several client releases. Clients must use advertised
 capabilities and handle their absence, rather than assume their own version

@@ -151,7 +151,7 @@ const formatTailcatStatus = (
     `  Status: ${state.status}`,
     `  Address: ${state.address ?? "none"}`,
     `  Remote port: ${state.remotePort === null ? "none" : String(state.remotePort)}`,
-    `  Pairing window: ${state.pairingOpen ? "open (a connection code is active)" : "closed"}`,
+    `  Connection code: ${state.pairingOpen ? "active (not yet redeemed)" : "none active"}`,
     `  Runtime: ${formatRuntime(state)}`,
     `  Identity: ${state.identityFingerprint ?? "none"}`,
     `  Trusted peers: ${String(state.trustedPeers.length)}`,

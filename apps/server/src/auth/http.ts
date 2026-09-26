@@ -371,9 +371,9 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               }),
               proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
             );
-            // A Tailcat connection code binds the pairing to the client's node
-            // key: only a grant minted as such may extend the transport
-            // allowlist, so a LAN pairing link cannot smuggle a key in.
+            // Only a grant minted as a Tailcat connection code records the
+            // client's node key as a paired Tailcat device, so any other
+            // pairing link cannot claim one.
             const tailcatNodeKey = args.payload.client_tailcat_node_key?.trim();
             if (
               tailcatNodeKey !== undefined &&
