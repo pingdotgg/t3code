@@ -1079,7 +1079,9 @@ export function projectEvent(
           const activities = retainThreadActivities(
             [
               ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-              payload.activity,
+              payload.activity.kind.startsWith("connection.")
+                ? { ...payload.activity, sequence: event.sequence }
+                : payload.activity,
             ].toSorted(compareThreadActivities),
           );
 

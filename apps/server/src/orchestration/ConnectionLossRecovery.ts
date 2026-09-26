@@ -389,10 +389,26 @@ export const makeConnectionLossRecovery = Effect.fnUntraced(function* (
       event.payload.activity.kind === "connection.interrupted"
     ) {
       const turnId = event.payload.activity.turnId;
-      if (!turnId || !(yield* settings.getSettings).resumeThreadsAfterConnectionLoss) return;
+      if (!turnId) return;
       const threadId = event.payload.threadId;
       const key = `${threadId}:${turnId}`;
-      if (seen.has(key)) return;
+      const skippedRecovery: Recovery = {
+        threadId,
+        interruptedTurnId: turnId,
+        interruptedSequence: event.sequence,
+        admitting: false,
+        outcomes: new Map(),
+      };
+      if (!(yield* settings.getSettings).resumeThreadsAfterConnectionLoss) {
+        if (pending.has(threadId)) yield* cancel(threadId);
+        else yield* append(skippedRecovery, "cancelled");
+        return;
+      }
+      if (seen.has(key)) {
+        if (!pending.has(threadId) && !cancellations.has(threadId))
+          yield* append(skippedRecovery, "cancelled");
+        return;
+      }
       seen.add(key);
       // The bounded cache only suppresses redelivery; eligibility still rejects stale turns.
       if (seen.size > 10_000) seen.delete(seen.values().next().value!);
@@ -482,11 +498,19 @@ export const makeConnectionLossRecovery = Effect.fnUntraced(function* (
           seen.add(`${event.payload.threadId}:${event.payload.turnId}`);
           if (seen.size > 10_000) seen.delete(seen.values().next().value!);
         }
+        // Called by the domain subscriber before asynchronous cleanup is queued.
+        // Revoke admission immediately; other threads can keep processing events.
+        if (pending.has(event.payload.threadId))
+          pending.get(event.payload.threadId)!.cancelRequested = true;
         return cancel(event.payload.threadId).pipe(Effect.orElseSucceed(() => false));
       case "thread.turn-start-requested":
       case "thread.archived":
       case "thread.deleted":
       case "thread.settled":
+        // Called by the domain subscriber before asynchronous cleanup is queued.
+        // Revoke admission immediately; other threads can keep processing events.
+        if (pending.has(event.payload.threadId))
+          pending.get(event.payload.threadId)!.cancelRequested = true;
         return cancel(event.payload.threadId).pipe(Effect.orElseSucceed(() => false));
       case "thread.activity-appended":
         return event.payload.activity.kind === "connection.interrupted"
@@ -511,6 +535,7 @@ export const makeConnectionLossRecovery = Effect.fnUntraced(function* (
       const detail = Option.getOrUndefined(
         yield* query.getThreadDetailById(thread.id, {
           activityKinds: [
+            "connection.interrupted",
             "connection.recovery.waiting",
             "connection.recovery.resumed",
             "connection.recovery.failed",
@@ -519,7 +544,10 @@ export const makeConnectionLossRecovery = Effect.fnUntraced(function* (
         }),
       );
       const last = detail?.activities.at(-1);
-      if (last?.kind === "connection.recovery.waiting" && last.turnId) {
+      if (
+        (last?.kind === "connection.interrupted" || last?.kind === "connection.recovery.waiting") &&
+        last.turnId
+      ) {
         yield* append(
           {
             threadId: thread.id,

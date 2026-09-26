@@ -90,6 +90,22 @@ type ProviderIntentEvent = Extract<
   }
 >;
 
+function shouldProcessProviderIntent(event: OrchestrationEvent): event is ProviderIntentEvent {
+  return (
+    (event.type === "thread.meta-updated" &&
+      (event.payload.regenerateTitle === true ||
+        event.payload.titleState?.needsRefinement === true)) ||
+    (event.type === "thread.session-set" && event.payload.session.status === "ready") ||
+    event.type === "thread.runtime-mode-set" ||
+    event.type === "thread.turn-start-requested" ||
+    event.type === "thread.turn-interrupt-requested" ||
+    event.type === "thread.approval-response-requested" ||
+    event.type === "thread.user-input-response-requested" ||
+    event.type === "thread.session-stop-requested" ||
+    event.type === "thread.settled"
+  );
+}
+
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
@@ -213,6 +229,8 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 }
 
 const make = Effect.gen(function* () {
+  const scope = yield* Effect.scope;
+  const eventTails = new Map<ThreadId, Deferred.Deferred<void>>();
   const connectionLossRecovery = yield* makeConnectionLossRecovery((run) =>
     worker.enqueue({ source: "recovery", run }),
   );
@@ -1892,8 +1910,11 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.as({ interruptedRegenerations: [], refinementThreadIds: [] }));
       }),
     );
-    const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
-      if (!(yield* connectionLossRecovery.handleDomainEvent(event))) {
+    const processEvent = Effect.fn("processEvent")(function* (
+      event: OrchestrationEvent,
+      recoveryHandled: Effect.Effect<boolean>,
+    ) {
+      if (!(yield* recoveryHandled)) {
         if (event.type === "thread.turn-start-requested") {
           yield* appendProviderFailureActivity({
             threadId: event.payload.threadId,
@@ -1908,26 +1929,55 @@ const make = Effect.gen(function* () {
         }
         return;
       }
-      if (
-        (event.type === "thread.meta-updated" &&
-          (event.payload.regenerateTitle === true ||
-            event.payload.titleState?.needsRefinement === true)) ||
-        (event.type === "thread.session-set" && event.payload.session.status === "ready") ||
-        event.type === "thread.runtime-mode-set" ||
-        event.type === "thread.turn-start-requested" ||
-        event.type === "thread.turn-interrupt-requested" ||
-        event.type === "thread.approval-response-requested" ||
-        event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested" ||
-        event.type === "thread.settled"
-      ) {
+      if (shouldProcessProviderIntent(event)) {
         return yield* worker.enqueue(event);
       }
     });
 
+    const routeEvent = Effect.fnUntraced(function* (event: OrchestrationEvent) {
+      if (
+        !shouldProcessProviderIntent(event) &&
+        event.type !== "thread.archived" &&
+        event.type !== "thread.deleted" &&
+        !(
+          event.type === "thread.activity-appended" &&
+          event.payload.activity.kind === "connection.interrupted"
+        )
+      )
+        return;
+      // This call invalidates pending recovery synchronously, before a later
+      // admission can run. Native cleanup waits outside the subscriber and the
+      // provider worker, so another thread can progress and admission can unwind.
+      const recoveryHandled = connectionLossRecovery.handleDomainEvent(event);
+      if (event.aggregateKind !== "thread") return yield* processEvent(event, recoveryHandled);
+      const threadId = ThreadId.make(event.aggregateId);
+      const previous = eventTails.get(threadId);
+      const settled = yield* Deferred.make<void>();
+      eventTails.set(threadId, settled);
+      yield* Effect.gen(function* () {
+        if (previous) yield* Deferred.await(previous);
+        yield* processEvent(event, recoveryHandled);
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("provider command reactor failed to route event", {
+                eventType: event.type,
+                cause: Cause.pretty(cause),
+              }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (eventTails.get(threadId) === settled) eventTails.delete(threadId);
+          }).pipe(Effect.andThen(Deferred.succeed(settled, undefined))),
+        ),
+        Effect.forkIn(scope),
+      );
+    });
+
     // Subscribe before returning, even while event handling waits for server activation.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
-    yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+    yield* forkParked(Stream.runForEach(domainEvents, routeEvent));
     yield* connectionLossRecovery
       .start()
       .pipe(
@@ -1970,6 +2020,9 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: Effect.gen(function* () {
+      while (eventTails.size > 0) {
+        yield* Effect.forEach([...eventTails.values()], Deferred.await, { discard: true });
+      }
       yield* worker.drain;
       yield* connectionLossRecovery.drain;
       yield* threadTitleRegenerationWorker.drain;

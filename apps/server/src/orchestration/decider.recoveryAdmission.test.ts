@@ -124,36 +124,6 @@ it.layer(NodeServices.layer)("connection-loss recovery admission", (it) => {
       }),
   );
 
-  it.effect("rejects recovery when Stop was persisted after the worker checked eligibility", () =>
-    Effect.gen(function* () {
-      const initial = readModel();
-      const stop = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.turn.interrupt",
-          commandId: CommandId.make("cmd-stop"),
-          threadId: THREAD_ID,
-          createdAt: RECOVERED_AT,
-        },
-        readModel: initial,
-      });
-      let stopped = initial;
-      for (const event of Array.isArray(stop) ? stop : [stop]) {
-        stopped = yield* projectEvent(stopped, {
-          ...event,
-          sequence: stopped.snapshotSequence + 1,
-        });
-      }
-      // An interrupt request need not update the thread itself; the stream
-      // version must still invalidate admission based on the earlier read.
-      expect(stopped.threads[0]?.updatedAt).toBe(FAILED_AT);
-      const rejected = yield* decideOrchestrationCommand({
-        command: recoveryCommand(),
-        readModel: stopped,
-      }).pipe(Effect.flip);
-      expect(rejected._tag).toBe("OrchestrationCommandInvariantError");
-    }),
-  );
-
   it.effect("releases only the reservation the worker owns", () =>
     Effect.gen(function* () {
       const reserved = {

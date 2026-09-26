@@ -678,7 +678,9 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
-      const activity = event.payload.activity;
+      const activity = event.payload.activity.kind.startsWith("connection.")
+        ? { ...event.payload.activity, sequence: event.sequence }
+        : event.payload.activity;
       // A resolvable context-window update supersedes earlier resolvable ones
       // for the same turn: consumers only read the latest value (walking the
       // array backwards), and providers stream these updates continuously, so

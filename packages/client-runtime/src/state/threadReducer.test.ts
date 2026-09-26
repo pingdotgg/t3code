@@ -14,6 +14,7 @@ import {
 import type { OrchestrationThread } from "@t3tools/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
+import { deriveConnectionRecoveryNotice } from "../connectionRecovery.ts";
 
 const baseEventFields = {
   eventId: EventId.make("event-1"),
@@ -1127,6 +1128,63 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.activity-appended", () => {
+    it.each(["cancelled", "failed"] as const)(
+      "shows the latest recovery outcome %s when wire receipts share a timestamp",
+      (outcome) => {
+        const at = "2026-04-01T11:00:00.000Z";
+        const turnId = TurnId.make("interrupted-turn");
+        let thread: OrchestrationThread = {
+          ...baseThread,
+          latestTurn: {
+            turnId,
+            state: "error",
+            requestedAt: at,
+            startedAt: at,
+            completedAt: at,
+            assistantMessageId: null,
+          },
+        };
+        // IDs sort in the reverse of receipt order; arrival time cannot break
+        // the tie. The live reducer must retain the server event sequence.
+        for (const [sequence, id, state] of [
+          [20, "z-waiting", "waiting"],
+          [21, "a-terminal", outcome],
+        ] as const) {
+          const result = applyThreadDetailEvent(thread, {
+            ...baseEventFields,
+            eventId: EventId.make(`event-${id}`),
+            sequence,
+            occurredAt: at,
+            aggregateKind: "thread",
+            aggregateId: thread.id,
+            type: "thread.activity-appended",
+            payload: {
+              threadId: thread.id,
+              activity: {
+                id: EventId.make(id),
+                kind: `connection.recovery.${state}`,
+                tone: "info",
+                summary: state,
+                payload: {},
+                turnId,
+                createdAt: at,
+              },
+            },
+          });
+          if (result.kind !== "updated") throw new Error("Recovery receipt was not applied");
+          thread = result.thread;
+        }
+        const notice = deriveConnectionRecoveryNotice({
+          activities: thread.activities,
+          latestTurn: thread.latestTurn,
+          enabled: true,
+          pendingRequest: false,
+          now: Date.parse(at),
+        });
+        expect(notice?.kind ?? null).toBe(outcome === "cancelled" ? null : "failed");
+      },
+    );
+
     it("adds an activity", () => {
       const result = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,

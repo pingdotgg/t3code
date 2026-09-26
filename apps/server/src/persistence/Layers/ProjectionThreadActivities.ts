@@ -97,7 +97,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
   const listProjectionThreadActivityRows = SqlSchema.findAll({
     Request: ListProjectionThreadActivitiesInput,
     Result: ProjectionThreadActivityDbRowSchema,
-    execute: ({ threadId, activityKinds, limit }) =>
+    execute: ({ threadId, turnId, activityKinds, limit }) =>
       sql`
         SELECT
           activity_id AS "activityId",
@@ -113,6 +113,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           SELECT *
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
+            ${turnId === undefined ? sql`` : sql`AND turn_id = ${turnId}`}
             ${activityKinds === undefined ? sql`` : sql`AND ${sql.in("kind", activityKinds)}`}
           ORDER BY sequence DESC, created_at DESC, activity_id DESC
           ${limit === undefined ? sql`` : sql`LIMIT ${limit}`}

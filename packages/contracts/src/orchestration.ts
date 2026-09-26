@@ -1496,6 +1496,7 @@ const ThreadSessionSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  connectionInterruptedTurnId: Schema.optional(TurnId),
   recoveryAdmission: Schema.optional(
     Schema.Struct({
       interruptedTurnId: TurnId,

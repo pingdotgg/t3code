@@ -1006,6 +1006,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.checkConnection).not.toHaveBeenCalled();
     const thread = (await harness.readModel()).threads[0];
     expect(thread?.latestTurn?.state).toBe("error");
+    expect(thread?.activities.at(-1)?.kind).toBe("connection.recovery.cancelled");
   });
 
   it("reports unsupported connectivity without attempting a continuation", async () => {
@@ -1035,59 +1036,62 @@ describe("ProviderCommandReactor", () => {
     ).toMatchObject({ payload: { reason: "unsupported" } });
   });
 
-  it("clears a prior process's waiting notice on startup without resuming work", async () => {
-    const harness = await createHarness({
-      deferReactorStart: true,
-      resumeThreadsAfterConnectionLoss: true,
-      checkConnectionEffect: () => Effect.succeed(true),
-    });
-    const threadId = ThreadId.make("thread-1");
-    const createdAt = "2026-01-01T00:00:00.000Z";
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make("cmd-stale-recovery-session"),
-        threadId,
-        session: {
+  it.each(["connection.interrupted", "connection.recovery.waiting"] as const)(
+    "clears a prior process's %s receipt on startup without resuming work",
+    async (kind) => {
+      const harness = await createHarness({
+        deferReactorStart: true,
+        resumeThreadsAfterConnectionLoss: true,
+        checkConnectionEffect: () => Effect.succeed(true),
+      });
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-stale-recovery-session"),
           threadId,
-          status: "error",
-          providerName: "codex",
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: "Connection lost",
-          updatedAt: createdAt,
-        },
-        createdAt,
-      }),
-    );
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.activity.append",
-        commandId: CommandId.make("cmd-stale-recovery-waiting"),
-        threadId,
-        activity: {
-          id: EventId.make("stale-recovery-waiting"),
-          tone: "info",
-          kind: "connection.recovery.waiting",
-          summary: "Connection lost. Waiting to resume…",
-          payload: { interruptedTurnId: "prior-turn" },
-          turnId: asTurnId("prior-turn"),
+          session: {
+            threadId,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: "Connection lost",
+            updatedAt: createdAt,
+          },
           createdAt,
-        },
-        createdAt,
-      }),
-    );
-    await harness.startReactor();
-    await harness.drain();
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-stale-recovery-waiting"),
+          threadId,
+          activity: {
+            id: EventId.make("stale-recovery-waiting"),
+            tone: "info",
+            kind,
+            summary: "Connection lost. Waiting to resume…",
+            payload: { interruptedTurnId: "prior-turn" },
+            turnId: asTurnId("prior-turn"),
+            createdAt,
+          },
+          createdAt,
+        }),
+      );
+      await harness.startReactor();
+      await harness.drain();
 
-    const thread = (await harness.readModel()).threads[0];
-    expect(thread?.activities.at(-1)).toMatchObject({
-      kind: "connection.recovery.cancelled",
-      turnId: "prior-turn",
-    });
-    expect(harness.checkConnection).not.toHaveBeenCalled();
-    expect(harness.sendTurn).not.toHaveBeenCalled();
-  });
+      const thread = (await harness.readModel()).threads[0];
+      expect(thread?.activities.at(-1)).toMatchObject({
+        kind: "connection.recovery.cancelled",
+        turnId: "prior-turn",
+      });
+      expect(harness.checkConnection).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not continue while the provider remains disconnected", async () => {
     const checked = Effect.runSync(Deferred.make<void>());
@@ -1421,6 +1425,90 @@ describe("ProviderCommandReactor", () => {
       expect(harness.sendTurn).toHaveBeenCalledTimes(3);
     },
   );
+
+  it("lets another thread start while native recovery cancellation waits", async () => {
+    const checked = Deferred.makeUnsafe<void>();
+    const connectivity = Deferred.makeUnsafe<boolean>();
+    const admitting = Deferred.makeUnsafe<void>();
+    const stopping = Deferred.makeUnsafe<void>();
+    const allowStop = Deferred.makeUnsafe<void>();
+    const otherSent = Deferred.makeUnsafe<void>();
+    const sameSent = Deferred.makeUnsafe<void>();
+    let sameThreadSent = false;
+    const harness = await createHarness({
+      resumeThreadsAfterConnectionLoss: true,
+      checkConnectionEffect: () =>
+        Deferred.succeed(checked, undefined).pipe(Effect.andThen(Deferred.await(connectivity))),
+      stopSessionEffect: () =>
+        Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Deferred.await(allowStop))),
+    });
+    const otherThread = ThreadId.make("thread-other");
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-other-thread"),
+        threadId: otherThread,
+        projectId: asProjectId("project-1"),
+        title: "Other thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await interruptConnection(harness);
+    await harness.runEffect(Deferred.await(checked));
+    harness.sendTurn.mockImplementationOnce(() =>
+      Deferred.succeed(admitting, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+    harness.sendTurn.mockImplementation((input) =>
+      Effect.gen(function* () {
+        if (input.threadId === otherThread) yield* Deferred.succeed(otherSent, undefined);
+        else {
+          sameThreadSent = true;
+          yield* Deferred.succeed(sameSent, undefined);
+        }
+        return { threadId: input.threadId, turnId: asTurnId(`${input.threadId}-new`) };
+      }),
+    );
+    await harness.runEffect(Deferred.succeed(connectivity, true));
+    await harness.runEffect(Deferred.await(admitting));
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("stop-first-thread"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(Deferred.await(stopping));
+    for (const threadId of [ThreadId.make("thread-1"), otherThread]) {
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`new-${threadId}`),
+          threadId,
+          message: {
+            messageId: asMessageId(`new-message-${threadId}`),
+            role: "user",
+            text: "New task",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:03.000Z",
+        }),
+      );
+    }
+    await harness.runEffect(Deferred.await(otherSent));
+    expect(sameThreadSent).toBe(false);
+    await harness.runEffect(Deferred.succeed(allowStop, undefined));
+    await harness.runEffect(Deferred.await(sameSent));
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(4);
+  });
 
   it("interrupts the accepted continuation before admitting newer user work", async () => {
     const checked = Deferred.makeUnsafe<void>();

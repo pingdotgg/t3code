@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient } from "effect/unstable/http";
 import type * as CodexRpc from "effect-codex-app-server/rpc";
 import type * as CodexSchema from "effect-codex-app-server/schema";
@@ -32,6 +35,32 @@ const clientFor = (
 });
 
 describe("Codex connection recovery probe", () => {
+  for (const stalledMethod of ["config/read", "account/read"] as const) {
+    it.effect(`returns to recovery backoff when ${stalledMethod} stalls`, () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const client = clientFor({ type: "apiKey" });
+        const probe = yield* checkCodexConnection(
+          {
+            request: (method, params) =>
+              method === stalledMethod
+                ? Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(client.request(method, params)),
+                  )
+                : client.request(method, params),
+          },
+          { cwd: "/project", environment: {} },
+        ).pipe(Effect.provide(FetchHttpClient.layer), Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("5 seconds");
+        NodeAssert.ok(probe.pollUnsafe(), "The complete probe must finish within five seconds");
+        NodeAssert.equal(yield* Fiber.join(probe), false);
+      }),
+    );
+  }
+
   for (const [account, endpoint, baseUrl] of [
     [{ type: "apiKey" }, "https://api.openai.com/v1/responses", "https://chatgpt.com/backend-api/"],
     [

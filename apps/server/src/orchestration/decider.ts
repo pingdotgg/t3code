@@ -212,10 +212,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  connectionRecoveryActivity,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly connectionRecoveryActivity?: Pick<OrchestrationThreadActivity, "kind" | "turnId">;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -492,6 +494,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           commandType: command.type,
           detail: `thread ${command.threadId} changed before automatic settlement`,
         });
+      }
+      if (
+        command.type === "thread.auto-settle" &&
+        thread.latestTurn?.state === "error" &&
+        connectionRecoveryActivity?.turnId === thread.latestTurn.turnId &&
+        (connectionRecoveryActivity.kind === "connection.interrupted" ||
+          connectionRecoveryActivity.kind === "connection.recovery.waiting")
+      ) {
+        return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       // The server owns settle eligibility. A stale command must not settle
       // a thread whose session is coming alive or working.
@@ -1897,8 +1908,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const recovery = command.recoveryAdmission;
       if (recovery !== undefined) {
-        // Reserve recovery in the serialized command stream. The global sequence
-        // also catches Stop requests, which need not change thread.updatedAt.
+        // The engine fences this thread's event stream before reaching the
+        // decider; state checks below preserve the interrupted turn's identity.
         const latestTurn = thread.latestTurn;
         const isRelease = recovery.reservationUpdatedAt !== undefined;
         const matchesSession = isRelease
@@ -1907,7 +1918,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             (command.session.status === "error" || command.session.status === "interrupted")
           : thread.session?.status === "error" && command.session.status === "starting";
         if (
-          (!isRelease && readModel.snapshotSequence !== recovery.expectedSnapshotSequence) ||
           latestTurn?.turnId !== recovery.interruptedTurnId ||
           (!isRelease && latestTurn.state !== "error") ||
           !matchesSession ||
@@ -1945,6 +1955,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      if (command.connectionInterruptedTurnId !== undefined) {
+        if (command.session.status !== "error" || command.session.activeTurnId !== null) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Connection interruption requires a terminal error session",
+          });
+        }
+        return [
+          sessionSetEvent,
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.activity-appended" as const,
+            payload: {
+              threadId: command.threadId,
+              activity: {
+                id: EventId.make(`connection-interrupted:${command.commandId}`),
+                kind: "connection.interrupted",
+                tone: "info" as const,
+                summary: "Connection interrupted",
+                payload: {},
+                turnId: command.connectionInterruptedTurnId,
+                createdAt: command.createdAt,
+              },
+            },
+          },
+        ];
+      }
       // Only a session coming alive is activity worth waking a settled thread
       // for — status writes like ready/stopped/error arrive after the fact and
       // must not fight a user's explicit settle. Snooze is deliberately NOT
