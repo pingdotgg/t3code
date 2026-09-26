@@ -1,0 +1,25 @@
+{
+  "name": "@t3tools/extension-files",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "t3-extension build .",
+    "check": "t3-extension check .t3-extension",
+    "test": "node --test --experimental-strip-types viewModel.test.mjs saveCoordinator.test.mjs markdown.test.mjs sessionEffects.test.mjs fileNavigation.test.mjs fileComments.test.mjs commentSession.test.mjs composerBridge.test.mjs uiContracts.test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "audit": "node ../scripts/audit-imports.mjs . --allow react-test-renderer"
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "workspace:*",
+    "@t3tools/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "^19.2.14",
+    "@types/react-test-renderer": "19.1.0",
+    "react": "^19.0.0",
+    "react-test-renderer": "19.2.6",
+    "typescript": "catalog:"
+  }
+}
