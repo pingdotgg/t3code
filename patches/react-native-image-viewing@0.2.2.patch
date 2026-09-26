@@ -1,5 +1,5 @@
 diff --git a/dist/ImageViewing.js b/dist/ImageViewing.js
-index 3d7641a9a94864415d207c678b71f8c592c90aa1..b7733f9667ff12cdbf0d69b79d75de78833282d4 100644
+index 3d7641a9a94864415d207c678b71f8c592c90aa1..9666461b9395646e782cb55b13bc566951f7da23 100644
 --- a/dist/ImageViewing.js
 +++ b/dist/ImageViewing.js
 @@ -6,7 +6,7 @@
@@ -16,9 +16,9 @@ index 3d7641a9a94864415d207c678b71f8c592c90aa1..b7733f9667ff12cdbf0d69b79d75de78
  const DEFAULT_DELAY_LONG_PRESS = 800;
  const SCREEN = Dimensions.get("screen");
 -const SCREEN_WIDTH = SCREEN.width;
++const useViewingDimensions = Platform.OS === "android" ? useWindowDimensions : () => SCREEN;
  function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClose, onLongPress = () => { }, onImageIndexChange, animationType = DEFAULT_ANIMATION_TYPE, backgroundColor = DEFAULT_BG_COLOR, presentationStyle, swipeToCloseEnabled, doubleTapToZoomEnabled, delayLongPress = DEFAULT_DELAY_LONG_PRESS, HeaderComponent, FooterComponent, }) {
-+    const window = useWindowDimensions();
-+    const viewport = Platform.OS === "android" ? window : SCREEN;
++    const viewport = useViewingDimensions();
 +    const SCREEN_WIDTH = viewport.width;
      const imageList = useRef(null);
      const [opacity, onRequestCloseEnhanced] = useRequestClose(onRequestClose);
