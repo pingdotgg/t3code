@@ -607,6 +607,7 @@ function RightPanelEmptyState(props: {
                 reason={action.disabledReason}
                 trigger={
                   <div
+                    role="button"
                     tabIndex={0}
                     aria-disabled="true"
                     aria-label={
