@@ -182,7 +182,7 @@ it.effect.each([
   { args: {}, advice: "No active preview tab was found for snapshot. Call preview_open first." },
   {
     args: { tabId: alternateTabId },
-    advice: `Preview tab ${alternateTabId} was not found for snapshot. Omit tabId to use the current tab, or call preview_open.`,
+    advice: `No connected preview host can run snapshot for tab ${alternateTabId} in this thread. Reconnect the desktop that owns the tab and retry after it reports its live tabs. To deliberately start a new browser session, call preview_open with reuseExistingTab: false and no tabId.`,
   },
 ])("tells the agent to open a tab when the snapshot has none $args", ({ args, advice }) =>
   Effect.scoped(
@@ -265,7 +265,16 @@ it.effect.each([
       let requests = 0;
       const events = yield* broker.connect({ clientId: "mcp-image-option-client", environmentId });
       yield* Stream.runForEach(events, (event) => {
-        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        if (event.type === "connected")
+          return broker
+            .focusHost({
+              clientId: "mcp-image-option-client",
+              connectionId: event.connectionId,
+              environmentId,
+              focused: true,
+              liveTabs: [{ threadId, tabId: alternateTabId }],
+            })
+            .pipe(Effect.andThen(Deferred.succeed(connected, undefined)));
         requests += 1;
         expect(event.request).toMatchObject({
           operation: "snapshot",
