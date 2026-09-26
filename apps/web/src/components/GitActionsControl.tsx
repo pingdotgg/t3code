@@ -1786,7 +1786,7 @@ export default function GitActionsControl({
           </>
         )
       ) : !isRepo ? (
-        <Button variant="outline" size="xs" disabled={initAction.isPending} onClick={initializeGit}>
+        <Button variant="outline" size="sm" disabled={initAction.isPending} onClick={initializeGit}>
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
           <span className="ml-0.5">
             {initAction.isPending ? "Initializing..." : "Initialize Git"}
@@ -1798,7 +1798,7 @@ export default function GitActionsControl({
             <Popover>
               <PopoverTrigger
                 openOnHover
-                render={<Button aria-disabled="true" size="xs" variant="outline" />}
+                render={<Button aria-disabled="true" size="sm" variant="outline" />}
               >
                 <GitQuickActionIcon
                   quickAction={quickAction}
@@ -1815,7 +1815,7 @@ export default function GitActionsControl({
           ) : (
             <Button
               variant="outline"
-              size="xs"
+              size="sm"
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
@@ -1834,7 +1834,7 @@ export default function GitActionsControl({
             }}
           >
             <MenuTrigger
-              render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
+              render={<Button aria-label="Git action options" size="icon-sm" variant="outline" />}
               disabled={isGitActionRunning}
             >
               <ChevronDownIcon aria-hidden="true" className="size-4" />

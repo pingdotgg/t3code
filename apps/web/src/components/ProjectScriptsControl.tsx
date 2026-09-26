@@ -271,9 +271,9 @@ export default function ProjectScriptsControl({
             <TooltipTrigger
               render={
                 <Button
-                  size="xs"
+                  size="sm"
                   variant="outline"
-                  className="w-7 sm:w-6 @3xl/header-actions:w-auto!"
+                  className="w-8 sm:w-7 @3xl/header-actions:w-auto!"
                   aria-label={`Run ${primaryScript.name}`}
                   // The tooltip wrapper replaces data-slot="button", so themed
                   // toolbar styling needs its own hook.
@@ -297,7 +297,7 @@ export default function ProjectScriptsControl({
             }
           >
             <MenuTrigger
-              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+              render={<Button size="icon-sm" variant="outline" aria-label="Script actions" />}
             >
               <ChevronDownIcon className="size-4" />
             </MenuTrigger>
@@ -311,7 +311,7 @@ export default function ProjectScriptsControl({
             setActionsMenuOpen({ presentation, scripts: false, imports: open })
           }
         >
-          <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
+          <MenuTrigger render={<Button size="sm" variant="outline" aria-label="Project actions" />}>
             <PlusIcon className="size-3.5" />
             <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
               Add action
@@ -331,9 +331,9 @@ export default function ProjectScriptsControl({
           <TooltipTrigger
             render={
               <Button
-                size="xs"
+                size="sm"
                 variant="outline"
-                className="w-7 sm:w-6 @3xl/header-actions:w-auto!"
+                className="w-8 sm:w-7 @3xl/header-actions:w-auto!"
                 aria-label="Add action"
                 // The tooltip wrapper replaces data-slot="button", so themed
                 // toolbar styling needs its own hook.
