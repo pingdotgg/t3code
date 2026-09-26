@@ -11,10 +11,15 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
-import { restartContinuationRun, continueRestartedRun } from "./RestartContinuation.ts";
+import {
+  restartContinuationRun,
+  continueRestartedRun,
+  retryProviderBusyRun,
+} from "./RestartContinuation.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -311,5 +316,83 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
       ),
     );
     assert.isFalse(dispatched);
+  }),
+);
+
+it.effect("retries a provider-busy failure once and yields to newer work or a spent budget", () =>
+  Effect.gen(function* () {
+    let projection = makeProjection();
+    projection = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        modelSelection: { instanceId, model: "gpt-chosen-later" },
+      } as never,
+      runs: [{ ...projection.runs[0]!, status: "failed" }],
+    };
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    const threads = Layer.mock(ThreadManagementService)({
+      getThreadProjection: () => Effect.succeed(projection),
+      dispatch: (command) => {
+        commands.push(command);
+        if (command.type === "message.dispatch")
+          projection = { ...projection, messages: [{ id: command.messageId } as never] };
+        return Effect.succeed({} as never);
+      },
+    });
+    const retry = (attempt: number) =>
+      retryProviderBusyRun({ threadId, sourceRunId: runId, attempt }).pipe(Effect.provide(threads));
+    yield* retry(1);
+    yield* retry(1);
+    assert.lengthOf(commands, 1);
+    if (commands[0]!.type === "message.dispatch") {
+      assert.deepEqual(commands[0]!.providerBusyRetry, { sourceRunId: runId, attempt: 1 });
+      assert.isUndefined(commands[0]!.restartContinuationOfRunId);
+      // A model chosen while the retry waited is kept.
+      assert.deepEqual(commands[0]!.modelSelection, { instanceId, model: "gpt-chosen-later" });
+      assert.isAbove(commands[0]!.text.length, 0);
+    }
+    projection = { ...projection, messages: [] };
+    yield* retry(4);
+    assert.lengthOf(commands, 1);
+    for (const blocked of [
+      { ...projection, runs: [{ ...projection.runs[0]!, status: "completed" as const }] },
+      { ...projection, thread: { ...projection.thread, archivedAt: {} as never } },
+      { ...projection, thread: { ...projection.thread, settledOverride: "settled" as never } },
+      {
+        ...projection,
+        thread: {
+          ...projection.thread,
+          snoozedUntil: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z") as never,
+        },
+      },
+      {
+        ...projection,
+        thread: { ...projection.thread, providerInstanceId: ProviderInstanceId.make("other") },
+      },
+      {
+        ...projection,
+        runs: [
+          ...projection.runs,
+          { ...projection.runs[0]!, id: RunId.make("run:user-newer"), ordinal: 2 },
+        ],
+      },
+    ]) {
+      const restore = projection;
+      projection = blocked as OrchestrationV2ThreadProjection;
+      yield* retry(2);
+      projection = restore;
+    }
+    assert.lengthOf(commands, 1);
+    // A snooze that already expired no longer parks the thread.
+    projection = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        snoozedUntil: DateTime.makeUnsafe("1969-01-01T00:00:00.000Z") as never,
+      },
+    };
+    yield* retry(2);
+    assert.lengthOf(commands, 2);
   }),
 );

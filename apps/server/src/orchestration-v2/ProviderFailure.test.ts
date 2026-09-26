@@ -207,3 +207,48 @@ it.effect("keys terminal failure items by provider turn across retries and fallb
     assert.equal(firstAttempt.ordinal, 101);
   }).pipe(Effect.provide(idAllocatorLayer)),
 );
+
+it("reclassifies overload provider errors as retryable provider_busy", () => {
+  // The Codex incident: retries exhausted upstream, then a terminal capacity error.
+  const codex = makeProviderFailure({
+    message: "Selected model is at capacity. Please try a different model.",
+    code: "serverOverloaded",
+    class: "provider_error",
+  });
+  assert.equal(codex.class, "provider_busy");
+  assert.isTrue(codex.retryable);
+  assert.equal(
+    makeProviderFailure({
+      message: "Claude API overloaded error.",
+      code: "api_error_529",
+      class: "provider_error",
+    }).class,
+    "provider_busy",
+  );
+  assert.equal(
+    makeProviderFailure({ message: "The server is currently overloaded.", class: "provider_error" })
+      .class,
+    "provider_busy",
+  );
+});
+
+it("keeps permanent and already-classified failures out of provider_busy", () => {
+  // A proxy 503 for a revoked credential must not be retried automatically.
+  const revoked = makeProviderFailure({
+    message:
+      "unexpected status 503 Service Unavailable: auth_unavailable: no auth available (providers=codex)",
+    code: "http_503",
+    class: "provider_error",
+  });
+  assert.equal(revoked.class, "provider_error");
+  assert.isNull(revoked.retryable);
+  assert.equal(
+    makeProviderFailure({ message: "The server is overloaded.", class: "transport_error" }).class,
+    "transport_error",
+  );
+  assert.equal(
+    makeProviderFailure({ message: "Disk at capacity while writing.", class: "provider_error" })
+      .class,
+    "provider_error",
+  );
+});

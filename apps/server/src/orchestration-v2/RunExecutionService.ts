@@ -51,7 +51,11 @@ import type {
 } from "./ProviderAdapter.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
-import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+  PROVIDER_BUSY_RETRY_DELAYS_MS,
+} from "./ProviderFailure.ts";
 import { RunFinalizationObserver } from "./RunFinalizationService.ts";
 
 export interface ProviderEventRoutingState {
@@ -641,6 +645,15 @@ export const layer: Layer.Layer<
           status: finalProviderThreadStatus(input.terminal.threadDisposition),
           updatedAt: completedAt,
         };
+        // A run that died because the provider was overloaded is retried on the
+        // same provider thread after a delay, until the retry budget is spent.
+        const busyRetryAttempt = (input.run.providerBusyRetry?.attempt ?? 0) + 1;
+        const busyRetryDelayMs =
+          input.terminal.status === "failed" &&
+          input.terminal.failure.class === "provider_busy" &&
+          input.terminal.threadDisposition === "reusable"
+            ? PROVIDER_BUSY_RETRY_DELAYS_MS[busyRetryAttempt - 1]
+            : undefined;
         const runEventId = yield* allocateEventId();
         const nodeEventId = yield* allocateEventId();
         const providerThreadEventId = yield* allocateEventId();
@@ -662,7 +675,25 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : busyRetryDelayMs === undefined
+                ? []
+                : [
+                    {
+                      id: `effect:provider-busy.retry:${input.run.id}`,
+                      commandId: CommandId.make(
+                        `command:effect:provider-busy.retry:${input.run.id}`,
+                      ),
+                      threadId: input.run.threadId,
+                      request: {
+                        type: "provider-busy.retry" as const,
+                        sourceRunId: input.run.id,
+                        attempt: busyRetryAttempt,
+                      },
+                      availableAt: DateTime.add(completedAt, {
+                        milliseconds: busyRetryDelayMs,
+                      }),
+                    },
+                  ],
           events: [
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.

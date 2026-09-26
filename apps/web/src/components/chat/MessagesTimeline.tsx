@@ -83,6 +83,7 @@ import {
   createMessageAttachmentPreviewProjector,
   selectMessageImageResources,
   workEntryDisplayIndicatesToolFailure,
+  workEntryIsProviderBusy,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
@@ -2671,7 +2672,9 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
         tone:
           item.status === "completed"
             ? "success"
-            : item.status === "running" || item.failure.class === "usage_limit"
+            : item.status === "running" ||
+                item.failure.class === "usage_limit" ||
+                item.failure.class === "provider_busy"
               ? "warning"
               : "danger",
         icon: CircleAlertIcon,
@@ -4951,6 +4954,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showDestructiveRowStyle =
     !showWarningIndicator &&
     showFailedIndicator &&
+    !workEntryIsProviderBusy(workEntry) &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
   const entryIconName =
     showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);

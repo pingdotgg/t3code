@@ -3639,6 +3639,62 @@ function rootTerminalEvent(
     : { ...common, status, failure: null };
 }
 
+it.effect.each([
+  { failureClass: "provider_busy", priorAttempt: undefined, delayMs: 60_000 },
+  { failureClass: "provider_busy", priorAttempt: 2, delayMs: 900_000 },
+  { failureClass: "provider_busy", priorAttempt: 3, delayMs: undefined },
+  { failureClass: "provider_error", priorAttempt: undefined, delayMs: undefined },
+] as const)(
+  "schedules a delayed retry only for a $failureClass failure within budget (prior attempt $priorAttempt)",
+  ({ failureClass, priorAttempt, delayMs }) =>
+    Effect.gen(function* () {
+      const scheduled: Array<
+        Parameters<EventSinkV2["Service"]["writeWithEffects"]>[0]["effects"][number]
+      > = [];
+      yield* runBackgroundItemScenario(
+        `busy-retry-${failureClass}-${priorAttempt ?? 0}`,
+        (ids) => {
+          const terminal = rootTerminalEvent(ids, "failed");
+          return [
+            terminal.type === "turn.terminal" && terminal.status === "failed"
+              ? { ...terminal, failure: { ...terminal.failure, class: failureClass } }
+              : terminal,
+          ];
+        },
+        {
+          onEffects: (effects) => {
+            scheduled.push(...effects.filter((e) => e.request.type === "provider-busy.retry"));
+          },
+          ...(priorAttempt === undefined
+            ? {}
+            : {
+                run: {
+                  providerBusyRetry: {
+                    sourceRunId: RunId.make("run:busy-source"),
+                    attempt: priorAttempt,
+                  },
+                },
+              }),
+        },
+      );
+      if (delayMs === undefined) {
+        assert.lengthOf(scheduled, 0);
+        return;
+      }
+      assert.lengthOf(scheduled, 1);
+      const effect = scheduled[0]!;
+      assert.equal(
+        effect.request.type === "provider-busy.retry" ? effect.request.attempt : null,
+        (priorAttempt ?? 0) + 1,
+      );
+      // The test clock starts at the epoch, so the absolute time is the delay.
+      assert.equal(
+        effect.availableAt === undefined ? null : DateTime.toEpochMillis(effect.availableAt),
+        delayMs,
+      );
+    }),
+);
+
 function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapterV2Event>,
@@ -3648,6 +3704,10 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onEffects?: (
+      effects: Parameters<EventSinkV2["Service"]["writeWithEffects"]>[0]["effects"],
+    ) => void;
+    readonly run?: Partial<OrchestrationV2Run>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3663,6 +3723,7 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                options?.onEffects?.(input.effects);
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,
@@ -3725,6 +3786,7 @@ function runBackgroundItemScenario(
           threadId: ids.threadId,
           ordinal: 1,
           providerInstanceId,
+          ...options?.run,
         } as OrchestrationV2Run,
         rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
         checkpointScope: {

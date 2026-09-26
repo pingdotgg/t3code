@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  PositiveInt,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -27,6 +28,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-busy.retry"),
+    sourceRunId: RunId,
+    attempt: PositiveInt,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -107,6 +113,7 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
+  "provider-busy.retry",
   "provider-session.detach",
   "provider-thread.rollback",
   "checkpoint.capture",

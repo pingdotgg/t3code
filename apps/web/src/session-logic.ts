@@ -157,6 +157,14 @@ export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
   return entry.itemType === "error";
 }
 
+/** Transient capacity the server retries on its own: shown as failed, never in the destructive style. */
+export function workEntryIsProviderBusy(entry: WorkLogEntry): boolean {
+  return (
+    entry.structuredPayload?.type === "error" &&
+    entry.structuredPayload.failure.class === "provider_busy"
+  );
+}
+
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   if (
     !workLogEntryIsToolLike(entry) ||
@@ -358,12 +366,16 @@ function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["to
 export function providerErrorPresentation(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "error" }>,
 ): { readonly label: string; readonly detail: string } {
+  // Label from the failure class so rows persisted with an older title still read right.
+  const busy = item.failure.class === "provider_busy";
   if (item.retry === undefined) {
     return {
       label:
         item.failure.class === "usage_limit"
           ? "Usage limit reached"
-          : item.title?.trim() || "Provider error",
+          : busy
+            ? "Provider busy"
+            : item.title?.trim() || "Provider error",
       detail: item.failure.message,
     };
   }
@@ -377,7 +389,7 @@ export function providerErrorPresentation(
       : item.status === "completed"
         ? `Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
+          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : busy ? "Provider busy" : "Provider error"} after ${progress} retries`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
