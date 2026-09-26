@@ -12,8 +12,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { TextGenerationError, type ModelSelection, type PiSettings } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
+import { isPiThinkingLevel } from "../provider/Layers/piThinkingCapabilities.ts";
 import { makePiRpcConnection, parsePiModelSlug } from "../provider/PiRpc.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "../provider/piT3McpInjection.ts";
 import * as TextGeneration from "./TextGeneration.ts";
@@ -101,6 +103,11 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           provider: parsed.provider,
           modelId: parsed.modelId,
         });
+      }
+      // Pi clamps a level the model lacks, so any known level is safe to send.
+      const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+      if (thinking !== undefined && isPiThinkingLevel(thinking)) {
+        yield* connection.request({ type: "set_thinking_level", level: thinking });
       }
 
       yield* connection.request({ type: "prompt", message: prompt });
@@ -241,6 +248,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       });
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 

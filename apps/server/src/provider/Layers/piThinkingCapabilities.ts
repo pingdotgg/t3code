@@ -4,8 +4,8 @@ import * as Predicate from "effect/Predicate";
 
 /**
  * Pi's full thinking ladder. Extra High (`xhigh`) and Max are opt-in per
- * model via `thinkingLevelMap`; advertising them globally makes
- * `set_thinking_level` fail on models that lack them.
+ * model via `thinkingLevelMap`. Pi clamps them down on models that lack them,
+ * so advertising them globally would offer choices that do nothing.
  */
 const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -20,6 +20,10 @@ const PI_THINKING_LEVEL_LABELS: Record<PiThinkingLevel, string> = {
   xhigh: "Extra High",
   max: "Max",
 };
+
+/** Guards a stored `thinking` option before it is sent to `set_thinking_level`. */
+export const isPiThinkingLevel = (value: string): value is PiThinkingLevel =>
+  PI_THINKING_LEVELS.some((level) => level === value);
 
 export const EMPTY_PI_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
