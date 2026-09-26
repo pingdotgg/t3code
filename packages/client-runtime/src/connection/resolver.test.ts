@@ -426,7 +426,13 @@ describe("ConnectionResolver", () => {
     }),
   );
 
-  for (const scenario of ["unchanged", "changed", "revocation-failed"] as const) {
+  for (const scenario of [
+    "unchanged",
+    "changed",
+    "port-changed",
+    "user-changed",
+    "revocation-failed",
+  ] as const) {
     it.effect(`handles ${scenario} SSH routing consent before saving or authorizing`, () =>
       Effect.gen(function* () {
         const calls: string[] = [];
@@ -440,12 +446,17 @@ describe("ConnectionResolver", () => {
           environmentId: ENVIRONMENT_ID,
           label: "SSH",
           target: SSH_TARGET,
+          requestedTarget: { ...SSH_TARGET, username: null, port: null },
         });
         const entry = catalogEntry(target, Option.some(profile));
         const preparedTarget =
           scenario === "unchanged"
             ? SSH_TARGET
-            : { ...SSH_TARGET, hostname: "replacement.example.test" };
+            : scenario === "port-changed"
+              ? { ...SSH_TARGET, port: 4567 }
+              : scenario === "user-changed"
+                ? { ...SSH_TARGET, username: "new-user" }
+                : { ...SSH_TARGET, hostname: "replacement.example.test" };
         const failure = new ConnectionTransientError({
           reason: "remote-unavailable",
           detail: "Could not persist routing consent.",
@@ -476,15 +487,18 @@ describe("ConnectionResolver", () => {
               }),
             remove: () => Effect.die("unused"),
           },
-          prepareSsh: () =>
-            Effect.succeed({
-              bootstrap: {
-                target: preparedTarget,
-                httpBaseUrl: "http://127.0.0.1:4010",
-                wsBaseUrl: "ws://127.0.0.1:4010",
-                pairingToken: null,
-              },
-              bearerToken: "ssh-bearer",
+          prepareSsh: (input) =>
+            Effect.sync(() => {
+              expect(input.target).toEqual(profile.requestedTarget);
+              return {
+                bootstrap: {
+                  target: preparedTarget,
+                  httpBaseUrl: "http://127.0.0.1:4010",
+                  wsBaseUrl: "ws://127.0.0.1:4010",
+                  pairingToken: null,
+                },
+                bearerToken: "ssh-bearer",
+              };
             }),
           authorizeBearer: (input) =>
             Effect.sync(() => {
@@ -510,14 +524,30 @@ describe("ConnectionResolver", () => {
           expect(calls).toEqual(["revoke"]);
         } else {
           expect((yield* prepare).socketUrl).toContain("wsTicket=ssh");
-          expect(savedProfile).toMatchObject({ target: preparedTarget });
+          expect(savedProfile).toMatchObject({
+            target: preparedTarget,
+            requestedTarget: profile.requestedTarget,
+          });
           expect(calls).toEqual(
             scenario === "unchanged"
               ? ["profile", "authorize"]
               : ["revoke", "profile", "authorize"],
           );
         }
-        expect(yield* permissions.get(entry)).toBe(scenario === "changed" ? "off" : "read-write");
+        expect(yield* permissions.get(entry)).toBe(
+          scenario !== "unchanged" && scenario !== "revocation-failed" ? "off" : "read-write",
+        );
+        if (scenario !== "revocation-failed") {
+          calls.length = 0;
+          yield* broker
+            .prepare(catalogEntry(target, Option.some(savedProfile)))
+            .pipe(Effect.provideService(GitHubRoutingPermissions, permissions));
+          expect(calls).toEqual(["profile", "authorize"]);
+          expect(savedProfile).toMatchObject({
+            target: preparedTarget,
+            requestedTarget: profile.requestedTarget,
+          });
+        }
       }),
     );
   }
