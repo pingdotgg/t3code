@@ -56,7 +56,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
     otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
     otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-    otlpServiceName: "t3-server",
     otelEnvironment: OtelEnvironment.none,
     devAllowedOrigins: [],
   } as const;
@@ -509,7 +508,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resolved.terminalLogsDir,
         resolved.attachmentsDir,
         resolved.worktreesDir,
-        path.dirname(resolved.serverLogPath),
         path.dirname(resolved.serverTracePath),
       ]) {
         expect(yield* fs.exists(directory)).toBe(true);
