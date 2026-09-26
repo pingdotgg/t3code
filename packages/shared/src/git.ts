@@ -1,5 +1,6 @@
 import type {
   VcsRef,
+  WorktreeBaseRef,
   SourceControlProviderInfo,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
@@ -9,6 +10,26 @@ import type {
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
+
+/**
+ * Wait for settings (undefined); null opts into the repository default.
+ * Keep configured refs verbatim: tags, commits and paginated-out branches need not be listed.
+ */
+export function resolveDefaultWorktreeBaseRef(input: {
+  readonly configuredRef: WorktreeBaseRef | undefined;
+  /** Validated remembered ref; undefined means it is still loading. */
+  readonly rememberedRef?: string | null | undefined;
+  readonly refs: readonly Pick<VcsRef, "name" | "isDefault">[];
+  readonly currentBranch: string | null;
+}): string | null {
+  if (input.configuredRef === undefined) return null;
+  if (typeof input.configuredRef === "string") return input.configuredRef;
+  if (input.configuredRef !== null) {
+    if (input.rememberedRef === undefined) return null;
+    if (input.rememberedRef !== null) return input.rememberedRef;
+  }
+  return input.refs.find((ref) => ref.isDefault)?.name ?? input.currentBranch;
+}
 
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 // Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`

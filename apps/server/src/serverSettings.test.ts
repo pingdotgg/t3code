@@ -30,6 +30,7 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -299,6 +300,38 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": null } });
         const restored = yield* readPersisted;
         assert.deepStrictEqual(restored.usagePriceOverrides, {});
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists and broadcasts project worktree bases and resets them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+        const projectId = ProjectId.make("base-ref-project");
+        const overrides = { [projectId]: { defaultWorktreeBaseRef: "origin/dev" } };
+        yield* serverSettings.updateSettings({ projectSettingsOverrides: overrides });
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        assert.deepEqual(change?.projectSettingsOverrides, overrides);
+        const persisted = yield* decodeSettingsJson(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+        );
+        assert.deepEqual(persisted.projectSettingsOverrides, overrides);
+        const lastUsed = {
+          [projectId]: { defaultWorktreeBaseRef: { mode: "last-used" as const } },
+        };
+        yield* serverSettings.updateSettings({ projectSettingsOverrides: lastUsed });
+        const remembered = yield* decodeSettingsJson(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+        );
+        assert.deepEqual(remembered.projectSettingsOverrides, lastUsed);
+        const reset = yield* serverSettings.updateSettings({
+          projectSettingsOverrides: { [projectId]: null },
+        });
+        assert.isUndefined(reset.projectSettingsOverrides[projectId]);
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );

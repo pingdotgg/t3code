@@ -410,6 +410,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["default workspace mode draft local worktree"],
   },
   {
+    id: "worktree-base-ref",
+    title: "Worktree base ref",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["default branch base ref git tag commit new worktree"],
+  },
+  {
     id: "worktree-submodules",
     title: "Submodules",
     to: "/settings/general",

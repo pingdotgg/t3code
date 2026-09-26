@@ -365,7 +365,16 @@ export function NewTaskBranchPickerRouteScreen() {
   const renderBranch = useCallback(
     ({ item, index }: { readonly item: VcsRef; readonly index: number }) => (
       <BranchSelectionRow
-        badge={branchBadgeLabel({ branch: item, project: flow.selectedProject })}
+        badge={
+          [
+            branchBadgeLabel({ branch: item, project: flow.selectedProject }),
+            flow.workspaceMode === "worktree" && item.name === flow.lastWorktreeBaseBranch
+              ? "Last used"
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || null
+        }
         branch={item}
         disabled={switchingBranchName !== null}
         isFirst={index === 0}
@@ -376,6 +385,8 @@ export function NewTaskBranchPickerRouteScreen() {
     ),
     [
       flow.filteredBranches.length,
+      flow.lastWorktreeBaseBranch,
+      flow.workspaceMode,
       flow.selectedProject,
       selectBranch,
       selectedBranchName,

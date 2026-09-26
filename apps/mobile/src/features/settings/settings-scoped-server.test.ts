@@ -3,11 +3,13 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ServerSettings,
+  type WorktreeBaseRef,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
+  mobileSettingsAreMixed,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -29,6 +31,28 @@ function environment(environmentId: EnvironmentId, settings: ServerSettings): Se
 }
 
 describe("mobile project settings scope", () => {
+  it.each<[WorktreeBaseRef, WorktreeBaseRef, boolean]>([
+    [{ mode: "last-used" }, { mode: "last-used" }, false],
+    [{ mode: "last-used" }, "last-used", true],
+    [{ mode: "last-used" }, null, true],
+    [null, null, false],
+    ["dev", "dev", false],
+    ["dev", "main", true],
+  ])("compares base refs by value: %j and %j", (first, second, mixed) => {
+    const targets = resolveMobileSettingsTargets(
+      [
+        environment(firstId, { ...DEFAULT_SERVER_SETTINGS, defaultWorktreeBaseRef: first }),
+        environment(secondId, { ...DEFAULT_SERVER_SETTINGS, defaultWorktreeBaseRef: second }),
+      ],
+      null,
+    );
+    expect(mobileSettingsAreMixed(targets, "defaultWorktreeBaseRef")).toBe(mixed);
+  });
+
+  it("has no uniform value when no environments are selected", () => {
+    expect(mobileSettingsAreMixed([], "defaultWorktreeBaseRef")).toBe(true);
+  });
+
   it("edits each checkout's own override without changing either environment default", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
@@ -99,6 +123,27 @@ describe("mobile project settings scope", () => {
           },
         },
       },
+    ]);
+  });
+
+  it("keeps an explicit repository default separate from inheriting the environment base", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultWorktreeBaseRef: "origin/dev",
+      projectSettingsOverrides: { [firstProject]: { defaultWorktreeBaseRef: "release" } },
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings)],
+      [{ environmentId: firstId, id: firstProject }],
+    );
+    expect(planMobileScopedSettingsPatch(targets, true, { defaultWorktreeBaseRef: null })).toEqual([
+      {
+        environmentId: firstId,
+        patch: { projectSettingsOverrides: { [firstProject]: { defaultWorktreeBaseRef: null } } },
+      },
+    ]);
+    expect(planMobileScopedSettingsClear(targets, ["defaultWorktreeBaseRef"])).toEqual([
+      { environmentId: firstId, patch: { projectSettingsOverrides: { [firstProject]: null } } },
     ]);
   });
 

@@ -20,6 +20,40 @@ const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 
 describe("resolveProjectSettings", () => {
+  it("isolates worktree bases per project and restores inheritance when cleared", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultWorktreeBaseRef: "main",
+      projectSettingsOverrides: { [projectId]: { defaultWorktreeBaseRef: "origin/dev" } },
+    });
+    expect(resolveProjectSettings(settings, projectId).settings.defaultWorktreeBaseRef).toBe(
+      "origin/dev",
+    );
+    expect(resolveProjectSettings(settings, otherProjectId).settings.defaultWorktreeBaseRef).toBe(
+      "main",
+    );
+    const remembered = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: { [projectId]: { defaultWorktreeBaseRef: { mode: "last-used" } } },
+    });
+    expect(resolveProjectSettings(remembered, projectId).settings.defaultWorktreeBaseRef).toEqual({
+      mode: "last-used",
+    });
+    expect(resolveProjectSettings(remembered, otherProjectId).settings.defaultWorktreeBaseRef).toBe(
+      "main",
+    );
+    const automatic = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: { [projectId]: { defaultWorktreeBaseRef: null } },
+    });
+    expect(resolveProjectSettings(automatic, projectId).settings.defaultWorktreeBaseRef).toBeNull();
+    const reset = applyServerSettingsPatch(automatic, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(automatic, projectId, [
+          "defaultWorktreeBaseRef",
+        ]),
+      },
+    });
+    expect(resolveProjectSettings(reset, projectId).settings.defaultWorktreeBaseRef).toBe("main");
+  });
+
   it("inherits every scopable key when the project has no overrides", () => {
     const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId);
     expect(resolved.settings).toBe(DEFAULT_SERVER_SETTINGS);

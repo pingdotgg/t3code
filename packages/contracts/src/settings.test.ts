@@ -20,6 +20,49 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("worktree base ref settings", () => {
+  it("preserves automatic selection for existing settings", () => {
+    expect(decodeServerSettings({}).defaultWorktreeBaseRef).toBeNull();
+  });
+
+  it.each(["dev", "origin/dev", "refs/tags/v1.0", "a1b2c3d"])(
+    "round-trips %s as a project override",
+    (ref) => {
+      const patch = decodeServerSettingsPatch({
+        projectSettingsOverrides: { project: { defaultWorktreeBaseRef: ` ${ref} ` } },
+      });
+      expect(encodeServerSettings(decodeServerSettings(patch)).projectSettingsOverrides).toEqual({
+        project: { defaultWorktreeBaseRef: ref },
+      });
+    },
+  );
+
+  it("round-trips last-used without reserving a valid branch name", () => {
+    const patch = decodeServerSettingsPatch({
+      defaultWorktreeBaseRef: { mode: "last-used" },
+      projectSettingsOverrides: { project: { defaultWorktreeBaseRef: { mode: "last-used" } } },
+    });
+    const encoded = encodeServerSettings(decodeServerSettings(patch));
+    expect(encoded.defaultWorktreeBaseRef).toEqual({ mode: "last-used" });
+    expect(encoded.projectSettingsOverrides).toEqual(patch.projectSettingsOverrides);
+    expect(
+      decodeServerSettingsPatch({ defaultWorktreeBaseRef: "last-used" }).defaultWorktreeBaseRef,
+    ).toBe("last-used");
+    expect(() =>
+      decodeServerSettingsPatch({ defaultWorktreeBaseRef: { mode: "unknown" } }),
+    ).toThrow();
+  });
+
+  it("allows explicit repository defaults but rejects blank refs", () => {
+    expect(
+      decodeServerSettingsPatch({
+        projectSettingsOverrides: { project: { defaultWorktreeBaseRef: null } },
+      }).projectSettingsOverrides,
+    ).toEqual({ project: { defaultWorktreeBaseRef: null } });
+    expect(() => decodeServerSettingsPatch({ defaultWorktreeBaseRef: "  " })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

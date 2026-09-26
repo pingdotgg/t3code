@@ -8,6 +8,25 @@ const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
 
 describe("settingInheritanceLayers", () => {
+  it("labels remembered and repository base choices in the inheritance chain", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: { defaultWorktreeBaseRef: { mode: "last-used" as const } },
+      },
+    };
+    const layers = settingInheritanceLayers(
+      { environmentId, label: "Laptop", projectId, ...resolveProjectSettings(settings, projectId) },
+      settings,
+      "defaultWorktreeBaseRef",
+    );
+    expect(layers.map((layer) => layer.value)).toEqual([
+      "Last used",
+      "Inherits",
+      "Repository default",
+    ]);
+  });
+
   it("marks the built-in default effective when nothing is set", () => {
     const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null);
     const layers = settingInheritanceLayers(

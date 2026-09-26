@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  resolveDefaultWorktreeBaseRef,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
@@ -272,5 +273,64 @@ describe("applyGitStatusStreamEvent", () => {
       behindCount: 1,
       pr: null,
     });
+  });
+});
+
+describe("resolveDefaultWorktreeBaseRef", () => {
+  const refs = [{ name: "origin/main", isDefault: true }];
+
+  it("waits for remembered refs and falls back only once their lookup settles", () => {
+    const input = { configuredRef: { mode: "last-used" as const }, refs, currentBranch: "main" };
+    expect(resolveDefaultWorktreeBaseRef(input)).toBeNull();
+    expect(resolveDefaultWorktreeBaseRef({ ...input, rememberedRef: "dev" })).toBe("dev");
+    expect(resolveDefaultWorktreeBaseRef({ ...input, rememberedRef: "origin/dev" })).toBe(
+      "origin/dev",
+    );
+    expect(resolveDefaultWorktreeBaseRef({ ...input, rememberedRef: null })).toBe("origin/main");
+    expect(resolveDefaultWorktreeBaseRef({ ...input, rememberedRef: null, refs: [] })).toBe("main");
+    expect(
+      resolveDefaultWorktreeBaseRef({ ...input, configuredRef: "release", rememberedRef: "dev" }),
+    ).toBe("release");
+    expect(
+      resolveDefaultWorktreeBaseRef({ ...input, configuredRef: null, rememberedRef: "dev" }),
+    ).toBe("origin/main");
+  });
+
+  it("waits for saved settings when refs load first", () => {
+    expect(
+      resolveDefaultWorktreeBaseRef({
+        configuredRef: undefined,
+        refs,
+        currentBranch: "main",
+      }),
+    ).toBeNull();
+    expect(
+      resolveDefaultWorktreeBaseRef({ configuredRef: "dev", refs, currentBranch: "main" }),
+    ).toBe("dev");
+  });
+
+  it.each(["dev", "upstream/dev", "refs/tags/v1", "a1b2c3d", "missing-branch"])(
+    "honors %s even when it is absent from the loaded page of refs",
+    (configuredRef) => {
+      expect(
+        resolveDefaultWorktreeBaseRef({ configuredRef, refs, currentBranch: "feature/current" }),
+      ).toBe(configuredRef);
+    },
+  );
+
+  it("uses the repository default before the checkout and handles repositories with no refs", () => {
+    expect(
+      resolveDefaultWorktreeBaseRef({
+        configuredRef: null,
+        refs,
+        currentBranch: "feature/current",
+      }),
+    ).toBe("origin/main");
+    expect(
+      resolveDefaultWorktreeBaseRef({ configuredRef: null, refs: [], currentBranch: "dev" }),
+    ).toBe("dev");
+    expect(
+      resolveDefaultWorktreeBaseRef({ configuredRef: null, refs: [], currentBranch: null }),
+    ).toBeNull();
   });
 });

@@ -62,6 +62,18 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+To start new worktrees from a branch other than the repository default, choose the project in
+**Settings → General** and set **Worktree base ref** to a branch, tag, or commit such as `dev`
+or `origin/dev`. Choose **Last used** to reuse the base you last explicitly selected for this
+project and environment on the current device. Automatic defaults do not replace that memory.
+If the remembered branch is gone, it falls back to the repository default, then the current
+checkout. On mobile, the same setting is under **New threads**. You can still choose a
+different base in an individual thread. Existing drafts keep their selection. Choose **Repository
+default** (or clear the field on mobile) to use the repository default branch. Reset the override
+to inherit the environment setting.
+The **Start from origin** preference still applies. Turn it off to use the selected ref exactly
+as it exists locally.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected
