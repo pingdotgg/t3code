@@ -2479,6 +2479,10 @@ interface ActiveClaudeTurnContext {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
+  // Item ordinals allocated in this turn. Later turns never look items up
+  // here: a subagent resumed from another turn keeps its ordinal on the
+  // session subagent registry.
+  readonly itemOrdinals: Map<string, number>;
   readonly assistant: {
     fallbackText: string;
     fallbackNativeItemId: string;
@@ -2788,8 +2792,6 @@ export function makeClaudeAdapterV2(
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
-        const itemOrdinals = yield* Ref.make(new Map<string, number>());
-        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
@@ -3284,29 +3286,16 @@ export function makeClaudeAdapterV2(
           }),
         });
 
-        const resolveItemOrdinal = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          nativeItemId: string,
-        ) {
-          const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
-          if (existing !== undefined) {
-            return existing;
-          }
-
-          const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-            const next = (current.get(context.nativeTurnId) ?? 0) + 1;
-            const updated = new Map(current);
-            updated.set(context.nativeTurnId, next);
-            return [next, updated];
+        const resolveItemOrdinal = (context: ActiveClaudeTurnContext, nativeItemId: string) =>
+          Effect.sync(() => {
+            const existing = context.itemOrdinals.get(nativeItemId);
+            if (existing !== undefined) {
+              return existing;
+            }
+            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
+            context.itemOrdinals.set(nativeItemId, ordinal);
+            return ordinal;
           });
-          const nextOrdinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
-          yield* Ref.update(itemOrdinals, (current) => {
-            const updated = new Map(current);
-            updated.set(nativeItemId, nextOrdinal);
-            return updated;
-          });
-          return nextOrdinal;
-        });
 
         const providerTurnPayload = (input: {
           readonly context: ActiveClaudeTurnContext;
@@ -6397,6 +6386,7 @@ export function makeClaudeAdapterV2(
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
+              itemOrdinals: new Map(),
               assistant: {
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
