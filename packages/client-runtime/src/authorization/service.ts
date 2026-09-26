@@ -81,6 +81,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
+/** Cached-token ticket timeouts in a row before the client asks the relay again. */
+const CACHED_TICKET_TIMEOUT_LIMIT = 3;
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
@@ -110,6 +112,10 @@ export const make = Effect.gen(function* () {
   const tokenOwners = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
+  >();
+  const cachedTicketTimeouts = new Map<
+    EnvironmentId,
+    { readonly accessToken: string; readonly count: number }
   >();
   const pendingTokens = new Map<
     EnvironmentId,
@@ -465,17 +471,26 @@ export const make = Effect.gen(function* () {
     if (selected.fromCache) {
       const cachedSocket = yield* createDpopSocketUrl(selected.token).pipe(Effect.result);
       if (Result.isSuccess(cachedSocket)) {
+        cachedTicketTimeouts.delete(input.expectedEnvironmentId);
         yield* assertSession(selected.identity);
         return { ...httpAuthorization(selected.token), socketUrl: cachedSocket.success };
       }
-      // A timeout means a slow server, not a bad token. Keep the token so the next attempt
-      // reuses it instead of minting a new credential. The cost: an endpoint that accepts the
-      // request and never answers is only replaced when the token expires.
-      if (
-        cachedSocket.failure._tag === "ConnectionBlockedError" ||
-        cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError"
-      ) {
+      if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
+      }
+      // A timeout means a slow server, not a bad token. Keep the token so the next attempt
+      // reuses it instead of minting a new credential. After several timeouts in a row the
+      // endpoint may be gone, so drop the token and ask the relay again. The mint runs in the
+      // service scope, so it still lands if the setup deadline ends this attempt first.
+      if (cachedSocket.failure._tag === "RemoteEnvironmentAuthTimeoutError") {
+        const accessToken = selected.token.accessToken;
+        const previous = cachedTicketTimeouts.get(input.expectedEnvironmentId);
+        const count = previous?.accessToken === accessToken ? previous.count + 1 : 1;
+        if (count < CACHED_TICKET_TIMEOUT_LIMIT) {
+          cachedTicketTimeouts.set(input.expectedEnvironmentId, { accessToken, count });
+          return yield* mapDpopSocketError(cachedSocket.failure);
+        }
+        cachedTicketTimeouts.delete(input.expectedEnvironmentId);
       }
       selected = yield* getDpopToken({
         ...input,

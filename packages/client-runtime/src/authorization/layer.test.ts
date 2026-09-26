@@ -514,6 +514,57 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("asks the relay again after three cached ticket timeouts in a row", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        responses: [
+          STALLED,
+          STALLED,
+          websocketTicket("cached-ticket"),
+          STALLED,
+          STALLED,
+          STALLED,
+          Response.json(DESCRIPTOR),
+          accessToken("replacement-access-token"),
+          websocketTicket("replacement-ticket"),
+        ],
+      });
+
+      const [timeouts, replaced] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () => remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+        // Runs an attempt whose cached ticket request stalls until its 10 s budget runs out.
+        const stalled = <A, E>(attempt: Effect.Effect<A, E>) =>
+          Effect.gen(function* () {
+            const pending = yield* Effect.forkChild(attempt);
+            yield* Queue.take(harness.stalls);
+            yield* TestClock.adjust("10 seconds");
+            return yield* Fiber.join(pending);
+          });
+        const timeouts = [
+          yield* stalled(Effect.flip(authorize())),
+          yield* stalled(Effect.flip(authorize())),
+        ];
+        // A success resets the count, so two more timeouts keep the cached token.
+        yield* authorize();
+        timeouts.push(
+          yield* stalled(Effect.flip(authorize())),
+          yield* stalled(Effect.flip(authorize())),
+        );
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+        return [timeouts, yield* stalled(authorize())] as const;
+      }).pipe(Effect.provide(harness.layer));
+
+      for (const failure of timeouts) {
+        expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      }
+      expect(replaced.socketUrl).toContain("wsTicket=replacement-ticket");
+      expect(replaced.httpAuthorization).toMatchObject({ accessToken: "replacement-access-token" });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+    }),
+  );
+
   it.effect("keeps a newly refreshed token when its websocket ticket request times out", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
