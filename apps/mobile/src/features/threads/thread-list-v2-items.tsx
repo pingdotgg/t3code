@@ -32,6 +32,7 @@ import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { ThreadDevServerIndicator } from "./thread-dev-server-indicator";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
@@ -1026,6 +1027,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        <ThreadDevServerIndicator environmentId={thread.environmentId} threadId={thread.id} />
         {pr ? (
           <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
             <SymbolView
@@ -1156,6 +1158,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          <ThreadDevServerIndicator environmentId={thread.environmentId} threadId={thread.id} />
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
