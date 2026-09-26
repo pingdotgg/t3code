@@ -172,7 +172,6 @@ function makeHarness(config?: {
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
   readonly environment?: ClaudeAdapterLiveOptions["environment"];
   readonly getSessionMessages?: ClaudeAdapterLiveOptions["getSessionMessages"];
-  readonly forkSession?: ClaudeAdapterLiveOptions["forkSession"];
 }) {
   const query = new FakeClaudeQuery();
   const queries = [query];
@@ -189,7 +188,6 @@ function makeHarness(config?: {
     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
     modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     ...(config?.getSessionMessages ? { getSessionMessages: config.getSessionMessages } : {}),
-    ...(config?.forkSession ? { forkSession: config.forkSession } : {}),
     createQuery: (input) => {
       if (createInput && config?.getSessionMessages) queries.push(new FakeClaudeQuery());
       createInput = input;
@@ -317,7 +315,6 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 const SYNTHETIC_SUBAGENT_MODEL = "claude-synthetic-subagent[expanded]";
 const CLAUDE_ORIGINAL_SESSION_ID = "550e8400-e29b-41d4-a716-446655440010";
-const CLAUDE_FORK_SESSION_ID = "550e8400-e29b-41d4-a716-446655440020";
 
 function claudeHistoryMessage(input: {
   readonly type: "user" | "assistant" | "system";
@@ -6470,17 +6467,12 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("rewinds a steered Claude turn after recovery and preserves fork boundaries", () => {
-    const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
+  it.effect("rewinds a steered Claude turn after recovery at the kept turn's last entry", () => {
     let firstTurnId = "";
     let secondTurnId = "";
     let missingBoundary = false;
     let legacyHistory = false;
     const harness = makeHarness({
-      forkSession: async (...args) => {
-        forkCalls.push(args);
-        return { sessionId: "550e8400-e29b-41d4-a716-446655440020" };
-      },
       getSessionMessages: async (sessionId) => {
         const history: Awaited<
           ReturnType<NonNullable<ClaudeAdapterLiveOptions["getSessionMessages"]>>
@@ -6550,13 +6542,11 @@ describe("ClaudeAdapterLive", () => {
             message: { content: [] },
           },
         ];
-        return sessionId.endsWith("0020")
-          ? history.slice(0, 4).map((message) => ({ ...message, uuid: `fork-${message.uuid}` }))
-          : legacyHistory
-            ? history.slice(0, 6)
-            : missingBoundary
-              ? history.filter((message) => message.uuid !== secondTurnId)
-              : history;
+        return legacyHistory
+          ? history.slice(0, 6)
+          : missingBoundary
+            ? history.filter((message) => message.uuid !== secondTurnId)
+            : history;
       },
     });
     return Effect.gen(function* () {
@@ -6645,7 +6635,6 @@ describe("ClaudeAdapterLive", () => {
       const legacyOptions = harness.getLastCreateQueryInput();
       const ambiguousLegacy = yield* adapter.rollbackThread(session.threadId, 1).pipe(Effect.flip);
       assert.match(ambiguousLegacy.message, /exact Claude turn boundary is unavailable/);
-      assert.equal(forkCalls.length, 0);
       assert.equal(harness.getLastCreateQueryInput(), legacyOptions);
       assert.equal((yield* adapter.listSessions()).length, 1);
       yield* adapter.stopSession(session.threadId);
@@ -6655,28 +6644,27 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
         resumeCursor: cursor,
       });
+      const recoveredOptions = harness.getLastCreateQueryInput();
       missingBoundary = true;
       const unavailable = yield* adapter.rollbackThread(session.threadId, 1).pipe(Effect.flip);
       assert.match(unavailable.message, /exact Claude turn boundary is unavailable/);
-      assert.equal(forkCalls.length, 0);
+      assert.equal(harness.getLastCreateQueryInput(), recoveredOptions);
       missingBoundary = false;
 
       const recoveredQuery = harness.queries.at(-1)!;
       assert.equal(recoveredQuery.closeCalls, 0);
       yield* adapter.rollbackThread(session.threadId, 1);
       assert.equal(recoveredQuery.closeCalls, 1);
-      const forkOptions = harness.getLastCreateQueryInput()?.options;
-      assert.deepEqual(forkCalls, [
-        ["550e8400-e29b-41d4-a716-446655440010", { upToMessageId: "assistant-1-final" }],
-      ]);
-      assert.equal(forkOptions?.resume, "550e8400-e29b-41d4-a716-446655440020");
-      assert.equal(forkOptions?.resumeSessionAt, undefined);
-      assert.equal(forkOptions?.forkSession, undefined);
+      const rewindOptions = harness.getLastCreateQueryInput()?.options;
+      assert.equal(rewindOptions?.resume, "550e8400-e29b-41d4-a716-446655440010");
+      assert.equal(rewindOptions?.resumeSessionAt, "assistant-1-final");
+      assert.equal(rewindOptions?.forkSession, undefined);
       assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
         threadId: session.threadId,
-        resume: "550e8400-e29b-41d4-a716-446655440020",
+        resume: "550e8400-e29b-41d4-a716-446655440010",
+        rewindTo: "assistant-1-final",
         turnCount: 1,
-        turnStartMessageIds: [`fork-${firstTurnId}`],
+        turnStartMessageIds: [firstTurnId],
       });
 
       yield* adapter.rollbackThread(session.threadId, 2);
@@ -6741,44 +6729,41 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("rewinds Claude history when the fork omits retained system messages", () => {
-    const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
+  it.effect("rewinds Claude history after a compaction that preserved recent messages", () => {
+    let compactedTurnId = "";
     let firstTurnId = "";
     let secondTurnId = "";
     const harness = makeHarness({
-      forkSession: async (...args) => {
-        forkCalls.push(args);
-        return { sessionId: CLAUDE_FORK_SESSION_ID };
-      },
-      getSessionMessages: async (sessionId) => {
-        if (sessionId === CLAUDE_FORK_SESSION_ID) {
-          return [
-            claudeHistoryMessage({
-              type: "user",
-              uuid: `fork-${firstTurnId}`,
-              sessionId,
-              content: "first",
-            }),
-            claudeHistoryMessage({
-              type: "assistant",
-              uuid: "fork-assistant-1",
-              sessionId,
-            }),
-          ];
-        }
-        return [
-          claudeHistoryMessage({ type: "system", uuid: "system-init" }),
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
-          claudeHistoryMessage({
-            type: "system",
-            uuid: "compact-boundary",
-            content: { subtype: "compact_boundary" },
-          }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-        ];
-      },
+      // Shaped like a real reactive compaction: the chain restarts at the
+      // boundary, preserved entries follow the summary, the oldest turn start
+      // is compacted away, and every turn ends with a Stop hook summary.
+      getSessionMessages: async () => [
+        claudeHistoryMessage({
+          type: "system",
+          uuid: "compact-boundary",
+          content: { subtype: "compact_boundary" },
+        }),
+        claudeHistoryMessage({
+          type: "user",
+          uuid: "compact-summary",
+          content: "This session is being continued from a previous conversation.",
+        }),
+        claudeHistoryMessage({ type: "assistant", uuid: "preserved-assistant" }),
+        claudeHistoryMessage({
+          type: "system",
+          uuid: "preserved-stop-hook",
+          content: { subtype: "stop_hook_summary" },
+        }),
+        claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
+        claudeHistoryMessage({
+          type: "system",
+          uuid: "stop-hook-1",
+          content: { subtype: "stop_hook_summary" },
+        }),
+        claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
+      ],
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -6787,21 +6772,28 @@ describe("ClaudeAdapterLive", () => {
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
       });
+      compactedTurnId = (yield* sendCompletedClaudeTurn(
+        adapter,
+        harness,
+        session.threadId,
+        "compacted",
+      )).turnId;
       firstTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "first"))
         .turnId;
       secondTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "second"))
         .turnId;
 
       const snapshot = yield* adapter.rollbackThread(session.threadId, 1);
-      assert.equal(snapshot.turns.length, 1);
-      assert.deepEqual(forkCalls, [
-        [CLAUDE_ORIGINAL_SESSION_ID, { upToMessageId: "compact-boundary" }],
-      ]);
+      assert.equal(snapshot.turns.length, 2);
+      const rewindOptions = harness.getLastCreateQueryInput()?.options;
+      assert.equal(rewindOptions?.resume, CLAUDE_ORIGINAL_SESSION_ID);
+      assert.equal(rewindOptions?.resumeSessionAt, "stop-hook-1");
       assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
         threadId: session.threadId,
-        resume: CLAUDE_FORK_SESSION_ID,
-        turnCount: 1,
-        turnStartMessageIds: [`fork-${firstTurnId}`],
+        resume: CLAUDE_ORIGINAL_SESSION_ID,
+        rewindTo: "stop-hook-1",
+        turnCount: 2,
+        turnStartMessageIds: [compactedTurnId, firstTurnId],
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -6809,167 +6801,140 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("rewinds Claude history when the fork inserts extra system messages", () => {
-    let firstTurnId = "";
-    let secondTurnId = "";
-    const harness = makeHarness({
-      forkSession: async () => ({ sessionId: CLAUDE_FORK_SESSION_ID }),
-      getSessionMessages: async (sessionId) => {
-        if (sessionId === CLAUDE_FORK_SESSION_ID) {
-          return [
-            claudeHistoryMessage({
-              type: "system",
-              uuid: "fork-system-init",
-              sessionId,
-            }),
-            claudeHistoryMessage({
-              type: "user",
-              uuid: `fork-${firstTurnId}`,
-              sessionId,
-              content: "first",
-            }),
-            claudeHistoryMessage({
-              type: "assistant",
-              uuid: "fork-assistant-1",
-              sessionId,
-            }),
-          ];
-        }
-        return [
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-        ];
+  for (const firstEntry of ["reply", "compaction"] as const) {
+    it.effect(
+      `keeps a Claude rewind point until the rewound branch records a ${firstEntry}`,
+      () => {
+        let firstTurnId = "";
+        let secondTurnId = "";
+        const harness = makeHarness({
+          getSessionMessages: async () => [
+            claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+            claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
+            claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
+            claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
+          ],
+        });
+        return Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          const session = yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
+          firstTurnId = (yield* sendCompletedClaudeTurn(
+            adapter,
+            harness,
+            session.threadId,
+            "first",
+          )).turnId;
+          secondTurnId = (yield* sendCompletedClaudeTurn(
+            adapter,
+            harness,
+            session.threadId,
+            "second",
+          )).turnId;
+          yield* adapter.rollbackThread(session.threadId, 1);
+
+          // Until the rewound branch records something, Claude's newest leaf is
+          // still the discarded turn, so a restart has to resume at the rewind
+          // point again.
+          const pinnedCursor = (yield* adapter.listSessions())[0]?.resumeCursor;
+          yield* adapter.stopSession(session.threadId);
+          yield* adapter.startSession({
+            threadId: session.threadId,
+            runtimeMode: "full-access",
+            resumeCursor: pinnedCursor,
+          });
+          assert.equal(harness.getLastCreateQueryInput()?.options.resumeSessionAt, "assistant-1");
+
+          const nextTurn = yield* adapter.sendTurn({
+            threadId: session.threadId,
+            input: firstEntry === "reply" ? "second, edited" : "/compact",
+            attachments: [],
+          });
+          const completedFiber = yield* Stream.filter(
+            adapter.streamEvents,
+            (event) => event.type === "turn.completed",
+          ).pipe(Stream.runHead, Effect.forkChild);
+          harness.queries.at(-1)!.emit(
+            (firstEntry === "reply"
+              ? {
+                  type: "assistant",
+                  session_id: CLAUDE_ORIGINAL_SESSION_ID,
+                  uuid: "assistant-2-edited",
+                  parent_tool_use_id: null,
+                  message: {
+                    id: "assistant-message-2-edited",
+                    content: [{ type: "text", text: "Edited" }],
+                  },
+                }
+              : {
+                  type: "system",
+                  subtype: "compact_boundary",
+                  compact_metadata: { pre_tokens: 200, post_tokens: 40 },
+                  session_id: CLAUDE_ORIGINAL_SESSION_ID,
+                  uuid: "compact-boundary-after-rewind",
+                }) as unknown as SDKMessage,
+          );
+          harness.queries.at(-1)!.emit({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            errors: [],
+            session_id: CLAUDE_ORIGINAL_SESSION_ID,
+            uuid: "result-after-rewind",
+          } as unknown as SDKMessage);
+          yield* Fiber.join(completedFiber);
+
+          const cursor = (yield* adapter.listSessions())[0]?.resumeCursor;
+          assert.deepEqual(cursor, {
+            threadId: session.threadId,
+            resume: CLAUDE_ORIGINAL_SESSION_ID,
+            ...(firstEntry === "reply" ? { resumeSessionAt: "assistant-2-edited" } : {}),
+            turnCount: 2,
+            turnStartMessageIds: [firstTurnId, nextTurn.turnId],
+          });
+          yield* adapter.stopSession(session.threadId);
+          yield* adapter.startSession({
+            threadId: session.threadId,
+            runtimeMode: "full-access",
+            resumeCursor: cursor,
+          });
+          const resumedOptions = harness.getLastCreateQueryInput()?.options;
+          assert.equal(resumedOptions?.resume, CLAUDE_ORIGINAL_SESSION_ID);
+          assert.equal(resumedOptions?.resumeSessionAt, undefined);
+        }).pipe(
+          Effect.provideService(Random.Random, makeDeterministicRandomService()),
+          Effect.provide(harness.layer),
+        );
       },
-    });
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
-      });
-      firstTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "first"))
-        .turnId;
-      secondTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "second"))
-        .turnId;
-
-      yield* adapter.rollbackThread(session.threadId, 1);
-      assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
-        threadId: session.threadId,
-        resume: CLAUDE_FORK_SESSION_ID,
-        turnCount: 1,
-        turnStartMessageIds: [`fork-${firstTurnId}`],
-      });
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
     );
-  });
-
-  it.effect("rewinds Claude history when the fork keeps a compact conversation prefix", () => {
-    let firstTurnId = "";
-    let secondTurnId = "";
-    const harness = makeHarness({
-      forkSession: async () => ({ sessionId: CLAUDE_FORK_SESSION_ID }),
-      getSessionMessages: async (sessionId) => {
-        if (sessionId === CLAUDE_FORK_SESSION_ID) {
-          return [
-            claudeHistoryMessage({
-              type: "user",
-              uuid: "fork-compacted-user",
-              sessionId,
-              content: "earlier compacted turn",
-            }),
-            claudeHistoryMessage({
-              type: "assistant",
-              uuid: "fork-compacted-assistant",
-              sessionId,
-            }),
-            claudeHistoryMessage({
-              type: "user",
-              uuid: `fork-${firstTurnId}`,
-              sessionId,
-              content: "first",
-            }),
-            claudeHistoryMessage({
-              type: "assistant",
-              uuid: "fork-assistant-1",
-              sessionId,
-            }),
-          ];
-        }
-        return [
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-        ];
-      },
-    });
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
-      });
-      firstTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "first"))
-        .turnId;
-      secondTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "second"))
-        .turnId;
-
-      yield* adapter.rollbackThread(session.threadId, 1);
-      assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
-        threadId: session.threadId,
-        resume: CLAUDE_FORK_SESSION_ID,
-        turnCount: 1,
-        turnStartMessageIds: [`fork-${firstTurnId}`],
-      });
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
+  }
 
   it.effect("rewinds a Claude turn that includes tool results and a later steer", () => {
-    const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
     let firstTurnId = "";
     let secondTurnId = "";
     const harness = makeHarness({
-      forkSession: async (...args) => {
-        forkCalls.push(args);
-        return { sessionId: CLAUDE_FORK_SESSION_ID };
-      },
-      getSessionMessages: async (sessionId) => {
-        const history = [
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1-tool" }),
-          claudeHistoryMessage({
-            type: "user",
-            uuid: "tool-result-1",
-            content: [{ type: "tool_result" }],
-          }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1-final" }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-          claudeHistoryMessage({
-            type: "user",
-            uuid: "steer",
-            sessionId,
-            content: "steer the second turn",
-          }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-steer", sessionId }),
-        ];
-        return sessionId === CLAUDE_FORK_SESSION_ID
-          ? history.slice(0, 4).map((message) => ({
-              ...message,
-              uuid: `fork-${message.uuid}`,
-              session_id: sessionId,
-            }))
-          : history;
-      },
+      getSessionMessages: async (sessionId) => [
+        claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-1-tool" }),
+        claudeHistoryMessage({
+          type: "user",
+          uuid: "tool-result-1",
+          content: [{ type: "tool_result" }],
+        }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-1-final" }),
+        claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
+        claudeHistoryMessage({
+          type: "user",
+          uuid: "steer",
+          sessionId,
+          content: "steer the second turn",
+        }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-steer", sessionId }),
+      ],
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -7008,14 +6973,13 @@ describe("ClaudeAdapterLive", () => {
 
       const snapshot = yield* adapter.rollbackThread(session.threadId, 1);
       assert.equal(snapshot.turns.length, 1);
-      assert.deepEqual(forkCalls, [
-        [CLAUDE_ORIGINAL_SESSION_ID, { upToMessageId: "assistant-1-final" }],
-      ]);
+      assert.equal(harness.getLastCreateQueryInput()?.options.resumeSessionAt, "assistant-1-final");
       assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
         threadId: session.threadId,
-        resume: CLAUDE_FORK_SESSION_ID,
+        resume: CLAUDE_ORIGINAL_SESSION_ID,
+        rewindTo: "assistant-1-final",
         turnCount: 1,
-        turnStartMessageIds: [`fork-${firstTurnId}`],
+        turnStartMessageIds: [firstTurnId],
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -7028,33 +6992,15 @@ describe("ClaudeAdapterLive", () => {
     let secondTurnId = "";
     let thirdTurnId = "";
     const harness = makeHarness({
-      forkSession: async () => ({ sessionId: CLAUDE_FORK_SESSION_ID }),
-      getSessionMessages: async (sessionId) => {
-        const history = [
-          claudeHistoryMessage({ type: "system", uuid: "system-init" }),
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-          claudeHistoryMessage({ type: "user", uuid: thirdTurnId, content: "third" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-3" }),
-        ];
-        return sessionId === CLAUDE_FORK_SESSION_ID
-          ? [
-              claudeHistoryMessage({
-                type: "user",
-                uuid: `fork-${firstTurnId}`,
-                sessionId,
-                content: "first",
-              }),
-              claudeHistoryMessage({
-                type: "assistant",
-                uuid: "fork-assistant-1",
-                sessionId,
-              }),
-            ]
-          : history;
-      },
+      getSessionMessages: async () => [
+        claudeHistoryMessage({ type: "system", uuid: "system-init" }),
+        claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
+        claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
+        claudeHistoryMessage({ type: "user", uuid: thirdTurnId, content: "third" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-3" }),
+      ],
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -7074,9 +7020,10 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(snapshot.turns.length, 1);
       assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
         threadId: session.threadId,
-        resume: CLAUDE_FORK_SESSION_ID,
+        resume: CLAUDE_ORIGINAL_SESSION_ID,
+        rewindTo: "assistant-1",
         turnCount: 1,
-        turnStartMessageIds: [`fork-${firstTurnId}`],
+        turnStartMessageIds: [firstTurnId],
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -7089,49 +7036,15 @@ describe("ClaudeAdapterLive", () => {
     let secondTurnId = "";
     let thirdTurnId = "";
     const harness = makeHarness({
-      forkSession: async () => ({ sessionId: CLAUDE_FORK_SESSION_ID }),
-      getSessionMessages: async (sessionId) => {
-        const history = [
-          claudeHistoryMessage({ type: "system", uuid: "system-init" }),
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-          claudeHistoryMessage({ type: "user", uuid: thirdTurnId, content: "third" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-3" }),
-        ];
-        return sessionId === CLAUDE_FORK_SESSION_ID
-          ? [
-              claudeHistoryMessage({
-                type: "user",
-                uuid: `fork-${firstTurnId}`,
-                sessionId,
-                content: "first",
-              }),
-              claudeHistoryMessage({
-                type: "assistant",
-                uuid: "fork-assistant-1",
-                sessionId,
-              }),
-              claudeHistoryMessage({
-                type: "system",
-                uuid: "fork-notice",
-                sessionId,
-              }),
-              claudeHistoryMessage({
-                type: "user",
-                uuid: `fork-${secondTurnId}`,
-                sessionId,
-                content: "second",
-              }),
-              claudeHistoryMessage({
-                type: "assistant",
-                uuid: "fork-assistant-2",
-                sessionId,
-              }),
-            ]
-          : history;
-      },
+      getSessionMessages: async () => [
+        claudeHistoryMessage({ type: "system", uuid: "system-init" }),
+        claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
+        claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
+        claudeHistoryMessage({ type: "user", uuid: thirdTurnId, content: "third" }),
+        claudeHistoryMessage({ type: "assistant", uuid: "assistant-3" }),
+      ],
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -7151,9 +7064,10 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(snapshot.turns.length, 2);
       assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, {
         threadId: session.threadId,
-        resume: CLAUDE_FORK_SESSION_ID,
+        resume: CLAUDE_ORIGINAL_SESSION_ID,
+        rewindTo: "assistant-2",
         turnCount: 2,
-        turnStartMessageIds: [`fork-${firstTurnId}`, `fork-${secondTurnId}`],
+        turnStartMessageIds: [firstTurnId, secondTurnId],
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -7162,12 +7076,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("resets a Claude thread when rewind removes every recorded turn", () => {
-    const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
     const harness = makeHarness({
-      forkSession: async (...args) => {
-        forkCalls.push(args);
-        return { sessionId: CLAUDE_FORK_SESSION_ID };
-      },
       getSessionMessages: async () => [
         claudeHistoryMessage({ type: "user", uuid: "unused", content: "first" }),
       ],
@@ -7184,145 +7093,15 @@ describe("ClaudeAdapterLive", () => {
 
       const snapshot = yield* adapter.rollbackThread(session.threadId, 2);
       assert.equal(snapshot.turns.length, 0);
-      assert.equal(forkCalls.length, 0);
       const resetOptions = harness.getLastCreateQueryInput()?.options;
       assert.equal(resetOptions?.resume, undefined);
+      assert.equal(resetOptions?.resumeSessionAt, undefined);
       assert.ok(resetOptions?.sessionId);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
   });
-
-  it.effect("rejects a Claude fork that drops a retained user turn", () => {
-    let firstTurnId = "";
-    let secondTurnId = "";
-    const harness = makeHarness({
-      forkSession: async () => ({ sessionId: CLAUDE_FORK_SESSION_ID }),
-      getSessionMessages: async (sessionId) => {
-        if (sessionId === CLAUDE_FORK_SESSION_ID) {
-          return [
-            claudeHistoryMessage({
-              type: "assistant",
-              uuid: "fork-assistant-1",
-              sessionId,
-            }),
-          ];
-        }
-        return [
-          claudeHistoryMessage({ type: "user", uuid: firstTurnId, content: "first" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-1" }),
-          claudeHistoryMessage({ type: "user", uuid: secondTurnId, content: "second" }),
-          claudeHistoryMessage({ type: "assistant", uuid: "assistant-2" }),
-        ];
-      },
-    });
-    return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      const session = yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        runtimeMode: "full-access",
-      });
-      firstTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "first"))
-        .turnId;
-      secondTurnId = (yield* sendCompletedClaudeTurn(adapter, harness, session.threadId, "second"))
-        .turnId;
-
-      const error = yield* adapter.rollbackThread(session.threadId, 1).pipe(Effect.flip);
-      assert.match(error.message, /did not preserve the retained turn boundaries/);
-      assert.equal(harness.queries.at(-1)?.closeCalls, 0);
-    }).pipe(
-      Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
-    );
-  });
-
-  for (const scenario of [
-    "restores conversation messages between retained turns",
-    "changes retained assistant content without changing its role",
-  ] as const) {
-    it.effect(`rejects a Claude fork that ${scenario}`, () => {
-      const turnIds: Array<string> = [];
-      const harness = makeHarness({
-        forkSession: async () => ({ sessionId: CLAUDE_FORK_SESSION_ID }),
-        getSessionMessages: async (sessionId) => {
-          const history = turnIds.flatMap((turnId, index) => [
-            claudeHistoryMessage({
-              type: "user",
-              uuid: turnId,
-              content: `prompt ${index + 1}`,
-            }),
-            claudeHistoryMessage({
-              type: "assistant",
-              uuid: `assistant-${index + 1}`,
-              content: [{ type: "text", text: `reply ${index + 1}` }],
-            }),
-          ]);
-          if (sessionId !== CLAUDE_FORK_SESSION_ID) return history;
-          const forkHistory = history.slice(0, 4).map((message) => ({
-            ...message,
-            uuid: `fork-${message.uuid}`,
-            session_id: sessionId,
-          }));
-          if (scenario === "restores conversation messages between retained turns") {
-            forkHistory.splice(
-              2,
-              0,
-              claudeHistoryMessage({
-                type: "user",
-                uuid: "fork-restored-steer",
-                sessionId,
-                content: "earlier steer omitted by compaction",
-              }),
-              claudeHistoryMessage({
-                type: "assistant",
-                uuid: "fork-restored-reply",
-                sessionId,
-                content: [{ type: "text", text: "earlier steering reply" }],
-              }),
-            );
-          } else {
-            forkHistory[1] = claudeHistoryMessage({
-              type: "assistant",
-              uuid: "fork-assistant-1",
-              sessionId,
-              content: [{ type: "text", text: "different retained reply" }],
-            });
-          }
-          return forkHistory;
-        },
-      });
-      return Effect.gen(function* () {
-        const adapter = yield* ClaudeAdapter;
-        const session = yield* adapter.startSession({
-          threadId: THREAD_ID,
-          provider: ProviderDriverKind.make("claudeAgent"),
-          runtimeMode: "full-access",
-        });
-        for (let index = 0; index < 3; index++) {
-          const turn = yield* sendCompletedClaudeTurn(
-            adapter,
-            harness,
-            session.threadId,
-            `prompt ${index + 1}`,
-          );
-          turnIds.push(turn.turnId);
-        }
-        const cursorBeforeRollback = (yield* adapter.listSessions())[0]?.resumeCursor;
-        const queryCountBeforeRollback = harness.queries.length;
-
-        const error = yield* adapter.rollbackThread(session.threadId, 1).pipe(Effect.flip);
-        assert.match(error.message, /did not preserve the retained turn boundaries/);
-        assert.equal(harness.queries.length, queryCountBeforeRollback);
-        assert.equal(harness.queries.at(-1)?.closeCalls, 0);
-        assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, cursorBeforeRollback);
-      }).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
-      );
-    });
-  }
 
   it.effect("updates model on sendTurn when model override is provided", () => {
     const harness = makeHarness();
