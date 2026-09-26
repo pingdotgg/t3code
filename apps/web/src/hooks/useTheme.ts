@@ -35,7 +35,8 @@ type ThemeSnapshot = {
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 
-const STORAGE_KEY = "t3code:theme";
+export const THEME_PREFERENCE_STORAGE_KEY = "t3code:theme";
+const STORAGE_KEY = THEME_PREFERENCE_STORAGE_KEY;
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",

@@ -318,6 +318,28 @@ describe("ClientSettings chat width", () => {
   });
 });
 
+describe("ClientSettings interface layout", () => {
+  it("defaults to no customized surfaces", () => {
+    expect(decodeClientSettings({}).interfaceLayout).toEqual({});
+  });
+
+  it("keeps element ids this build does not know", () => {
+    const interfaceLayout = {
+      threadRow: { order: ["provider", "a-future-element"], hidden: ["terminal"] },
+    };
+    const settings = decodeClientSettings({ interfaceLayout });
+    expect(settings.interfaceLayout).toEqual(interfaceLayout);
+    expect(encodeClientSettings(settings).interfaceLayout).toEqual(interfaceLayout);
+    expect(decodeClientSettingsPatch({ interfaceLayout }).interfaceLayout).toEqual(interfaceLayout);
+  });
+
+  it("fills a surface's missing lists with empty defaults", () => {
+    expect(decodeClientSettings({ interfaceLayout: { chatHeader: {} } }).interfaceLayout).toEqual({
+      chatHeader: { order: [], hidden: [] },
+    });
+  });
+});
+
 describe("ClientSettings load balancing", () => {
   it("requires opt-in when settings are new or omit load balancing", () => {
     expect(decodeClientSettings({}).loadBalancingEnabled).toBe(false);

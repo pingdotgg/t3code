@@ -53,6 +53,7 @@ import {
   MoonIcon,
   PaletteIcon,
   SettingsIcon,
+  SlidersHorizontalIcon,
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
@@ -169,6 +170,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
+import { useCustomizeInterfaceStore } from "./customize/customizeInterfaceStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import {
   COMMAND_PALETTE_META_ICON_CLASS,
@@ -665,6 +667,12 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        // Customize interface opened from here takes focus for its own keys.
+        const customize =
+          document.querySelector<HTMLElement>(
+            '[data-customize-popover] [data-preset][aria-pressed="true"]',
+          ) ?? document.querySelector<HTMLElement>("[data-customize-popover] [data-preset]");
+        if (customize) return customize;
         composerHandleRef?.current?.focusAtEnd();
         return false;
       }}
@@ -1993,6 +2001,27 @@ function OpenCommandPaletteDialog(props: {
       groups: [{ value: "themes", label: "Change theme", items: [] }],
     });
   }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView]);
+
+  actionItems.push({
+    kind: "action",
+    value: "action:customize-interface",
+    searchTerms: [
+      "customize",
+      "customise",
+      "interface",
+      "layout",
+      "appearance",
+      "arrange",
+      "thread list",
+      "composer",
+      "header",
+    ],
+    title: "Customize interface",
+    icon: <SlidersHorizontalIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      useCustomizeInterfaceStore.getState().open();
+    },
+  });
 
   actionItems.push({
     kind: "action",

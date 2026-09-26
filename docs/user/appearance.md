@@ -21,6 +21,23 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Customize the interface
+
+On web and desktop, choose **Customize interface** at the bottom of the sidebar, in the command
+palette, or under **Settings → Appearance**. Pick a layout to start from: **Balanced**, **Minimal**,
+**Focus**, or **Detailed**. Hovering a layout marks what it would hide before you choose it. The same
+panel changes the theme, light or dark mode, text size, and chat width.
+
+To fine-tune, choose **Thread rows**, **Header**, or **Composer**. That part of the app stays lit
+while you edit it in place: drag an item to move it, or use its minus button to hide it. Hidden
+items wait beside it, ready to bring back. With the keyboard, Tab to an item, use the arrow keys to
+move it, and press Delete to hide it. For the composer, hold it **Expanded** or **Collapsed** to
+arrange both layouts.
+
+Changes apply immediately. **Undo** (⌘Z or Ctrl+Z) steps back one change, **Revert** returns to how
+things looked when you started, and **Done** or Escape keeps your changes. The arrangement is saved
+on each device or browser. Mobile does not have this mode.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

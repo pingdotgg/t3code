@@ -12,6 +12,7 @@ import {
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
+  resolveContextBarLeadsControls,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
@@ -21,6 +22,11 @@ import {
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
+import {
+  moveSurfaceElement,
+  resolveSurfaceLayout,
+  setSurfaceElementHidden,
+} from "../interfaceLayout";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
@@ -856,5 +862,35 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveContextBarLeadsControls", () => {
+  const shown = { workspace: true, branch: true };
+
+  it("leads with the workspace in the default order", () => {
+    expect(
+      resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", {}), shown),
+    ).toBe(true);
+  });
+
+  it("has nothing before the controls once they move to the front", () => {
+    const layout = moveSurfaceElement({}, "composerContextBar", "controls", "workspace");
+    expect(
+      resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", layout), shown),
+    ).toBe(false);
+  });
+
+  it("ignores leading items that are hidden or have nothing to show", () => {
+    const hidden = setSurfaceElementHidden({}, "composerContextBar", "workspace", true);
+    expect(
+      resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", hidden), shown),
+    ).toBe(false);
+    expect(
+      resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", {}), {
+        workspace: false,
+        branch: true,
+      }),
+    ).toBe(false);
   });
 });

@@ -68,6 +68,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -241,6 +242,8 @@ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarT
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
+import { useInterfaceLayout } from "../hooks/useInterfaceLayout";
+import { groupAdjacentElements, type InterfaceElementId } from "../interfaceLayout";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -956,6 +959,12 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
+/** Row details drawn as small icons, kept together at the icons' tighter spacing. */
+const THREAD_ROW_ICON_DETAILS = new Set<InterfaceElementId<"threadRow">>([
+  "environment",
+  "provider",
+]);
+
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -1045,6 +1054,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(props.isActive);
+  const rowLayout = useInterfaceLayout("threadRow");
+  const showsDetail = (id: (typeof rowLayout.order)[number]) => !rowLayout.hidden.has(id);
+  const showsProjectLine = showsDetail("project");
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -1503,7 +1515,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
   const prBadge =
-    prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
+    showsDetail("pullRequest") && (prBadgeShape?.kind === "stack" || pr || currentLinkedPr) ? (
       <ThreadPullRequestBadgeControl
         render={<InlineButton />}
         badge={prBadgeShape}
@@ -1514,19 +1526,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
-  const terminalStatusIcon = terminalStatus ? (
-    <span
-      role="img"
-      aria-label={terminalProcessLabel(terminalProcessCount)}
-      data-testid={`sidebar-terminal-status-${thread.id}`}
-      className={cn("inline-flex shrink-0 items-center justify-center", terminalStatus.colorClass)}
-    >
-      <TerminalIcon
-        className={cn("size-3.5", terminalStatus.pulse && "motion-safe:animate-status-pulse")}
-        onAnimationStart={synchronizeTerminalPulse}
-      />
-    </span>
-  ) : null;
+  const terminalStatusIcon =
+    terminalStatus && showsDetail("terminal") ? (
+      <span
+        role="img"
+        aria-label={terminalProcessLabel(terminalProcessCount)}
+        data-testid={`sidebar-terminal-status-${thread.id}`}
+        data-customize-element="threadRow:terminal"
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center",
+          terminalStatus.colorClass,
+        )}
+      >
+        <TerminalIcon
+          className={cn("size-3.5", terminalStatus.pulse && "motion-safe:animate-status-pulse")}
+          onAnimationStart={synchronizeTerminalPulse}
+        />
+      </span>
+    ) : null;
   // Same pen the new-thread draft rows lead with, so both kinds of unsent
   // work read the same way in the list.
   const draftIndicator = hasUnsentDraft ? (
@@ -1612,12 +1629,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.project && showsDetail("project") ? (
+                <span data-customize-element="threadRow:project" className="contents">
+                  <ProjectFavicon project={props.project} className="size-4" />
+                </span>
+              ) : null}
             </span>
             {draftIndicator}
             {title}
             {pinIndicator}
-            {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 Regenerating title
@@ -1626,7 +1646,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {/* The PR badge stays outside the hover-fading slot: it must
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
-            {prBadge}
+            {rowLayout.order.indexOf("terminal") < rowLayout.order.indexOf("pullRequest") ? (
+              <>
+                {terminalStatusIcon}
+                <span data-customize-element="threadRow:pullRequest" className="contents">
+                  {prBadge}
+                </span>
+              </>
+            ) : (
+              <>
+                <span data-customize-element="threadRow:pullRequest" className="contents">
+                  {prBadge}
+                </span>
+                {terminalStatusIcon}
+              </>
+            )}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1662,13 +1696,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       />
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                     </Tooltip>
-                  ) : (
-                    <span className="text-xs">
+                  ) : showsDetail("status") ? (
+                    <span data-customize-element="threadRow:status" className="text-xs">
                       {variantAction === "unsettle"
                         ? settledTimeLabel(thread)
                         : threadTimeLabel(thread)}
                     </span>
-                  )}
+                  ) : null}
                 </span>
                 {variantAction === "unsnooze" ? (
                   !props.snoozeSupported ? null : (
@@ -1734,8 +1768,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        // Matches the content box height; the py-0.5 padding is added on top.
+        "list-none py-0.5 [content-visibility:auto]",
+        showsProjectLine
+          ? "[contain-intrinsic-size:auto_78px]"
+          : "[contain-intrinsic-size:auto_54px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1756,14 +1793,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             />
           }
         >
-          <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+          <div
+            className={cn(
+              "relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+              showsProjectLine ? "h-[4.875rem]" : "h-[3.375rem]",
+            )}
+          >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
+              {props.project && showsProjectLine ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
-              {props.projectDisplayName ? (
+              {/* Without the project line the title takes its place, beside the
+                  pin and status, so the card loses a line instead of leaving
+                  one blank. */}
+              {!showsProjectLine ? (
+                title
+              ) : props.projectDisplayName ? (
                 <span
+                  data-customize-element="threadRow:project"
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
@@ -1787,6 +1835,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     itself an action, so it stays pointer-enabled and visible
                     while the other controls appear beside it. */}
                   <span
+                    data-customize-element="threadRow:status"
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
@@ -1795,7 +1844,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {topStatus ? (
+                    {!showsDetail("status") && !isWokeStatus ? null : topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
                           <TooltipTrigger
@@ -1911,67 +1960,102 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               )}
             </div>
-            <div className="mt-1 flex min-w-0">
-              {title}
-              {isRegeneratingTitle ? (
-                <span role="status" className="sr-only">
-                  Regenerating title
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
-                  working, but it truncated to a half-sentence and dropped the
-                  branch, so the row lost its most stable identifier. */}
-              {thread.branch ? (
-                <>
-                  <ThreadWorktreeIndicator thread={thread} />
-                  <span className="flex min-w-0 flex-1 text-muted-foreground/40">
-                    <MiddleTruncate value={thread.branch} showTitle={false} />
-                  </span>
-                </>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalStatusIcon}
-              {prBadge}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
-                  <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
-                </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={props.environmentMachine}
-                      className="size-3.5"
-                    />
-                  </span>
-                ) : null}
-                {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center">
-                    <ProviderInstanceIcon
-                      driverKind={driverKind}
-                      displayName={
-                        providerEntry?.displayName ??
-                        thread.session?.providerName ??
-                        modelInstanceId
-                      }
-                      accentColor={providerEntry?.accentColor}
-                      showBadge={showInstanceBadge}
-                      // Glyph dims, badge stays saturated; offset matches the composer trigger.
-                      iconClassName="size-3.5 opacity-60"
-                      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
-                    />
-                  </span>
-                ) : null}
+            {showsProjectLine ? <div className="mt-1 flex min-w-0">{title}</div> : null}
+            {isRegeneratingTitle ? (
+              <span role="status" className="sr-only">
+                Regenerating title
               </span>
+            ) : null}
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+              {/* Always the branch by default. The plan step used to take this
+                  slot while working, but it truncated to a half-sentence and
+                  dropped the branch, so the row lost its most stable identifier.
+                  The branch (or a spacer in its place) absorbs the free width,
+                  so details ordered after it sit at the trailing edge. */}
+              {groupAdjacentElements(rowLayout.order, THREAD_ROW_ICON_DETAILS).map((id) => {
+                if (Array.isArray(id)) {
+                  return (
+                    <span
+                      key={id.join()}
+                      aria-hidden
+                      className="pointer-events-none inline-flex shrink-0 items-center gap-1"
+                    >
+                      {id.map((icon) =>
+                        icon === "environment" ? (
+                          isRemote && showsDetail("environment") ? (
+                            <span
+                              key={icon}
+                              data-customize-element="threadRow:environment"
+                              className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                            >
+                              <EnvironmentMachineIcon
+                                aria-hidden
+                                kind={props.environmentMachine}
+                                className="size-3.5"
+                              />
+                            </span>
+                          ) : null
+                        ) : driverKind && showsDetail("provider") ? (
+                          <span
+                            key={icon}
+                            data-customize-element="threadRow:provider"
+                            className="inline-flex shrink-0 items-center"
+                          >
+                            <ProviderInstanceIcon
+                              driverKind={driverKind}
+                              displayName={
+                                providerEntry?.displayName ??
+                                thread.session?.providerName ??
+                                modelInstanceId
+                              }
+                              accentColor={providerEntry?.accentColor}
+                              showBadge={showInstanceBadge}
+                              // Glyph dims, badge stays saturated; offset matches the composer trigger.
+                              iconClassName="size-3.5 opacity-60"
+                              badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
+                            />
+                          </span>
+                        ) : null,
+                      )}
+                    </span>
+                  );
+                }
+                switch (id) {
+                  case "branch":
+                    return thread.branch && showsDetail("branch") ? (
+                      <span key={id} data-customize-element="threadRow:branch" className="contents">
+                        <ThreadWorktreeIndicator thread={thread} />
+                        <span className="flex min-w-0 flex-1 text-muted-foreground/40">
+                          <MiddleTruncate value={thread.branch} showTitle={false} />
+                        </span>
+                      </span>
+                    ) : (
+                      <span key={id} className="flex-1" />
+                    );
+                  case "terminal":
+                    return <Fragment key={id}>{terminalStatusIcon}</Fragment>;
+                  case "pullRequest":
+                    return (
+                      <span
+                        key={id}
+                        data-customize-element="threadRow:pullRequest"
+                        className="contents"
+                      >
+                        {prBadge}
+                        {diff ? (
+                          <span className="shrink-0 font-mono">
+                            <span className="text-diff-addition-foreground">
+                              +{diff.insertions}
+                            </span>{" "}
+                            <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
+                          </span>
+                        ) : null}
+                      </span>
+                    );
+                  default:
+                    return null;
+                }
+              })}
             </div>
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
