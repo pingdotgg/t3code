@@ -366,7 +366,11 @@ import {
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
-import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
+import {
+  createTimelineWheelLatch,
+  isTimelineScrollTarget,
+  latchTimelineWheelTarget,
+} from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -5458,6 +5462,12 @@ export default function ChatView(props: ChatViewProps) {
     timelineEntries,
     timelineLiveFollowEnabled,
   ]);
+  // Outlives the listener effect below, which reattaches whenever the
+  // composer inset changes, possibly in the middle of a wheel run.
+  const wheelLatchRef = useRef(createTimelineWheelLatch());
+  useEffect(() => {
+    wheelLatchRef.current = createTimelineWheelLatch();
+  }, [activeThread?.id]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -5493,7 +5503,7 @@ export default function ChatView(props: ChatViewProps) {
         // Only an upward wheel is a navigation intent; wheeling down while
         // following either does nothing (at the end) or moves toward it.
         const handleWheel = (event: WheelEvent) => {
-          if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
+          if (event.ctrlKey || !latchTimelineWheelTarget(wheelLatchRef.current, event, scrollNode))
             return;
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";

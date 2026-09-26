@@ -4,7 +4,12 @@ import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
 } from "./composerScrollGesture";
-import { isTimelineScrollTarget } from "./timelineScrollTarget";
+import {
+  TIMELINE_WHEEL_RUN_GAP_MS,
+  createTimelineWheelLatch,
+  isTimelineScrollTarget,
+  latchTimelineWheelTarget,
+} from "./timelineScrollTarget";
 
 class ScrollElement extends EventTarget {
   scrollTop = 0;
@@ -26,6 +31,20 @@ class ScrollElement extends EventTarget {
 
 function targetsTimeline(target: EventTarget | null, timeline: ScrollElement, deltaY: number) {
   return isTimelineScrollTarget(target, timeline as unknown as HTMLElement, deltaY);
+}
+
+function latchedTargetsTimeline(
+  latch: ReturnType<typeof createTimelineWheelLatch>,
+  target: EventTarget | null,
+  timeline: ScrollElement,
+  deltaY: number,
+  timeStamp: number,
+) {
+  return latchTimelineWheelTarget(
+    latch,
+    { target, deltaY, timeStamp },
+    timeline as unknown as HTMLElement,
+  );
 }
 
 function setup() {
@@ -122,21 +141,59 @@ describe("timeline scroll targets", () => {
 
   it("does not accumulate nested scrolling toward composer collapse", () => {
     const { timeline, group, content } = setup();
+    const latch = createTimelineWheelLatch();
     const state = createComposerScrollGestureState();
     const record = (target: ScrollElement, now: number, deltaPx: number) =>
       recordComposerScrollGestureEvent(state, {
         now,
         deltaPx,
         collapseThresholdPx: 24,
-        collapseEligible: targetsTimeline(target, timeline, -deltaPx),
+        collapseEligible: latchedTargetsTimeline(latch, target, timeline, -deltaPx, now),
         canScrollInGestureDirection: timeline.scrollTop > 0,
         scrollsTowardLogicalEnd: false,
       });
 
-    expect(record(timeline, 0, 20)).toBe(false);
-    expect(record(content, 20, 30)).toBe(false);
+    expect(record(content, 0, 30)).toBe(false);
     group.scrollTop = 0;
-    expect(record(content, 40, 10)).toBe(false);
-    expect(record(content, 60, 14)).toBe(true);
+    expect(record(content, 20, 30)).toBe(false);
+    expect(record(content, 40, 30)).toBe(false);
+    expect(record(content, 40 + TIMELINE_WHEEL_RUN_GAP_MS + 1, 30)).toBe(true);
+  });
+});
+
+describe("timeline wheel runs", () => {
+  it("keeps a run on a nested group after the group reaches its edge", () => {
+    const { timeline, group, content } = setup();
+    const latch = createTimelineWheelLatch();
+
+    expect(latchedTargetsTimeline(latch, content, timeline, -100, 0)).toBe(false);
+    group.scrollTop = 0;
+    // A slow wheel still counts as one run while clicks keep arriving.
+    expect(latchedTargetsTimeline(latch, content, timeline, -100, 400)).toBe(false);
+    expect(latchedTargetsTimeline(latch, content, timeline, -100, 800)).toBe(false);
+    expect(
+      latchedTargetsTimeline(latch, content, timeline, -100, 800 + TIMELINE_WHEEL_RUN_GAP_MS + 1),
+    ).toBe(true);
+  });
+
+  it("keeps a timeline run on the timeline when a nested group slides under the pointer", () => {
+    const { timeline, content } = setup();
+    const latch = createTimelineWheelLatch();
+
+    expect(latchedTargetsTimeline(latch, new ScrollElement(timeline), timeline, -100, 0)).toBe(
+      true,
+    );
+    expect(latchedTargetsTimeline(latch, content, timeline, -100, 30)).toBe(true);
+  });
+
+  it("does not let a horizontal-only event decide or end a run", () => {
+    const { timeline, group, content } = setup();
+    const latch = createTimelineWheelLatch();
+
+    expect(latchedTargetsTimeline(latch, content, timeline, 0, 0)).toBe(false);
+    group.scrollTop = 0;
+    expect(latchedTargetsTimeline(latch, content, timeline, -100, 10)).toBe(true);
+    expect(latchedTargetsTimeline(latch, content, timeline, 0, 20)).toBe(false);
+    expect(latchedTargetsTimeline(latch, content, timeline, -100, 30)).toBe(true);
   });
 });

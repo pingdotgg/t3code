@@ -29,3 +29,34 @@ export function isTimelineScrollTarget(
   }
   return true;
 }
+
+// Chromium keeps a run of wheel events on the scroller the run started on: a
+// nested group that reaches its edge mid-run swallows the rest of the run, and
+// the timeline only moves on a run that starts at that edge. With OS wheel input
+// in Edge, clicks 400 ms apart stayed on the group and 800 ms apart chained;
+// Chromium's own wheel transaction timeout is 500 ms.
+export const TIMELINE_WHEEL_RUN_GAP_MS = 500;
+
+export type TimelineWheelLatch = {
+  targetsTimeline: boolean;
+  lastEventAt: number;
+};
+
+export function createTimelineWheelLatch(): TimelineWheelLatch {
+  return { targetsTimeline: false, lastEventAt: Number.NEGATIVE_INFINITY };
+}
+
+// Whether a wheel event scrolls the timeline, decided once per run by
+// isTimelineScrollTarget on the run's first vertical event.
+export function latchTimelineWheelTarget(
+  latch: TimelineWheelLatch,
+  event: Pick<WheelEvent, "target" | "deltaY" | "timeStamp">,
+  timeline: HTMLElement,
+): boolean {
+  if (event.deltaY === 0) return false;
+  if (event.timeStamp - latch.lastEventAt > TIMELINE_WHEEL_RUN_GAP_MS) {
+    latch.targetsTimeline = isTimelineScrollTarget(event.target, timeline, event.deltaY);
+  }
+  latch.lastEventAt = event.timeStamp;
+  return latch.targetsTimeline;
+}

@@ -310,7 +310,7 @@ import {
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { pendingDraftWork } from "./pendingDraftWork";
-import { isTimelineScrollTarget } from "./timelineScrollTarget";
+import { createTimelineWheelLatch, latchTimelineWheelTarget } from "./timelineScrollTarget";
 import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
@@ -4887,6 +4887,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerScrollCollapseTimeoutRef.current = null;
       resetComposerScrollGesture(composerScrollGestureRef.current);
     };
+    const wheelLatch = createTimelineWheelLatch();
     const handleTimelineWheel = (event: WheelEvent) => {
       if (event.ctrlKey || !(event.target instanceof Element)) {
         return;
@@ -4894,12 +4895,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
       const scrollNode = getTimelineScrollableNode();
       if (!scrollNode) return;
-      const targetsTimeline = isTimelineScrollTarget(event.target, scrollNode, event.deltaY);
-      if (
-        !scrollNode.contains(event.target) &&
-        !composerScrollGestureRef.current.collapseSuppressed
-      )
-        return;
+      // Only timeline events may start or extend a run, as in ChatView, whose
+      // listener sits on the timeline itself.
+      const insideTimeline = scrollNode.contains(event.target);
+      if (!insideTimeline && !composerScrollGestureRef.current.collapseSuppressed) return;
+      const targetsTimeline =
+        insideTimeline && latchTimelineWheelTarget(wheelLatch, event, scrollNode);
 
       if (composerScrollCollapseTimeoutRef.current !== null) {
         window.clearTimeout(composerScrollCollapseTimeoutRef.current);
