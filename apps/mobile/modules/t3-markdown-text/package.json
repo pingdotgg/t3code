@@ -31,6 +31,7 @@
   "peerDependencies": {
     "@t3tools/client-runtime": "*",
     "@t3tools/shared": "*",
+    "@tabler/icons-react-native": "*",
     "expo": "*",
     "expo-asset": "*",
     "expo-clipboard": "*",

@@ -1,9 +1,17 @@
-import { createContext, memo, useContext, useMemo } from "react";
+import type { Icon } from "@tabler/icons-react-native/types";
+import IconAlertOctagon from "@tabler/icons-react-native/IconAlertOctagon";
+import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
+import IconBulb from "@tabler/icons-react-native/IconBulb";
+import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
+import IconMessageExclamation from "@tabler/icons-react-native/IconMessageExclamation";
+import { SymbolView } from "expo-symbols";
+import { createContext, memo, useContext, useMemo, type ComponentProps } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
+import { markdownAlertKind, type GithubAlertKind } from "./nativeMarkdownExtensions";
 import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
@@ -492,6 +500,132 @@ function NativeList(props: {
   );
 }
 
+/**
+ * GitHub's own five alert kinds in its colours, matching the web renderer's presentations.
+ * expo-symbols only draws SF Symbols on iOS, so Android gets the Tabler icon the app pairs with
+ * the same symbol in `AppSymbol.tsx`, imported per icon to keep the rest of the set out of Metro.
+ */
+const GITHUB_ALERT_PRESENTATIONS: Record<
+  GithubAlertKind,
+  {
+    label: string;
+    symbol: ComponentProps<typeof SymbolView>["name"];
+    androidIcon: Icon;
+    light: string;
+    dark: string;
+  }
+> = {
+  note: {
+    label: "Note",
+    symbol: "info.circle",
+    androidIcon: IconInfoCircle,
+    light: "#0969da",
+    dark: "#4493f8",
+  },
+  tip: {
+    label: "Tip",
+    symbol: "lightbulb",
+    androidIcon: IconBulb,
+    light: "#1a7f37",
+    dark: "#3fb950",
+  },
+  important: {
+    label: "Important",
+    symbol: "exclamationmark.bubble",
+    androidIcon: IconMessageExclamation,
+    light: "#8250df",
+    dark: "#ab7df8",
+  },
+  warning: {
+    label: "Warning",
+    symbol: "exclamationmark.triangle",
+    androidIcon: IconAlertTriangle,
+    light: "#9a6700",
+    dark: "#d29922",
+  },
+  caution: {
+    label: "Caution",
+    symbol: "exclamationmark.octagon",
+    androidIcon: IconAlertOctagon,
+    light: "#cf222e",
+    dark: "#f85149",
+  },
+};
+
+function NativeBlockChildren(props: {
+  readonly node: MarkdownNode;
+  readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+}) {
+  return (props.node.children ?? []).map((child, index) => (
+    <NativeMarkdownBlock
+      key={nodeKey(child, index)}
+      node={child}
+      skills={props.skills}
+      textStyle={props.textStyle}
+      highlightCode={props.highlightCode}
+      onLinkPress={props.onLinkPress}
+      depth={props.depth}
+      compact
+    />
+  ));
+}
+
+function NativeAlert(props: {
+  readonly kind: GithubAlertKind;
+  readonly node: MarkdownNode;
+  readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly textStyle: NativeMarkdownTextStyle;
+  readonly highlightCode: MarkdownCodeHighlighter;
+  readonly onLinkPress?: (href: string) => void;
+  readonly depth: number;
+  readonly compact?: boolean;
+}) {
+  const colorScheme = useColorScheme();
+  const presentation = GITHUB_ALERT_PRESENTATIONS[props.kind];
+  const color = colorScheme === "dark" ? presentation.dark : presentation.light;
+  return (
+    <View
+      style={{
+        borderLeftColor: color,
+        borderLeftWidth: 2,
+        marginVertical: props.compact ? 4 : 0,
+        paddingLeft: 11,
+        paddingVertical: 2,
+        gap: 6,
+      }}
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        {Platform.OS === "android" ? (
+          <presentation.androidIcon color={color} size={props.textStyle.fontSize} strokeWidth={2} />
+        ) : (
+          <SymbolView
+            name={presentation.symbol}
+            size={props.textStyle.fontSize}
+            tintColor={color}
+            type="monochrome"
+          />
+        )}
+        <Text
+          selectable
+          style={{
+            color,
+            fontFamily: props.textStyle.boldFontFamily,
+            fontSize: props.textStyle.fontSize,
+            lineHeight: props.textStyle.lineHeight,
+          }}
+        >
+          {presentation.label}
+        </Text>
+      </View>
+      <NativeBlockChildren {...props} />
+    </View>
+  );
+}
+
 export function NativeMarkdownBlock(props: {
   readonly node: MarkdownNode;
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
@@ -502,6 +636,10 @@ export function NativeMarkdownBlock(props: {
   readonly compact?: boolean;
 }) {
   const depth = props.depth ?? 0;
+  const alert = markdownAlertKind(props.node);
+  if (alert) {
+    return <NativeAlert {...props} kind={alert} depth={depth} />;
+  }
   switch (props.node.type) {
     case "document":
       return (
