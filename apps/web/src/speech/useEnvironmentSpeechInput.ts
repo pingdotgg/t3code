@@ -93,7 +93,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const startRequestRef = useRef(0);
-  const cancelledControllerRef = useRef<VoiceInputController<true> | null>(null);
   const latestInputRef = useRef(input);
   const microphoneIdRef = useRef(microphoneId);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
@@ -187,7 +186,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     return () => {
       disposed = true;
       startRequestRef.current += 1;
-      cancelledControllerRef.current = null;
       setQueuedStart(null);
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
@@ -261,22 +259,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
       if (!stillCurrent()) return;
       if (latestStatus.supported && latestStatus.state === "transcribing") {
-        if (cancelledControllerRef.current !== expectedController) return;
         setQueuedStart({ prepared, request });
-        // Only a start after our own cancellation waits for the previous stream.
-        // Bound the wait so an unresponsive environment cannot leave Preparing forever.
-        for (
-          let attempt = 0;
-          attempt < 20 && latestStatus.supported && latestStatus.state === "transcribing";
-          attempt++
-        ) {
+        // Remember the press and start when the previous stream drains,
+        // like Handy does, instead of erroring after a fixed wait.
+        // Esc, cancel, or a draft change (stillCurrent) abandons the queue.
+        while (latestStatus.supported && latestStatus.state === "transcribing") {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
           if (!stillCurrent()) return;
           latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
           if (!stillCurrent()) return;
-        }
-        if (latestStatus.supported && latestStatus.state === "transcribing") {
-          throw new Error("Voice transcription is still finishing. Try again shortly.");
         }
       }
     } catch (error) {
@@ -298,7 +289,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     if (!stillCurrent()) return;
-    cancelledControllerRef.current = null;
     setLevel(0);
     await expectedController.start();
   }, [currentStatus, prepared]);
@@ -375,10 +365,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     cancel: useCallback(() => {
       startRequestRef.current += 1;
       setQueuedStart(null);
-      const controller = controllerRef.current;
-      cancelledControllerRef.current =
-        controller && controller.currentState.phase !== "idle" ? controller : null;
-      controller?.cancel();
+      controllerRef.current?.cancel();
     }, []),
     skipPostProcessing: useCallback(() => controllerRef.current?.skipPostProcessing(), []),
   };

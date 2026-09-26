@@ -125,11 +125,29 @@ afterEach(async () => {
   mocks.preparedEnvironmentIds = [];
   vi.unstubAllGlobals();
 });
-it("does not capture audio while the environment is transcribing", async () => {
-  mocks.busy = true;
-  await mountProbe();
-  await act(() => voice.start());
-  expect(voice.state.phase).toBe("idle");
+it("queues a recording while the environment is transcribing and starts when it drains", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.microphoneFailure = false;
+    mocks.busy = true;
+    await mountProbe();
+    let starting!: Promise<void>;
+    await act(async () => {
+      starting = voice.start();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(voice.state.phase).toBe("preparing");
+    expect(mocks.microphoneRequests).toBe(0);
+    mocks.busy = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+      await starting;
+    });
+    expect(voice.state.phase).toBe("recording");
+    expect(mocks.microphoneRequests).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("starts a recording requested while a cancelled stream is finishing", async () => {
   vi.useFakeTimers();
