@@ -30,7 +30,8 @@ export interface ProviderRegistryShape {
   /**
    * Refresh all providers, or the default instance of the specified
    * kind when supplied. Concurrent full refreshes share one run that
-   * finishes even when every caller is interrupted.
+   * finishes even when every caller is interrupted. A run that hangs
+   * stops after 2 minutes and returns the cached list.
    *
    * Retained for back-compat with legacy call sites (WS refresh RPC,
    * orchestration metrics). New code should prefer `refreshInstance`.

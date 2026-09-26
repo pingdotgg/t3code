@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -368,6 +369,74 @@ const awaitPersistedProvider = (
     Stream.runDrain,
     Effect.forkScoped,
   );
+
+const stubCodexDriver = ProviderDriverKind.make("codex");
+const stubCodexInstanceId = ProviderInstanceId.make("codex");
+const stubCodexPendingProvider = {
+  instanceId: stubCodexInstanceId,
+  driver: stubCodexDriver,
+  status: "warning",
+  enabled: true,
+  installed: false,
+  auth: { status: "unknown" },
+  checkedAt: "2026-06-10T00:00:00.000Z",
+  version: null,
+  models: [],
+  slashCommands: [],
+  skills: [],
+} as const satisfies ServerProvider;
+
+// Builds a registry over one Codex instance that starts at
+// `stubCodexPendingProvider` and runs `refresh` as its probe.
+const buildStubCodexRegistry = (refresh: Effect.Effect<ServerProvider>) =>
+  Effect.gen(function* () {
+    const instance = {
+      instanceId: stubCodexInstanceId,
+      driverKind: stubCodexDriver,
+      continuationIdentity: {
+        driverKind: stubCodexDriver,
+        continuationKey: "codex:instance:codex",
+      },
+      displayName: undefined,
+      enabled: true,
+      snapshot: {
+        resolveMaintenance: () =>
+          Effect.succeed(
+            makeManualOnlyProviderMaintenanceCapabilities({
+              provider: stubCodexDriver,
+              packageName: null,
+            }),
+          ),
+        getSnapshot: Effect.succeed(stubCodexPendingProvider),
+        refresh,
+        streamChanges: Stream.empty,
+        applyUsageLimits: () => Effect.void,
+      },
+      adapter: {} as ProviderInstance["adapter"],
+      textGeneration: {} as ProviderInstance["textGeneration"],
+    } satisfies ProviderInstance;
+    const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+      getInstance: (instanceId) =>
+        Effect.succeed(instanceId === stubCodexInstanceId ? instance : undefined),
+      listInstances: Effect.succeed([instance]),
+      listUnavailable: Effect.succeed([]),
+      streamChanges: Stream.empty,
+      subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+    });
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    return yield* Layer.build(
+      ProviderRegistryLive.pipe(
+        Layer.provideMerge(instanceRegistryLayer),
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-provider-registry-shared-refresh-",
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ).pipe(Scope.provide(scope));
+  });
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
@@ -2120,23 +2189,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("shares one full refresh that outlives an interrupted caller", () =>
         Effect.gen(function* () {
-          const codexDriver = ProviderDriverKind.make("codex");
-          const codexInstanceId = ProviderInstanceId.make("codex");
-          const pendingProvider = {
-            instanceId: codexInstanceId,
-            driver: codexDriver,
-            status: "warning",
-            enabled: true,
-            installed: false,
-            auth: { status: "unknown" },
-            checkedAt: "2026-06-10T00:00:00.000Z",
-            version: null,
-            models: [],
-            slashCommands: [],
-            skills: [],
-          } as const satisfies ServerProvider;
           const refreshedProvider = {
-            ...pendingProvider,
+            ...stubCodexPendingProvider,
             status: "ready",
             installed: true,
             auth: { status: "authenticated" },
@@ -2146,60 +2200,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const refreshCalls = yield* Ref.make(0);
           const probeStarted = yield* Deferred.make<void>();
           const releaseProbe = yield* Deferred.make<void>();
-          const instance = {
-            instanceId: codexInstanceId,
-            driverKind: codexDriver,
-            continuationIdentity: {
-              driverKind: codexDriver,
-              continuationKey: "codex:instance:codex",
-            },
-            displayName: undefined,
-            enabled: true,
-            snapshot: {
-              resolveMaintenance: () =>
-                Effect.succeed(
-                  makeManualOnlyProviderMaintenanceCapabilities({
-                    provider: codexDriver,
-                    packageName: null,
-                  }),
-                ),
-              getSnapshot: Effect.succeed(pendingProvider),
-              refresh: Effect.gen(function* () {
-                yield* Ref.update(refreshCalls, (count) => count + 1);
-                yield* Deferred.succeed(probeStarted, undefined);
-                yield* Deferred.await(releaseProbe);
-                return refreshedProvider;
-              }),
-              streamChanges: Stream.empty,
-              applyUsageLimits: () => Effect.void,
-            },
-            adapter: {} as ProviderInstance["adapter"],
-            textGeneration: {} as ProviderInstance["textGeneration"],
-          } satisfies ProviderInstance;
-          const instanceRegistryLayer = Layer.succeed(
-            ProviderInstanceRegistry.ProviderInstanceRegistry,
-            {
-              getInstance: (instanceId) =>
-                Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
-              listInstances: Effect.succeed([instance]),
-              listUnavailable: Effect.succeed([]),
-              streamChanges: Stream.empty,
-              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-            },
+          const runtimeServices = yield* buildStubCodexRegistry(
+            Effect.gen(function* () {
+              yield* Ref.update(refreshCalls, (count) => count + 1);
+              yield* Deferred.succeed(probeStarted, undefined);
+              yield* Deferred.await(releaseProbe);
+              return refreshedProvider;
+            }),
           );
-          const scope = yield* Scope.make();
-          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-          const runtimeServices = yield* Layer.build(
-            ProviderRegistryLive.pipe(
-              Layer.provideMerge(instanceRegistryLayer),
-              Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
-                  prefix: "t3-provider-registry-shared-refresh-",
-                }),
-              ),
-              Layer.provideMerge(NodeServices.layer),
-            ),
-          ).pipe(Scope.provide(scope));
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
@@ -2216,6 +2224,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(yield* Fiber.join(joinedCaller), expected);
             assert.deepStrictEqual(yield* registry.getProviders, expected);
             assert.strictEqual(yield* Ref.get(refreshCalls), 1);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("frees the shared full refresh slot when a probe hangs", () =>
+        Effect.gen(function* () {
+          const probeStarts = yield* Queue.unbounded<void>();
+          const runtimeServices = yield* buildStubCodexRegistry(
+            Queue.offer(probeStarts, undefined).pipe(Effect.andThen(Effect.never)),
+          );
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const caller = yield* registry.refresh().pipe(Effect.forkChild);
+            yield* Queue.take(probeStarts);
+            yield* TestClock.adjust("2 minutes");
+
+            // The caller gets the cached list, and the next refresh starts a new run.
+            assert.deepStrictEqual(yield* Fiber.join(caller), [
+              withBundledCompatibility(stubCodexPendingProvider),
+            ]);
+            yield* registry.refresh().pipe(Effect.forkChild);
+            yield* Queue.take(probeStarts);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

@@ -579,14 +579,26 @@ export const ProviderRegistryLive = Layer.effect(
     // Untargeted refreshes share one run that lives in the registry scope.
     // Callers only join it, so a caller interrupt (a dropped socket) stops the
     // wait while the probes still finish and land in `providersRef`.
+    // No caller can cancel the run, so a timeout frees the slot if a probe
+    // hangs (OpenCode's inventory requests have no deadline of their own). It
+    // is longer than the slowest bounded probe, Antigravity's 90 s health check.
     const refreshAllFiber = yield* FiberHandle.make<ReadonlyArray<ServerProvider>, never>();
     const refreshAllGate = yield* Semaphore.make(1);
+    const boundedRefreshAll = refreshAll().pipe(
+      Effect.timeoutOrElse({
+        duration: "2 minutes",
+        orElse: () =>
+          Effect.logWarning("Full provider refresh timed out.").pipe(
+            Effect.andThen(Ref.get(providersRef)),
+          ),
+      }),
+    );
     const sharedRefreshAll = refreshAllGate
       .withPermits(1)(
         FiberHandle.get(refreshAllFiber).pipe(
           Effect.flatMap(
             Option.match({
-              onNone: () => FiberHandle.run(refreshAllFiber, refreshAll()),
+              onNone: () => FiberHandle.run(refreshAllFiber, boundedRefreshAll),
               onSome: Effect.succeed,
             }),
           ),
