@@ -1614,6 +1614,27 @@ body {
   --desktop-window-right-resize-inset: 6px;
 }
 
+/* A single vertical mask preserves the fade without the stacked masks that
+   caused Linux desktop scroll areas to flicker (#7766). */
+.electron-linux [data-slot="scroll-area-viewport"][data-scroll-fade] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black min(1.5rem, var(--scroll-area-overflow-y-start)),
+    black calc(100% - min(1.5rem, var(--scroll-area-overflow-y-end))),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black min(1.5rem, var(--scroll-area-overflow-y-start)),
+    black calc(100% - min(1.5rem, var(--scroll-area-overflow-y-end))),
+    transparent 100%
+  );
+  -webkit-mask-composite: source-over;
+  mask-composite: add;
+}
+
 /* App-chrome grain. Baked into each surface's own background (behind
    content) rather than a fixed overlay on top: a full-viewport overlay
    forces the compositor to re-blend every frame any animation produces,
