@@ -1,5 +1,6 @@
+import { projectEnvironment } from "../../state/projects";
 import { useFileContextMenu } from "../../fileContextMenu";
-import { composerMentionMenuTarget } from "./composerMentionMenuTarget";
+import { composerMentionMenuTarget, isResolvedComposerMention } from "./composerMentionMenuTarget";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { readLocalApi } from "../../localApi";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -1628,6 +1629,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const mentionMenu = useFileContextMenu(environmentId);
+  const mentionMenuAttempt = useRef(0);
+  useEffect(
+    () => () => {
+      mentionMenuAttempt.current += 1;
+    },
+    [environmentId, gitCwd],
+  );
+  const searchMention = useAtomQueryRunner(projectEnvironment.searchEntries, { refresh: true });
   const composerContextActions = useMemo(
     () => ({
       expandImage: (imageId: string) => {
@@ -1640,8 +1649,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const target = composerMentionMenuTarget(environmentId, gitCwd, path);
         // Without the local bridge there is no menu to show; tell the chip so the native
         // context menu keeps working on plain web.
-        if (target === null || readLocalApi() === undefined) return false;
-        void mentionMenu.show(target, position);
+        if (
+          target === null ||
+          environmentId === null ||
+          gitCwd === null ||
+          readLocalApi() === undefined
+        )
+          return false;
+        const attempt = ++mentionMenuAttempt.current;
+        void searchMention({
+          environmentId,
+          input: { cwd: gitCwd, query: target.filePath, kind: "file", limit: 100 },
+        }).then((result) => {
+          if (attempt !== mentionMenuAttempt.current) return;
+          if (result._tag === "Failure") {
+            toastManager.add({ type: "error", title: "Could not verify file", description: path });
+            return;
+          }
+          if (!isResolvedComposerMention(target.filePath, result.value.entries)) {
+            toastManager.add({
+              type: "error",
+              title: "File is no longer available",
+              description: path,
+            });
+            return;
+          }
+          void mentionMenu.show(target, position);
+        });
         return true;
       },
       expandVideo: (fileId: string) => {
@@ -1674,6 +1708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentId,
       gitCwd,
       mentionMenu,
+      searchMention,
       onExpandImage,
       openPrLink,
       routeThreadRef,

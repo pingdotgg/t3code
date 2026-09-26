@@ -1,3 +1,4 @@
+import { resolveDiffPathForWorkspace } from "../../diffFileActions";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   resolveFileContextMenuAbsolutePath,
@@ -12,6 +13,20 @@ export function composerMentionMenuTarget(
 ): FileContextMenuTarget | null {
   if (environmentId === null || workspaceRoot === null || path.trim() === "" || /[\\/]$/.test(path))
     return null;
-  const target = { environmentId, workspaceRoot, filePath: path };
+  const filePath = resolveDiffPathForWorkspace({
+    filePath: path,
+    workspaceRoot,
+    repositoryRoot: undefined,
+  });
+  if (filePath === null) return null;
+  const target = { environmentId, workspaceRoot, filePath };
   return resolveFileContextMenuAbsolutePath(target) === null ? null : target;
+}
+
+/** A search hit must identify this file exactly before host actions are offered. */
+export function isResolvedComposerMention(
+  path: string,
+  entries: readonly { readonly path: string; readonly kind: string }[],
+): boolean {
+  return entries.some((entry) => entry.path === path && entry.kind === "file");
 }
