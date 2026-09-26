@@ -25,6 +25,7 @@ import {
   requireThreadNotArchived,
   requireQueuedTurn,
   requireThreadReadyForTurnStart,
+  requireThreadWithInFlightTurn,
   threadHasPendingInteraction,
   threadHasQueuedTurnStart,
   threadHasSettlementOverride,
@@ -3570,6 +3571,86 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             interrupted,
             nudgingMetaEvent(targetThread, interrupted, { ...targetThread.nudging, paused: true }),
           ];
+    }
+
+    case "thread.turn.steer": {
+      yield* requireWritableProjectForThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const { thread: targetThread, turnId: activeTurnId } = yield* requireThreadWithInFlightTurn({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (command.turnId !== undefined && command.turnId !== activeTurnId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail:
+            `Turn '${command.turnId}' is no longer the active turn on thread ` +
+            `'${command.threadId}'. Reissue the steer against turn '${activeTurnId}' or send a new turn.`,
+        });
+      }
+      const occurredAt = command.createdAt;
+      const eventBase = () =>
+        withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        });
+      const userMessageEvent: PlannedOrchestrationEvent = {
+        ...eventBase(),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          role: "user",
+          text: command.message.text,
+          attachments: command.message.attachments,
+          ...(command.origin !== undefined ? { origin: command.origin } : {}),
+          turnId: activeTurnId,
+          streaming: false,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+      const steerRequestedEvent: PlannedOrchestrationEvent = {
+        ...eventBase(),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-steer-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.message.messageId,
+          turnId: activeTurnId,
+          createdAt: occurredAt,
+        },
+      };
+      const lifecycleEvents: PlannedOrchestrationEvent[] = [];
+      if (threadHasSettlementOverride(targetThread)) {
+        lifecycleEvents.push({
+          ...eventBase(),
+          type: "thread.unsettled",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      if (threadIsSnoozed(targetThread)) {
+        lifecycleEvents.push({
+          ...eventBase(),
+          type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: occurredAt,
+          },
+        });
+      }
+      return [userMessageEvent, steerRequestedEvent, ...lifecycleEvents];
     }
 
     case "thread.approval.respond": {

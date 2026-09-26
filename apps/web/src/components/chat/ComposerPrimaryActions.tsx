@@ -25,6 +25,7 @@ interface ComposerPrimaryActionsProps {
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onSteer: () => void;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -63,6 +64,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
+  onSteer,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
@@ -123,16 +125,30 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
         {hasSendableContent ? (
-          <Button
-            type="submit"
-            size="sm"
-            variant="outline"
-            className={cn("rounded-full", compact ? "px-3" : "px-4")}
-            {...pointerFocusProps}
-            disabled={isSendBusy || isConnecting}
-          >
-            {isSendBusy ? "Queueing..." : "Queue"}
-          </Button>
+          <>
+            <Button
+              type="button"
+              size="sm"
+              className={cn("rounded-full", compact ? "px-3" : "px-4")}
+              {...pointerFocusProps}
+              onClick={() => void onSteer()}
+              disabled={isSendBusy || isConnecting}
+              title="Send immediately into the running turn"
+            >
+              {isSendBusy ? "Steering..." : "Steer"}
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              className={cn("rounded-full", compact ? "px-3" : "px-4")}
+              {...pointerFocusProps}
+              disabled={isSendBusy || isConnecting}
+              title="Queue for after the running turn"
+            >
+              {isSendBusy ? "Queueing..." : "Queue"}
+            </Button>
+          </>
         ) : null}
         <button
           type="button"

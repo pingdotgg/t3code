@@ -56,6 +56,7 @@ type ProviderIntentEvent = Extract<
       | "thread.runtime-mode-set"
       | "thread.provider-fork-requested"
       | "thread.turn-start-requested"
+      | "thread.turn-steer-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
@@ -232,6 +233,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly kind:
       | "provider.turn.start.failed"
+      | "provider.turn.steer.failed"
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
@@ -1229,6 +1231,70 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processTurnSteerRequested = Effect.fn("processTurnSteerRequested")(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-steer-requested" }>,
+  ) {
+    const steerFailed = (detail: string, options?: { readonly messageId?: MessageId }) =>
+      appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.steer.failed",
+        summary: "Provider turn steer failed",
+        detail,
+        turnId: event.payload.turnId,
+        createdAt: event.payload.createdAt,
+        ...(options?.messageId !== undefined ? { messageId: options.messageId } : {}),
+      });
+
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+    const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
+    if (!message || message.role !== "user") {
+      yield* steerFailed(
+        `User message '${event.payload.messageId}' was not found for turn steer request.`,
+        { messageId: event.payload.messageId },
+      );
+      return;
+    }
+    // The steered turn must still be the active provider turn. A completed,
+    // interrupted, or replaced turn fails here without touching provider state,
+    // so a late steer can never resurrect or cross into another turn.
+    const activeTurnId = thread.session?.activeTurnId ?? null;
+    if (thread.session?.status !== "running" || activeTurnId !== event.payload.turnId) {
+      yield* steerFailed(
+        `Turn '${event.payload.turnId}' is no longer the active turn on thread '${event.payload.threadId}'. Queue the message or send it as a new turn.`,
+        { messageId: event.payload.messageId },
+      );
+      return;
+    }
+    const normalizedInput = toNonEmptyProviderInput(message.text);
+    const normalizedAttachments = message.attachments ?? [];
+    if (!normalizedInput && normalizedAttachments.length === 0) {
+      yield* steerFailed("Steer input is empty.", { messageId: event.payload.messageId });
+      return;
+    }
+    yield* providerService
+      .steerTurn({
+        threadId: event.payload.threadId,
+        turnId: event.payload.turnId,
+        ...(normalizedInput ? { input: normalizedInput } : {}),
+        ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
+      })
+      .pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.void;
+          }
+          // Activity-only failure: the running turn is left untouched so it
+          // can keep streaming; no session state is rewritten here.
+          return steerFailed(formatFailureDetail(cause), {
+            messageId: event.payload.messageId,
+          });
+        }),
+      );
+  });
+
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.approval-response-requested" }>,
   ) {
@@ -1399,6 +1465,9 @@ const make = Effect.gen(function* () {
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
+      case "thread.turn-steer-requested":
+        yield* processTurnSteerRequested(event);
+        return;
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);
         return;
@@ -1453,6 +1522,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.provider-fork-requested" ||
         event.type === "thread.turn-start-requested" ||
+        event.type === "thread.turn-steer-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||

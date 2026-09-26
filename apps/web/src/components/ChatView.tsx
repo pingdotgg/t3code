@@ -3658,6 +3658,110 @@ function ChatViewBody(
     }
   };
 
+  const onSteer = async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (phase !== "running") return;
+    if (activePendingProgress) {
+      onAdvanceActivePendingUserInput();
+      return;
+    }
+    if (activePendingApproval) {
+      return;
+    }
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx) return;
+    const {
+      images: composerImages,
+      terminalContexts: composerTerminalContexts,
+      previewAnnotations: composerPreviewAnnotations,
+      selectedProvider: ctxSelectedProvider,
+      selectedModel: ctxSelectedModel,
+      selectedProviderModels: ctxSelectedProviderModels,
+      selectedPromptEffort: ctxSelectedPromptEffort,
+    } = sendCtx;
+    const draftPromptForSend = promptRef.current;
+    const promptForSend = composerPreviewAnnotations.reduce(
+      (prompt, annotation) => appendPreviewAnnotationPrompt(prompt, annotation),
+      draftPromptForSend,
+    );
+    const {
+      sendableTerminalContexts: sendableComposerTerminalContexts,
+      expiredTerminalContextCount,
+      hasSendableContent,
+    } = deriveComposerSendState({
+      prompt: promptForSend,
+      imageCount: composerImages.length,
+      terminalContexts: composerTerminalContexts,
+    });
+    if (!hasSendableContent || !activeProject) {
+      return;
+    }
+    sendInFlightRef.current = true;
+    try {
+      const composerImagesSnapshot = [...composerImages];
+      const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+      const messageTextForSteer = appendTerminalContextsToPrompt(
+        promptForSend,
+        composerTerminalContextsSnapshot,
+      );
+      const steerAttachments = await Promise.all(
+        composerImagesSnapshot.map(async (image) => ({
+          type: "image" as const,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+      // Pass the known active turn so a turn that ended since the composer
+      // rendered fails fast instead of steering its replacement.
+      const turnId = resolveInterruptTurnId(activeThread);
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.steer",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        ...(turnId !== undefined ? { turnId } : {}),
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: formatOutgoingPrompt({
+            provider: ctxSelectedProvider,
+            model: ctxSelectedModel,
+            models: ctxSelectedProviderModels,
+            effort: ctxSelectedPromptEffort,
+            text: messageTextForSteer || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          }),
+          attachments: steerAttachments,
+        },
+        createdAt: new Date().toISOString(),
+      });
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          }),
+        );
+      }
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    } catch (err) {
+      setThreadError(
+        activeThread.id,
+        err instanceof Error ? err.message : "Failed to steer the running turn.",
+      );
+    } finally {
+      sendInFlightRef.current = false;
+    }
+  };
+
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!activeThread) return;
@@ -5131,6 +5235,7 @@ function ChatViewBody(
                     onSend={onSend}
                     onComposerIntent={prewarmComposerProviderSession}
                     onInterrupt={onInterrupt}
+                    onSteer={onSteer}
                     onImplementPlanInNewThread={onImplementPlanInNewThread}
                     onRespondToApproval={onRespondToApproval}
                     onUpdateQueuedTurn={onUpdateQueuedTurn}

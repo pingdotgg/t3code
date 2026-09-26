@@ -550,6 +550,7 @@ async function preserveUploadedAttachmentsForEditor(
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const steerTurn = useAtomCommand(threadEnvironment.steerTurn, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -805,23 +806,52 @@ export function useThreadOutboxDrain(): void {
         currentConfig.providers,
       );
       recordOutboxDiagnostic(queuedMessage, "dispatching");
-      const deliveryResult = await startTurn({
-        environmentId: queuedMessage.environmentId,
-        input: {
-          commandId: queuedMessage.commandId,
-          threadId: queuedMessage.threadId,
-          message: {
-            messageId: queuedMessage.messageId,
-            role: "user",
-            text: queuedMessage.text,
-            attachments: prepared.attachments,
-          },
-          modelSelection: sendSettings.modelSelection,
-          runtimeMode: sendSettings.runtimeMode,
-          interactionMode: sendSettings.interactionMode,
-          createdAt: queuedMessage.createdAt,
-        },
-      });
+      // A follow-up for a busy thread steers the active turn instead of
+      // starting a new one: thread.turn.start is rejected while a turn is in
+      // flight. Re-read the live shell so a turn that ended since the drain
+      // pass began falls back to a normal start.
+      const liveShell = findThread(
+        appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+        queuedMessage,
+      );
+      const liveActiveTurnId =
+        liveShell?.session?.status === "running"
+          ? (liveShell.session.activeTurnId ?? undefined)
+          : undefined;
+      const deliveryResult =
+        liveActiveTurnId !== undefined
+          ? await steerTurn({
+              environmentId: queuedMessage.environmentId,
+              input: {
+                commandId: queuedMessage.commandId,
+                threadId: queuedMessage.threadId,
+                turnId: liveActiveTurnId,
+                message: {
+                  messageId: queuedMessage.messageId,
+                  role: "user",
+                  text: queuedMessage.text,
+                  attachments: prepared.attachments,
+                },
+                createdAt: queuedMessage.createdAt,
+              },
+            })
+          : await startTurn({
+              environmentId: queuedMessage.environmentId,
+              input: {
+                commandId: queuedMessage.commandId,
+                threadId: queuedMessage.threadId,
+                message: {
+                  messageId: queuedMessage.messageId,
+                  role: "user",
+                  text: queuedMessage.text,
+                  attachments: prepared.attachments,
+                },
+                modelSelection: sendSettings.modelSelection,
+                runtimeMode: sendSettings.runtimeMode,
+                interactionMode: sendSettings.interactionMode,
+                createdAt: queuedMessage.createdAt,
+              },
+            });
       const failure = reportFailure(deliveryResult, "start-turn");
       recordOutboxDiagnostic(
         queuedMessage,
@@ -846,6 +876,7 @@ export function useThreadOutboxDrain(): void {
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startTurn,
+      steerTurn,
       updateThreadMetadata,
       restoreQueuedMessage,
     ],
