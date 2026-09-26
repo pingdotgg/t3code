@@ -8,8 +8,10 @@ import type {
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -193,6 +195,8 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
+  const clock = yield* Clock.Clock;
+  const now = () => Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000;
   const unsupportedReason = supported(platform, architecture);
   const modelDirectory = path.join(config.stateDir, "speech", "models");
   let model: LoadedModel | undefined;
@@ -211,7 +215,7 @@ export const make = Effect.gen(function* () {
   let closing = false;
   const lifetime = new AbortController();
   let unloadTimeout: SpeechModelUnloadTimeout = "min_15";
-  let unloadFiber: Fiber.Fiber<void, never> | undefined;
+  const unloadRequests = yield* Queue.sliding<{ deadline: number; generation: number } | null>(1);
   let unloadGeneration = 0;
   let lastUse = 0;
   const unloadMilliseconds: Record<Exclude<SpeechModelUnloadTimeout, "never">, number> = {
@@ -224,44 +228,13 @@ export const make = Effect.gen(function* () {
   };
   const clearUnloadTimer = () => {
     unloadGeneration += 1;
-    if (unloadFiber) Effect.runFork(Fiber.interrupt(unloadFiber));
-    unloadFiber = undefined;
+    Queue.offerUnsafe(unloadRequests, null);
   };
   const scheduleUnload = (minimumDelay = 0) => {
     clearUnloadTimer();
     if (!model || closing || unloadTimeout === "never") return;
-    const generation = unloadGeneration;
-    const delay = Math.max(
-      minimumDelay,
-      unloadMilliseconds[unloadTimeout] - (performance.now() - lastUse),
-    );
-    unloadFiber = Effect.runFork(
-      Effect.sleep(delay).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            if (generation !== unloadGeneration) return;
-            unloadFiber = undefined;
-            if (activeOperation || activeTranscriptions || loading) {
-              scheduleUnload(1000);
-              return;
-            }
-            const loaded = model;
-            model = undefined;
-            loadedModelId = undefined;
-            loadedAcceleration = undefined;
-            if (loaded) {
-              const pending = Promise.resolve().then(() => loaded.dispose());
-              activeOperation = pending;
-              void pending
-                .catch(() => undefined)
-                .finally(() => {
-                  if (activeOperation === pending) activeOperation = undefined;
-                });
-            }
-          }),
-        ),
-      ),
-    );
+    const delay = Math.max(minimumDelay, unloadMilliseconds[unloadTimeout] - (now() - lastUse));
+    Queue.offerUnsafe(unloadRequests, { deadline: now() + delay, generation: unloadGeneration });
   };
 
   yield* Effect.addFinalizer(() =>
@@ -275,6 +248,43 @@ export const make = Effect.gen(function* () {
       loadedAcceleration = undefined;
       loading = undefined;
     }),
+  );
+
+  yield* Stream.fromQueue(unloadRequests).pipe(
+    Stream.switchMap((request) =>
+      request === null
+        ? Stream.empty
+        : Stream.fromEffect(
+            Effect.gen(function* () {
+              yield* Effect.sleep(Math.max(0, request.deadline - now()));
+              if (closing || request.generation !== unloadGeneration) return;
+              if (activeOperation || activeTranscriptions || loading) {
+                scheduleUnload(1000);
+                return;
+              }
+              const loaded = model;
+              model = undefined;
+              loadedModelId = undefined;
+              loadedAcceleration = undefined;
+              if (!loaded) return;
+              yield* Effect.uninterruptible(
+                Effect.gen(function* () {
+                  const pending = Promise.resolve().then(() => loaded.dispose());
+                  activeOperation = pending;
+                  yield* Effect.promise(() => pending.catch(() => undefined)).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        if (activeOperation === pending) activeOperation = undefined;
+                      }),
+                    ),
+                  );
+                }),
+              );
+            }),
+          ),
+    ),
+    Stream.runDrain,
+    Effect.forkScoped,
   );
 
   type SettingsSnapshot = Effect.Success<
@@ -321,7 +331,7 @@ export const make = Effect.gen(function* () {
     acceleration = "auto",
   ) => {
     if (model && loadedModelId === definition.id && loadedAcceleration === acceleration) {
-      lastUse = performance.now();
+      lastUse = now();
       scheduleUnload();
       return model;
     }
@@ -341,7 +351,7 @@ export const make = Effect.gen(function* () {
             throw new SpeechBusyError({ operation: "model preparation" });
           }
           model = loaded;
-          lastUse = performance.now();
+          lastUse = now();
           // Batch preparation can precede up to five minutes of recording.
           scheduleUnload();
           loadedModelId = definition.id;
@@ -385,7 +395,7 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(
             Effect.sync(() => {
               if (activeOperation === gate.promise) activeOperation = undefined;
-              lastUse = performance.now();
+              lastUse = now();
               scheduleUnload(
                 operation === "model preparation" ? MAX_SPEECH_DURATION_SECONDS * 1000 : 0,
               );
@@ -522,7 +532,7 @@ export const make = Effect.gen(function* () {
           return await pending;
         } finally {
           activeOperation = undefined;
-          lastUse = performance.now();
+          lastUse = now();
           scheduleUnload(
             operation === "model preparation" ? MAX_SPEECH_DURATION_SECONDS * 1000 : 0,
           );
@@ -637,33 +647,25 @@ export const make = Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           if (!finished) {
-            yield* Effect.suspend(() =>
-              loaded && started
-                ? resetStreamOrThrow(loaded)
-                : Effect.fail(
-                    new SpeechOperationError({
-                      operation: "stream initialization",
-                      cause: undefined,
-                    }),
-                  ),
-            ).pipe(
-              Effect.catch(() =>
-                Effect.promise(async () => {
-                  controller.abort();
-                  if (loaded ?? loading) {
-                    await loading?.catch(() => undefined);
-                    await (loaded ?? model)?.dispose();
-                    model = undefined;
-                    loadedModelId = undefined;
-                    loadedAcceleration = undefined;
-                  }
-                }),
-              ),
-            );
+            const disposeStream = Effect.promise(async () => {
+              controller.abort();
+              if (loaded ?? loading) {
+                await loading?.catch(() => undefined);
+                await (loaded ?? model)?.dispose();
+                model = undefined;
+                loadedModelId = undefined;
+                loadedAcceleration = undefined;
+              }
+            });
+            if (loaded && started) {
+              yield* resetStreamOrThrow(loaded).pipe(Effect.catch(() => disposeStream));
+            } else {
+              yield* disposeStream;
+            }
           }
           activeTranscriptions -= 1;
           if (activeOperation === released.promise) activeOperation = undefined;
-          lastUse = performance.now();
+          lastUse = now();
           scheduleUnload();
           released.resolve();
         }),
