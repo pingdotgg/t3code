@@ -375,6 +375,56 @@ it.effect("disposes a stream when resetting it fails", () =>
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("stops an unresponsive stream reset and releases the busy slot", () =>
+  Effect.gen(function* () {
+    native.reset.mockImplementationOnce(() => new Promise(() => {}));
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.startStream.pipe(Effect.scoped);
+    expect(native.dispose).toHaveBeenCalledOnce();
+    expect(yield* speech.status).toMatchObject({ state: "ready" });
+    yield* speech.startStream.pipe(Effect.scoped);
+    expect(loadNative).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("releases a stream cancelled while settings are loading", () =>
+  Effect.gen(function* () {
+    const settingsRead = Promise.withResolvers<void>();
+    const delayedSettings = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const settings = yield* ServerSettings.ServerSettingsService;
+        let firstRead = true;
+        return {
+          ...settings,
+          getSettings: Effect.suspend(() => {
+            if (!firstRead) return settings.getSettings;
+            firstRead = false;
+            settingsRead.resolve();
+            return Effect.never;
+          }),
+        };
+      }),
+    ).pipe(Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })));
+    const testLayer = SpeechService.layer.pipe(
+      Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-cancel-settings-" })),
+      Layer.provide(delayedSettings),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const starting = yield* speech.startStream.pipe(Effect.scoped, Effect.forkChild);
+      yield* Effect.promise(() => settingsRead.promise);
+      yield* Fiber.interrupt(starting);
+      yield* Effect.gen(function* () {
+        const stream = yield* speech.startStream;
+        yield* stream.finish;
+      }).pipe(Effect.scoped);
+      expect(loadNative).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(testLayer));
+  }),
+);
+
 it.effect("reuses the model when a cancelled feed finishes during reset", () =>
   Effect.gen(function* () {
     const started = Promise.withResolvers<void>();

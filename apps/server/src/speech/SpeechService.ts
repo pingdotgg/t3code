@@ -129,6 +129,20 @@ const isSpeechError = Schema.is(
 
 type LoadedModel = Awaited<ReturnType<typeof loadNativeSpeechModel>>;
 
+async function resetStreamOrThrow(model: LoadedModel): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      model.reset(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Speech stream reset timed out.")), 1_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export type SpeechStream = {
   readonly feed: (
     pcm: Uint8Array,
@@ -493,6 +507,32 @@ export const make = Effect.gen(function* () {
       const signal = AbortSignal.any([controller.signal, lifetime.signal]);
       let finished = false;
       let loaded: LoadedModel | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(async () => {
+          if (!finished) {
+            try {
+              // Reset after the current feed settles so the loaded model can be reused.
+              // A stalled feed or reset falls back to stopping the isolated process.
+              if (!loaded) throw new Error("Speech stream is not loaded.");
+              await resetStreamOrThrow(loaded);
+            } catch {
+              controller.abort();
+              if (loaded ?? loading) {
+                await loading?.catch(() => undefined);
+                await (loaded ?? model)?.dispose();
+                model = undefined;
+                loadedModelId = undefined;
+                loadedAcceleration = undefined;
+              }
+            }
+          }
+          activeTranscriptions -= 1;
+          if (activeOperation === released.promise) activeOperation = undefined;
+          lastUse = performance.now();
+          scheduleUnload();
+          released.resolve();
+        }),
+      );
       const settings = yield* readSettings("custom words loading");
       const customWords = transcriptionCustomWords(settings);
       const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
@@ -503,30 +543,6 @@ export const make = Effect.gen(function* () {
         getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
       const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
       const fillerWordLanguage = language === "auto" ? undefined : language;
-      yield* Effect.addFinalizer(() =>
-        Effect.promise(async () => {
-          if (!finished) {
-            try {
-              // Reset after the current feed settles so the loaded model can be reused.
-              // The native worker bounds that wait and falls back to process shutdown.
-              if (!loaded) throw new Error("Speech stream is not loaded.");
-              await loaded.reset();
-            } catch {
-              controller.abort();
-              await loading?.catch(() => undefined);
-              await (loaded ?? model)?.dispose();
-              model = undefined;
-              loadedModelId = undefined;
-              loadedAcceleration = undefined;
-            }
-          }
-          activeTranscriptions -= 1;
-          if (activeOperation === released.promise) activeOperation = undefined;
-          lastUse = performance.now();
-          scheduleUnload();
-          released.resolve();
-        }),
-      );
       const preparation = yield* attemptSpeech(operation, async () => {
         const startedAt = performance.now();
         const prepared = await loadModel(definition, signal, settings.speechAcceleration);
