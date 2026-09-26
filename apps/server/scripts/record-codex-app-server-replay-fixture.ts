@@ -102,6 +102,7 @@ const SCENARIO_NAMES = [
   "turn_interrupt",
   "turn_interrupt_mid_tool",
   "thread_rollback",
+  "thread_rollback_after_restart",
   "thread_fork_native_continue",
   "thread_fork_native_siblings",
   "thread_merge_back_continue",
@@ -805,6 +806,41 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       ],
     },
     {
+      name: "thread_rollback_after_restart",
+      fileName: "thread_rollback_after_restart.ndjson",
+      description:
+        "One thread completes two turns, the app-server restarts, then the thread rolls back its latest turn and starts another turn.",
+      runs: [
+        {
+          name: "rollback-after-restart",
+          description:
+            "Two completed turns, a fresh app-server that has not loaded the thread, thread/revert before the second turn, then a post-rollback turn.",
+          steps: [
+            {
+              type: "turn",
+              label: "first-before-rollback",
+              prompt: THREAD_ROLLBACK_FIRST_PROMPT,
+            },
+            {
+              type: "turn",
+              label: "second-before-rollback",
+              prompt: THREAD_ROLLBACK_SECOND_PROMPT,
+            },
+            {
+              type: "rollback",
+              label: "rollback-latest-turn",
+              numTurns: 1,
+            },
+            {
+              type: "turn",
+              label: "post-rollback",
+              prompt: THREAD_ROLLBACK_AFTER_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
       name: "thread_fork_native_continue",
       fileName: "thread_fork_native_continue.ndjson",
       description:
@@ -1413,6 +1449,52 @@ function runReplaySession({
           }),
         ),
       );
+      return;
+    }
+
+    if (scenario.name === "thread_rollback_after_restart") {
+      const [first, second, rollback, after] = run.steps;
+      if (
+        first === undefined ||
+        second === undefined ||
+        rollback?.type !== "rollback" ||
+        after === undefined ||
+        first.type === "rollback" ||
+        first.type === "fork" ||
+        second.type === "rollback" ||
+        second.type === "fork" ||
+        after.type === "rollback" ||
+        after.type === "fork"
+      ) {
+        throw new Error(
+          "thread_rollback_after_restart replay recording requires turn, turn, rollback, turn.",
+        );
+      }
+
+      const threadId = yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const thread = yield* client.request("thread/start", threadRuntimeParams);
+        yield* runTurnStep(client, thread.thread.id, first);
+        yield* runTurnStep(client, thread.thread.id, second);
+        return thread.thread.id;
+      }).pipe(Effect.provide(makeCodexLayer({ recorder })));
+
+      yield* recorder.writeRecord({
+        type: "runtime_exit",
+        status: "success",
+      });
+
+      yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const resumeParams = { threadId, excludeTurns: true, ...threadRuntimeParams };
+        // Like the adapter: the fresh app-server reports the thread notLoaded,
+        // so it is resumed before thread/revert, and the next turn resumes it again.
+        yield* client.request("thread/read", { threadId, includeTurns: false });
+        yield* client.request("thread/resume", resumeParams);
+        yield* revertCodexThread(client, threadId, rollback.numTurns);
+        yield* client.request("thread/resume", resumeParams);
+        yield* runTurnStep(client, threadId, after);
+      }).pipe(Effect.provide(makeCodexLayer({ recorder })));
       return;
     }
 

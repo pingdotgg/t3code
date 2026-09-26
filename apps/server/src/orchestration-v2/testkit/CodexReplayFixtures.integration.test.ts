@@ -275,6 +275,22 @@ const scenarioExpectations = {
     turnCompletedCount: 3,
     approvalRequestCount: 0,
   },
+  thread_rollback_after_restart: {
+    outgoing: [
+      "initialize",
+      "initialized",
+      "thread/start",
+      "turn/start",
+      "thread/read",
+      "thread/resume",
+      "thread/turns/list",
+      "thread/revert",
+    ],
+    incoming: ["turn/started", "turn/completed", "item/agentMessage/delta", "thread/reverted"],
+    turnStartCount: 3,
+    turnCompletedCount: 3,
+    approvalRequestCount: 0,
+  },
   thread_fork_native_continue: {
     outgoing: ["initialize", "initialized", "thread/start", "thread/fork", "turn/start"],
     incoming: ["thread/started", "turn/started", "turn/completed", "item/agentMessage/delta"],
