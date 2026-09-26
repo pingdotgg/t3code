@@ -611,13 +611,14 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
     ) {
       if (turn.finalized) return;
       turn.finalized = true;
-      // The run stops sending updates now. Close tool rows it left open.
+      // The run stops sending updates now. Close tool rows it left open. They
+      // only finished if the turn did.
       for (const [callId, payload] of turn.tools) {
         yield* offerRuntimeEvent({
           type: "item.completed",
           ...(yield* eventBase(ctx.threadId, turn.turnId)),
           itemId: RuntimeItemId.make(callId),
-          payload: { ...payload, status: "completed" },
+          payload: { ...payload, status: outcome.state === "completed" ? "completed" : "failed" },
         });
       }
       turn.tools.clear();

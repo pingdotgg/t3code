@@ -443,7 +443,15 @@ it.layer(testLayer)("CursorAdapter", (it) => {
       const firstRunCancelled = yield* Deferred.make<void>();
       const sdk = makeFakeRunner([
         {
-          updates: [{ type: "text-delta", text: "Working" }],
+          updates: [
+            { type: "text-delta", text: "Working" },
+            {
+              type: "tool-call-started",
+              modelCallId: "model-call-1",
+              callId: "call-open-shell",
+              toolCall: { type: "shell", args: { command: "sleep 60" } },
+            },
+          ],
           wait: Deferred.await(firstRunCancelled).pipe(
             Effect.as({ id: "run-1", status: "cancelled" } satisfies RunResult),
           ),
@@ -473,6 +481,11 @@ it.layer(testLayer)("CursorAdapter", (it) => {
         ["started", second.turnId],
         ["completed", second.turnId],
       ]);
+      // The interrupted run never finished its shell call.
+      const openTool = collected.events.find(
+        (event) => event.type === "item.completed" && event.itemId === "call-open-shell",
+      );
+      assert.equal(openTool?.type === "item.completed" && openTool.payload.status, "failed");
       yield* adapter.stopSession(threadId);
     }),
   );
