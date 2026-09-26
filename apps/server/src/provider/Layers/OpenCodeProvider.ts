@@ -293,6 +293,26 @@ function trimOptional(value: string | null | undefined): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+/**
+ * A T3-owned server keeps running the binary it was spawned with, so the
+ * version it reports lags the CLI on disk after `opencode upgrade` replaces
+ * the executable. The installed version is the CLI probe whenever it is
+ * newer, because update checks and the version gate compare the on-disk
+ * install, not the process that is still borrowing the old one.
+ */
+function resolveInstalledOpenCodeVersion(input: {
+  readonly cliVersion: string | null;
+  readonly serverVersion: string;
+}): string {
+  if (
+    input.cliVersion !== null &&
+    compareSemverVersions(input.cliVersion, input.serverVersion) > 0
+  ) {
+    return input.cliVersion;
+  }
+  return input.serverVersion;
+}
+
 export function openCodeSkillsToServerProviderSkills(
   input: OpenCodeInventory["skills"] | undefined,
 ): ReadonlyArray<ServerProviderSkill> {
@@ -532,7 +552,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     return fallback(Cause.squash(inventoryExit.cause), version, "inventory");
   }
 
-  version = inventoryExit.value.version;
+  version = isExternalServer
+    ? inventoryExit.value.version
+    : resolveInstalledOpenCodeVersion({
+        cliVersion: version,
+        serverVersion: inventoryExit.value.version,
+      });
 
   const models = providerModelsFromSettings(
     flattenOpenCodeModels(inventoryExit.value.inventory),
