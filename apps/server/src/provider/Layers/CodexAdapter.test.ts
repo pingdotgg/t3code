@@ -23,6 +23,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -75,6 +76,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       updatedAt: this.now,
     } satisfies ProviderSession),
   );
+  public startEffect: Effect.Effect<ProviderSession> | undefined;
 
   public readonly sendTurnImpl = vi.fn(
     (_input: CodexSessionRuntimeSendTurnInput): Promise<ProviderTurnStartResult> =>
@@ -119,6 +121,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   );
 
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
+  public closeEffect: Effect.Effect<void> | undefined;
 
   readonly options: CodexSessionRuntimeOptions;
 
@@ -127,7 +130,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   start() {
-    return Effect.promise(() => this.startImpl());
+    return this.startEffect ?? Effect.promise(() => this.startImpl());
   }
 
   getSession = Effect.promise(() => this.startImpl());
@@ -162,7 +165,9 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     return Stream.fromQueue(this.eventQueue);
   }
 
-  close = Effect.promise(() => this.closeImpl());
+  get close() {
+    return this.closeEffect ?? Effect.promise(() => this.closeImpl());
+  }
 
   emit(event: ProviderEvent) {
     return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);
@@ -188,13 +193,24 @@ function makeRuntimeFactory() {
 function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolean }) {
   const runtimes: Array<FakeCodexRuntime> = [];
   const releasedThreadIds: Array<ThreadId> = [];
+  let exitDuringNextStart:
+    | {
+        readonly exitForwarded: Deferred.Deferred<void>;
+        readonly scopeReleased: Deferred.Deferred<void>;
+      }
+    | undefined;
 
   const factory = vi.fn((runtimeOptions: CodexSessionRuntimeOptions) =>
     Effect.gen(function* () {
+      const exitDuringStart = exitDuringNextStart;
+      exitDuringNextStart = undefined;
       yield* Scope.Scope;
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           releasedThreadIds.push(runtimeOptions.threadId);
+          if (exitDuringStart) {
+            Deferred.doneUnsafe(exitDuringStart.scopeReleased, Effect.void);
+          }
         }),
       );
 
@@ -206,6 +222,23 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
       }
 
       const runtime = new FakeCodexRuntime(runtimeOptions);
+      if (exitDuringStart) {
+        const startImpl = runtime.startImpl.getMockImplementation();
+        runtime.startEffect = runtime
+          .emit({
+            id: asEventId("evt-session-exited-during-start"),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:00.000Z",
+            method: "session/exited",
+            threadId: runtimeOptions.threadId,
+            message: "Codex App Server exited with code 1.",
+          })
+          .pipe(
+            Effect.andThen(Deferred.await(exitDuringStart.exitForwarded)),
+            Effect.andThen(Effect.promise(() => startImpl!())),
+          );
+      }
       runtimes.push(runtime);
       return runtime;
     }),
@@ -214,6 +247,13 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
   return {
     factory,
     releasedThreadIds,
+    exitDuringNextStart: () => {
+      exitDuringNextStart = {
+        exitForwarded: Deferred.makeUnsafe<void>(),
+        scopeReleased: Deferred.makeUnsafe<void>(),
+      };
+      return exitDuringNextStart;
+    },
     get lastRuntime(): FakeCodexRuntime | undefined {
       return runtimes.at(-1);
     },
@@ -2653,27 +2693,86 @@ const scopedLifecycleLayer = it.layer(
 );
 
 scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
+  it.effect("cleans up an exit during startup without deleting its replacement", () =>
+    Effect.gen(function* () {
+      scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;
+      const signals = scopedLifecycleRuntimeFactory.exitDuringNextStart();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-exited");
+      const exitedFiber = yield* Stream.runHead(
+        Stream.filter(adapter.streamEvents, (event) => event.threadId === threadId),
+      ).pipe(
+        Effect.tap(() => Deferred.succeed(signals.exitForwarded, undefined)),
+        Effect.forkChild,
+      );
+
+      const startResult = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const exited = yield* Fiber.join(exitedFiber);
+      NodeAssert.equal(startResult._tag, "Failure");
+      if (startResult._tag === "Failure") {
+        NodeAssert.equal(startResult.failure._tag, "ProviderAdapterProcessError");
+      }
+      NodeAssert.equal(exited._tag, "Some");
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+      NodeAssert.deepStrictEqual(yield* adapter.listSessions(), []);
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const replacement = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(replacement);
+      NodeAssert.notEqual(replacement, runtime);
+
+      yield* Deferred.await(signals.scopeReleased);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+      NodeAssert.equal((yield* adapter.listSessions()).length, 1);
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
+      NodeAssert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [threadId]);
+    }),
+  );
+
   it.effect("closes the externally owned session scope on stopSession", () =>
     Effect.gen(function* () {
       scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;
       const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-stop");
+      const terminalEvent = yield* Stream.runHead(
+        Stream.filter(adapter.streamEvents, (event) => event.threadId === threadId),
+      ).pipe(Effect.forkChild);
 
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("codex"),
-        threadId: asThreadId("thread-stop"),
+        threadId,
         runtimeMode: "full-access",
       });
 
       const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
       NodeAssert.ok(runtime);
 
-      yield* adapter.stopSession(asThreadId("thread-stop"));
+      yield* adapter.stopSession(threadId);
 
+      const exited = yield* Fiber.join(terminalEvent);
+      NodeAssert.equal(exited._tag, "Some");
+      if (exited._tag === "Some") {
+        NodeAssert.equal(exited.value.type, "session.exited");
+        if (exited.value.type === "session.exited") {
+          NodeAssert.equal(exited.value.payload.exitKind, "graceful");
+        }
+      }
       NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
-      NodeAssert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [
-        asThreadId("thread-stop"),
-      ]);
-      NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
+      NodeAssert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 });
@@ -2782,6 +2881,94 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
         yield* Scope.close(scope, Exit.void);
       }
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }),
+);
+
+it.effect("waits for an exited session teardown when stopAll follows its terminal event", () =>
+  Effect.gen(function* () {
+    const runtimeFactory = makeScopedRuntimeFactory();
+    const scope = yield* Scope.make("sequential");
+    const closeStarted = yield* Deferred.make<void>();
+    const allowClose = yield* Deferred.make<void>();
+    let scopeClosed = false;
+
+    try {
+      const layer = Layer.effect(
+        CodexAdapter,
+        Effect.gen(function* () {
+          const codexConfig = decodeCodexSettings({});
+          return yield* makeCodexAdapter(codexConfig, {
+            makeRuntime: runtimeFactory.factory,
+          });
+        }),
+      ).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const context = yield* Layer.buildWithScope(layer, scope);
+      const adapter = yield* Effect.service(CodexAdapter).pipe(Effect.provide(context));
+      const threadId = asThreadId("thread-shutdown-after-exit");
+      const terminalPublished = yield* Deferred.make<void>();
+      yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "session.exited"),
+        Stream.runForEach(() => Deferred.succeed(terminalPublished, undefined).pipe(Effect.asVoid)),
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.closeEffect = Effect.promise(() => runtime.closeImpl()).pipe(
+        Effect.andThen(Deferred.succeed(closeStarted, undefined)),
+        Effect.andThen(Deferred.await(allowClose)),
+        Effect.asVoid,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-session-exited-before-shutdown"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        threadId,
+        message: "Codex App Server exited unexpectedly.",
+      });
+      yield* Deferred.await(terminalPublished);
+      yield* Deferred.await(closeStarted);
+      const stopAllEntered = yield* Deferred.make<void>();
+      const stopAllComplete = yield* Deferred.make<void>();
+      const stopAllFiber = yield* Effect.gen(function* () {
+        yield* Deferred.succeed(stopAllEntered, undefined);
+        yield* adapter.stopAll();
+        yield* Deferred.succeed(stopAllComplete, undefined);
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(stopAllEntered);
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      NodeAssert.equal(yield* Deferred.isDone(stopAllComplete), false);
+
+      yield* Deferred.succeed(allowClose, undefined);
+      yield* Fiber.join(stopAllFiber);
+      NodeAssert.equal(yield* Deferred.isDone(stopAllComplete), true);
+      yield* Scope.close(scope, Exit.void);
+      scopeClosed = true;
+
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
+      NodeAssert.deepStrictEqual(runtimeFactory.releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    } finally {
+      yield* Deferred.succeed(allowClose, undefined);
+      if (!scopeClosed) {
+        yield* Scope.close(scope, Exit.void);
+      }
     }
   }),
 );
