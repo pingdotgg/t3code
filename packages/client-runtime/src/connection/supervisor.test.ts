@@ -1519,8 +1519,8 @@ describe("EnvironmentSupervisor", () => {
       // The exchange still lands after the attempt ended, so the next attempt reuses it.
       answerExchange();
       yield* TestClock.adjust("8 seconds");
-      const settled = yield* awaitState(supervisor.state, (state) => state.phase !== "backoff");
-      expect(settled).toMatchObject({ phase: "connected", attempt: 4 });
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected.attempt).toBe(4);
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
       expect(prepared.httpAuthorization).toMatchObject({ accessToken: "access-token-2" });
       expect(yield* Ref.get(relay.bootstrapCalls)).toBe(1);
