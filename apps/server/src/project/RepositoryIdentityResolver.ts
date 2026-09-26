@@ -14,7 +14,8 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Background sweeps resolve every project each minute. A long TTL keeps them
-// from spawning git each time. Clone and publish resolve with `refresh: true`.
+// from spawning git each time. Clone, publish, and PR discovery (before it
+// saves links) resolve with `refresh: true`.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 // Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
@@ -145,7 +146,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
-  // A failed or interrupted lookup is not cached.
+  // Git errors and timeouts resolve to null, so they use the negative TTL like
+  // "no repository" or "no remote". Only interrupts and defects skip the cache.
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
