@@ -116,6 +116,9 @@ const PI_SESSION_TIMEOUT_MS = 60_000;
 const PI_SKILL_DISCOVERY_TIMEOUT_MS = 4_000;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
+// Pi's own error text tells the user what to fix (a missing API key, an
+// unknown model), but it is persisted and sent to every client, so keep it bounded.
+const PI_TURN_FAILURE_MAX_CHARS = 1_000;
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
@@ -869,7 +872,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           ? yield* readTokenUsage(ctx, turn.latestCompactionAfterTokens)
           : undefined;
         if (usage !== undefined) yield* emitTokenUsage(ctx, turn.turnId, usage);
-        const failure = turn.interrupted ? null : turn.failure;
+        const failure = turn.interrupted
+          ? null
+          : (turn.failure?.slice(0, PI_TURN_FAILURE_MAX_CHARS) ?? null);
         const { activeTurnId: _activeTurnId, lastError: _lastError, ...rest } = ctx.session;
         ctx.session = { ...rest };
         yield* updateSession(ctx, {

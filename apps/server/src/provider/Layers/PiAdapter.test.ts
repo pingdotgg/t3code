@@ -428,6 +428,28 @@ describe("PiAdapter", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("fails a rejected prompt with Pi's reason, bounded", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "Hello pi" });
+      yield* fake.takeRequest("prompt");
+      const reason = `No API key found for anthropic. ${"x".repeat(5_000)}`;
+      yield* fake.emit({ type: "response", command: "prompt", success: false, error: reason });
+
+      const completed = yield* takeEvent("turn.completed");
+      assert.equal(completed.turnId, turn.turnId);
+      assert.equal(completed.payload.state, "failed");
+      assert.equal(completed.payload.errorMessage, reason.slice(0, 1_000));
+      const [session] = yield* adapter.listSessions();
+      assert.equal(session?.lastError, reason.slice(0, 1_000));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("releases a pending approval before aborting a stopped turn", () =>
     Effect.gen(function* () {
       const { fake, adapter, takeEvent } = yield* makeHarness();
