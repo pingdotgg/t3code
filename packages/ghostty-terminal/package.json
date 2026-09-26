@@ -1,0 +1,45 @@
+{
+  "name": "@t3tools/ghostty-terminal",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./core": {
+      "types": "./src/core.ts",
+      "import": "./src/core.ts"
+    },
+    "./monospaceFonts": {
+      "types": "./src/monospaceFonts.ts",
+      "import": "./src/monospaceFonts.ts"
+    },
+    "./platform": {
+      "types": "./src/platform.ts",
+      "import": "./src/platform.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "import": "./src/runtime.ts"
+    },
+    "./selection": {
+      "types": "./src/selection.ts",
+      "import": "./src/selection.ts"
+    },
+    "./surface": {
+      "types": "./src/surface.ts",
+      "import": "./src/surface.ts"
+    },
+    "./terminal-links": {
+      "types": "./src/terminal-links.ts",
+      "import": "./src/terminal-links.ts"
+    },
+    "./assets/*": "./assets/*"
+  },
+  "scripts": {
+    "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run",
+    "audit": "node ../first-party-extensions/scripts/audit-imports.mjs . --allow vite-plus --allow-relative ../../native/libghostty-vt/VERSION?raw --allow-relative ../../native/libghostty-vt/LICENSE?raw"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}

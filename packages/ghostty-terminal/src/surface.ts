@@ -1,21 +1,21 @@
-import { isMacPlatform } from "../../lib/utils";
-import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
-import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
+import { isMacPlatform } from "./platform.ts";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "./selection.ts";
+import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "./terminal-links.ts";
 import {
   GhosttyTerminalCore,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
-} from "./core";
+} from "./core.ts";
+import { type GhosttyRuntime } from "./runtime.ts";
 import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
   type GhosttyCellRange,
   type GhosttyCellMetrics,
-} from "./renderer";
-import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
-import { isMonospaceFamily } from "../../appearanceFonts";
+} from "./renderer.ts";
+import { isMonospaceFamily } from "./monospaceFonts.ts";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -59,7 +59,8 @@ let symbolsFontLoad: Promise<void> | null = null;
  * composes with any text face without changing metrics — prompt symbols and
  * devicons render even on machines without a locally installed Nerd Font.
  */
-function ensureTerminalSymbolsFont(): Promise<void> {
+function ensureTerminalSymbolsFont(symbolsFontUrl: string | undefined): Promise<void> {
+  if (symbolsFontUrl === undefined) return Promise.resolve();
   if (symbolsFontLoad !== null) return symbolsFontLoad;
   symbolsFontLoad = (async () => {
     try {
@@ -538,6 +539,14 @@ export interface GhosttySelectionPosition {
 }
 
 export interface GhosttyTerminalSurfaceOptions {
+  /**
+   * The shared libghostty-vt instance; the surface allocates its terminal
+   * inside it. A pending load is awaited after the mount paints its
+   * background, so the canvas never waits on the WASM fetch.
+   */
+  readonly runtime: GhosttyRuntime | Promise<GhosttyRuntime>;
+  /** URL of the bundled symbols-only Nerd Font (`assets/`); skipped when absent. */
+  readonly symbolsFontUrl?: string;
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
   /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
@@ -677,6 +686,10 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
+    // Observe a pending runtime load now: a failure while the fonts load must
+    // not surface as an unhandled rejection. It rethrows at the await below.
+    const runtime = Promise.resolve(options.runtime);
+    runtime.catch(() => {});
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
@@ -715,7 +728,7 @@ export class GhosttyTerminalSurface {
     try {
       // Cell metrics must come from the faces that will render; measuring before
       // the bundled webfonts load would size the grid from a fallback font.
-      await ensureTerminalSymbolsFont();
+      await ensureTerminalSymbolsFont(options.symbolsFontUrl);
     } catch {
       // Metrics fall back to whichever faces are already available.
     }
@@ -723,6 +736,7 @@ export class GhosttyTerminalSurface {
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
+      await runtime,
       grid.cols,
       grid.rows,
       metrics.width,
@@ -782,6 +796,42 @@ export class GhosttyTerminalSurface {
     this.cursorOn = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
+  /**
+   * Bracket a whole remount replay (base + retained tail). Terminal queries
+   * inside replayed bytes were already answered by the previous parser, so
+   * the PTY writer stays detached for the bracket — the process is not
+   * re-asking and a duplicate reply confuses the shell.
+   */
+  beginReplay(): void {
+    if (this.disposed) return;
+    this.core.beginReplay();
+  }
+
+  endReplay(): void {
+    if (this.disposed) return;
+    this.core.endReplay();
+    this.synchronizeMouseTrackingState();
+  }
+
+  /**
+   * Host history clear: the server dropped retained output only — the
+   * process and its negotiated modes keep running. ED2+ED3 erase the
+   * viewport and scrollback without the RIS that resetAndWrite performs, so
+   * application-cursor, bracketed-paste, kitty-keyboard, and mouse state
+   * survive and input keeps encoding the way the process expects.
+   */
+  clearScreen(): void {
+    if (this.disposed) return;
+    this.core.clearScreen();
+    this.synchronizeMouseTrackingState();
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    // The scrollback is gone; a scrolled-up viewport would show nothing.
+    this.scrollToBottom();
     this.requestRender();
   }
 

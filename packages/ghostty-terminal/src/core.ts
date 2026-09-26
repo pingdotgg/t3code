@@ -4,8 +4,8 @@ import {
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
-} from "./keyCodes";
-import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
+} from "./keyCodes.ts";
+import { type GhosttyRuntime } from "./runtime.ts";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
@@ -223,6 +223,7 @@ export class GhosttyTerminalCore {
   }
 
   static async create(
+    runtime: GhosttyRuntime,
     cols: number,
     rows: number,
     cellWidth: number,
@@ -230,7 +231,7 @@ export class GhosttyTerminalCore {
     theme: GhosttyTheme,
     onPtyData: (data: string) => void,
   ): Promise<GhosttyTerminalCore> {
-    const core = new GhosttyTerminalCore(await loadGhosttyRuntime());
+    const core = new GhosttyTerminalCore(runtime);
     try {
       core.initialize(cols, rows, cellWidth, cellHeight, theme, onPtyData);
       return core;
@@ -325,6 +326,50 @@ export class GhosttyTerminalCore {
     this.runtime.free(pointer, bytes.length);
   }
 
+  /**
+   * Erase the viewport and scrollback (ED 2 + ED 3) without an RIS: modes,
+   * cursor position, and screen selection survive. This is the parser-side
+   * equivalent of a host history clear, which never reaches the process —
+   * `resetAndWrite` would drop negotiated modes (application cursor,
+   * bracketed paste, kitty keyboard, mouse tracking) and desync input
+   * encoding.
+   */
+  clearScreen(): void {
+    this.ensureActive();
+    this.write("\x1b[2J\x1b[3J");
+  }
+
+  private replayDepth = 0;
+
+  /**
+   * Bracket a replay of output the process already emitted once. Replaying
+   * bytes that contain terminal queries (DA, DSR, DECRQSS) re-answers them
+   * through the PTY trampoline — the process is not re-asking, and a
+   * duplicate reply confuses the shell — so the writer stays detached for
+   * the whole bracket. Brackets nest by depth (attach() wraps a replay that
+   * itself calls resetAndWrite).
+   */
+  beginReplay(): void {
+    this.ensureActive();
+    this.replayDepth += 1;
+    if (this.replayDepth === 1 && this.ptyWriterId !== 0) {
+      this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
+      this.ptyWriterId = 0;
+    }
+  }
+
+  endReplay(): void {
+    this.replayDepth = Math.max(0, this.replayDepth - 1);
+    if (
+      this.replayDepth === 0 &&
+      this.ptyWriter !== null &&
+      this.ptyWriterId === 0 &&
+      !this.disposed
+    ) {
+      this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, this.ptyWriter);
+    }
+  }
+
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
@@ -333,17 +378,11 @@ export class GhosttyTerminalCore {
     this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
-    const writer = this.ptyWriter;
-    if (this.ptyWriterId !== 0) {
-      this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
-      this.ptyWriterId = 0;
-    }
+    this.beginReplay();
     try {
       this.write(data);
     } finally {
-      if (writer !== null && !this.disposed) {
-        this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
-      }
+      this.endReplay();
     }
   }
 

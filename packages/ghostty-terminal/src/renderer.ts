@@ -4,7 +4,7 @@ import {
   type GhosttyCell,
   type GhosttyColor,
   type GhosttySnapshot,
-} from "./core";
+} from "./core.ts";
 
 export interface GhosttyCellMetrics {
   readonly width: number;

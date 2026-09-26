@@ -7,7 +7,8 @@ import { useTheme } from "../../hooks/useTheme";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
-import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
+import { GhosttyTerminalSurface } from "@t3tools/ghostty-terminal/surface";
+import { GHOSTTY_SYMBOLS_FONT_URL, loadWebGhosttyRuntime } from "~/terminal/ghosttyAssets";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
 // Tiptap editor, the diff panel's file diff, and the Ghostty canvas
@@ -22,7 +23,7 @@ const EMPTY_SKILLS: ReadonlyArray<never> = [];
 // text and pills exactly as the real composer draws them.
 const PROMPT_PREVIEW_TEXT =
   "Use $frontend-design to fix the flaky test in " +
-  "[surface.test.ts](apps/web/src/terminal/ghostty/surface.test.ts) and align the header with " +
+  "[surface.test.ts](packages/ghostty-terminal/src/surface.test.ts) and align the header with " +
   "[SettingsPanels.tsx](apps/web/src/components/settings/SettingsPanels.tsx) before shipping.";
 
 function noop() {}
@@ -234,6 +235,8 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
     };
 
     void GhosttyTerminalSurface.create(mount, {
+      runtime: loadWebGhosttyRuntime(),
+      symbolsFontUrl: GHOSTTY_SYMBOLS_FONT_URL,
       theme: terminalThemeFromApp(mount),
       font: previewTerminalFont(fontRef.current.family, fontRef.current.size),
       onData: echo,

@@ -649,6 +649,9 @@ importers:
       '@t3tools/extension-sdk':
         specifier: workspace:*
         version: link:../../packages/extension-sdk
+      '@t3tools/ghostty-terminal':
+        specifier: workspace:*
+        version: link:../../packages/ghostty-terminal
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -1018,6 +1021,12 @@ importers:
       react-test-renderer:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
+
+  packages/ghostty-terminal:
+    devDependencies:
+      vite-plus:
+        specifier: 'catalog:'
+        version: 0.3.3(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
   packages/shared:
     dependencies:

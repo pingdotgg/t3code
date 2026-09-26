@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
     "dev": "vp run --filter @t3tools/extension-sdk build && vp dev",
     "build": "vp run --filter @t3tools/extension-sdk build && vp build",
     "preview": "vp preview",
@@ -29,6 +28,7 @@
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/extension-sdk": "workspace:*",
+    "@t3tools/ghostty-terminal": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",

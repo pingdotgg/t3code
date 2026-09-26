@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // Only the tests use Vite asset queries; the sources load under any bundler or Node.
+    "types": ["vite-plus/client"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Browser rendering code, not Effect code: the same overrides as the web app.
+        "diagnosticSeverity": {
+          "globalDate": "off",
+          "globalConsole": "off",
+          "globalRandom": "off",
+          "globalTimers": "off",
+          "globalFetch": "off"
+        }
+      }
+    ]
+  },
+  "include": ["src", "vite.config.ts"]
+}

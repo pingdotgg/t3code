@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
+import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core.ts";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -30,14 +30,9 @@ import {
   terminalWheelDeltaRows,
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
-} from "./surface";
-
-vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
-  default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
-}));
-vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
-  default: (await import("./vendor/ghostty-write-pty.wasm?inline")).default,
-}));
+} from "./surface.ts";
+import { type GhosttyRuntime, loadGhosttyRuntime } from "./runtime.ts";
+import { testWasmSources } from "./testing/wasmSources.ts";
 
 describe("GhosttyTerminalSurface visibility", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
@@ -135,7 +130,10 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(private readonly callback: () => void) {
+        // No parameter property: the package keeps erasable syntax so Node can strip it.
+        private readonly callback: () => void;
+        constructor(callback: () => void) {
+          this.callback = callback;
           resizeCallbacks.add(callback);
         }
         observe() {}
@@ -167,6 +165,11 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
+      wheel(deltaY: number) {
+        canvas.dispatchEvent(
+          Object.assign(new Event("wheel", { cancelable: true }), { deltaY, deltaMode: 1 }),
+        );
+      },
       pointer(type: string, clientX: number, buttons: number, shiftKey = false, button = 0) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
@@ -181,6 +184,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       },
       async create(options: Partial<GhosttyTerminalSurfaceOptions> = {}) {
         const surface = await GhosttyTerminalSurface.create(mount as unknown as HTMLElement, {
+          runtime: loadGhosttyRuntime(testWasmSources),
           theme: {
             foreground: { r: 255, g: 255, b: 255 },
             background: { r: 0, g: 0, b: 0 },
@@ -303,6 +307,74 @@ describe("GhosttyTerminalSurface visibility", () => {
     surface.clearSelection();
     harness.pointer("pointerdown", 5, 4, false, 1);
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("paints the mount before a pending runtime resolves and rethrows its failure", async () => {
+    const harness = createHarness();
+    let resolveRuntime: (runtime: GhosttyRuntime) => void = () => {};
+    const created = harness.create({
+      runtime: new Promise<GhosttyRuntime>((resolve) => {
+        resolveRuntime = resolve;
+      }),
+    });
+    expect(harness.paint).toHaveBeenCalledWith("fillRect", [0, 0, 300, 150]);
+    resolveRuntime(await loadGhosttyRuntime(testWasmSources));
+    const surface = await created;
+    surface.write("\x1b[5n");
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+
+    await expect(
+      harness.create({ runtime: Promise.reject(new Error("libghostty-vt unavailable")) }),
+    ).rejects.toThrow("libghostty-vt unavailable");
+  });
+
+  it("registers the symbols font once, from the first surface that supplies its URL", async () => {
+    const harness = createHarness();
+    const sources: string[] = [];
+    vi.stubGlobal(
+      "FontFace",
+      class {
+        constructor(_family: string, source: string) {
+          sources.push(source);
+        }
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    );
+    // A host without the font must not stop a later host from registering it.
+    await harness.create();
+    expect(sources).toEqual([]);
+    await harness.create({ symbolsFontUrl: "/assets/symbols.woff2" });
+    await harness.create({ symbolsFontUrl: "/assets/other.woff2" });
+    expect(sources).toEqual(["url(/assets/symbols.woff2)"]);
+  });
+
+  it("holds PTY replies for a whole replay bracket", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.beginReplay();
+    surface.resetAndWrite("base\x1b[5n");
+    surface.write("tail\x1b[6n");
+    surface.endReplay();
+    expect(harness.onData).not.toHaveBeenCalled();
+    surface.write("\x1b[5n");
+    expect(harness.onData.mock.calls).toEqual([["\x1b[0n"]]);
+  });
+
+  it("clears history in place and returns a scrolled viewport to the bottom", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write(`${"line\r\n".repeat(30)}prompt`);
+    harness.flushFrame();
+    harness.wheel(-3);
+    expect(surface.isAtBottom()).toBe(false);
+
+    surface.clearScreen();
+    harness.flushFrame();
+    expect(surface.isAtBottom()).toBe(true);
+    expect(harness.renderedSnapshot.rowData.every((row) => row.text === "")).toBe(true);
+    expect(harness.onData).not.toHaveBeenCalled();
   });
 
   it("starts a selection when dragging from a link", async () => {
@@ -563,6 +635,8 @@ describe("terminalLinkAtPositionWithRange", () => {
   });
 
   it("uses shared path matching and reconstructs soft-wrapped links", () => {
+    // Joined at runtime so the package source never carries the app-alias literal.
+    const homePath = ["~", "project", "file"].join("/");
     const row = (text: string, isWrapContinuation: boolean, wrapsToNext = false): GhosttyRow => ({
       cells: Array.from(text.padEnd(16), (character) => cell(character)),
       text: text.trimEnd(),
@@ -572,13 +646,13 @@ describe("terminalLinkAtPositionWithRange", () => {
     const rows = [
       row("https://example.", false),
       row("com/reference", true),
-      row("~/project/file", false),
+      row(homePath, false),
       row("C:\\repo\\file.ts", false),
     ];
 
     expect(terminalLinkAtPositionWithRange(rows, 0, 8)?.text).toBe("https://example.com/reference");
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)?.text).toBe("https://example.com/reference");
-    expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.text).toBe("~/project/file");
+    expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.text).toBe(homePath);
     expect(terminalLinkAtPositionWithRange(rows, 3, 4)?.text).toBe("C:\\repo\\file.ts");
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
       text: "https://example.com/reference",
