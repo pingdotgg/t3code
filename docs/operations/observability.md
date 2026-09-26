@@ -90,16 +90,24 @@ If OTLP is not configured, metrics still exist in-process, but you will not have
 ### Event Loop Stalls
 
 `apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 30 s. When
-the loop stalled for more than 1 s since the previous sample, it records a root
+the loop stalled for more than 2 s since the previous sample, it records a root
 `server.eventLoop.stall` span with a warning. The span has trace level `Warn`, so it stays when
 `T3CODE_TRACE_MIN_LEVEL` is `Warn`. The warning shows in Settings > Diagnostics unless OTLP logs are
 on. The span time is when the sample ran, not when the stall happened.
 
-`delayMaxMs` is the longest stall, and can undercount it by up to 200 ms. CPU times and page faults
-cover the whole process over the whole window since the previous sample. The window is nominally
-30 s, but a long stall delays the sample and makes the window longer. Other work in the window can
-hide a wait, so only CPU time far below `delayMaxMs` proves the thread was waiting. Read CPU together
-with page faults:
+Some delay is not recorded:
+
+- `delayMaxMs` is the longest stall, and can undercount it by up to 1 s. The 2 s threshold applies to
+  this value, so every stall over 3 s is recorded, and a shorter one can be missed.
+- Time the computer spends asleep reads as delay on macOS and Windows. So a sample only counts when
+  the loop was busy, not waiting for events, for at least `delayMaxMs`.
+- The first sample after launch is skipped. Startup work such as migrations and projection bootstrap
+  can block the loop for seconds on a large database.
+
+CPU times and page faults cover the whole process over the whole window since the previous sample.
+The window is nominally 30 s, but a long stall delays the sample and makes the window longer. Other
+work in the window can hide a wait, so only CPU time far below `delayMaxMs` proves the thread was
+waiting. Read CPU together with page faults:
 
 - High `cpuSystemMs` with many page faults means memory pressure. Major faults are reads from disk or swap.
   On macOS, reads from compressed memory are minor faults plus system CPU.
@@ -107,9 +115,6 @@ with page faults:
 - Low CPU with few major page faults points at synchronous disk I/O, such as SQLite reads or trace
   file writes.
 - Many `involuntaryContextSwitches` mean other processes were competing for the CPU.
-
-The first sample after launch includes startup, such as migrations and projection bootstrap. With a
-large database, this can record a real stall at each launch.
 
 ### Related Artifacts
 

@@ -8,15 +8,16 @@ import type * as Scope from "effect/Scope";
 // Node's delay histogram wakes a native timer every RESOLUTION_MS and records the
 // gap between wakeups, so an idle loop reads about RESOLUTION_MS and a stall of S
 // reads between S and S + RESOLUTION_MS. We subtract the resolution, so a delay can
-// undercount a stall by up to RESOLUTION_MS. Keeping it at a fifth of the threshold
-// catches every stall of 1.2 s or more, at 5 wakeups per second that never enter JS.
-const RESOLUTION_MS = 200;
-const STALL_THRESHOLD_MS = 1000;
+// undercount a stall by up to RESOLUTION_MS. With these values every stall over 3 s
+// is caught, at 1 wakeup per second that never enters JS.
+const RESOLUTION_MS = 1000;
+const STALL_THRESHOLD_MS = 2000;
 const SAMPLE_INTERVAL = "30 seconds";
 
-/** One sample interval as Node reports it. Delay in ns, CPU times in µs. */
+/** One sample interval as Node reports it. Delay in ns, active time in ms, CPU in µs. */
 export interface EventLoopReadings {
   readonly delayMaxNs: number;
+  readonly activeMs: number;
   readonly utilization: number;
   readonly usage: Pick<
     NodeJS.ResourceUsage,
@@ -48,9 +49,11 @@ const makeNodeSampler = Effect.gen(function* () {
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
+    const loop = NodePerfHooks.performance.eventLoopUtilization(nextElu, elu);
     const readings: EventLoopReadings = {
       delayMaxNs: histogram.max,
-      utilization: NodePerfHooks.performance.eventLoopUtilization(nextElu, elu).utilization,
+      activeMs: loop.active,
+      utilization: loop.utilization,
       usage: {
         userCPUTime: nextUsage.userCPUTime - usage.userCPUTime,
         systemCPUTime: nextUsage.systemCPUTime - usage.systemCPUTime,
@@ -69,8 +72,20 @@ const makeNodeSampler = Effect.gen(function* () {
 });
 
 /**
+ * Returns the stall to report for one sample in ms, or undefined when there was none.
+ */
+export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
+  const delayMs = Math.round(delayMaxNs / 1e6) - RESOLUTION_MS;
+  // A stall is time the loop spent running code, so it counts as active time. libuv's
+  // clock keeps running while the system sleeps on macOS and Windows, so a sleep also
+  // reads as delay, but the loop spent it idle in poll.
+  if (delayMs <= STALL_THRESHOLD_MS || activeMs < delayMs) return undefined;
+  return delayMs;
+};
+
+/**
  * Samples event loop health every 30 s and records a `server.eventLoop.stall` span
- * with a warning when the loop stalled for more than a second, so stalls land in
+ * with a warning when the loop stalled for more than 2 s, so stalls land in
  * the local trace file and Settings > Diagnostics without OTLP. Takes the sampler
  * so tests can inject readings.
  */
@@ -81,9 +96,10 @@ export const layerWith = (
     Effect.gen(function* () {
       const sample = yield* makeSampler;
       const tick = Effect.gen(function* () {
-        const { delayMaxNs, utilization, usage, rssBytes } = yield* sample;
-        const delayMaxMs = Math.round(delayMaxNs / 1e6) - RESOLUTION_MS;
-        if (delayMaxMs <= STALL_THRESHOLD_MS) return;
+        const readings = yield* sample;
+        const delayMaxMs = stallMs(readings);
+        if (delayMaxMs === undefined) return;
+        const { utilization, usage, rssBytes } = readings;
         // Root, as the stall has no caller to attach to. Warn level keeps it when
         // T3CODE_TRACE_MIN_LEVEL is raised to cut trace noise.
         yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
@@ -103,10 +119,14 @@ export const layerWith = (
           }),
         );
       });
-      // Layers build outside any span, so this fiber retains no parent span.
-      yield* Effect.sleep(SAMPLE_INTERVAL).pipe(
-        Effect.andThen(tick),
-        Effect.forever,
+      const wait = Effect.sleep(SAMPLE_INTERVAL);
+      // The layer builds before the rest of the server, so the first sample covers
+      // startup work such as migrations and projection bootstrap. That can block the
+      // loop for seconds on a large database, so skip it rather than warn at every
+      // launch. Layers build outside any span, so this fiber retains no parent span.
+      yield* wait.pipe(
+        Effect.andThen(sample),
+        Effect.andThen(wait.pipe(Effect.andThen(tick), Effect.forever)),
         Effect.forkScoped,
       );
     }),
