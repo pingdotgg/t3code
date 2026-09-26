@@ -1145,6 +1145,62 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("moves durable streams to the supervisor an identical re-registration installs", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const firstObserved = yield* Deferred.make<void>();
+        const secondObserved = yield* Deferred.make<void>();
+        const supervisors = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const subscription = yield* Effect.forkChild(
+          registry
+            .followStream(
+              RELAY_TARGET.environmentId,
+              Stream.unwrap(
+                EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+                  Effect.map((supervisor) =>
+                    Stream.concat(Stream.succeed(supervisor), Stream.never),
+                  ),
+                ),
+              ),
+            )
+            .pipe(
+              Stream.tap((supervisor) =>
+                Ref.updateAndGet(supervisors, (current) => [...current, supervisor]).pipe(
+                  Effect.flatMap((current) =>
+                    current.length === 1
+                      ? Deferred.succeed(firstObserved, undefined)
+                      : Deferred.succeed(secondObserved, undefined),
+                  ),
+                ),
+              ),
+              Stream.runDrain,
+            ),
+        );
+
+        yield* Deferred.await(firstObserved).pipe(Effect.timeout("1 second"));
+        // A re-pair re-registers the same target and profile; only the stored
+        // credential changes, so the catalog entry is identical.
+        yield* registry.register(new RelayConnectionRegistration({ target: RELAY_TARGET }));
+        yield* Deferred.await(secondObserved).pipe(Effect.timeout("1 second"));
+        yield* Fiber.interrupt(subscription);
+
+        const [first, second] = yield* Ref.get(supervisors);
+        expect(second).toBeDefined();
+        expect(second).not.toBe(first);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("ignores retry signals for environments that are no longer registered", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([]);

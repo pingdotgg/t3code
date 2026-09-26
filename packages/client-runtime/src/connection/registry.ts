@@ -5,6 +5,7 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -378,17 +379,34 @@ export const make = Effect.gen(function* () {
               acquireSupervisor(environmentId).pipe(
                 Effect.match({
                   onFailure: () => Stream.empty,
-                  onSuccess: (supervisor) =>
-                    Stream.provideService(
-                      stream,
-                      EnvironmentSupervisor.EnvironmentSupervisor,
-                      supervisor,
+                  // Reinstalling an entry replaces its supervisor even when the
+                  // entry is unchanged (a re-pair keeps the same target and
+                  // profile), so follow the supervisor itself.
+                  onSuccess: () =>
+                    supervisorChanges(environmentId).pipe(
+                      Stream.switchMap((supervisor) =>
+                        Stream.provideService(
+                          stream,
+                          EnvironmentSupervisor.EnvironmentSupervisor,
+                          supervisor,
+                        ),
+                      ),
                     ),
                 }),
               ),
             ),
         }),
       ),
+    );
+
+  const supervisorChanges = (environmentId: EnvironmentId) =>
+    Stream.concat(
+      Stream.fromEffect(SubscriptionRef.get(serviceScopes)),
+      SubscriptionRef.changes(serviceScopes),
+    ).pipe(
+      Stream.map((current) => current.get(environmentId)?.supervisor),
+      Stream.filter(Predicate.isNotUndefined),
+      Stream.changesWith((previous, next) => previous === next),
     );
 
   const start = Effect.gen(function* () {
