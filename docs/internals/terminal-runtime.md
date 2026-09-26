@@ -37,6 +37,11 @@ owns and frees its own handles. The canonical upstream pin is
 web artifacts must be rebuilt when it changes. Web embeds the revision in its build
 info so the ABI check can detect drift without a second pin.
 
+Mobile link taps resolve the tapped cell natively. Android uses line selection
+and OSC 8 hyperlink metadata in JNI; iOS reads the libghostty screen text. Both
+pass the logical line to `@t3tools/shared/terminalLinks`, which shares URL detection
+with the web terminal.
+
 Restoring scrollback must not send terminal replies to the current shell. Historical
 device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the

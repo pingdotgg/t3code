@@ -57,7 +57,7 @@ class T3TerminalModule : Module() {
       Prop("captureRequest") { view: T3TerminalView, request: Double ->
         view.captureRequest = request
       }
-      Events("onInput", "onResize", "onCapture")
+      Events("onInput", "onResize", "onCapture", "onLinkTap")
 
       OnViewDestroys { view: T3TerminalView ->
         view.cleanup()

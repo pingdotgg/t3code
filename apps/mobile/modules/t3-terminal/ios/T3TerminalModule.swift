@@ -54,7 +54,7 @@ public class T3TerminalModule: Module {
       Prop("captureRequest") { (view: T3TerminalView, request: Double) in
         view.captureRequest = request
       }
-      Events("onInput", "onResize", "onCapture")
+      Events("onInput", "onResize", "onCapture", "onLinkTap")
     }
   }
 }

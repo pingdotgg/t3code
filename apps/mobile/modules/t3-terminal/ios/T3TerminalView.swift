@@ -216,6 +216,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   let onInput = EventDispatcher()
   let onResize = EventDispatcher()
   let onCapture = EventDispatcher()
+  let onLinkTap = EventDispatcher()
   var captureRequest: Double = 0 {
     didSet {
       guard captureRequest > 0, captureRequest != oldValue else { return }
@@ -348,7 +349,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       self?.emitInput(data)
     }
 
-    focusTapGesture.addTarget(self, action: #selector(handleViewportTap))
+    focusTapGesture.addTarget(self, action: #selector(handleViewportTap(_:)))
     terminalViewport.addGestureRecognizer(focusTapGesture)
     scrollPanGesture.addTarget(self, action: #selector(handleViewportPan(_:)))
     scrollPanGesture.maximumNumberOfTouches = 1
@@ -421,7 +422,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   @objc
-  private func handleViewportTap() {
+  private func handleViewportTap(_ gesture: UITapGestureRecognizer) {
+    emitLinkTap(at: gesture.location(in: terminalViewport))
     requestKeyboardFocus()
   }
 
@@ -468,6 +470,110 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   @objc
   private func handleInputEditingDidBegin() {
     textInputModeDidChange()
+  }
+
+  /// Ghostty's default `window-padding-x`/`window-padding-y` in points. The
+  /// grid starts after this inset; themeConfig never overrides padding.
+  private static let ghosttyWindowPaddingPoints: CGFloat = 2
+
+  private func viewportCell(at location: CGPoint) -> (col: UInt32, row: UInt32)? {
+    guard let surface else { return nil }
+    let size = ghostty_surface_size(surface)
+    guard size.columns > 0, size.rows > 0, size.cell_width_px > 0, size.cell_height_px > 0 else {
+      return nil
+    }
+
+    let scale = contentScaleFactor
+    let padding = Self.ghosttyWindowPaddingPoints * scale
+    let px = location.x * scale - padding
+    let py = location.y * scale - padding
+    guard px >= 0, py >= 0,
+      px < CGFloat(size.columns) * CGFloat(size.cell_width_px),
+      py < CGFloat(size.rows) * CGFloat(size.cell_height_px)
+    else { return nil }
+
+    let col = UInt32(px / CGFloat(size.cell_width_px))
+    let row = UInt32(py / CGFloat(size.cell_height_px))
+    return (col, row)
+  }
+
+  private func viewportPoint(x: UInt32, y: UInt32) -> ghostty_point_s {
+    ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: x, y: y)
+  }
+
+  private func boundaryPoint(_ tag: ghostty_point_tag_e, _ coordinate: ghostty_point_coord_e) -> ghostty_point_s {
+    ghostty_point_s(tag: tag, coord: coordinate, x: 0, y: 0)
+  }
+
+  private func readText(from topLeft: ghostty_point_s, to bottomRight: ghostty_point_s) -> String? {
+    guard let surface else { return nil }
+
+    let selection = ghostty_selection_s(
+      top_left: topLeft,
+      bottom_right: bottomRight,
+      rectangle: false
+    )
+    var text = ghostty_text_s()
+    guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+    defer { ghostty_surface_free_text(surface, &text) }
+
+    guard let pointer = text.text, text.text_len > 0 else { return "" }
+    return String(data: Data(bytes: pointer, count: Int(text.text_len)), encoding: .utf8)
+  }
+
+  /// Resolves the logical line and character offset under a tap and emits
+  /// onLinkTap so JS can run the shared link detection. Ghostty's text dump
+  /// joins soft-wrapped rows, so a URL spanning several rows arrives intact.
+  private func emitLinkTap(at location: CGPoint) {
+    guard surface != nil, let cell = viewportCell(at: location) else { return }
+
+    // Ghostty drops trailing blank cells when dumping text, so without this
+    // check a tap on empty space would resolve onto the last printed character.
+    let tappedPoint = viewportPoint(x: cell.col, y: cell.row)
+    guard let tappedCell = readText(from: tappedPoint, to: tappedPoint),
+          !tappedCell.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return }
+
+    // Text dumps are expensive, so a tap reads only the viewport. The prefix
+    // dump ends at the tapped cell inclusive, so its last UTF-16 unit is the
+    // tapped character's offset within the viewport dump.
+    let viewportOrigin = boundaryPoint(GHOSTTY_POINT_VIEWPORT, GHOSTTY_POINT_COORD_TOP_LEFT)
+    let viewportEnd = boundaryPoint(GHOSTTY_POINT_VIEWPORT, GHOSTTY_POINT_COORD_BOTTOM_RIGHT)
+    guard let prefix = readText(from: viewportOrigin, to: tappedPoint),
+          let viewportText = readText(from: viewportOrigin, to: viewportEnd)
+    else { return }
+
+    let fullText = viewportText as NSString
+    let tapOffset = (prefix as NSString).length - 1
+    guard tapOffset >= 0, tapOffset < fullText.length else { return }
+
+    let lineRange = fullText.lineRange(for: NSRange(location: tapOffset, length: 0))
+    var lineText = fullText.substring(with: lineRange)
+    while lineText.hasSuffix("\n") || lineText.hasSuffix("\r") {
+      lineText.removeLast()
+    }
+    var tapIndex = tapOffset - lineRange.location
+    guard tapIndex >= 0, tapIndex < (lineText as NSString).length else { return }
+
+    // A line touching the viewport top may start in scrollback. Only then read
+    // back to the screen origin, so a URL wrapped above the viewport keeps its
+    // scheme. The rest of the line still comes from the viewport dump.
+    if lineRange.location == 0 {
+      let screenOrigin = boundaryPoint(GHOSTTY_POINT_SCREEN, GHOSTTY_POINT_COORD_TOP_LEFT)
+      guard let screenPrefix = readText(from: screenOrigin, to: tappedPoint).map({ $0 as NSString }),
+            screenPrefix.length > 0
+      else { return }
+      let lineStart = screenPrefix.lineRange(for: NSRange(location: screenPrefix.length - 1, length: 0)).location
+      let head = screenPrefix.substring(from: lineStart)
+      let tail = (lineText as NSString).substring(from: tapIndex + 1)
+      lineText = head + tail
+      tapIndex = (head as NSString).length - 1
+    }
+
+    onLinkTap([
+      "lineText": lineText,
+      "tapIndex": tapIndex,
+    ])
   }
 
   private func createSurfaceIfPossible() {

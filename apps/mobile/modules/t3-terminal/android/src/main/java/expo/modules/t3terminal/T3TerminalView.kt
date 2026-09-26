@@ -15,6 +15,8 @@ import android.widget.FrameLayout
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.max
 
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
@@ -24,6 +26,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
   private val onCapture by EventDispatcher()
+  private val onLinkTap by EventDispatcher()
   var captureRequest: Double = 0.0
     set(value) {
       if (field == value || value <= 0) return
@@ -141,6 +144,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       }
     }
     terminalCanvas.onCellMetricsChanged = { emitResize() }
+    terminalCanvas.onTapCell = { col, row -> emitLinkTap(col, row) }
     terminalCanvas.selectionDelegate = object : TerminalSelectionDelegate {
       override fun selectWordAt(col: Int, row: Int): Boolean {
         if (terminalHandle == 0L) return false
@@ -216,6 +220,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalCanvas.onScrollRows = null
     terminalCanvas.onRequestKeyboard = null
     terminalCanvas.onCellMetricsChanged = null
+    terminalCanvas.onTapCell = null
     terminalCanvas.selectionDelegate = null
     destroyTerminal()
   }
@@ -382,6 +387,46 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     renderSnapshot()
   }
 
+  /** Decodes the nativeLinkAt blob; see t3_terminal_jni.cpp for the layout. */
+  private fun emitLinkTap(col: Int, row: Int) {
+    if (terminalHandle == 0L) return
+    val encoded = GhosttyBridge.nativeLinkAt(terminalHandle, col, row)
+    if (!encoded.isNullOrEmpty()) {
+      when (encoded[0].toInt()) {
+        LINK_KIND_HYPERLINK -> emitHyperlinkTap(encoded)
+        LINK_KIND_LINE -> emitLineTap(encoded)
+      }
+    }
+  }
+
+  private fun emitHyperlinkTap(encoded: ByteArray) {
+    if (encoded.size > 1) {
+      onLinkTap(mapOf("uri" to String(encoded, 1, encoded.size - 1, Charsets.UTF_8)))
+    }
+  }
+
+  private fun emitLineTap(encoded: ByteArray) {
+    if (encoded.size < LINK_LINE_HEADER_BYTES) return
+    val prefixLength = ByteBuffer
+      .wrap(encoded, 1, Int.SIZE_BYTES)
+      .order(ByteOrder.LITTLE_ENDIAN)
+      .int
+    if (prefixLength <= 0 || LINK_LINE_HEADER_BYTES + prefixLength > encoded.size) return
+    val prefix = String(encoded, LINK_LINE_HEADER_BYTES, prefixLength, Charsets.UTF_8)
+    val lineText = String(
+      encoded,
+      LINK_LINE_HEADER_BYTES + prefixLength,
+      encoded.size - LINK_LINE_HEADER_BYTES - prefixLength,
+      Charsets.UTF_8,
+    )
+    // The prefix ends at the tapped cell inclusive, so its last UTF-16
+    // unit is the tapped character's index within the line.
+    val tapIndex = prefix.length - 1
+    if (tapIndex in lineText.indices) {
+      onLinkTap(mapOf("lineText" to lineText, "tapIndex" to tapIndex))
+    }
+  }
+
   private fun renderSnapshot() {
     if (terminalHandle == 0L) return
     TerminalFrame.decode(
@@ -458,4 +503,10 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     } catch (_: IllegalArgumentException) {
       fallback
     }
+
+  private companion object {
+    const val LINK_KIND_HYPERLINK = 1
+    const val LINK_KIND_LINE = 2
+    const val LINK_LINE_HEADER_BYTES = 1 + Int.SIZE_BYTES
+  }
 }

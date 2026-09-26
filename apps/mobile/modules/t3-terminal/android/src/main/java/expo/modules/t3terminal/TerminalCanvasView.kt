@@ -123,6 +123,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   var onScrollRows: ((Int) -> Unit)? = null
   var onRequestKeyboard: (() -> Unit)? = null
   var onCellMetricsChanged: (() -> Unit)? = null
+  var onTapCell: ((Int, Int) -> Unit)? = null
   var selectionDelegate: TerminalSelectionDelegate? = null
 
   private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -351,6 +352,25 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   private fun rowAt(py: Float): Int {
     val rows = frame?.rows ?: return 0
     return ((py - contentPadding) / cellHeightPx).toInt().coerceIn(0, max(rows - 1, 0))
+  }
+
+  /**
+   * Reports occupied cells for link detection, including spaces inside OSC 8
+   * hyperlinks. The native untrimmed prefix keeps plain-text tap indexes aligned.
+   */
+  private fun tapCellAt(px: Float, py: Float) {
+    frame?.let { currentFrame ->
+      val gridX = px - contentPadding
+      val gridY = py - contentPadding
+      if (gridX < 0 || gridX >= currentFrame.cols * cellWidthPx) return
+      if (gridY < 0 || gridY >= currentFrame.rows * cellHeightPx) return
+      val col = columnAt(px)
+      val row = rowAt(py)
+      val index = row * currentFrame.cols + col
+      if (index in currentFrame.cellText.indices && currentFrame.cellText[index].isNotEmpty()) {
+        onTapCell?.invoke(col, row)
+      }
+    }
   }
 
   private fun startWordSelection(px: Float, py: Float) {
@@ -590,6 +610,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         clearSelection()
       } else {
         performClick()
+        tapCellAt(event.x, event.y)
       }
       return true
     }
