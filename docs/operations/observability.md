@@ -640,8 +640,9 @@ open it, use the Memory tab in Chrome DevTools and select Load.
 Before you take one:
 
 - The server stops while it writes the file. For a large heap this can take a minute or more.
-  Send the signal once. A second signal sent during a write takes another snapshot after the first
-  one finishes.
+  Connected clients can reconnect during the pause, and an event loop monitor, if the server has
+  one, records the pause as a stall. Send the signal once. A second signal sent during a write
+  takes another snapshot after the first one finishes.
 - The write needs about as much free memory as the heap uses. On a machine that is already
   swapping, it can make the problem worse or crash the server.
 - The file contains everything in server memory, including tokens, secrets, and thread content. Do
