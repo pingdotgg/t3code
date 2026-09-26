@@ -3,9 +3,11 @@ import {
   FederationError,
   type FederationTransport as FederationTransportDescriptor,
   type TailcatNodeKey,
+  isTailcatRuntimeUnavailable,
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import * as NetService from "@t3tools/shared/Net";
+import { tailcatFailureCode } from "@t3tools/tailcat/errors";
 import * as TailcatRuntime from "@t3tools/tailcat/runtime";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -34,7 +36,6 @@ const PEER_READY_TIMEOUT = Duration.seconds(25);
 
 export interface PeerEndpoint {
   readonly httpBaseUrl: string;
-  readonly localPort: number;
 }
 
 export class FederationTransport extends Context.Service<
@@ -133,10 +134,7 @@ export const make = Effect.gen(function* () {
           if (sameTarget && (yield* existing.handle.isRunning)) {
             const touched = { ...existing, lastUsedAtMs: yield* nowMs };
             yield* Ref.update(forwards, (current) => new Map(current).set(peerId, touched));
-            return {
-              httpBaseUrl: existing.handle.httpBaseUrl,
-              localPort: existing.handle.localPort,
-            } satisfies PeerEndpoint;
+            return { httpBaseUrl: existing.handle.httpBaseUrl } satisfies PeerEndpoint;
           }
           yield* Ref.update(forwards, (current) => withoutKey(current, peerId));
           yield* closeForward(existing);
@@ -177,9 +175,7 @@ export const make = Effect.gen(function* () {
                     message:
                       "The peer did not answer through Tailcat. It may be offline, or this environment may no longer be trusted by it.",
                   })
-                : error._tag === "TailcatBinaryMissingError" ||
-                    error._tag === "TailcatBinaryNotExecutableError" ||
-                    error._tag === "TailcatVersionIncompatibleError"
+                : isTailcatRuntimeUnavailable(tailcatFailureCode(error))
                   ? transportUnavailable(error.message)
                   : new FederationError({ code: "peer-unreachable", message: error.message }),
             ),
@@ -199,10 +195,7 @@ export const make = Effect.gen(function* () {
           localPort: handle.localPort,
           pid: handle.pid,
         });
-        return {
-          httpBaseUrl: handle.httpBaseUrl,
-          localPort: handle.localPort,
-        } satisfies PeerEndpoint;
+        return { httpBaseUrl: handle.httpBaseUrl } satisfies PeerEndpoint;
       }),
     );
 

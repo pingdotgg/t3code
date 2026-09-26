@@ -8,11 +8,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   describeFederationPeerCode,
-  isRemoteRunActive,
   remoteRunLastEventSummary,
   remoteRunStatusBadgeVariant,
   remoteRunStatusLabel,
-  sortRemoteRuns,
   toggleFederationScope,
 } from "./FederationSection.logic";
 
@@ -56,15 +54,11 @@ function remoteRun(overrides: {
 }
 
 describe("remote run presentation", () => {
-  it("labels statuses and knows which ones can still be cancelled", () => {
+  it("labels statuses", () => {
     expect(remoteRunStatusLabel("queued")).toBe("Queued");
     expect(remoteRunStatusLabel("error")).toBe("Failed");
     expect(remoteRunStatusBadgeVariant("running")).toBe("warning");
     expect(remoteRunStatusBadgeVariant("completed")).toBe("success");
-    expect(isRemoteRunActive("queued")).toBe(true);
-    expect(isRemoteRunActive("running")).toBe(true);
-    expect(isRemoteRunActive("completed")).toBe(false);
-    expect(isRemoteRunActive("interrupted")).toBe(false);
   });
 
   it("prefers the newest event summary, then the assistant preview", () => {
@@ -74,8 +68,8 @@ describe("remote run presentation", () => {
         remoteRun({
           requestedAt: at,
           events: [
-            { sequence: 2, at, type: "turn.completed", summary: "Turn completed" },
             { sequence: 1, at, type: "turn.started", summary: "Turn started" },
+            { sequence: 2, at, type: "turn.completed", summary: "Turn completed" },
           ],
           assistantPreview: "Working on it",
         }),
@@ -85,12 +79,6 @@ describe("remote run presentation", () => {
       remoteRunLastEventSummary(remoteRun({ requestedAt: at, assistantPreview: "  Working  " })),
     ).toBe("Working");
     expect(remoteRunLastEventSummary(remoteRun({ requestedAt: at }))).toBeNull();
-  });
-
-  it("sorts runs newest first", () => {
-    const older = remoteRun({ requestedAt: "2026-09-03T11:00:00.000Z" });
-    const newer = remoteRun({ requestedAt: "2026-09-03T12:00:00.000Z" });
-    expect(sortRemoteRuns([older, newer])).toEqual([newer, older]);
   });
 });
 
@@ -141,6 +129,11 @@ describe("describeFederationPeerCode", () => {
       transport: "tailcat",
       address: ADDRESS,
       port: 3773,
+      environmentId: EnvironmentId.make("env-studio"),
+      name: "Studio",
+      serverVersion: "0.9.0",
+      pairingToken: "one-time",
+      expiresAt: "2026-09-03T12:05:00.000Z",
     });
     expect(describeFederationPeerCode(tailcatCode, NOW_MS)).toMatchObject({ kind: "tailcat-code" });
     expect(describeFederationPeerCode("   ", NOW_MS)).toEqual({ kind: "empty" });

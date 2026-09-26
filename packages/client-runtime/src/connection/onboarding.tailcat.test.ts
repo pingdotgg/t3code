@@ -43,7 +43,7 @@ const cryptoLayer = Layer.effect(
   }),
 );
 
-const code = (options: { readonly withPairingToken?: boolean } = {}) =>
+const code = () =>
   encodeTailcatConnectionCode({
     v: 1,
     transport: "tailcat",
@@ -52,7 +52,7 @@ const code = (options: { readonly withPairingToken?: boolean } = {}) =>
     environmentId: ENVIRONMENT_ID,
     name: "gpu-box",
     serverVersion: "0.0.38",
-    ...(options.withPairingToken === false ? {} : { pairingToken: "PAIRTOKEN123" }),
+    pairingToken: "PAIRTOKEN123",
     expiresAt: "2026-09-03T20:05:21.215Z",
   });
 
@@ -176,33 +176,6 @@ it.layer(cryptoLayer)("tailcat onboarding", (it) => {
         _tag: "ConnectionBlockedError",
         reason: "configuration",
       });
-    }),
-  );
-
-  it.effect("refuses a code without a pairing credential before opening a tunnel", () =>
-    Effect.gen(function* () {
-      let provisioned = false;
-      const result = yield* prepareTailcatRegistration({
-        code: code({ withPairingToken: false }),
-      }).pipe(
-        Effect.provideService(
-          TailcatEnvironmentGateway,
-          TailcatEnvironmentGateway.of({
-            provision: () =>
-              Effect.sync(() => {
-                provisioned = true;
-              }).pipe(Effect.andThen(Effect.die("unreachable"))),
-            prepare: () => Effect.die("unused"),
-            disconnect: () => Effect.die("unused"),
-          }),
-        ),
-        Effect.flip,
-      );
-      expect(result).toMatchObject({
-        _tag: "ConnectionBlockedError",
-        reason: "authentication",
-      });
-      expect(provisioned).toBe(false);
     }),
   );
 

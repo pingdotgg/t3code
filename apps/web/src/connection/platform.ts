@@ -65,7 +65,7 @@ import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
-import { reportTailcatProvisioningProgress } from "../state/tailcatProvisioning";
+import { reportTailcatProvisioningPhase } from "../state/tailcatProvisioning";
 import {
   desktopLocalConnectionId,
   readDesktopSecondaryBootstrapsResult,
@@ -308,35 +308,27 @@ const provisionDesktopTailcatEnvironment = Effect.fn(
     readonly connectionId: string;
   }) {
     const { payload, connectionId } = input;
-    const pairingToken = payload.pairingToken;
-    if (pairingToken === undefined) {
-      return yield* new ConnectionBlockedError({
-        reason: "authentication",
-        detail:
-          "This connection code has no pairing credential. Ask the other machine for a fresh code.",
-      });
-    }
     const nowMs = yield* Clock.currentTimeMillis;
-    if (payload.expiresAt !== undefined && Date.parse(payload.expiresAt) <= nowMs) {
+    if (Date.parse(payload.expiresAt) <= nowMs) {
       return yield* new ConnectionBlockedError({
         reason: "authentication",
         detail:
           "This connection code has expired. Create a fresh code on the other machine and paste it again.",
       });
     }
-    yield* Effect.sync(() => reportTailcatProvisioningProgress({ phase: "starting-tunnel" }));
+    yield* Effect.sync(() => reportTailcatProvisioningPhase("starting-tunnel"));
     const bootstrap = yield* ensureDesktopTailcatEnvironment({
       connectionId,
       address: payload.address,
       remotePort: payload.port,
     });
-    yield* Effect.sync(() => reportTailcatProvisioningProgress({ phase: "pairing" }));
+    yield* Effect.sync(() => reportTailcatProvisioningPhase("pairing"));
     const descriptor = yield* fetchRemoteEnvironmentDescriptor({
       httpBaseUrl: bootstrap.httpBaseUrl,
     }).pipe(Effect.mapError(mapRemoteEnvironmentError));
     const access = yield* bootstrapRemoteBearerSession({
       httpBaseUrl: bootstrap.httpBaseUrl,
-      credential: pairingToken,
+      credential: payload.pairingToken,
       scopes: AuthStandardClientScopes,
       clientMetadata: clientMetadata(),
       clientTailcatNodeKey: bootstrap.clientNodeKey,
@@ -349,7 +341,7 @@ const provisionDesktopTailcatEnvironment = Effect.fn(
     } satisfies ProvisionedTailcatEnvironment;
   },
   Effect.provide(FetchHttpClient.layer),
-  Effect.ensuring(Effect.sync(() => reportTailcatProvisioningProgress(null))),
+  Effect.ensuring(Effect.sync(() => reportTailcatProvisioningPhase(null))),
 );
 
 const capabilitiesLayer = Layer.effectContext(

@@ -1440,26 +1440,29 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 
 const TailcatRpcError = Schema.Union([TailcatRemoteAccessError, EnvironmentAuthorizationError]);
 
-const WsTailcatSubscribeRemoteAccessRpc = Rpc.make(WS_METHODS.tailcatSubscribeRemoteAccess, {
+export const WsTailcatSubscribeRemoteAccessRpc = Rpc.make(WS_METHODS.tailcatSubscribeRemoteAccess, {
   payload: Schema.Struct({}),
   success: TailcatRemoteAccessState,
   error: TailcatRpcError,
   stream: true,
 });
 
-const WsTailcatSetRemoteAccessEnabledRpc = Rpc.make(WS_METHODS.tailcatSetRemoteAccessEnabled, {
-  payload: TailcatSetRemoteAccessEnabledInput,
-  success: TailcatRemoteAccessState,
-  error: TailcatRpcError,
-});
+export const WsTailcatSetRemoteAccessEnabledRpc = Rpc.make(
+  WS_METHODS.tailcatSetRemoteAccessEnabled,
+  {
+    payload: TailcatSetRemoteAccessEnabledInput,
+    success: TailcatRemoteAccessState,
+    error: TailcatRpcError,
+  },
+);
 
-const WsTailcatCreateConnectionCodeRpc = Rpc.make(WS_METHODS.tailcatCreateConnectionCode, {
+export const WsTailcatCreateConnectionCodeRpc = Rpc.make(WS_METHODS.tailcatCreateConnectionCode, {
   payload: TailcatCreateConnectionCodeInput,
   success: TailcatConnectionCodeResult,
   error: TailcatRpcError,
 });
 
-const WsTailcatRevokeTrustedPeerRpc = Rpc.make(WS_METHODS.tailcatRevokeTrustedPeer, {
+export const WsTailcatRevokeTrustedPeerRpc = Rpc.make(WS_METHODS.tailcatRevokeTrustedPeer, {
   payload: TailcatTrustedPeerIdInput,
   success: TailcatRemoteAccessState,
   error: TailcatRpcError,

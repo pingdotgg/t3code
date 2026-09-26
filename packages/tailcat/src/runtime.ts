@@ -444,8 +444,7 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
         continue;
       }
       const version = yield* readVersion(candidate.path);
-      const compatible = isCompatibleTailcatVersion(version);
-      if (!compatible) {
+      if (!isCompatibleTailcatVersion(version)) {
         return yield* new TailcatVersionIncompatibleError({
           path: candidate.path,
           version,
@@ -458,7 +457,6 @@ export const make = Effect.fn("TailcatRuntime.make")(function* (
         source: candidate.source,
         version,
         pinnedVersion: TAILCAT_PINNED_VERSION,
-        compatible,
       };
     }
 

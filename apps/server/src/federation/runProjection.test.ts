@@ -18,7 +18,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   FEDERATION_PREVIEW_MAX_CHARS,
   federationRunStatus,
-  isFederationRunActive,
   projectFederationArtifacts,
   projectFederationRun,
   summarizeFederationRunEvent,
@@ -99,6 +98,7 @@ const messageSentEvent = (input: {
   readonly text: string;
   readonly role?: "user" | "assistant";
   readonly aggregateId?: ThreadId;
+  readonly streaming?: boolean;
 }): OrchestrationEvent => {
   const aggregateId = input.aggregateId ?? threadId;
   return {
@@ -110,7 +110,7 @@ const messageSentEvent = (input: {
       role: input.role ?? "user",
       text: input.text,
       turnId,
-      streaming: false,
+      streaming: input.streaming ?? false,
       createdAt: occurredAt,
       updatedAt: occurredAt,
     },
@@ -270,26 +270,6 @@ describe("projectFederationRun", () => {
   });
 });
 
-describe("isFederationRunActive", () => {
-  const baseRun = projectFederationRun({
-    environmentId,
-    thread: makeThreadShell(),
-    assistantPreview: null,
-    turnCount: 0,
-  });
-
-  it("treats queued and running runs as active", () => {
-    expect(isFederationRunActive({ ...baseRun, status: "queued" })).toBe(true);
-    expect(isFederationRunActive({ ...baseRun, status: "running" })).toBe(true);
-  });
-
-  it("treats settled runs as inactive", () => {
-    expect(isFederationRunActive({ ...baseRun, status: "completed" })).toBe(false);
-    expect(isFederationRunActive({ ...baseRun, status: "interrupted" })).toBe(false);
-    expect(isFederationRunActive({ ...baseRun, status: "error" })).toBe(false);
-  });
-});
-
 describe("summarizeFederationRunEvent", () => {
   it("ignores events that belong to another thread", () => {
     const event = messageSentEvent({ text: "hello", aggregateId: otherThreadId });
@@ -334,6 +314,18 @@ describe("summarizeFederationRunEvent", () => {
       type: "thread.message-sent",
       summary: "user: Please fix the flaky test",
     });
+  });
+
+  it("skips streamed assistant chunks and the empty completion that ends them", () => {
+    expect(
+      summarizeFederationRunEvent(
+        messageSentEvent({ text: "Hel", role: "assistant", streaming: true }),
+        threadId,
+      ),
+    ).toBeNull();
+    expect(
+      summarizeFederationRunEvent(messageSentEvent({ text: "", role: "assistant" }), threadId),
+    ).toBeNull();
   });
 
   it("truncates long message text after the role prefix", () => {

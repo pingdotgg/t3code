@@ -1,4 +1,3 @@
-import { ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -118,27 +117,6 @@ describe("FederationPeerStore pending peer codes", () => {
         assert.deepEqual(
           (yield* again.pendingPeerCodes).map((code) => code.linkId),
           ["link-live"],
-        );
-      }),
-    ),
-  );
-
-  it.effect("state files written before pending codes existed still load", () =>
-    withStateDir(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const config = yield* ServerConfig.ServerConfig;
-        yield* fs.writeFileString(
-          path.join(config.stateDir, FederationPeerStore.FEDERATION_STATE_FILE),
-          `{"version":1,"peers":[],"remoteRuns":[],"inboundRuns":[{"threadId":"thread-1","peerId":"environment-test","createdAt":"2026-09-03T00:00:00.000Z"}]}`,
-        );
-
-        const store = yield* FederationPeerStore.make;
-        assert.deepEqual(yield* store.pendingPeerCodes, []);
-        assert.deepEqual(
-          (yield* store.inboundRuns).map((run) => run.threadId),
-          [ThreadId.make("thread-1")],
         );
       }),
     ),

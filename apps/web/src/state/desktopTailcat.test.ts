@@ -21,7 +21,6 @@ const diagnostics: TailcatConnectionDiagnostics = {
     source: "bundled",
     version: "0.5.0",
     pinnedVersion: "0.5.0",
-    compatible: true,
   },
   clientNodeKey: `nodekey:${"0".repeat(64)}`,
   path: null,

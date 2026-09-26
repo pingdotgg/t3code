@@ -11,13 +11,10 @@ import { TailcatAddressInvalidError } from "./errors.ts";
  * `tc` + base64url(CBOR map) with single-character keys:
  *   p = server node public key (32 bytes), k = disco public key (32 bytes),
  *   i = DERP region id, r = embedded DERP regions.
- * Only the fields T3 reads are decoded; everything else is skipped.
+ * Only the server node key is read; everything else is skipped.
  */
 export interface DecodedTailcatAddress {
   readonly serverNodeKey: TailcatNodeKey;
-  readonly serverDiscoKey: string | null;
-  readonly regionId: number | null;
-  readonly hasEmbeddedRegions: boolean;
 }
 
 const isAddress = Schema.is(TailcatAddress);
@@ -192,21 +189,10 @@ export function decodeTailcatAddress(
   if (!(serverPublic instanceof Uint8Array) || serverPublic.length !== 32) {
     return Result.fail(invalid("The tailcat address is missing the server key."));
   }
-  const disco = map.get("k");
-  const regionId = map.get("i");
-  const regions = map.get("r");
   return Result.succeed({
     serverNodeKey: `nodekey:${Encoding.encodeHex(serverPublic)}` as TailcatNodeKey,
-    serverDiscoKey:
-      disco instanceof Uint8Array && disco.length === 32
-        ? `discokey:${Encoding.encodeHex(disco)}`
-        : null,
-    regionId: typeof regionId === "number" ? regionId : null,
-    hasEmbeddedRegions: Array.isArray(regions) && regions.length > 0,
   });
 }
-
-/** Short human-readable identity for a node key, for diagnostics and peer lists. */
 
 export function isTailcatNodeKey(value: string): value is TailcatNodeKey {
   return isNodeKey(value.trim());

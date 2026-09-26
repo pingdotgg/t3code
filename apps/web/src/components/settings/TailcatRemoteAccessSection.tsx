@@ -4,17 +4,17 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { formatAbsoluteTimestamp } from "~/timestampFormat";
-import type {
-  EnvironmentId,
-  TailcatConnectionCodeResult,
-  TailcatRemoteAccessState,
-  TailcatTrustedPeer,
+import {
+  type EnvironmentId,
+  type TailcatConnectionCodeResult,
+  type TailcatRemoteAccessState,
+  type TailcatTrustedPeer,
+  tailcatNodeKeyFingerprint,
 } from "@t3tools/contracts";
 import { CopyIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import { memo, useCallback, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { formatExpiresInLabel } from "../../timestampFormat";
 import { useEnvironmentQuery } from "~/state/query";
 import { tailcatEnvironment } from "~/state/tailcat";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -31,27 +31,19 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { QRCodeSvg } from "../ui/qr-code";
 import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { SettingsRow, useRelativeTimeTick } from "./settingsLayout";
+import { SettingsRow } from "./settingsLayout";
+import { OneTimeCodeReveal } from "./OneTimeCodeReveal";
 import { searchableSetting } from "./settingsSearch";
 import {
-  connectionCodeLifetimeMinutes,
   formatTailcatConnectionError,
   tailcatDiagnosticsJson,
-  tailcatNodeKeyFingerprint,
   tailcatRuntimeLabel,
   tailcatStatusBadgeVariant,
   tailcatStatusLabel,
 } from "./TailcatRemoteAccess.logic";
-
-interface IssuedConnectionCode {
-  readonly result: TailcatConnectionCodeResult;
-  readonly lifetimeMinutes: number;
-}
 
 type TrustedPeerRowProps = {
   readonly peer: TailcatTrustedPeer;
@@ -160,79 +152,6 @@ const TrustedPeerRow = memo(function TrustedPeerRow({
   );
 });
 
-/** The freshly minted code, its QR, and a live countdown. Ticks only while a code is on screen. */
-const ConnectionCodeReveal = memo(function ConnectionCodeReveal({
-  issued,
-}: {
-  readonly issued: IssuedConnectionCode;
-}) {
-  const nowMs = useRelativeTimeTick(1_000);
-  const expiresAtMs = Date.parse(issued.result.expiresAt);
-  const { copyToClipboard } = useCopyToClipboard<void>({
-    onCopy: () => {
-      toastManager.add({
-        type: "success",
-        title: "Connection code copied",
-        description:
-          "Paste it in the desktop app on the other device under Add environment → Tailcat.",
-      });
-    },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy connection code",
-          description: error.message,
-        }),
-      );
-    },
-  });
-
-  if (expiresAtMs <= nowMs) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        That code expired unused. Create a new one when the other device is ready.
-      </p>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-      <div className="min-w-0 flex-1 space-y-2">
-        <Textarea
-          readOnly
-          value={issued.result.code}
-          rows={4}
-          aria-label="Tailcat connection code"
-          font="mono"
-          className="break-all"
-          onFocus={(event) => event.currentTarget.select()}
-          onClick={(event) => event.currentTarget.select()}
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="xs" variant="outline" onClick={() => copyToClipboard(issued.result.code)}>
-            <CopyIcon aria-hidden />
-            Copy code
-          </Button>
-          <span className="text-2xs text-muted-foreground">
-            {formatExpiresInLabel(issued.result.expiresAt, nowMs)} · single use, expires in{" "}
-            {issued.lifetimeMinutes} min
-          </span>
-        </div>
-      </div>
-      <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
-        <QRCodeSvg
-          value={issued.result.code}
-          size={168}
-          level="L"
-          marginSize={1}
-          title="Tailcat connection code"
-        />
-      </div>
-    </div>
-  );
-});
-
 type TailcatRemoteAccessRowProps = {
   readonly environmentId: EnvironmentId;
 };
@@ -267,7 +186,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
   });
   const [isToggling, setIsToggling] = useState(false);
   const [isCreatingCode, setIsCreatingCode] = useState(false);
-  const [issuedCode, setIssuedCode] = useState<IssuedConnectionCode | null>(null);
+  const [issuedCode, setIssuedCode] = useState<TailcatConnectionCodeResult | null>(null);
   const [revokingPeerId, setRevokingPeerId] = useState<string | null>(null);
   const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -342,10 +261,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
       }
       return;
     }
-    setIssuedCode({
-      result: result.value,
-      lifetimeMinutes: connectionCodeLifetimeMinutes(result.value.expiresAt, Date.now()),
-    });
+    setIssuedCode(result.value);
   }, [createConnectionCode, environmentId]);
 
   const handleRename = useCallback(
@@ -454,11 +370,6 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
               {runtimeLabel ? (
                 <span className="text-muted-foreground">Runtime {runtimeLabel}</span>
               ) : null}
-              {state.runtime !== null && !state.runtime.compatible ? (
-                <Badge variant="warning" size="sm">
-                  Incompatible · expected {state.runtime.pinnedVersion}
-                </Badge>
-              ) : null}
               {state.identityFingerprint ? (
                 <span className="truncate font-mono text-muted-foreground">
                   identity {state.identityFingerprint}
@@ -525,7 +436,13 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
                 </Button>
               </div>
               {issuedCode !== null ? (
-                <ConnectionCodeReveal issued={issuedCode} />
+                <OneTimeCodeReveal
+                  code={issuedCode.code}
+                  expiresAt={issuedCode.expiresAt}
+                  label="Connection code"
+                  copiedDescription="Paste it in the desktop app on the other device under Add environment → Tailcat."
+                  expiredMessage="That code expired unused. Create a new one when the other device is ready."
+                />
               ) : !state.enabled ? (
                 <p className="text-2xs text-muted-foreground/70">
                   Enable remote access to create codes.

@@ -57,12 +57,12 @@ export const TailcatConnectionCodePayload = Schema.Struct({
   address: TailcatAddress,
   /** The T3 server's own listening port behind the tunnel. */
   port: PortSchema,
-  environmentId: Schema.optionalKey(EnvironmentId),
-  name: Schema.optionalKey(TrimmedNonEmptyString),
-  serverVersion: Schema.optionalKey(TrimmedNonEmptyString),
+  environmentId: EnvironmentId,
+  name: TrimmedNonEmptyString,
+  serverVersion: TrimmedNonEmptyString,
   /** One-time, short-lived T3 pairing credential. Never a reusable secret. */
-  pairingToken: Schema.optionalKey(TrimmedNonEmptyString),
-  expiresAt: Schema.optionalKey(IsoDateTime),
+  pairingToken: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
 });
 export type TailcatConnectionCodePayload = typeof TailcatConnectionCodePayload.Type;
 
@@ -74,7 +74,6 @@ export const TailcatRuntimeInfo = Schema.Struct({
   source: TailcatRuntimeSource,
   version: TrimmedNonEmptyString,
   pinnedVersion: TrimmedNonEmptyString,
-  compatible: Schema.Boolean,
 });
 export type TailcatRuntimeInfo = typeof TailcatRuntimeInfo.Type;
 
@@ -92,6 +91,10 @@ export const TailcatFailureCode = Schema.Literals([
   "unknown",
 ]);
 export type TailcatFailureCode = typeof TailcatFailureCode.Type;
+
+/** The tailcat binary itself is missing or unusable: fixed on that machine, not by retrying. */
+export const isTailcatRuntimeUnavailable = (code: TailcatFailureCode): boolean =>
+  code === "binary-missing" || code === "binary-not-executable" || code === "version-incompatible";
 
 export const TailcatFailure = Schema.Struct({
   code: TailcatFailureCode,

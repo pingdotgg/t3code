@@ -48,7 +48,6 @@ const RUNTIME_INFO: TailcatRuntimeInfo = {
   source: "bundled",
   version: "0.3.0",
   pinnedVersion: "0.3.0",
-  compatible: true,
 };
 
 const PATH_PROBE: TailcatPathProbe = {

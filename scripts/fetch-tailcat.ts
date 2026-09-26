@@ -47,7 +47,6 @@ import {
   replaceTailcatVersion,
   resolveTailcatTarget,
   summarizeTailcatManifestChanges,
-  tailcatHostPlatformKey,
   tailcatManifestPlatformKeys,
   tailcatReleaseAssetUrl,
   updateTailcatManifest,
@@ -55,6 +54,7 @@ import {
   type TailcatManifest,
   type TailcatTarget,
 } from "./lib/tailcat-manifest.ts";
+import { tailcatPlatformKey } from "@t3tools/tailcat/manifest";
 
 /**
  * Stages the pinned Tailcat CLI for one or every platform.
@@ -495,7 +495,7 @@ const selectPlatformKeys = Effect.fn("selectPlatformKeys")(function* (
   }
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
-  const hostKey = tailcatHostPlatformKey(platform, architecture);
+  const hostKey = tailcatPlatformKey(platform, architecture);
   if (hostKey === undefined) {
     return yield* new TailcatPlatformSelectionError({
       reason: "unsupported-host",

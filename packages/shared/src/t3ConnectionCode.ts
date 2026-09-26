@@ -68,7 +68,7 @@ export type T3ConnectionCodePreview<Kind extends T3ConnectionCodeKind> =
   | {
       readonly kind: "valid";
       readonly payload: PayloadForKind<Kind>;
-      readonly expiresAtMs: number | null;
+      readonly expiresAtMs: number;
     };
 
 const isConnectionCodeInvalidError = Schema.is(T3ConnectionCodeInvalidError);
@@ -103,12 +103,7 @@ export function describeT3ConnectionCode<Kind extends T3ConnectionCodeKind>(
         ? decodeTailcatConnectionCode(trimmed)
         : decodeFederationPeerCode(trimmed)
     ) as PayloadForKind<Kind>;
-    const expiresAt = payload.expiresAt;
-    return {
-      kind: "valid",
-      payload,
-      expiresAtMs: expiresAt === undefined ? null : Date.parse(expiresAt),
-    };
+    return { kind: "valid", payload, expiresAtMs: Date.parse(payload.expiresAt) };
   } catch (cause) {
     return {
       kind: "invalid",

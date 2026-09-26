@@ -171,7 +171,6 @@ import * as FederationIdentity from "./federation/FederationIdentity.ts";
 import * as FederationPeerStore from "./federation/FederationPeerStore.ts";
 import * as FederationService from "./federation/FederationService.ts";
 import * as FederationTransport from "./federation/FederationTransport.ts";
-import { tailcatHttpApiLayer } from "./tailcat/http.ts";
 import * as TailcatRemoteAccess from "./tailcat/TailcatRemoteAccess.ts";
 import * as TailcatRuntimeLive from "./tailcat/TailcatRuntimeLive.ts";
 import { formatTailcatHeadlessOutput } from "./tailcat/startupOutput.ts";
@@ -620,7 +619,6 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
-      Layer.provide(tailcatHttpApiLayer),
       Layer.provide(federationHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -771,14 +769,14 @@ const makeServerLayer = Layer.unwrap(
         // Headless `t3 serve --tailcat`: print a one-time connection code once
         // the Tailcat listener is reachable, like the pairing URL for HTTP.
         yield* Effect.forkScoped(
-          Stream.concat(Stream.fromEffect(remoteAccess.state), remoteAccess.changes).pipe(
+          // `changes` replays the current state first.
+          remoteAccess.changes.pipe(
             Stream.filter(
               (state) =>
                 state.status === "ready" ||
                 state.status === "error" ||
                 state.status === "unavailable",
             ),
-            Stream.take(1),
             Stream.runHead,
             Effect.flatMap((settled) =>
               settled._tag === "Some" && settled.value.status === "ready"

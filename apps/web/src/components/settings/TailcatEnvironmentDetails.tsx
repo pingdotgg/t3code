@@ -1,5 +1,9 @@
 import type { TailcatConnectionProfile } from "@t3tools/client-runtime/connection";
-import type { EnvironmentId, TailcatConnectionDiagnostics } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type TailcatConnectionDiagnostics,
+  tailcatNodeKeyFingerprint,
+} from "@t3tools/contracts";
 import { memo, useCallback, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -26,7 +30,6 @@ import { TailcatConnectForm } from "./TailcatConnectForm";
 import {
   formatTailcatConnectionError,
   tailcatForwardStatusLabel,
-  tailcatNodeKeyFingerprint,
   tailcatPathKindLabel,
   tailcatPathLabel,
   tailcatRuntimeLabel,
@@ -43,11 +46,11 @@ export function useTailcatEnvironmentSubtitle(connectionId: string | null): stri
   return tailcatPathLabel(diagnostics.data?.path ?? null);
 }
 
+const measuredAtFormatter = new Intl.DateTimeFormat(undefined, { timeStyle: "medium" });
+
 const formatMeasuredAt = (value: string) => {
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? value
-    : new Intl.DateTimeFormat(undefined, { timeStyle: "medium" }).format(parsed);
+  return Number.isNaN(parsed.getTime()) ? value : measuredAtFormatter.format(parsed);
 };
 
 function DetailRow({ label, value }: { readonly label: string; readonly value: string }) {

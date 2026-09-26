@@ -96,42 +96,32 @@ function refreshDesktopTailcatDiagnostics(connectionId: string): void {
   appAtomRegistry.refresh(desktopTailcatDiagnosticsAtom(connectionId));
 }
 
-function requireDesktopTailcatBridge(): DesktopTailcatBridge {
+/** Runs one bridge action for a saved environment, then refreshes its diagnostics view. */
+async function callDesktopTailcat<A>(
+  connectionId: string,
+  action: (bridge: DesktopTailcatBridge) => Promise<A> | undefined,
+): Promise<A> {
   const bridge = getDesktopTailcatBridge();
-  if (bridge === undefined || !isDesktopTailcatAvailable(bridge)) {
+  const pending =
+    bridge !== undefined && isDesktopTailcatAvailable(bridge) ? action(bridge) : undefined;
+  if (pending === undefined) {
     throw new DesktopTailcatUnavailableError();
   }
-  return bridge;
+  try {
+    return await pending;
+  } finally {
+    refreshDesktopTailcatDiagnostics(connectionId);
+  }
 }
 
 /** Measures the current path (direct or DERP relay) and refreshes the diagnostics view. */
-export async function probeDesktopTailcatConnectionPath(
+export const probeDesktopTailcatConnectionPath = (
   connectionId: string,
-): Promise<TailcatConnectionDiagnostics | null> {
-  const bridge = requireDesktopTailcatBridge();
-  const probeTailcatConnectionPath = bridge.probeTailcatConnectionPath;
-  if (probeTailcatConnectionPath === undefined) {
-    throw new DesktopTailcatUnavailableError();
-  }
-  try {
-    return await probeTailcatConnectionPath.call(bridge, connectionId);
-  } finally {
-    refreshDesktopTailcatDiagnostics(connectionId);
-  }
-}
+): Promise<TailcatConnectionDiagnostics | null> =>
+  callDesktopTailcat(connectionId, (bridge) => bridge.probeTailcatConnectionPath?.(connectionId));
 
 /** Restarts the forwarder for a saved environment and refreshes the diagnostics view. */
-export async function restartDesktopTailcatEnvironment(
+export const restartDesktopTailcatEnvironment = (
   connectionId: string,
-): Promise<DesktopTailcatEnvironmentBootstrap> {
-  const bridge = requireDesktopTailcatBridge();
-  const restartTailcatEnvironment = bridge.restartTailcatEnvironment;
-  if (restartTailcatEnvironment === undefined) {
-    throw new DesktopTailcatUnavailableError();
-  }
-  try {
-    return await restartTailcatEnvironment.call(bridge, connectionId);
-  } finally {
-    refreshDesktopTailcatDiagnostics(connectionId);
-  }
-}
+): Promise<DesktopTailcatEnvironmentBootstrap> =>
+  callDesktopTailcat(connectionId, (bridge) => bridge.restartTailcatEnvironment?.(connectionId));

@@ -94,8 +94,8 @@ export const FederationHello = Schema.Struct({
 });
 export type FederationHello = typeof FederationHello.Type;
 
-export const FederationPairRequest = Schema.Struct({
-  token: TrimmedNonEmptyString,
+/** What each side of a pairing tells the other about itself. */
+const FederationIntroductionFields = {
   protocolVersion: PositiveInt,
   environmentId: EnvironmentId,
   publicKey: FederationPublicKey,
@@ -103,25 +103,23 @@ export const FederationPairRequest = Schema.Struct({
   serverVersion: TrimmedNonEmptyString,
   capabilities: Schema.Array(FederationCapability),
   transport: Schema.NullOr(FederationTransport),
+  /** The sender's Tailcat client key, so the other side keeps admitting it after relocking. */
+  tailcatNodeKey: Schema.optionalKey(TailcatNodeKey),
+};
+export type FederationIntroduction = Schema.Struct.Type<typeof FederationIntroductionFields>;
+
+export const FederationPairRequest = Schema.Struct({
+  ...FederationIntroductionFields,
+  token: TrimmedNonEmptyString,
   /** Scopes this requester grants the issuer for reverse calls. */
   grantedScopes: FederationScopes,
-  /** The requester's Tailcat client key, so the issuer keeps admitting it after relocking. */
-  tailcatNodeKey: Schema.optionalKey(TailcatNodeKey),
 });
 export type FederationPairRequest = typeof FederationPairRequest.Type;
 
 export const FederationPairResponse = Schema.Struct({
-  protocolVersion: PositiveInt,
-  environmentId: EnvironmentId,
-  publicKey: FederationPublicKey,
-  label: TrimmedNonEmptyString,
-  serverVersion: TrimmedNonEmptyString,
-  capabilities: Schema.Array(FederationCapability),
+  ...FederationIntroductionFields,
   /** Scopes the issuer granted the requester. */
   grantedScopes: FederationScopes,
-  transport: Schema.NullOr(FederationTransport),
-  /** The issuer's Tailcat client key, for the requester's own allowlist. */
-  tailcatNodeKey: Schema.optionalKey(TailcatNodeKey),
 });
 export type FederationPairResponse = typeof FederationPairResponse.Type;
 
@@ -177,6 +175,10 @@ export const FederationRunStatus = Schema.Literals([
   "error",
 ]);
 export type FederationRunStatus = typeof FederationRunStatus.Type;
+
+/** Queued and running runs can still change and be cancelled; the rest are final. */
+export const isFederationRunStatusActive = (status: FederationRunStatus): boolean =>
+  status === "queued" || status === "running";
 
 export const FederationRunStartRequest = Schema.Struct({
   projectId: ProjectId,

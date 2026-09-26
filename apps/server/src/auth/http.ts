@@ -377,7 +377,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const tailcatNodeKey = args.payload.client_tailcat_node_key?.trim();
             if (
               tailcatNodeKey !== undefined &&
-              exchange.grant.subject === TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT &&
+              exchange.grantSubject === TAILCAT_CONNECTION_CODE_PAIRING_SUBJECT &&
               isTailcatNodeKey(tailcatNodeKey)
             ) {
               yield* tailcatRemoteAccess

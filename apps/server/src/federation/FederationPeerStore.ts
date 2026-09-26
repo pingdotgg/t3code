@@ -55,7 +55,7 @@ export const PersistedInboundRun = Schema.Struct({
   peerId: EnvironmentId,
   createdAt: IsoDateTime,
   /** Event-log sequence just before the run was created; its events all follow it. */
-  startSequence: Schema.optionalKey(Schema.Int),
+  startSequence: Schema.Int,
 });
 export type PersistedInboundRun = typeof PersistedInboundRun.Type;
 
@@ -92,8 +92,7 @@ const PersistedFederationState = Schema.Struct({
   peers: Schema.Array(PersistedFederationPeer),
   remoteRuns: Schema.Array(PersistedRemoteRun),
   inboundRuns: Schema.Array(PersistedInboundRun),
-  // Absent in files written before pending codes were persisted.
-  pendingPeerCodes: Schema.optionalKey(Schema.Array(PersistedPendingPeerCode)),
+  pendingPeerCodes: Schema.Array(PersistedPendingPeerCode),
 });
 type PersistedFederationState = typeof PersistedFederationState.Type;
 
@@ -278,19 +277,19 @@ export const make = Effect.gen(function* () {
           run,
         ],
       })),
-    pendingPeerCodes: Ref.get(state).pipe(Effect.map((current) => current.pendingPeerCodes ?? [])),
+    pendingPeerCodes: Ref.get(state).pipe(Effect.map((current) => current.pendingPeerCodes)),
     addPendingPeerCode: (code) =>
       update((current) => ({
         ...current,
         pendingPeerCodes: [
-          ...(current.pendingPeerCodes ?? []).filter((existing) => existing.linkId !== code.linkId),
+          ...current.pendingPeerCodes.filter((existing) => existing.linkId !== code.linkId),
           code,
         ],
       })),
     settlePendingPeerCodes: ({ redeemedLinkId, nowMs }) =>
       update((current) => ({
         ...current,
-        pendingPeerCodes: (current.pendingPeerCodes ?? []).filter(
+        pendingPeerCodes: current.pendingPeerCodes.filter(
           (code) =>
             code.linkId !== redeemedLinkId &&
             DateTime.toEpochMillis(DateTime.makeUnsafe(code.expiresAt)) > nowMs,

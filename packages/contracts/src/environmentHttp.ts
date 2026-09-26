@@ -62,14 +62,6 @@ import {
   FederationTokenResponse,
 } from "./federation.ts";
 import {
-  TailcatConnectionCodeResult,
-  TailcatCreateConnectionCodeInput,
-  TailcatRemoteAccessError,
-  TailcatRemoteAccessState,
-  TailcatSetRemoteAccessEnabledInput,
-  TailcatTrustedPeerIdInput,
-} from "./tailcat.ts";
-import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
   RelayEnvironmentConfigRequest,
@@ -640,12 +632,6 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
-const EnvironmentTailcatErrors = [
-  TailcatRemoteAccessError,
-  EnvironmentScopeRequiredError,
-  EnvironmentInternalError,
-] as const;
-
 const FederationTurnIdParams = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -660,44 +646,6 @@ const FederationEventsQuery = {
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   ),
 };
-
-/**
- * Tailcat remote-access management for command-line clients. The desktop and
- * web UIs drive the same service over RPC; the CLI has no socket, so it uses
- * these with a short-lived administrative session.
- */
-export class EnvironmentTailcatHttpApi extends HttpApiGroup.make("tailcat")
-  .add(
-    HttpApiEndpoint.get("remoteAccess", "/api/tailcat/remote-access", {
-      headers: OptionalBearerHeaders,
-      success: TailcatRemoteAccessState,
-      error: EnvironmentTailcatErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("setRemoteAccess", "/api/tailcat/remote-access", {
-      headers: OptionalBearerHeaders,
-      payload: TailcatSetRemoteAccessEnabledInput,
-      success: TailcatRemoteAccessState,
-      error: EnvironmentTailcatErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("createConnectionCode", "/api/tailcat/connection-code", {
-      headers: OptionalBearerHeaders,
-      payload: TailcatCreateConnectionCodeInput,
-      success: TailcatConnectionCodeResult,
-      error: EnvironmentTailcatErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("revokeTrustedPeer", "/api/tailcat/trusted-peers/revoke", {
-      headers: OptionalBearerHeaders,
-      payload: TailcatTrustedPeerIdInput,
-      success: TailcatRemoteAccessState,
-      error: EnvironmentTailcatErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
 
 const FederationPublicErrors = [FederationError, EnvironmentInternalError] as const;
 const FederationAuthenticatedErrors = [
@@ -803,5 +751,4 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentTailcatHttpApi)
   .add(EnvironmentFederationHttpApi) {}

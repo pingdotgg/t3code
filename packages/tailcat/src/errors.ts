@@ -114,20 +114,6 @@ export class TailcatTimeoutError extends Schema.TaggedError<TailcatTimeoutError>
   }
 }
 
-export class TailcatProcessExitedError extends Schema.TaggedError<TailcatProcessExitedError>()(
-  "TailcatProcessExitedError",
-  {
-    ...TailcatErrorFields,
-    subcommand: Schema.Literals(["serve", "forward"]),
-    exitCode: Schema.NullOr(Schema.Number),
-    recentOutput: Schema.Array(Schema.String),
-  },
-) {
-  override get message(): string {
-    return this.detail;
-  }
-}
-
 export const TailcatRuntimeError = Schema.Union([
   TailcatBinaryMissingError,
   TailcatBinaryNotExecutableError,
@@ -137,7 +123,6 @@ export const TailcatRuntimeError = Schema.Union([
   TailcatPortInUseError,
   TailcatStartupError,
   TailcatTimeoutError,
-  TailcatProcessExitedError,
 ]);
 export type TailcatRuntimeError = typeof TailcatRuntimeError.Type;
 export const isTailcatRuntimeError = Schema.is(TailcatRuntimeError);
@@ -159,8 +144,6 @@ export function tailcatFailureCode(error: TailcatRuntimeError): TailcatFailureCo
       return "startup-failed";
     case "TailcatTimeoutError":
       return "timeout";
-    case "TailcatProcessExitedError":
-      return "process-exited";
     case "TailcatCommandError":
       return "unknown";
   }

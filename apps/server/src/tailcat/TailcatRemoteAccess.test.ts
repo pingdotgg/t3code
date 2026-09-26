@@ -54,7 +54,6 @@ const RUNTIME_INFO: TailcatRuntimeInfo = {
   source: "bundled",
   version: "0.4.2",
   pinnedVersion: "0.4.2",
-  compatible: true,
 };
 const ENVIRONMENT_ID = EnvironmentId.make("environment-tailcat-test");
 const DESCRIPTOR: ExecutionEnvironmentDescriptor = {

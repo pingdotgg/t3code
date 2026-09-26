@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -14,37 +15,28 @@ import {
 const ADDRESS =
   "tco2FwWCB-p3FjjOrzlCPp0w8aT3p9xDZ1nNaXWX_dASxDCFT_MmFrWCDRnh2-iykbZ7W4Fl0g3nBpwTnR3iXVCKKCk4pps47ndGFpGQEu";
 
+const TAILCAT_PAYLOAD = {
+  v: 1,
+  transport: "tailcat",
+  address: ADDRESS,
+  port: 3773,
+  environmentId: EnvironmentId.make("env-gpu"),
+  name: "gpu-box",
+  serverVersion: "0.9.0",
+  pairingToken: "one-time-secret",
+  expiresAt: "2026-09-03T12:00:00.000Z",
+} as const;
+
 describe("t3ConnectionCode", () => {
   it("round-trips a tailcat connection code", () => {
-    const code = encodeTailcatConnectionCode({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-      name: "gpu-box",
-      pairingToken: "one-time-secret",
-      expiresAt: "2026-09-03T12:00:00.000Z",
-    });
+    const code = encodeTailcatConnectionCode(TAILCAT_PAYLOAD);
     expect(code.startsWith("t3c://tailcat/")).toBe(true);
     expect(code).not.toContain("one-time-secret");
-    expect(decodeTailcatConnectionCode(code)).toEqual({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-      name: "gpu-box",
-      pairingToken: "one-time-secret",
-      expiresAt: "2026-09-03T12:00:00.000Z",
-    });
+    expect(decodeTailcatConnectionCode(code)).toEqual(TAILCAT_PAYLOAD);
   });
 
   it("tolerates surrounding whitespace and case in the scheme", () => {
-    const code = encodeTailcatConnectionCode({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-    });
+    const code = encodeTailcatConnectionCode(TAILCAT_PAYLOAD);
     expect(decodeTailcatConnectionCode(`  ${code.replace("t3c://", "T3C://")}\n`).port).toBe(3773);
   });
 
@@ -66,12 +58,7 @@ describe("t3ConnectionCode", () => {
     } catch (error) {
       expect((error as T3ConnectionCodeInvalidError).reason).toBe("malformed-payload");
     }
-    const validPrefix = encodeTailcatConnectionCode({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-    });
+    const validPrefix = encodeTailcatConnectionCode(TAILCAT_PAYLOAD);
     try {
       decodeTailcatConnectionCode(validPrefix.slice(0, validPrefix.length - 12));
     } catch (error) {
@@ -113,13 +100,7 @@ describe("t3ConnectionCode", () => {
   });
 
   it("recognizes codes and redacts them for logs", () => {
-    const code = encodeTailcatConnectionCode({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-      pairingToken: "one-time-secret",
-    });
+    const code = encodeTailcatConnectionCode(TAILCAT_PAYLOAD);
     expect(isT3ConnectionCode(code)).toBe(true);
     expect(isT3ConnectionCode("tc123")).toBe(false);
     const redacted = redactT3ConnectionCode(code);

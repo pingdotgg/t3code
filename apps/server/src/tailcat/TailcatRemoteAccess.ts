@@ -16,6 +16,7 @@ import {
   type TailcatServeStatus,
   TailcatTrustedPeer,
   tailcatNodeKeyFingerprint,
+  isTailcatRuntimeUnavailable,
 } from "@t3tools/contracts";
 import { encodeTailcatConnectionCode } from "@t3tools/shared/t3ConnectionCode";
 import { decodeTailcatAddress } from "@t3tools/tailcat/address";
@@ -187,10 +188,7 @@ function failureOf(
 }
 
 const isPermanentFailure = (code: TailcatFailureCode): boolean =>
-  code === "binary-missing" ||
-  code === "binary-not-executable" ||
-  code === "version-incompatible" ||
-  code === "identity-failed";
+  isTailcatRuntimeUnavailable(code) || code === "identity-failed";
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {

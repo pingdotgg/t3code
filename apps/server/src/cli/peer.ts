@@ -4,12 +4,9 @@
  * runs on a peer.
  *
  * Federation management lives on the WebSocket RPC surface (the HTTP
- * federation group is the peer-to-peer protocol, not the operator API), so
- * this command opens an RPC connection to the running server with the same
- * short-lived administrative session `t3 remote` uses, carried as a bearer
- * header on the upgrade request.
+ * federation group is the peer-to-peer protocol, not the operator API); see
+ * runningServer.ts for discovery and credentials.
  */
-import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
   EnvironmentId,
   FEDERATION_DEFAULT_SCOPES,
@@ -19,94 +16,44 @@ import {
   type FederationProjectSummary,
   type FederationRemoteRun,
   type FederationRunEvent,
-  type FederationRunStatus,
   FederationScope,
+  isFederationRunStatusActive,
   type FederationSnapshot,
   ProjectId,
   TrimmedNonEmptyString,
   WS_METHODS,
-  WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
 
-import { baseDirFlag, DurationFromString, jsonFlag } from "./config.ts";
+import { baseDirFlag, jsonFlag } from "./config.ts";
 import {
-  RunningServerRequestError,
-  type RunningServerSession,
-  withRunningServerSession,
   callRunningServer,
-} from "./remote.ts";
-
-const RPC_OPEN_TIMEOUT = Duration.seconds(10);
+  codeTtlFlag,
+  codeTtlInput,
+  RunningServerRequestError,
+  withRunningServerRpcClient,
+  type WsRpcClient,
+} from "./runningServer.ts";
 
 const isFederationError = Schema.is(FederationError);
-
-const TERMINAL_RUN_STATUSES: ReadonlySet<FederationRunStatus> = new Set([
-  "completed",
-  "interrupted",
-  "error",
-]);
-
-const isTerminalRunStatus = (status: FederationRunStatus): boolean =>
-  TERMINAL_RUN_STATUSES.has(status);
-
-/** The server's `/ws` route on the origin it recorded; the dev proxy is not involved on loopback. */
-export const runningServerWsUrl = (origin: string): string => {
-  const url = new URL("/ws", origin);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString();
-};
-
-// Node's `ws` client rather than the global WebSocket: the administrative
-// bearer token has to ride on the upgrade request, and only `ws` takes headers.
-// Socket.makeWebSocket only ever passes its `protocols` option here.
-const bearerWebSocketConstructorLayer = (token: string) =>
-  Layer.succeed(
-    Socket.WebSocketConstructor,
-    (url, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
-        headers: { authorization: `Bearer ${token}` },
-      }) as unknown as globalThis.WebSocket,
-  );
-
-const rpcProtocolLayer = (session: RunningServerSession) =>
-  RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(
-      Socket.layerWebSocket(runningServerWsUrl(session.origin), {
-        openTimeout: RPC_OPEN_TIMEOUT,
-      }).pipe(Layer.provide(bearerWebSocketConstructorLayer(session.token))),
-    ),
-    Layer.provide(RpcSerialization.layerJson),
-  );
-
-const makeRpcClient = RpcClient.make(WsRpcGroup);
-type WsRpcClient = Effect.Success<typeof makeRpcClient>;
 
 const runPeerCommand = <A, E, R>(
   flags: { readonly baseDir: Option.Option<string>; readonly json?: boolean },
   run: (client: WsRpcClient) => Effect.Effect<A, E, R>,
 ) =>
-  withRunningServerSession({
+  withRunningServerRpcClient({
     baseDir: flags.baseDir,
     label: "t3 peer",
     quietLogs: flags.json === true,
-    run: (session) =>
-      Effect.scoped(
-        makeRpcClient.pipe(Effect.flatMap(run), Effect.provide(rpcProtocolLayer(session))),
-      ),
-  }).pipe(Effect.provide(FetchHttpClient.layer));
+    run,
+  });
 
 // Typed federation failures are worded for the user by the server; anything
 // else (authorization, transport, no answer) gets the generic wrapper.
@@ -230,7 +177,7 @@ const followRemoteRun = Effect.fn("peer.followRemoteRun")(function* (
       ),
     ),
     Stream.filter(Predicate.isNotUndefined),
-    Stream.takeUntil((remoteRun) => isTerminalRunStatus(remoteRun.run.status)),
+    Stream.takeUntil((remoteRun) => !isFederationRunStatusActive(remoteRun.run.status)),
     Stream.runForEach((remoteRun) =>
       Effect.gen(function* () {
         yield* Ref.set(latest, Option.some(remoteRun));
@@ -269,13 +216,7 @@ const peerCodeCommand = Command.make("code", {
     Flag.withDescription(`Scope offered to the server that redeems the code. ${scopeDescription}`),
     Flag.atLeast(0),
   ),
-  ttl: Flag.String("ttl").pipe(
-    Flag.withSchema(DurationFromString),
-    Flag.withDescription(
-      "How long the code stays redeemable, for example `5m` or `1h`. Defaults to 5 minutes.",
-    ),
-    Flag.optional,
-  ),
+  ttl: codeTtlFlag,
   json: jsonFlag,
 }).pipe(
   Command.withDescription("Create a one-time peer code another T3 Code server can redeem."),
@@ -286,9 +227,7 @@ const peerCodeCommand = Command.make("code", {
           "federation.createPeerCode",
           client[WS_METHODS.federationCreatePeerCode]({
             scopes: uniqueScopesOrDefault(flags.scope),
-            ...(Option.isSome(flags.ttl)
-              ? { ttlSeconds: Math.max(1, Math.round(Duration.toSeconds(flags.ttl.value))) }
-              : {}),
+            ...codeTtlInput(flags.ttl),
           }),
         );
         yield* Console.log(formatPeerCode(issued, { json: flags.json }));

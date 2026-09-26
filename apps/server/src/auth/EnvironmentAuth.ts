@@ -67,11 +67,8 @@ export interface IssuedBearerSession {
 export interface BootstrapCredentialExchange {
   readonly result: AuthAccessTokenResult;
   readonly sessionId: AuthSessionId;
-  readonly grant: {
-    readonly id?: string;
-    readonly subject: string;
-    readonly label?: string;
-  };
+  /** Subject of the redeemed grant, which names what kind of pairing it was. */
+  readonly grantSubject: string;
 }
 
 export interface AuthenticatedSession {
@@ -795,7 +792,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "id" | "scopes" | "subject" | "label"
+    "scopes" | "subject" | "label"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -882,11 +879,7 @@ export const make = Effect.gen(function* () {
                   scope: encodeOAuthScope(session.scopes),
                 } satisfies AuthAccessTokenResult,
                 sessionId: session.sessionId,
-                grant: {
-                  ...(grant.id === undefined ? {} : { id: grant.id }),
-                  subject: grant.subject,
-                  ...(grant.label === undefined ? {} : { label: grant.label }),
-                },
+                grantSubject: grant.subject,
               }) satisfies BootstrapCredentialExchange,
           ),
         ),

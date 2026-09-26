@@ -14,14 +14,13 @@ import {
   type FederationProjectSummary,
   type FederationRemoteRun,
   type FederationScope,
-  type RuntimeMode,
+  isFederationRunStatusActive,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import { CopyIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { formatExpiresInLabel } from "../../timestampFormat";
 import { federationEnvironment } from "~/state/federation";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -48,36 +47,27 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../ui/dialog";
-import { QRCodeSvg } from "../ui/qr-code";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   FEDERATION_SCOPE_OPTIONS,
   describeFederationPeerCode,
-  isRemoteRunActive,
   peerStatusDotClassName,
   peerStatusLabel,
   remoteRunLastEventSummary,
   remoteRunStatusBadgeVariant,
   remoteRunStatusLabel,
-  sortRemoteRuns,
   toggleFederationScope,
 } from "./FederationSection.logic";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
-import { SettingsRow, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
+import { OneTimeCodeReveal } from "./OneTimeCodeReveal";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_REMOTE_RUNS: ReadonlyArray<FederationRemoteRun> = [];
 const EMPTY_PEERS: ReadonlyArray<FederationPeer> = [];
-
-const RUNTIME_MODE_OPTIONS: ReadonlyArray<{ readonly value: RuntimeMode; readonly label: string }> =
-  [
-    { value: "approval-required", label: "Approval required" },
-    { value: "auto-accept-edits", label: "Auto-accept edits" },
-    { value: "auto", label: "Auto" },
-    { value: "full-access", label: "Full access" },
-  ];
 
 const PEER_DEFAULT_RUNTIME_MODE = "peer-default";
 
@@ -153,72 +143,6 @@ function ScopeChips({
   );
 }
 
-/** The minted peer code with QR and a countdown; ticks only while shown. */
-const PeerCodeReveal = memo(function PeerCodeReveal({
-  issued,
-}: {
-  readonly issued: FederationPeerCodeResult;
-}) {
-  const nowMs = useRelativeTimeTick(1_000);
-  const { copyToClipboard } = useCopyToClipboard<void>({
-    onCopy: () => {
-      toastManager.add({
-        type: "success",
-        title: "Peer code copied",
-        description: "Add it on the other environment under Federation → Add peer.",
-      });
-    },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy peer code",
-          description: error.message,
-        }),
-      );
-    },
-  });
-  const expired = Date.parse(issued.expiresAt) <= nowMs;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-        <div className="min-w-0 flex-1 space-y-2">
-          <Textarea
-            readOnly
-            value={issued.code}
-            rows={4}
-            aria-label="Federation peer code"
-            font="mono"
-            className="break-all"
-            onFocus={(event) => event.currentTarget.select()}
-            onClick={(event) => event.currentTarget.select()}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="xs" variant="outline" onClick={() => copyToClipboard(issued.code)}>
-              <CopyIcon aria-hidden />
-              Copy code
-            </Button>
-            <span
-              className={expired ? "text-2xs text-destructive" : "text-2xs text-muted-foreground"}
-            >
-              {formatExpiresInLabel(issued.expiresAt, nowMs)} · single use
-            </span>
-          </div>
-        </div>
-        {expired ? null : (
-          <div className="w-fit shrink-0 self-center rounded-xl bg-white p-3 sm:self-start">
-            <QRCodeSvg value={issued.code} size={168} level="L" marginSize={1} title="Peer code" />
-          </div>
-        )}
-      </div>
-      <p className="text-2xs text-muted-foreground/70">
-        Offers the redeeming environment: {issued.payload.scopes.join(", ")}.
-      </p>
-    </div>
-  );
-});
-
 const CreatePeerCodeDialog = memo(function CreatePeerCodeDialog({
   environmentId,
 }: {
@@ -281,7 +205,18 @@ const CreatePeerCodeDialog = memo(function CreatePeerCodeDialog({
               }
             />
           ) : (
-            <PeerCodeReveal issued={issued} />
+            <OneTimeCodeReveal
+              code={issued.code}
+              expiresAt={issued.expiresAt}
+              label="Peer code"
+              copiedDescription="Add it on the other environment under Federation → Add peer."
+              expiredMessage="That code expired unused. Create a new one when the other environment is ready."
+              footer={
+                <p className="text-2xs text-muted-foreground/70">
+                  Offers the redeeming environment: {issued.payload.scopes.join(", ")}.
+                </p>
+              }
+            />
           )}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
         </DialogPanel>
@@ -705,7 +640,7 @@ const RemoteRunRow = memo(function RemoteRunRow({
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-          {isRemoteRunActive(run.status) ? (
+          {isFederationRunStatusActive(run.status) ? (
             <Button
               size="xs"
               variant="destructive-outline"
@@ -766,13 +701,11 @@ const RunOnPeerDialog = memo(function RunOnPeerDialog({
     setError(null);
   }, []);
 
+  const selectedRuntimeMode = runtimeModeOptions.find((mode) => mode === runtimeMode);
   const handleStart = useCallback(async () => {
     if (!canStart || selectedPeer === null || selectedProject === null) return;
     setIsStarting(true);
     setError(null);
-    const selectedRuntimeMode = RUNTIME_MODE_OPTIONS.find(
-      (option) => option.value === runtimeMode,
-    )?.value;
     const result = await startRemoteRun({
       environmentId,
       input: {
@@ -801,14 +734,16 @@ const RunOnPeerDialog = memo(function RunOnPeerDialog({
     environmentId,
     prompt,
     reset,
-    runtimeMode,
+    selectedRuntimeMode,
     selectedPeer,
     selectedProject,
     startRemoteRun,
   ]);
 
   const runtimeModeLabel =
-    RUNTIME_MODE_OPTIONS.find((option) => option.value === runtimeMode)?.label ?? "Peer default";
+    selectedRuntimeMode === undefined
+      ? "Peer default"
+      : runtimeModeConfig[selectedRuntimeMode].label;
 
   return (
     <Dialog
@@ -934,9 +869,9 @@ const RunOnPeerDialog = memo(function RunOnPeerDialog({
                 <SelectItem hideIndicator value={PEER_DEFAULT_RUNTIME_MODE}>
                   Peer default
                 </SelectItem>
-                {RUNTIME_MODE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
+                {runtimeModeOptions.map((mode) => (
+                  <SelectItem hideIndicator key={mode} value={mode}>
+                    {runtimeModeConfig[mode].label}
                   </SelectItem>
                 ))}
               </SelectPopup>
@@ -977,10 +912,8 @@ export const FederationSection = memo(function FederationSection({
   );
   const snapshot = peersQuery.data;
   const peers = snapshot?.peers ?? EMPTY_PEERS;
-  const runs = useMemo(
-    () => sortRemoteRuns(runsQuery.data?.runs ?? EMPTY_REMOTE_RUNS),
-    [runsQuery.data],
-  );
+  // The server lists runs newest request first.
+  const runs = runsQuery.data?.runs ?? EMPTY_REMOTE_RUNS;
   const refreshPeer = useAtomCommand(federationEnvironment.refreshPeer, { reportFailure: false });
   const removePeer = useAtomCommand(federationEnvironment.removePeer, { reportFailure: false });
   const cancelRemoteRun = useAtomCommand(federationEnvironment.cancelRemoteRun, {

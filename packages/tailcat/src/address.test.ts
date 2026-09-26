@@ -9,18 +9,13 @@ const ADDRESS =
   "tco2FwWCB-p3FjjOrzlCPp0w8aT3p9xDZ1nNaXWX_dASxDCFT_MmFrWCDRnh2-iykbZ7W4Fl0g3nBpwTnR3iXVCKKCk4pps47ndGFpGQEu";
 
 describe("tailcat address", () => {
-  it("decodes the server key, disco key and region from a real address", () => {
+  it("decodes the server key from a real address", () => {
     const decoded = decodeTailcatAddress(ADDRESS);
     expect(Result.isSuccess(decoded)).toBe(true);
     if (Result.isSuccess(decoded)) {
       expect(decoded.success.serverNodeKey).toBe(
         "nodekey:7ea771638ceaf39423e9d30f1a4f7a7dc436759cd697597fdd012c430854ff32",
       );
-      expect(decoded.success.serverDiscoKey).toBe(
-        "discokey:d19e1dbe8b291b67b5b8165d20de7069c139d1de25d508a282938a69b38ee774",
-      );
-      expect(decoded.success.regionId).toBe(302);
-      expect(decoded.success.hasEmbeddedRegions).toBe(false);
     }
   });
 

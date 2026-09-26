@@ -48,69 +48,24 @@ export function tailcatRuntimeLabel(runtime: TailcatRuntimeInfo | null): string 
   return runtime === null ? null : `${runtime.source} ${runtime.version}`;
 }
 
-export { tailcatNodeKeyFingerprint } from "@t3tools/contracts";
-
-/** Whole minutes a freshly minted code stays valid, never below one. */
-export function connectionCodeLifetimeMinutes(expiresAt: string, nowMs: number): number {
-  const expiresAtMs = Date.parse(expiresAt);
-  if (Number.isNaN(expiresAtMs)) return 1;
-  return Math.max(1, Math.round((expiresAtMs - nowMs) / 60_000));
-}
-
-export interface TailcatConnectionCodeParsed {
-  readonly kind: "valid";
-  readonly payload: TailcatConnectionCodePayload;
-  readonly expiresAtMs: number | null;
-  readonly hasPairingToken: boolean;
-}
-
-export type TailcatConnectionCodePreview =
+type TailcatConnectionCodePreview =
   | { readonly kind: "empty" }
   | { readonly kind: "invalid"; readonly message: string }
   | { readonly kind: "peer-code"; readonly message: string }
-  | (TailcatConnectionCodeParsed & { readonly expired: boolean });
+  | {
+      readonly kind: "valid";
+      readonly payload: TailcatConnectionCodePayload;
+      readonly expiresAtMs: number;
+    };
 
 /**
- * Live feedback for the connection-code field. A federation peer code is
- * recognised and redirected rather than reported as damaged, and an expired
- * code is still shown so the user knows which machine to ask again.
+ * Live feedback for the connection-code field: memoize on the pasted text and
+ * judge expiry per tick. A federation peer code is recognised and redirected
+ * rather than reported as damaged.
  */
-export function describeTailcatConnectionCode(
-  raw: string,
-  nowMs: number,
-): TailcatConnectionCodePreview {
-  const preview = parseTailcatConnectionCodePreview(raw);
-  return preview.kind === "valid"
-    ? { ...preview, expired: isTailcatConnectionCodeExpired(preview, nowMs) }
-    : preview;
-}
-
-/** The decode half of the preview: memoize on the pasted text, judge expiry per tick. */
-export function parseTailcatConnectionCodePreview(
-  raw: string,
-): Exclude<TailcatConnectionCodePreview, { kind: "valid" }> | TailcatConnectionCodeParsed {
+export function parseTailcatConnectionCodePreview(raw: string): TailcatConnectionCodePreview {
   const preview = describeT3ConnectionCode(raw, "tailcat");
-  switch (preview.kind) {
-    case "empty":
-    case "invalid":
-      return preview;
-    case "other-kind":
-      return { kind: "peer-code", message: preview.message };
-    case "valid":
-      return {
-        kind: "valid",
-        payload: preview.payload,
-        expiresAtMs: preview.expiresAtMs,
-        hasPairingToken: preview.payload.pairingToken !== undefined,
-      };
-  }
-}
-
-export function isTailcatConnectionCodeExpired(
-  parsed: TailcatConnectionCodeParsed,
-  nowMs: number,
-): boolean {
-  return parsed.expiresAtMs !== null && parsed.expiresAtMs <= nowMs;
+  return preview.kind === "other-kind" ? { kind: "peer-code", message: preview.message } : preview;
 }
 
 /** "Direct", "Relay (via fra)", "Relay", or "Unknown" for a measured path. */

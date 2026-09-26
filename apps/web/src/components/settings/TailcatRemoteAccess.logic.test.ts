@@ -6,11 +6,9 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  connectionCodeLifetimeMinutes,
-  describeTailcatConnectionCode,
   formatTailcatConnectionError,
+  parseTailcatConnectionCodePreview,
   tailcatDiagnosticsJson,
-  tailcatNodeKeyFingerprint,
   tailcatPathKindLabel,
   tailcatPathLabel,
   tailcatRuntimeLabel,
@@ -19,40 +17,27 @@ import {
 } from "./TailcatRemoteAccess.logic";
 
 const ADDRESS = `tc${"a".repeat(40)}`;
-const NOW_MS = Date.parse("2026-09-03T12:00:00.000Z");
 
-describe("describeTailcatConnectionCode", () => {
-  it("previews the environment behind a valid code", () => {
-    const code = encodeTailcatConnectionCode({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-      name: "Studio",
-      pairingToken: "one-time",
-      expiresAt: "2026-09-03T12:05:00.000Z",
-    });
-    expect(describeTailcatConnectionCode(`  ${code}\n`, NOW_MS)).toEqual({
+const tailcatCode = (expiresAt: string) =>
+  encodeTailcatConnectionCode({
+    v: 1,
+    transport: "tailcat",
+    address: ADDRESS,
+    port: 3773,
+    environmentId: EnvironmentId.make("env-studio"),
+    name: "Studio",
+    serverVersion: "0.9.0",
+    pairingToken: "one-time",
+    expiresAt,
+  });
+
+describe("parseTailcatConnectionCodePreview", () => {
+  it("previews the environment behind a valid code with its expiry", () => {
+    const code = tailcatCode("2026-09-03T12:05:00.000Z");
+    expect(parseTailcatConnectionCodePreview(`  ${code}\n`)).toEqual({
       kind: "valid",
       payload: expect.objectContaining({ address: ADDRESS, port: 3773, name: "Studio" }),
       expiresAtMs: Date.parse("2026-09-03T12:05:00.000Z"),
-      expired: false,
-      hasPairingToken: true,
-    });
-  });
-
-  it("flags expired codes and codes without a pairing credential", () => {
-    const expired = encodeTailcatConnectionCode({
-      v: 1,
-      transport: "tailcat",
-      address: ADDRESS,
-      port: 3773,
-      expiresAt: "2026-09-03T11:59:59.000Z",
-    });
-    expect(describeTailcatConnectionCode(expired, NOW_MS)).toMatchObject({
-      kind: "valid",
-      expired: true,
-      hasPairingToken: false,
     });
   });
 
@@ -69,12 +54,13 @@ describe("describeTailcatConnectionCode", () => {
       scopes: ["environment.read"],
       expiresAt: "2026-09-03T12:05:00.000Z",
     });
-    expect(describeTailcatConnectionCode(peerCode, NOW_MS)).toMatchObject({ kind: "peer-code" });
-    expect(describeTailcatConnectionCode("", NOW_MS)).toEqual({ kind: "empty" });
-    expect(describeTailcatConnectionCode("https://example.com/pair#token=x", NOW_MS)).toMatchObject(
-      { kind: "invalid", message: expect.stringContaining("t3c://tailcat/") },
-    );
-    expect(describeTailcatConnectionCode("t3c://tailcat/%%%", NOW_MS)).toMatchObject({
+    expect(parseTailcatConnectionCodePreview(peerCode)).toMatchObject({ kind: "peer-code" });
+    expect(parseTailcatConnectionCodePreview("")).toEqual({ kind: "empty" });
+    expect(parseTailcatConnectionCodePreview("https://example.com/pair#token=x")).toMatchObject({
+      kind: "invalid",
+      message: expect.stringContaining("t3c://tailcat/"),
+    });
+    expect(parseTailcatConnectionCodePreview("t3c://tailcat/%%%")).toMatchObject({
       kind: "invalid",
       message: expect.stringContaining("incomplete or damaged"),
     });
@@ -118,16 +104,8 @@ describe("tailcat labels", () => {
         source: "bundled",
         version: "0.5.0",
         pinnedVersion: "0.5.0",
-        compatible: true,
       }),
     ).toBe("bundled 0.5.0");
-    expect(tailcatNodeKeyFingerprint(`nodekey:${"0".repeat(56)}deadbeef`)).toBe("0000·0000·beef");
-  });
-
-  it("rounds code lifetime to whole minutes with a floor of one", () => {
-    expect(connectionCodeLifetimeMinutes("2026-09-03T12:05:00.000Z", NOW_MS)).toBe(5);
-    expect(connectionCodeLifetimeMinutes("2026-09-03T12:00:10.000Z", NOW_MS)).toBe(1);
-    expect(connectionCodeLifetimeMinutes("not a date", NOW_MS)).toBe(1);
   });
 });
 

@@ -234,7 +234,6 @@ describe("TailcatRuntime.resolve", () => {
         source: "override",
         version: TAILCAT_PINNED_VERSION,
         pinnedVersion: TAILCAT_PINNED_VERSION,
-        compatible: true,
       });
       expect(tailcat.spawns.map((spawn) => [spawn.command, ...spawn.args])).toEqual([
         [OVERRIDE, "version"],
@@ -280,7 +279,6 @@ describe("TailcatRuntime.resolve", () => {
       const info = yield* runtime.resolve;
       expect(info.source).toBe("system");
       expect(info.executablePath).toBe(SYSTEM);
-      expect(info.compatible).toBe(true);
     }).pipe(
       Effect.provide(
         runtimeLayer(tailcat, {

@@ -11,16 +11,14 @@ import { readTextFromClipboard } from "../../hooks/useCopyToClipboard";
 import { formatExpiresInLabel } from "../../timestampFormat";
 import { connectTailcatEnvironment as connectTailcatEnvironmentAtom } from "~/connection/onboarding";
 import { isDesktopTailcatAvailable } from "~/state/desktopTailcat";
-import { tailcatProvisioningProgressAtom } from "~/state/tailcatProvisioning";
+import { tailcatProvisioningPhaseAtom } from "~/state/tailcatProvisioning";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useRelativeTimeTick } from "./settingsLayout";
 import {
-  isTailcatConnectionCodeExpired,
   parseTailcatConnectionCodePreview,
-  type TailcatConnectionCodePreview,
   formatTailcatConnectionError,
 } from "./TailcatRemoteAccess.logic";
 
@@ -49,7 +47,7 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nowMs = useRelativeTimeTick(1_000);
-  const provisioning = useAtomValue(tailcatProvisioningProgressAtom);
+  const provisioningPhase = useAtomValue(tailcatProvisioningPhaseAtom);
   const connectTailcatEnvironment = useAtomCommand(connectTailcatEnvironmentAtom, {
     reportFailure: false,
   });
@@ -57,25 +55,17 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
   const canPasteFromClipboard =
     typeof navigator !== "undefined" && navigator.clipboard?.readText !== undefined;
 
-  const parsed = useMemo(() => parseTailcatConnectionCodePreview(code), [code]);
-  const preview = useMemo(
-    (): TailcatConnectionCodePreview =>
-      parsed.kind === "valid"
-        ? { ...parsed, expired: isTailcatConnectionCodeExpired(parsed, nowMs) }
-        : parsed,
-    [parsed, nowMs],
-  );
+  const preview = useMemo(() => parseTailcatConnectionCodePreview(code), [code]);
+  const expired = preview.kind === "valid" && preview.expiresAtMs <= nowMs;
   const environmentMismatch =
     preview.kind === "valid" &&
     expectedEnvironmentId !== undefined &&
-    preview.payload.environmentId !== undefined &&
     preview.payload.environmentId !== expectedEnvironmentId;
   const canConnect =
     desktopAvailable &&
     !isConnecting &&
     preview.kind === "valid" &&
-    !preview.expired &&
-    preview.hasPairingToken &&
+    !expired &&
     !environmentMismatch;
 
   const handlePaste = useCallback(async () => {
@@ -123,7 +113,7 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
   }, [canConnect, code, connectTailcatEnvironment, mode, onConnected]);
 
   const connectLabel = isConnecting
-    ? provisioning?.phase === "pairing"
+    ? provisioningPhase === "pairing"
       ? "Pairing…"
       : "Starting tunnel…"
     : mode === "repair"
@@ -175,12 +165,8 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
         <div className="space-y-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs">
           <p className="flex min-w-0 items-center gap-1.5 text-foreground">
             <RadioTowerIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="font-medium">
-              {preview.payload.name ?? preview.payload.environmentId ?? "Tailcat environment"}
-            </span>
-            {preview.payload.serverVersion ? (
-              <span className="text-muted-foreground">· t3@{preview.payload.serverVersion}</span>
-            ) : null}
+            <span className="font-medium">{preview.payload.name}</span>
+            <span className="text-muted-foreground">· t3@{preview.payload.serverVersion}</span>
           </p>
           <p className="truncate font-mono text-2xs text-muted-foreground">
             {preview.payload.address}:{preview.payload.port}
@@ -189,19 +175,15 @@ export const TailcatConnectForm = memo(function TailcatConnectForm({
             <p className="text-destructive">
               This code names a different environment. Ask the same machine for a fresh code.
             </p>
-          ) : preview.expired ? (
+          ) : expired ? (
             <p className="text-destructive">
               This code has expired. Create a fresh one on the other machine.
             </p>
-          ) : !preview.hasPairingToken ? (
-            <p className="text-destructive">
-              This code has no pairing credential. Ask the other machine for a fresh code.
-            </p>
-          ) : preview.payload.expiresAt ? (
+          ) : (
             <p className="text-muted-foreground">
               {formatExpiresInLabel(preview.payload.expiresAt, nowMs)} · single use
             </p>
-          ) : null}
+          )}
         </div>
       ) : preview.kind === "invalid" || preview.kind === "peer-code" ? (
         <p className="text-xs text-destructive">{preview.message}</p>

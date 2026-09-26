@@ -1,10 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
-import * as NodeHttp from "node:http";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
@@ -28,133 +21,22 @@ import {
   WsFederationSubscribePeersRpc,
   WsFederationSubscribeRemoteRunsRpc,
 } from "@t3tools/contracts";
-import * as NetService from "@t3tools/shared/Net";
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { RpcGroup, RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { RpcGroup } from "effect/unstable/rpc";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { cli } from "../bin.ts";
-import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
 import {
-  makePersistedServerRuntimeState,
-  persistServerRuntimeState,
-} from "../serverRuntimeState.ts";
-import { runningServerWsUrl } from "./peer.ts";
-
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
-
-const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
-
-const provideCliTestLayers = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provide(effect, Layer.mergeAll(CliRuntimeLayer, TestConsole.layer));
-
-// The test console is shared and accumulates across CLI runs, so each capture
-// keeps only the entries its own run appended.
-const captureNewLogLines = (args: ReadonlyArray<string>) =>
-  provideCliTestLayers(
-    Effect.gen(function* () {
-      const before = (yield* TestConsole.logLines).length;
-      yield* runCli(args);
-      return (yield* TestConsole.logLines)
-        .slice(before)
-        .filter((line): line is string => typeof line === "string");
-    }),
-  );
-
-/** Everything one CLI run logged, joined; `run --wait` logs as events arrive. */
-const captureStdout = (args: ReadonlyArray<string>) =>
-  Effect.map(captureNewLogLines(args), (lines) => lines.join("\n"));
-
-/** `--json` output has to be one clean entry: nothing logged before or after it. */
-const captureJson = (args: ReadonlyArray<string>) =>
-  Effect.map(captureNewLogLines(args), (lines) => {
-    assert.equal(lines.length, 1, `Expected exactly one JSON entry, got ${String(lines)}`);
-    return lines[0] ?? "";
-  });
-
-const flipCli = (args: ReadonlyArray<string>) =>
-  provideCliTestLayers(runCli(args).pipe(Effect.flip));
-
-const expectShowHelpError = (error: unknown, expectedTag: string) => {
-  if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
-    assert.fail(`Expected ShowHelp, got ${String(error)}`);
-  }
-  assert.equal(error.errors[0]?._tag, expectedTag);
-  return error.errors[0];
-};
-
-const makeTempBaseDir = (prefix: string) =>
-  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), `t3-peer-cli-${prefix}-`));
-
-const testDescriptor = {
-  environmentId: "peer-test-environment",
-  label: "peer-test",
-  platform: { os: "linux", arch: "x64" },
-  serverVersion: "0.0.1",
-  capabilities: { repositoryIdentity: true },
-};
-
-const descriptorRouteLayer = HttpRouter.add(
-  "GET",
-  "/.well-known/t3/environment",
-  HttpServerResponse.jsonUnsafe(testDescriptor),
-);
-
-const makeCliTestServerConfig = (baseDir: string) =>
-  Effect.gen(function* () {
-    const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
-    return {
-      logLevel: "Warn",
-      traceMinLevel: "Info",
-      traceTimingEnabled: false,
-      traceBatchWindowMs: 200,
-      traceMaxBytes: 10 * 1024 * 1024,
-      traceMaxFiles: 10,
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      otelEnvironment: OtelEnvironment.none,
-      mode: "web",
-      port: 0,
-      host: "127.0.0.1",
-      cwd: process.cwd(),
-      baseDir,
-      ...derivedPaths,
-      staticDir: undefined,
-      devUrl: undefined,
-      devAllowedOrigins: [],
-      noBrowser: true,
-      startupPresentation: "headless",
-      desktopBootstrapToken: undefined,
-      autoBootstrapProjectFromCwd: false,
-      logWebSocketEvents: false,
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
-      tailcatEnabled: undefined,
-      tailcatBinaryPath: undefined,
-    } satisfies ServerConfig.ServerConfig["Service"];
-  });
+  captureJson,
+  captureStdout,
+  expectShowHelpError,
+  flipCli,
+  makeTempBaseDir,
+  withLiveCliServer,
+} from "../testUtils/liveCliServer.ts";
+import { runningServerWsUrl } from "./runningServer.ts";
 
 const LOCAL_ID = EnvironmentId.make("env-local");
 const PEER_ID = EnvironmentId.make("env-peer-1");
@@ -312,75 +194,18 @@ const makeFederationHandlersLayer = (calls: Ref.Ref<ReadonlyArray<RecordedCall>>
   });
 };
 
-// The production `/ws` route in miniature: authenticate the upgrade with the
-// server's auth (the CLI sends its session as a bearer header), then hand the
-// socket to an RPC server over the scripted federation handlers.
-const wsRouteLayer = (calls: Ref.Ref<ReadonlyArray<RecordedCall>>) =>
-  HttpRouter.add(
-    "GET",
-    "/ws",
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const authenticated = yield* Effect.result(serverAuth.authenticateWebSocketUpgrade(request));
-      if (authenticated._tag === "Failure") {
-        return HttpServerResponse.empty({ status: 401 });
-      }
-      return yield* RpcServer.toHttpEffectWebsocket(PeerCliRpcs, { disableTracing: true }).pipe(
-        Effect.provide(
-          makeFederationHandlersLayer(calls).pipe(Layer.provideMerge(RpcSerialization.layerJson)),
-        ),
-        Effect.flatMap((httpEffect) => httpEffect),
-      );
-    }),
-  );
-
 const withLiveFederationServer = <A, E, R>(
   baseDir: string,
   run: (calls: Ref.Ref<ReadonlyArray<RecordedCall>>) => Effect.Effect<A, E, R>,
 ) =>
-  Effect.gen(function* () {
-    const config = yield* makeCliTestServerConfig(baseDir);
-    const calls = yield* Ref.make<ReadonlyArray<RecordedCall>>([]);
-    const appLayer = HttpRouter.serve(Layer.mergeAll(descriptorRouteLayer, wsRouteLayer(calls)), {
-      disableListenLog: true,
-      disableLogger: true,
-    }).pipe(
-      Layer.provideMerge(
-        EnvironmentAuth.layer.pipe(
-          Layer.provideMerge(SqlitePersistenceLayerLive),
-          Layer.provide(ServerEnvironment.identityLayer),
-          Layer.provide(ServerSecretStore.layer),
-        ),
-      ),
-      Layer.provideMerge(
-        NodeHttpServer.layer(NodeHttp.createServer, {
-          host: "127.0.0.1",
-          port: 0,
-        }),
-      ),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(ServerConfig.layer(config)),
-      // The server shares the test console with the CLI under test; keep its
-      // own startup chatter out of the captured output.
-      Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
-    );
-
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        const server = yield* HttpServer.HttpServer;
-        const address = server.address;
-        if (typeof address === "string" || !("port" in address)) {
-          return yield* Effect.die(new Error(`Expected TCP address, got ${String(address)}`));
-        }
-        yield* persistServerRuntimeState({
-          path: config.serverRuntimeStatePath,
-          state: yield* makePersistedServerRuntimeState({ config, port: address.port }),
-        });
-        return yield* run(calls);
-      }).pipe(Effect.provide(Layer.mergeAll(appLayer, NodeServices.layer))),
-    );
-  });
+  Effect.flatMap(Ref.make<ReadonlyArray<RecordedCall>>([]), (calls) =>
+    withLiveCliServer({
+      baseDir,
+      rpcs: PeerCliRpcs,
+      handlers: makeFederationHandlersLayer(calls),
+      run: () => run(calls),
+    }),
+  );
 
 const decodePeersJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(FederationPeer)),

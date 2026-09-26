@@ -6600,11 +6600,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             ),
           },
           federation: {
-            snapshot: SubscriptionRef.get(peers),
             changes: SubscriptionRef.changes(peers).pipe(
               Stream.tap(() => Deferred.succeed(peersReplayed, undefined)),
             ),
-            remoteRuns: SubscriptionRef.get(runs),
             remoteRunChanges: SubscriptionRef.changes(runs).pipe(
               Stream.tap(() => Deferred.succeed(runsReplayed, undefined)),
             ),

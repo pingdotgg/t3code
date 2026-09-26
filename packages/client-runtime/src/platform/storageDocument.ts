@@ -60,15 +60,12 @@ export function removeCatalogValue<A>(
   return values.filter((value) => key(value) !== removedKey);
 }
 
-const connectionIdOf = (target: ConnectionTarget): string | null =>
-  connectionTargetConnectionId(target);
-
 function removeConnectionMetadata(
   document: ConnectionCatalogDocument,
   target: ConnectionTarget,
   removeRemoteToken: boolean,
 ): ConnectionCatalogDocument {
-  const connectionId = connectionIdOf(target);
+  const connectionId = connectionTargetConnectionId(target);
   return {
     ...document,
     targets: removeCatalogValue(

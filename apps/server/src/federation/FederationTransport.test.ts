@@ -159,21 +159,23 @@ it.effect("reuses a fresh forward until idle expiry and reopens it on demand", (
         },
       },
     };
+    const portOf = (endpoint: { readonly httpBaseUrl: string }) =>
+      Number(new URL(endpoint.httpBaseUrl).port);
     const first = yield* transport.endpointFor(peer);
     assert.deepEqual(yield* transport.endpointFor(peer), first);
-    assert.equal(yield* Ref.get(nextPort), first.localPort);
+    assert.equal(yield* Ref.get(nextPort), portOf(first));
 
     yield* TestClock.adjust("9 minutes");
     assert.isTrue(yield* transport.isActive(peer.peerId));
     yield* TestClock.adjust("2 minutes");
-    assert.equal(yield* Queue.take(closed), first.localPort);
+    assert.equal(yield* Queue.take(closed), portOf(first));
     assert.isFalse(yield* transport.isActive(peer.peerId));
 
     const reopened = yield* transport.endpointFor(peer);
-    assert.notEqual(reopened.localPort, first.localPort);
+    assert.notEqual(portOf(reopened), portOf(first));
     assert.isTrue(yield* transport.isActive(peer.peerId));
     yield* transport.drop(peer.peerId);
-    assert.equal(yield* Queue.take(closed), reopened.localPort);
+    assert.equal(yield* Queue.take(closed), portOf(reopened));
     assert.isFalse(yield* transport.isActive(peer.peerId));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

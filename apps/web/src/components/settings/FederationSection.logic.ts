@@ -87,30 +87,12 @@ export function remoteRunStatusBadgeVariant(status: FederationRunStatus): Remote
   }
 }
 
-/** Queued and running runs can still be cancelled on the peer. */
-export function isRemoteRunActive(status: FederationRunStatus): boolean {
-  return status === "queued" || status === "running";
-}
-
 /** The freshest one-line description of a remote run: its latest event, else the assistant preview. */
 export function remoteRunLastEventSummary(remoteRun: FederationRemoteRun): string | null {
-  const latest = remoteRun.events.reduce<FederationRemoteRun["events"][number] | null>(
-    (best, event) => (best === null || event.sequence > best.sequence ? event : best),
-    null,
-  );
-  const summary = latest?.summary.trim();
+  const summary = remoteRun.events.at(-1)?.summary.trim();
   if (summary) return summary;
   const preview = remoteRun.run.assistantPreview?.trim();
   return preview ? preview : null;
-}
-
-/** Newest request first, so the run just started is at the top. */
-export function sortRemoteRuns(
-  runs: ReadonlyArray<FederationRemoteRun>,
-): ReadonlyArray<FederationRemoteRun> {
-  return [...runs].toSorted(
-    (left, right) => Date.parse(right.run.requestedAt) - Date.parse(left.run.requestedAt),
-  );
 }
 
 export function peerStatusDotClassName(status: FederationPeerStatus): string {
@@ -158,7 +140,7 @@ export function describeFederationPeerCode(raw: string, nowMs: number): Federati
       return {
         kind: "valid",
         payload: preview.payload,
-        expired: preview.expiresAtMs !== null && preview.expiresAtMs <= nowMs,
+        expired: preview.expiresAtMs <= nowMs,
       };
   }
 }

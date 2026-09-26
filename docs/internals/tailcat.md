@@ -17,7 +17,7 @@ allowlist from its own pairing state.
 | Address / node-key helpers         | [`packages/tailcat/src/address.ts`](../../packages/tailcat/src/address.ts)                                                              |
 | Pinned version, checksums, license | [`native/tailcat/manifest.json`](../../native/tailcat/manifest.json), `native/tailcat/README.md`                                        |
 | Server remote access               | [`apps/server/src/tailcat/TailcatRemoteAccess.ts`](../../apps/server/src/tailcat/TailcatRemoteAccess.ts)                                |
-| Server HTTP + RPC surface          | `apps/server/src/tailcat/http.ts`, `tailcat.*` methods in `apps/server/src/ws.ts`                                                       |
+| Server RPC surface                 | `tailcat.*` methods in `apps/server/src/ws.ts` (the UIs and `t3 remote tailcat` share them)                                             |
 | Desktop forward manager            | [`apps/desktop/src/tailcat/DesktopTailcatEnvironment.ts`](../../apps/desktop/src/tailcat/DesktopTailcatEnvironment.ts)                  |
 | Desktop client identity            | [`apps/desktop/src/tailcat/DesktopTailcatIdentity.ts`](../../apps/desktop/src/tailcat/DesktopTailcatIdentity.ts)                        |
 | Connection code format             | [`packages/shared/src/t3ConnectionCode.ts`](../../packages/shared/src/t3ConnectionCode.ts)                                              |
@@ -31,8 +31,8 @@ bundled candidates (`resources/tailcat/<platform-key>/`, `tailcat/<platform-key>
 executable, `native/tailcat/dist/…` in a checkout), then a `tailcat` on `PATH`. Every candidate is
 version-checked against the pinned manifest with `tailcat version`; a build outside the
 compatible range fails with `version-incompatible` rather than running. The resolution is
-cached per process and reported in `TailcatRuntimeInfo` (`source`, `version`, `pinnedVersion`,
-`compatible`) so the UI and diagnostics can say exactly which binary is in use.
+cached per process and reported in `TailcatRuntimeInfo` (`source`, `version`, `pinnedVersion`)
+so the UI and diagnostics can say exactly which binary is in use.
 
 The runtime never downloads anything. Binaries are fetched at build time by
 `scripts/fetch-tailcat.ts` from the pinned upstream release (or built from the pinned source

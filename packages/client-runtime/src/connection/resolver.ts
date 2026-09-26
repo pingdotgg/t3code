@@ -105,21 +105,28 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   });
 });
 
-const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
-  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
-  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-
-  return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
-    entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
-  ) {
+/**
+ * The saved profile and bearer token of a target that paired once and keeps
+ * the issued session: plain bearer targets, and Tailcat targets whose base
+ * URLs come from the forward instead of the profile.
+ */
+const resolveSavedBearerPairing = <Profile extends { readonly environmentId: string }>(
+  credentials: ConnectionCredentialStore.ConnectionCredentialStore["Service"],
+  entry: ConnectionCatalogEntry & {
+    readonly target: BearerConnectionTarget | TailcatConnectionTarget;
+  },
+  isProfile: (profile: unknown) => profile is Profile,
+  profileKind: string,
+) =>
+  Effect.gen(function* () {
     const target = entry.target;
     const profile = yield* Effect.fromOption(entry.profile, () =>
       profileMissingError(target.connectionId),
     );
-    if (!isBearerProfile(profile)) {
+    if (!isProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not a bearer connection.`,
+        detail: `Connection profile ${target.connectionId} is not ${profileKind} connection.`,
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -139,11 +146,28 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
+    return { profile, bearerToken: credential.token };
+  });
+
+const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
+    entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
+  ) {
+    const target = entry.target;
+    const { profile, bearerToken } = yield* resolveSavedBearerPairing(
+      credentials,
+      entry,
+      isBearerProfile,
+      "a bearer",
+    );
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: profile.httpBaseUrl,
       wsBaseUrl: profile.wsBaseUrl,
-      bearerToken: credential.token,
+      bearerToken,
       connectionMethod: "direct",
     });
     return {
@@ -254,32 +278,12 @@ const makeTailcatBroker = Effect.fn("clientRuntime.connection.broker.makeTailcat
     entry: ConnectionCatalogEntry & { readonly target: TailcatConnectionTarget },
   ) {
     const target = entry.target;
-    const profile = yield* Effect.fromOption(entry.profile, () =>
-      profileMissingError(target.connectionId),
+    const { profile, bearerToken } = yield* resolveSavedBearerPairing(
+      credentials,
+      entry,
+      isTailcatProfile,
+      "a Tailcat",
     );
-    if (!isTailcatProfile(profile)) {
-      return yield* new ConnectionBlockedError({
-        reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not a Tailcat connection.`,
-      });
-    }
-    if (profile.environmentId !== target.environmentId) {
-      return yield* environmentMismatchError({
-        expected: target.environmentId,
-        actual: profile.environmentId,
-      });
-    }
-    const credential = yield* credentials.get(target.connectionId).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(credentialMissingError(target.connectionId)),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
-    if (!isBearerCredential(credential)) {
-      return yield* credentialMissingError(target.connectionId);
-    }
     const prepared = yield* tailcat.prepare({
       connectionId: target.connectionId,
       expectedEnvironmentId: target.environmentId,
@@ -290,7 +294,7 @@ const makeTailcatBroker = Effect.fn("clientRuntime.connection.broker.makeTailcat
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: prepared.bootstrap.httpBaseUrl,
       wsBaseUrl: prepared.bootstrap.wsBaseUrl,
-      bearerToken: credential.token,
+      bearerToken,
       connectionMethod: "tailcat",
     });
     return {

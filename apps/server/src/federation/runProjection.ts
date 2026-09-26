@@ -66,10 +66,6 @@ export function projectFederationRun(input: {
   };
 }
 
-export function isFederationRunActive(run: FederationRun): boolean {
-  return run.status === "queued" || run.status === "running";
-}
-
 /** Summarizes one persisted event for a peer; null when it carries nothing worth relaying. */
 export function summarizeFederationRunEvent(
   event: OrchestrationEvent,
@@ -81,10 +77,11 @@ export function summarizeFederationRunEvent(
   const base = { sequence: event.sequence, at: event.occurredAt, type: event.type };
   switch (event.type) {
     case "thread.message-sent":
-      return {
-        ...base,
-        summary: `${event.payload.role}: ${truncatePreview(event.payload.text)}`,
-      };
+      // Assistant text arrives as one event per streamed chunk and ends with an
+      // empty completion; the run's assistantPreview carries the text instead.
+      return event.payload.streaming || event.payload.text.trim().length === 0
+        ? null
+        : { ...base, summary: `${event.payload.role}: ${truncatePreview(event.payload.text)}` };
     case "thread.turn-start-requested":
       return { ...base, summary: "Turn started" };
     case "thread.turn-interrupt-requested":

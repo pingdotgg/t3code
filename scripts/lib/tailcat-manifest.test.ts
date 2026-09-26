@@ -20,7 +20,6 @@ import {
   resolveTailcatTarget,
   summarizeTailcatManifestChanges,
   tailcatExecutableName,
-  tailcatHostPlatformKey,
   tailcatManifestPlatformKeys,
   tailcatReleaseAssetUrl,
   updateTailcatManifest,
@@ -78,13 +77,7 @@ const fixture: TailcatManifest = {
 };
 
 describe("tailcat-manifest", () => {
-  it("maps hosts to platform keys, executables, and Go targets", () => {
-    assert.equal(tailcatHostPlatformKey("linux", "x64"), "linux-x64");
-    assert.equal(tailcatHostPlatformKey("darwin", "arm64"), "darwin-arm64");
-    assert.equal(tailcatHostPlatformKey("win32", "arm64"), "win32-arm64");
-    assert.isUndefined(tailcatHostPlatformKey("freebsd", "x64"));
-    assert.isUndefined(tailcatHostPlatformKey("linux", "ia32"));
-
+  it("maps platform keys to executables and Go targets", () => {
     assert.equal(tailcatExecutableName("win32-x64"), "tailcat.exe");
     assert.equal(tailcatExecutableName("linux-arm64"), "tailcat");
 

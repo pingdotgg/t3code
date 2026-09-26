@@ -6,7 +6,6 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import {
   TAILCAT_PLATFORM_KEYS,
   tailcatExecutableName as runtimeExecutableName,
-  tailcatPlatformKey,
 } from "@t3tools/tailcat/manifest";
 
 /**
@@ -91,8 +90,6 @@ export class TailcatManifestError extends Schema.TaggedError<TailcatManifestErro
 export function tailcatExecutableName(platformKey: string): string {
   return runtimeExecutableName(platformKey.startsWith("win32-") ? "win32" : "linux");
 }
-
-export const tailcatHostPlatformKey = tailcatPlatformKey;
 
 export interface GoTarget {
   readonly goos: "linux" | "windows" | "darwin";
