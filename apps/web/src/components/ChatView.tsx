@@ -1,5 +1,6 @@
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -532,6 +533,8 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   recallableComposerPrompt,
 } from "./chat/composerPromptHistory";
+
+const EMPTY_THREAD_PULL_REQUEST_LINKS: ReadonlyArray<ThreadPullRequestLink> = [];
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_QUEUED_MESSAGES: QueuedComposerMessage[] = [];
@@ -4595,8 +4598,11 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
-  const visiblePullRequests = visibleThreadPullRequests(
-    (activeThreadShell ?? activeThread)?.pullRequests ?? [],
+  const threadPullRequestLinks =
+    (activeThreadShell ?? activeThread)?.pullRequests ?? EMPTY_THREAD_PULL_REQUEST_LINKS;
+  const visiblePullRequests = useMemo(
+    () => visibleThreadPullRequests(threadPullRequestLinks),
+    [threadPullRequestLinks],
   );
   const visiblePullRequestCount = visiblePullRequests.length;
   const pullRequestsSurfaceAvailable =
@@ -10095,6 +10101,11 @@ export default function ChatView(props: ChatViewProps) {
                             }
                             pullRequestRepository={
                               supportsPullRequests ? activeProjectRepository : null
+                            }
+                            pullRequestLinks={
+                              supportsPullRequests
+                                ? visiblePullRequests
+                                : EMPTY_THREAD_PULL_REQUEST_LINKS
                             }
                             restingControlsHost={restingComposerControlsHost}
                             restingControlsHaveLeadingContext={

@@ -1,10 +1,17 @@
-import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
+import {
+  composerProjectPullRequestHost,
+  composerPullRequestEntriesFromLinks,
+  filterComposerPullRequestMatches,
+  matchesComposerPullRequestWords,
+  uniqueComposerPullRequests,
+} from "@t3tools/shared/composerPullRequestMatches";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   ProjectId,
   OrchestrationThread,
   ThreadId,
+  ThreadPullRequestLink,
   VcsListRefsResult,
   VcsRef,
 } from "@t3tools/contracts";
@@ -81,13 +88,23 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
   return debounced;
 }
 
+const EMPTY_PULL_REQUEST_LINKS: ReadonlyArray<ThreadPullRequestLink> = [];
+
 export function useComposerPullRequestSearch(input: {
   environmentId: EnvironmentId | null;
   projectId: ProjectId | null;
   repository: string | null;
   query: string | null;
+  /** Linked to the thread, so `#` can reach a pull request it opened in another repository. */
+  links?: ReadonlyArray<ThreadPullRequestLink>;
 }) {
   const query = useDebouncedValue(input.query, 180);
+  const links = input.links ?? EMPTY_PULL_REQUEST_LINKS;
+  const linkedEntries = useMemo(
+    () =>
+      input.projectId === null ? [] : composerPullRequestEntriesFromLinks(links, input.projectId),
+    [input.projectId, links],
+  );
   const ready =
     query === input.query &&
     query !== null &&
@@ -109,10 +126,22 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const number = numeric && query ? Number(query) : null;
-  const hasExact = list.data?.entries.some(
-    (entry) =>
-      entry.number === number && entry.repository.toLowerCase() === input.repository?.toLowerCase(),
+  // A linked row for the project's own repository already answers the typed number, so the
+  // exact lookup, which would return the same pull request without a host, is not needed. Only
+  // a link on the project's host counts, as the listing knows it: the same name elsewhere is
+  // another pull request.
+  const projectHost = composerProjectPullRequestHost(
+    list.data?.entries ?? [],
+    input.repository ?? "",
   );
+  const isProjectNumber = (entry: { repository: string; number: number }) =>
+    entry.number === number && entry.repository.toLowerCase() === input.repository?.toLowerCase();
+  const hasExact =
+    list.data?.entries.some(isProjectNumber) === true ||
+    (projectHost !== undefined &&
+      linkedEntries.some(
+        (entry) => isProjectNumber(entry) && entry.host.toLowerCase() === projectHost.toLowerCase(),
+      ));
   const exact = useEnvironmentQuery(
     ready && number !== null && Number.isSafeInteger(number) && number > 0 && !hasExact
       ? composerPullRequests.detail({
@@ -123,17 +152,29 @@ export function useComposerPullRequestSearch(input: {
   );
   const entries = useMemo(() => {
     if (!ready) return [];
+    const listed = list.data?.entries ?? [];
+    // The exact lookup row carries no host; give it the project's so it is told apart from a
+    // linked pull request of the same name on another host, and folded with its own listing.
+    const exactEntries = exact.data
+      ? [
+          {
+            ...exact.data,
+            host: composerProjectPullRequestHost(listed, input.repository!),
+          },
+        ]
+      : [];
     if (numeric) {
       return filterComposerPullRequestMatches({
-        entries: [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])],
+        entries: [...exactEntries, ...listed, ...linkedEntries],
         projectId: input.projectId!,
         repository: input.repository!,
         query: query ?? "",
         limit: 20,
+        linked: linkedEntries,
       });
     }
     const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-    const found = [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])].filter(
+    const found = [...exactEntries, ...listed].filter(
       (entry) =>
         entry.projectId === input.projectId &&
         entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
@@ -141,12 +182,22 @@ export function useComposerPullRequestSearch(input: {
           `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
         ),
     );
-    const unique = new Map<number, (typeof found)[number]>();
-    for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
-    return [...unique.values()]
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 20);
-  }, [ready, exact.data, list.data, input.projectId, input.repository, numeric, query]);
+    // The thread's own links lead the text search: they are the pull requests the thread is about.
+    // A listing row stays when its linked snapshot is stale and only the listing's title matches.
+    return uniqueComposerPullRequests([
+      ...linkedEntries.filter((entry) => matchesComposerPullRequestWords(entry, query ?? "")),
+      ...[...found].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    ]).slice(0, 20);
+  }, [
+    ready,
+    exact.data,
+    list.data,
+    linkedEntries,
+    input.projectId,
+    input.repository,
+    numeric,
+    query,
+  ]);
   return {
     entries,
     isPending: input.query !== null && (query !== input.query || list.isPending || exact.isPending),

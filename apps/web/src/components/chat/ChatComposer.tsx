@@ -5,7 +5,13 @@ import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
-import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
+import {
+  composerProjectPullRequestHost,
+  composerPullRequestEntriesFromLinks,
+  filterComposerPullRequestMatches,
+  matchesComposerPullRequestWords,
+  uniqueComposerPullRequests,
+} from "@t3tools/shared/composerPullRequestMatches";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -32,6 +38,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
+  ThreadPullRequestLink,
   SnapShotSource,
 } from "@t3tools/contracts";
 import {
@@ -1415,6 +1422,8 @@ export interface ChatComposerProps {
   gitCwd: string | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
+  /** Linked to the thread, so `#` can reach a pull request it opened in another repository. */
+  pullRequestLinks: ReadonlyArray<ThreadPullRequestLink>;
   restingControlsHost: HTMLDivElement | null;
   restingControlsHaveLeadingContext: boolean;
   onRestingControlsVisibilityChange: (visible: boolean) => void;
@@ -1540,6 +1549,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     gitCwd,
     pullRequestProjectId,
     pullRequestRepository,
+    pullRequestLinks,
     restingControlsHost,
     restingControlsHaveLeadingContext,
     onRestingControlsVisibilityChange,
@@ -2318,14 +2328,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
   const settledPullRequestNumber =
     pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
+  const linkedPullRequestEntries = useMemo(
+    () =>
+      pullRequestProjectId === null
+        ? []
+        : composerPullRequestEntriesFromLinks(pullRequestLinks, pullRequestProjectId),
+    [pullRequestLinks, pullRequestProjectId],
+  );
+  // A linked row for the project's own repository already answers the typed number, so the
+  // exact lookup, which would return the same pull request without a host, is not needed. Only
+  // a link on the project's host counts, as the listing knows it: the same name elsewhere is
+  // another pull request.
   const recentHasExactPullRequest =
     settledPullRequestNumber !== null &&
-    pullRequestLookup.data?.entries.some(
-      (entry) =>
+    (() => {
+      const listed = pullRequestLookup.data?.entries ?? [];
+      const projectHost = composerProjectPullRequestHost(listed, pullRequestRepository ?? "");
+      const isProjectRow = (entry: { projectId: string; repository: string; number: number }) =>
         entry.projectId === pullRequestProjectId &&
         entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase() &&
-        entry.number === settledPullRequestNumber,
-    ) === true;
+        entry.number === settledPullRequestNumber;
+      return (
+        listed.some(isProjectRow) ||
+        (projectHost !== undefined &&
+          linkedPullRequestEntries.some(
+            (entry) =>
+              isProjectRow(entry) &&
+              entry.host.trim().toLowerCase() === projectHost.trim().toLowerCase(),
+          ))
+      );
+    })();
   const exactPullRequestLookup = useEnvironmentQuery(
     settledPullRequestNumber === null ||
       pullRequestProjectId === null ||
@@ -2436,38 +2468,62 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       pullRequestProjectId !== null &&
       pullRequestRepository !== null
     ) {
+      const listedPullRequests = pullRequestLookup.data?.entries ?? [];
+      // The exact lookup row carries no host; give it the project's, as the listing knows it, so
+      // it is told apart from a linked pull request of the same name on another host.
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
-          ? [exactPullRequestLookup.data]
+          ? [
+              {
+                ...exactPullRequestLookup.data,
+                host: composerProjectPullRequestHost(listedPullRequests, pullRequestRepository),
+              },
+            ]
           : [];
+      // The thread's own links come last so a fresher listing row wins the de-duplication, and
+      // first in the text search, where they are the pull requests the thread is about.
       const matches = /^\d*$/u.test(composerTrigger.query)
         ? filterComposerPullRequestMatches({
-            entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
+            entries: [
+              ...exactPullRequest,
+              ...(pullRequestLookup.data?.entries ?? []),
+              ...linkedPullRequestEntries,
+            ],
             projectId: pullRequestProjectId,
             repository: pullRequestRepository,
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+            linked: linkedPullRequestEntries,
           })
-        : rankPullRequestMatches(
-            (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-              if (
-                entry.projectId !== pullRequestProjectId ||
-                entry.repository.trim().toLowerCase() !== pullRequestRepository.trim().toLowerCase()
-              ) {
-                return false;
-              }
-              const provider = pullRequestLookup.data?.providers.find(
-                (candidate) => candidate.host === entry.host,
-              );
-              return (
-                provider?.searchesOnHost === true ||
-                matchesPullRequestQuery(entry, composerTrigger.query)
-              );
-            }),
-            composerTrigger.query,
-          ).slice(0, COMPOSER_PULL_REQUEST_RESULT_LIMIT);
+        : // A listing row stays when its linked snapshot is stale and only the listing's title
+          // matches; when both match, the linked row is the one kept.
+          uniqueComposerPullRequests([
+            ...linkedPullRequestEntries.filter((entry) =>
+              matchesComposerPullRequestWords(entry, composerTrigger.query),
+            ),
+            ...rankPullRequestMatches(
+              listedPullRequests.filter((entry) => {
+                if (
+                  entry.projectId !== pullRequestProjectId ||
+                  entry.repository.trim().toLowerCase() !==
+                    pullRequestRepository.trim().toLowerCase()
+                ) {
+                  return false;
+                }
+                const provider = pullRequestLookup.data?.providers.find(
+                  (candidate) => candidate.host === entry.host,
+                );
+                return (
+                  provider?.searchesOnHost === true ||
+                  matchesPullRequestQuery(entry, composerTrigger.query)
+                );
+              }),
+              composerTrigger.query,
+            ),
+          ]).slice(0, COMPOSER_PULL_REQUEST_RESULT_LIMIT);
+      const projectRepository = pullRequestRepository.trim().toLowerCase();
       return matches.map((pullRequest) => ({
-        id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
+        id: `pull-request:${pullRequest.host ?? ""}:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
         type: "pull-request",
         pullRequest: {
           number: pullRequest.number,
@@ -2479,7 +2535,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           isDraft: pullRequest.isDraft,
         },
         label: `#${pullRequest.number}`,
-        description: pullRequest.title,
+        description:
+          pullRequest.repository.trim().toLowerCase() === projectRepository
+            ? pullRequest.title
+            : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
     }
     return [];
@@ -2487,6 +2546,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compactSlashCommandAvailable,
     composerTrigger,
     exactPullRequestLookup.data,
+    linkedPullRequestEntries,
     planModeUiEnabled,
     pullRequestLookup.data,
     pullRequestProjectId,
