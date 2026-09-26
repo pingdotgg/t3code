@@ -197,8 +197,42 @@ export function currentGrokReasoningEffortFromSessionSetup(
     : undefined;
 }
 
+export type GrokModelRuntime = Pick<
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
+  "setSessionModel"
+>;
+
+/**
+ * How to read and switch the model of a started Grok session. ACP v2 removed
+ * `session/set_model`, so v2 agents switch through the model config option.
+ */
+export const grokAcpModelControl = (
+  runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setModel" | "setSessionModel"
+  >,
+  started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+): Effect.Effect<{
+  readonly runtime: GrokModelRuntime;
+  readonly currentModelId: string | undefined;
+}> =>
+  started.initializeResult.protocolVersion === 1
+    ? Effect.succeed({
+        runtime,
+        currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
+      })
+    : runtime.getConfigOptions.pipe(
+        Effect.map((options) => {
+          const current = options.find((option) => option.category === "model")?.currentValue;
+          return {
+            runtime: { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+            currentModelId: typeof current === "string" ? current : undefined,
+          };
+        }),
+      );
+
 export function applyGrokAcpModelSelection<E>(input: {
-  readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
+  readonly runtime: GrokModelRuntime;
   readonly currentModelId: string | undefined;
   readonly currentReasoningEffort?: string | undefined;
   readonly requestedModelId: string | undefined;

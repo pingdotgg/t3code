@@ -26,8 +26,8 @@ import {
 } from "./TextGenerationUtils.ts";
 import {
   applyGrokAcpModelSelection,
-  currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
+  grokAcpModelControl,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../provider/acp/GrokAcpSupport.ts";
@@ -89,9 +89,10 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           modelSelection,
           "reasoningEffort",
         );
+        const modelControl = yield* grokAcpModelControl(runtime, started);
         yield* applyGrokAcpModelSelection({
-          runtime,
-          currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
+          runtime: modelControl.runtime,
+          currentModelId: modelControl.currentModelId,
           currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
             started.sessionSetupResult,
           ),

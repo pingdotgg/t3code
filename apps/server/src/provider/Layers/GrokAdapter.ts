@@ -68,8 +68,9 @@ import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { acpT3McpServers, serveAcpMcpOverAcp } from "../acp/AcpT3Mcp.ts";
 import {
   applyGrokAcpModelSelection,
-  currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
+  grokAcpModelControl,
+  type GrokModelRuntime,
   makeGrokAcpRuntime,
   normalizeGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
@@ -137,8 +138,6 @@ interface PendingUserInput {
 interface GrokTurnLivenessSignal {
   readonly turnId: TurnId;
 }
-
-type GrokModelRuntime = Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
 
 interface GrokSessionContext {
   readonly threadId: ThreadId;
@@ -1243,20 +1242,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           const requestedStartModelId = grokModelSelection?.model
             ? resolveGrokAcpBaseModelId(grokModelSelection.model)
             : undefined;
-          // ACP v2 removed `session/set_model`; those agents expose the model as a config option.
-          const legacyModelApi = started.initializeResult.protocolVersion === 1;
-          const modelRuntime: GrokModelRuntime = legacyModelApi
-            ? acp
-            : { setSessionModel: (model) => acp.setModel(model).pipe(Effect.as({})) };
-          const configuredModel = legacyModelApi
-            ? undefined
-            : (yield* acp.getConfigOptions).find((option) => option.category === "model")
-                ?.currentValue;
-          const currentStartModelId = legacyModelApi
-            ? currentGrokModelIdFromSessionSetup(started.sessionSetupResult)
-            : typeof configuredModel === "string"
-              ? configuredModel
-              : undefined;
+          const { runtime: modelRuntime, currentModelId: currentStartModelId } =
+            yield* grokAcpModelControl(acp, started);
           const currentStartReasoningEffort = currentGrokReasoningEffortFromSessionSetup(
             started.sessionSetupResult,
           );
