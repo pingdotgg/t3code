@@ -473,6 +473,7 @@ layer("CommandPolicyV2", (it) => {
         capabilities: CodexProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
+        sourceRunStatus: "completed",
         fromSpecificTurn: true,
       });
 
@@ -491,6 +492,7 @@ layer("CommandPolicyV2", (it) => {
         capabilities: CursorProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
+        sourceRunStatus: "completed",
         fromSpecificTurn: true,
       });
 
@@ -509,6 +511,7 @@ layer("CommandPolicyV2", (it) => {
         capabilities: GrokProviderCapabilitiesV2,
         sameProvider: true,
         hasStrongNativeSource: true,
+        sourceRunStatus: "completed",
         fromSpecificTurn: true,
       });
 
@@ -538,6 +541,7 @@ layer("CommandPolicyV2", (it) => {
           })),
           sameProvider: true,
           hasStrongNativeSource: true,
+          sourceRunStatus: "completed",
           fromSpecificTurn: true,
         })
         .pipe(Effect.flip);
