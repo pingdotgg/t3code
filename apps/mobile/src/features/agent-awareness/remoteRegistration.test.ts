@@ -8,6 +8,7 @@ import Constants from "expo-constants";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import {
   Cookies,
@@ -62,6 +63,7 @@ vi.mock("./androidNotifications", () => ({
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const widgetMocks = vi.hoisted(() => ({
+  dismissEndedInstances: vi.fn(() => Promise.resolve()),
   getInstances: vi.fn(() => []),
   start: vi.fn(() => ({})),
 }));
@@ -102,6 +104,7 @@ vi.mock("expo-widgets", () => ({
 }));
 
 vi.mock("./agentLiveActivity", () => ({
+  dismissEndedAgentLiveActivities: widgetMocks.dismissEndedInstances,
   getAgentLiveActivities: widgetMocks.getInstances,
   startAgentLiveActivity: widgetMocks.start,
 }));
@@ -274,6 +277,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockResolvedValue("device-1");
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
+    widgetMocks.dismissEndedInstances.mockReset();
+    widgetMocks.dismissEndedInstances.mockResolvedValue();
     widgetMocks.start.mockClear();
     environmentConfigsMock.configs.clear();
   });
@@ -473,6 +478,176 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(relayTestLayer));
     },
   );
+
+  it.effect(
+    "waits for ended-card cleanup before discovering and registering the active card",
+    () => {
+      const cleanup = Promise.withResolvers<void>();
+      const cleanupStarted = Promise.withResolvers<void>();
+      const activitiesRead = Promise.withResolvers<void>();
+      widgetMocks.getInstances.mockImplementation(() => {
+        activitiesRead.resolve();
+        return [];
+      });
+      widgetMocks.dismissEndedInstances.mockImplementation(() => {
+        cleanupStarted.resolve();
+        return cleanup.promise;
+      });
+      const activity = {
+        getPushToken: vi.fn(() => Promise.resolve("current-activity-token")),
+        addPushTokenListener: vi.fn(),
+        end: vi.fn(),
+      };
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+      return Effect.gen(function* () {
+        const refresh = yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.forkChild);
+        const firstStep = yield* Effect.promise(() =>
+          Promise.race([
+            cleanupStarted.promise.then(() => "cleanup"),
+            activitiesRead.promise.then(() => "activities"),
+          ]),
+        );
+        expect(firstStep).toBe("cleanup");
+        expect(widgetMocks.getInstances).not.toHaveBeenCalled();
+        expect(widgetMocks.start).not.toHaveBeenCalled();
+
+        // Another foreground path armed the live card while native cleanup was
+        // pending. Discover it after cleanup instead of starting a second one.
+        widgetMocks.getInstances.mockReturnValue([activity] as never);
+        cleanup.resolve();
+        yield* Fiber.join(refresh);
+
+        expect(activity.getPushToken).toHaveBeenCalledOnce();
+        expect(activity.end).not.toHaveBeenCalled();
+        expect(widgetMocks.start).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(relayTestLayer));
+    },
+  );
+
+  it.effect("still registers the active card when ended-card cleanup fails", () => {
+    widgetMocks.dismissEndedInstances.mockRejectedValueOnce(new Error("native cleanup failed"));
+    const activity = {
+      getPushToken: vi.fn(() => Promise.resolve("current-activity-token")),
+      addPushTokenListener: vi.fn(),
+      end: vi.fn(),
+    };
+    widgetMocks.getInstances.mockReturnValue([activity] as never);
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* refreshActiveLiveActivityRemoteRegistration();
+      expect(activity.getPushToken).toHaveBeenCalledOnce();
+      expect(activity.end).not.toHaveBeenCalled();
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(relayTestLayer));
+  });
+
+  it("rechecks for an active card after cleanup when arming local work", async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const cleanupStarted = Promise.withResolvers<void>();
+    const activitiesRead = Promise.withResolvers<void>();
+    widgetMocks.getInstances.mockImplementation(() => {
+      activitiesRead.resolve();
+      return [{ getPushToken: vi.fn() }] as never;
+    });
+    widgetMocks.dismissEndedInstances.mockImplementation(() => {
+      cleanupStarted.resolve();
+      return cleanup.promise;
+    });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    vi.mocked(loadPreferences).mockResolvedValueOnce({
+      liveActivitiesEnabled: true,
+    } as Preferences);
+
+    armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: "env-1" as EnvironmentId,
+      threadTitle: "New work",
+      projectTitle: "t3code",
+    });
+    expect(
+      await Promise.race([
+        cleanupStarted.promise.then(() => "cleanup"),
+        activitiesRead.promise.then(() => "activities"),
+      ]),
+    ).toBe("cleanup");
+    expect(widgetMocks.getInstances).not.toHaveBeenCalled();
+    expect(widgetMocks.start).not.toHaveBeenCalled();
+
+    cleanup.resolve();
+    await activitiesRead.promise;
+    expect(widgetMocks.start).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["preferences", "sign-out"],
+    ["preferences", "account change"],
+    ["preferences", "provider teardown"],
+    ["cleanup", "sign-out"],
+    ["cleanup", "account change"],
+    ["cleanup", "provider teardown"],
+  ])("cancels local arming pending %s after %s", async (pendingStep, sessionChange) => {
+    const resume = Promise.withResolvers<void>();
+    const paused = Promise.withResolvers<void>();
+    const preferences = { liveActivitiesEnabled: true } as Preferences;
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+    if (pendingStep === "preferences") {
+      vi.mocked(loadPreferences).mockImplementationOnce(async () => {
+        paused.resolve();
+        await resume.promise;
+        return preferences;
+      });
+    } else {
+      vi.mocked(loadPreferences).mockResolvedValueOnce(preferences);
+      widgetMocks.dismissEndedInstances.mockImplementationOnce(() => {
+        paused.resolve();
+        return resume.promise;
+      });
+    }
+
+    const arming = armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: "env-1" as EnvironmentId,
+      threadTitle: "Private work",
+      projectTitle: "Private project",
+    });
+    await paused.promise;
+    if (sessionChange === "sign-out") {
+      setAgentAwarenessRelayTokenProvider(null);
+    } else if (sessionChange === "account change") {
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-b"), "user-b");
+    } else {
+      releaseAgentAwarenessRelayTokenProvider();
+    }
+    resume.resolve();
+    await arming;
+
+    expect(widgetMocks.start).not.toHaveBeenCalled();
+  });
+
+  it("still arms local work after a same-account token refresh during cleanup", async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const cleanupStarted = Promise.withResolvers<void>();
+    widgetMocks.dismissEndedInstances.mockImplementationOnce(() => {
+      cleanupStarted.resolve();
+      return cleanup.promise;
+    });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+    vi.mocked(loadPreferences).mockResolvedValueOnce({
+      liveActivitiesEnabled: true,
+    } as Preferences);
+
+    const arming = armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: "env-1" as EnvironmentId,
+      threadTitle: "New work",
+      projectTitle: "t3code",
+    });
+    await cleanupStarted.promise;
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("refreshed-token-a"), "user-a");
+    cleanup.resolve();
+    await arming;
+
+    expect(widgetMocks.start).toHaveBeenCalledOnce();
+  });
 
   it.effect(
     "re-registers active Live Activity tokens when the app returns to the foreground",

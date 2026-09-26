@@ -1,5 +1,47 @@
+diff --git a/build/ExpoWidgets.js b/build/ExpoWidgets.js
+index aabbb41259038993305302607e0156e4d61cf4bd..867327294a649b6c8d596454d0fc4c2d39dd1805 100644
+--- a/build/ExpoWidgets.js
++++ b/build/ExpoWidgets.js
+@@ -30,6 +30,9 @@ class LiveActivityFactoryStub {
+     getInstances() {
+         return [];
+     }
++    dismissEndedInstances() {
++        return Promise.resolve();
++    }
+ }
+ const ExpoWidgetsModule = {
+     widgetsDirectory: '',
+diff --git a/build/Widgets.d.ts b/build/Widgets.d.ts
+index d4b5aacee380c056855f68c5ca62c9af24304745..e0a95729c5f3b89599b1b814937ab8a7e9f3e537 100644
+--- a/build/Widgets.d.ts
++++ b/build/Widgets.d.ts
+@@ -83,6 +83,8 @@ export declare class LiveActivityFactory<T extends object = object> {
+      * Returns all currently active instances of this Live Activity type.
+      */
+     getInstances(): LiveActivity<T>[];
++    /** Removes ended instances that are still visible without ending active or stale ones. */
++    dismissEndedInstances(): Promise<void>;
+ }
+ /**
+  * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
+diff --git a/build/Widgets.js b/build/Widgets.js
+index 9099a1bb3c10eaddc41518ba5b82117284f82135..c35bbad071006501994afebf9a30016dfb0f6d4c 100644
+--- a/build/Widgets.js
++++ b/build/Widgets.js
+@@ -113,6 +113,10 @@ export class LiveActivityFactory {
+     start(props, url, staleDate) {
+         return new LiveActivity(this.nativeLiveActivityFactory.start(JSON.stringify(props), url, staleDate?.getTime()));
+     }
++    /** Removes ended instances that are still visible without ending active or stale ones. */
++    dismissEndedInstances() {
++        return this.nativeLiveActivityFactory.dismissEndedInstances();
++    }
+     /**
+      * Returns all currently active instances of this Live Activity type.
+      */
 diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
-index 15e026868625ce20a3e359e5cc8e5c7e937c4650..f5cc83174ede4fb6e01cbce494f61e088eb4eed8 100644
+index 15e026868625ce20a3e359e5cc8e5c7e937c4650..1f63ec87c54fc329812e3fe1ec1f0eece0ef515b 100644
 --- a/build/Widgets.types.d.ts
 +++ b/build/Widgets.types.d.ts
 @@ -90,6 +90,10 @@ export type LiveActivityEnvironment = {
@@ -13,6 +55,36 @@ index 15e026868625ce20a3e359e5cc8e5c7e937c4650..f5cc83174ede4fb6e01cbce494f61e08
      /**
       * Whether the activity is displayed in a context with reduced luminance.
       * @platform iOS 16+
+@@ -263,6 +267,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
+     constructor(name: string, layout: string);
+     start(props: string, url?: string, staleDate?: number): NativeLiveActivity;
+     getInstances(): NativeLiveActivity[];
++    dismissEndedInstances(): Promise<void>;
+ }
+ export declare class NativeLiveActivity extends SharedObject<LiveActivityEvents> {
+     getId(): string;
+diff --git a/ios/LiveActivityFactory.swift b/ios/LiveActivityFactory.swift
+index 4b8a632965ddb507aeeb54a4d8944f455e5dffd7..9a6604e09c2e8f2811a512ee04a2ca12ce46a397 100644
+--- a/ios/LiveActivityFactory.swift
++++ b/ios/LiveActivityFactory.swift
+@@ -62,6 +62,17 @@ final class LiveActivityFactory: SharedObject {
+     }
+   }
+ 
++  func dismissEndedInstances() async throws {
++    guard #available(iOS 16.2, *) else { throw LiveActivitiesNotSupportedException() }
++
++    // Ended activities can remain visible for hours, but getInstances()
++    // deliberately excludes them because they can no longer receive updates.
++    for activity in Activity<LiveActivityAttributes>.activities
++      where activity.content.state.name == name && activity.activityState == .ended {
++      await activity.end(nil, dismissalPolicy: .immediate)
++    }
++  }
++
+   override func sharedObjectWillRelease() {
+     instances.removeAll()
+   }
 diff --git a/ios/Widgets/Utils.swift b/ios/Widgets/Utils.swift
 index 2b4c044b597de7e0fab42dbc47af14d8bb521838..801f0aed65ea2659f221d477dd841787d9146c26 100644
 --- a/ios/Widgets/Utils.swift
@@ -131,8 +203,53 @@ index 24d4571a52d3ebe9d785b5d049d8e134a149d513..7051c23b17ac91552e5b5c54606c5708
      if #available(iOS 18.0, *) {
        LiveActivityBanner(context: context, nodes: nodes)
      } else if let node = nodes["banner"] as? [String: Any] {
+diff --git a/ios/WidgetsModule.swift b/ios/WidgetsModule.swift
+index b1b4295e22726e6fe501aa5e514b56061dea57a1..8252ffe389c853a0bc9f1f369abf43d856c93847 100644
+--- a/ios/WidgetsModule.swift
++++ b/ios/WidgetsModule.swift
+@@ -93,6 +93,10 @@ public final class WidgetsModule: Module {
+       Function("getInstances") { (liveActivity: LiveActivityFactory) in
+         try liveActivity.getInstances()
+       }
++
++      AsyncFunction("dismissEndedInstances") { (liveActivity: LiveActivityFactory) in
++        try await liveActivity.dismissEndedInstances()
++      }
+     }
+ 
+     Class("LiveActivity", LiveActivity.self) {
+diff --git a/src/ExpoWidgets.ts b/src/ExpoWidgets.ts
+index b118f9142e1a2a97c0b3683ee8a42a642a955e4d..e888e14544d6eb80fddc42c78f50e30ce332cb81 100644
+--- a/src/ExpoWidgets.ts
++++ b/src/ExpoWidgets.ts
+@@ -48,6 +48,9 @@ class LiveActivityFactoryStub {
+   getInstances(): NativeLiveActivity[] {
+     return [];
+   }
++  dismissEndedInstances(): Promise<void> {
++    return Promise.resolve();
++  }
+ }
+ 
+ const ExpoWidgetsModule = {
+diff --git a/src/Widgets.ts b/src/Widgets.ts
+index 51ea140b4309c347d6f98290051be1c5062bff70..9063111e47b2f1ba80d4fe26441461db298f6a04 100644
+--- a/src/Widgets.ts
++++ b/src/Widgets.ts
+@@ -168,6 +168,11 @@ export class LiveActivityFactory<T extends object = object> {
+     );
+   }
+ 
++  /** Removes ended instances that are still visible without ending active or stale ones. */
++  dismissEndedInstances(): Promise<void> {
++    return this.nativeLiveActivityFactory.dismissEndedInstances();
++  }
++
+   /**
+    * Returns all currently active instances of this Live Activity type.
+    */
 diff --git a/src/Widgets.types.ts b/src/Widgets.types.ts
-index fee5c7475b52218fa0e192a1d347dd32cb0fe1f8..1d3a097b45d8eb5d13e5cedd26f0414caa83a5d6 100644
+index fee5c7475b52218fa0e192a1d347dd32cb0fe1f8..eca20f9d294a0c10b6c8fbdd4431211563aa9878 100644
 --- a/src/Widgets.types.ts
 +++ b/src/Widgets.types.ts
 @@ -104,6 +104,10 @@ export type LiveActivityEnvironment = {
@@ -146,3 +263,11 @@ index fee5c7475b52218fa0e192a1d347dd32cb0fe1f8..1d3a097b45d8eb5d13e5cedd26f0414c
    /**
     * Whether the activity is displayed in a context with reduced luminance.
     * @platform iOS 16+
+@@ -292,6 +296,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
+   constructor(name: string, layout: string);
+   start(props: string, url?: string, staleDate?: number): NativeLiveActivity;
+   getInstances(): NativeLiveActivity[];
++  dismissEndedInstances(): Promise<void>;
+ }
+ 
+ export declare class NativeLiveActivity extends SharedObject<LiveActivityEvents> {
