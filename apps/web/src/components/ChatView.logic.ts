@@ -676,9 +676,14 @@ export function reconcileMountedTerminalThreadIds(input: {
       ? hiddenThreadIds.slice(-maxHiddenThreadCount)
       : hiddenThreadIds;
 
+  // Keep the active drawer mounted after closing so CSS can finish its
+  // transition and reopening can reuse the viewport. Navigation releases it.
+  const activeThreadMounted =
+    input.activeThreadTerminalOpen ||
+    (input.activeThreadId !== null && input.currentThreadIds.includes(input.activeThreadId));
   if (
     input.activeThreadId &&
-    input.activeThreadTerminalOpen &&
+    activeThreadMounted &&
     !nextThreadIds.includes(input.activeThreadId)
   ) {
     nextThreadIds.push(input.activeThreadId);
