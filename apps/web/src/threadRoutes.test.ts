@@ -6,6 +6,7 @@ import { DraftId } from "./composerDraftStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
+  isThreadRouteSnapshotAuthoritative,
   resolveActiveThreadRouteRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
@@ -13,6 +14,13 @@ import {
 } from "./threadRoutes";
 
 describe("threadRoutes", () => {
+  it("does not treat cached thread lists as authoritative for deep links", () => {
+    expect(isThreadRouteSnapshotAuthoritative("empty")).toBe(false);
+    expect(isThreadRouteSnapshotAuthoritative("cached")).toBe(false);
+    expect(isThreadRouteSnapshotAuthoritative("synchronizing")).toBe(false);
+    expect(isThreadRouteSnapshotAuthoritative("live")).toBe(true);
+  });
+
   it("builds canonical thread route params from a scoped ref", () => {
     const ref = scopeThreadRef("env-1" as never, ThreadId.make("thread-1"));
 
