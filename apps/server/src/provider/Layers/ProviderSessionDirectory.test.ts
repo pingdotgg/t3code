@@ -372,6 +372,41 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
     }),
   );
 
+  it.effect("lists only bindings that are not stopped when asked", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const statuses = ["running", "starting", "error", "stopped"] as const;
+      const threadIds = new Set<string>();
+
+      for (const status of statuses) {
+        const threadId = ThreadId.make(`thread-exclude-stopped-${status}`);
+        threadIds.add(threadId);
+        yield* runtimeRepository.upsert({
+          threadId,
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status,
+          lastSeenAt: "2026-04-14T12:00:00.000Z",
+          resumeCursor: null,
+          runtimePayload: null,
+        });
+      }
+
+      const liveStatuses = (yield* directory.listBindings({ excludeStopped: true }))
+        .filter((binding) => threadIds.has(binding.threadId))
+        .map((binding) => binding.status);
+      const allStatuses = (yield* directory.listBindings())
+        .filter((binding) => threadIds.has(binding.threadId))
+        .map((binding) => binding.status);
+
+      assert.deepEqual(liveStatuses.toSorted(), ["error", "running", "starting"]);
+      assert.deepEqual(allStatuses.toSorted(), ["error", "running", "starting", "stopped"]);
+    }),
+  );
+
   it.effect(
     "resets adapterKey to the new provider when provider changes without an explicit adapter key",
     () =>

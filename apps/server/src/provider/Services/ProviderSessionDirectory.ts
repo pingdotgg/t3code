@@ -70,7 +70,10 @@ export interface ProviderSessionDirectoryShape {
     ProviderSessionDirectoryPersistenceError
   >;
 
-  readonly listBindings: () => Effect.Effect<
+  /** `excludeStopped` skips stopped rows in the query, not after decoding. */
+  readonly listBindings: (options?: {
+    readonly excludeStopped?: boolean;
+  }) => Effect.Effect<
     ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
     ProviderSessionDirectoryPersistenceError
   >;
