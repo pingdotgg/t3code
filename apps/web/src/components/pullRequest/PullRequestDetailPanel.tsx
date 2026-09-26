@@ -431,7 +431,7 @@ export function PullRequestDetailPanel({
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
-  getShortcutContext: () => ShortcutMatchContext;
+  getShortcutContext: () => Partial<ShortcutMatchContext>;
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
   /**
    * The thread this panel sits beside, if any. Links that are not the pull
