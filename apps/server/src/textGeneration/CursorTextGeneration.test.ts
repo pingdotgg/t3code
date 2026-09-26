@@ -24,7 +24,9 @@ const cursorSdkMock = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("../provider/cursorSdk.ts", () => ({ Agent: { create: cursorSdkMock.create } }));
+vi.mock("../provider/cursorSdk.ts", () => ({
+  loadCursorSdk: () => ({ Agent: { create: cursorSdkMock.create } }),
+}));
 
 let hasCustomPolicy = false;
 const fsLayer = FileSystem.layerNoop({

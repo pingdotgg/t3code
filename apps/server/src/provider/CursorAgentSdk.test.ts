@@ -68,15 +68,16 @@ const cursorSdkMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("./cursorSdk.ts", () => ({
-  Agent: {
+vi.mock("./cursorSdk.ts", () => {
+  const Agent = {
     create: cursorSdkMock.create,
     resume: vi.fn(),
     messages: {
       list: vi.fn(async () => []),
     },
-  },
-}));
+  };
+  return { loadCursorSdk: () => ({ Agent }) };
+});
 
 const testLayer = cursorAgentSdkRunnerLiveLayer.pipe(
   Layer.provide(

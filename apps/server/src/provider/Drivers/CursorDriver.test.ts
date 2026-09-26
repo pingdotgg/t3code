@@ -15,7 +15,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { CursorDriver } from "./CursorDriver.ts";
-import { Cursor } from "../cursorSdk.ts";
+import { loadCursorSdk } from "../cursorSdk.ts";
 
 // Replaces only the SDK agent. Auth and catalog calls use spies on the real module.
 const cursorAgent = vi.hoisted(() => ({
@@ -25,8 +25,8 @@ const cursorAgent = vi.hoisted(() => ({
 
 vi.mock("../cursorSdk.ts", async (importOriginal) => {
   const original = await importOriginal<typeof import("../cursorSdk.ts")>();
-  return {
-    ...original,
+  const sdk = {
+    ...original.loadCursorSdk(),
     Agent: {
       create: async (options: { readonly apiKey?: string }) => {
         cursorAgent.openedKeys.push(options.apiKey);
@@ -42,7 +42,11 @@ vi.mock("../cursorSdk.ts", async (importOriginal) => {
       },
     },
   };
+  return { ...original, loadCursorSdk: () => sdk };
 });
+
+// The mock keeps the real `Cursor` object, so spies on it reach the driver.
+const { Cursor } = loadCursorSdk();
 
 const testLayer = ServerSecretStore.layer.pipe(
   Layer.provideMerge(

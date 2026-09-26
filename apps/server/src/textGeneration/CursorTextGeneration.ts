@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
 import * as FileSystem from "effect/FileSystem";
 
 import type { AgentOptions, RunResult } from "@cursor/sdk";
-import { Agent } from "../provider/cursorSdk.ts";
+import { loadCursorSdk } from "../provider/cursorSdk.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -125,10 +125,12 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const request = Effect.gen(function* () {
         const agent = yield* Effect.acquireRelease(
           Effect.tryPromise((signal) =>
-            Agent.create(agentOptions).then((agent) => {
-              if (signal.aborted) agent.close();
-              return agent;
-            }),
+            loadCursorSdk()
+              .Agent.create(agentOptions)
+              .then((agent) => {
+                if (signal.aborted) agent.close();
+                return agent;
+              }),
           ),
           (agent) =>
             Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(

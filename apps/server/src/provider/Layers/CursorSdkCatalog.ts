@@ -7,7 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { AuthenticationError, Cursor, CursorSdkError } from "../cursorSdk.ts";
+import { loadCursorSdk } from "../cursorSdk.ts";
 
 export interface CursorSdkCatalogSnapshot {
   readonly user: SDKUser;
@@ -36,13 +36,6 @@ export class CursorSdkCatalog extends Context.Service<CursorSdkCatalog, CursorSd
   "t3/provider/Layers/CursorSdkCatalog",
 ) {}
 
-function isAuthenticationFailure(cause: unknown): boolean {
-  return (
-    cause instanceof AuthenticationError ||
-    (cause instanceof CursorSdkError && cause.status === 401)
-  );
-}
-
 export interface CursorSdkCatalogProbes {
   readonly readUser: (apiKey: string) => Effect.Effect<SDKUser, CursorSdkCatalogError>;
   readonly readModels: (
@@ -50,19 +43,28 @@ export interface CursorSdkCatalogProbes {
   ) => Effect.Effect<ReadonlyArray<SDKModel>, CursorSdkCatalogError>;
 }
 
-const sdkRequest = <A>(tryRequest: () => Promise<A>) =>
-  Effect.tryPromise({
-    try: tryRequest,
-    catch: (cause) =>
-      new CursorSdkCatalogError({
-        authenticationFailure: isAuthenticationFailure(cause),
-        cause,
+const sdkRequest = <A>(request: (sdk: ReturnType<typeof loadCursorSdk>) => Promise<A>) =>
+  Effect.try({
+    try: loadCursorSdk,
+    catch: (cause) => new CursorSdkCatalogError({ authenticationFailure: false, cause }),
+  }).pipe(
+    Effect.flatMap((sdk) =>
+      Effect.tryPromise({
+        try: () => request(sdk),
+        catch: (cause) =>
+          new CursorSdkCatalogError({
+            authenticationFailure:
+              cause instanceof sdk.AuthenticationError ||
+              (cause instanceof sdk.CursorSdkError && cause.status === 401),
+            cause,
+          }),
       }),
-  });
+    ),
+  );
 
 const liveProbes: CursorSdkCatalogProbes = {
-  readUser: (apiKey) => sdkRequest(() => Cursor.me({ apiKey })),
-  readModels: (apiKey) => sdkRequest(() => Cursor.models.list({ apiKey })),
+  readUser: (apiKey) => sdkRequest((sdk) => sdk.Cursor.me({ apiKey })),
+  readModels: (apiKey) => sdkRequest((sdk) => sdk.Cursor.models.list({ apiKey })),
 };
 
 export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function* (

@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
-import { Agent } from "./cursorSdk.ts";
+import { loadCursorSdk } from "./cursorSdk.ts";
 import type { EventNdjsonLogger } from "./Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "./Layers/ProviderEventLoggers.ts";
 
@@ -323,8 +323,8 @@ function makeCursorAgentSdkRunner(
       const agent = yield* Effect.tryPromise({
         try: () =>
           input.operation === "create"
-            ? Agent.create(input.options)
-            : Agent.resume(input.agentId!, input.options),
+            ? loadCursorSdk().Agent.create(input.options)
+            : loadCursorSdk().Agent.resume(input.agentId!, input.options),
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
 
@@ -478,7 +478,7 @@ function makeCursorAgentSdkRunner(
           Effect.andThen(
             Effect.tryPromise({
               try: () =>
-                Agent.messages.list(agent.agentId, {
+                loadCursorSdk().Agent.messages.list(agent.agentId, {
                   runtime: "local",
                   ...(cwd === undefined ? {} : { cwd }),
                 }),

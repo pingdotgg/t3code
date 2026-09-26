@@ -16,7 +16,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { Cursor, InMemoryCredentialStore } from "./cursorSdk.ts";
+import { loadCursorSdk } from "./cursorSdk.ts";
 import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
@@ -159,6 +159,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   const runLogin = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
     Effect.gen(function* () {
       yield* stopSessions.pipe(Effect.ensuring(stopSessionsWithCredentials));
+      const { Cursor, InMemoryCredentialStore } = loadCursorSdk();
       // The SDK first writes into memory. Cancellation must not save a late login result.
       const pendingStore = new InMemoryCredentialStore();
       const urls = yield* Queue.unbounded<string>();
