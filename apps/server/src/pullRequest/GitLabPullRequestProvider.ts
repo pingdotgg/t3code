@@ -146,7 +146,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.all(
         [
-          cli.getMergeRequestDetail(input),
+          cli.getMergeRequestDetail({ ...input, includeJobs: true }),
           cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
         ],
         { concurrency: 2 },

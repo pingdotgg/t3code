@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -881,6 +881,108 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(error._tag, "GitLabMergeRequestReadError");
     }),
   );
+
+  describe("the head pipeline's jobs", () => {
+    const detailWithPipeline = mergeRequestJson({
+      head_pipeline: {
+        id: 9,
+        // A merge request from a fork runs its pipeline in the fork, not in acme/web.
+        project_id: 42,
+        status: "failed",
+        web_url: "https://gitlab.com/fork/web/-/pipelines/9",
+        source: "merge_request_event",
+      },
+    });
+    const pipelineCheck = {
+      name: "Pipeline",
+      status: "failure",
+      description: "merge_request_event",
+      url: "https://gitlab.com/fork/web/-/pipelines/9",
+    };
+    const job = (id: number) => ({ id, name: `job ${id}`, stage: "test", status: "success" });
+
+    /** Answers each endpoint by its path, since the two job reads run side by side. */
+    function answer(pages: { readonly jobs: string | null; readonly bridges: string }) {
+      mockedExecute.mockImplementation((input) => {
+        const path = input.args[1] ?? "";
+        if (path.includes("/jobs?")) {
+          return pages.jobs === null
+            ? Effect.succeed(output('{"message":"404 Not Found"}'))
+            : Effect.succeed(output(pages.jobs));
+        }
+        if (path.includes("/bridges?")) return Effect.succeed(output(pages.bridges));
+        return Effect.succeed(output(detailWithPipeline));
+      });
+    }
+
+    const read = (includeJobs: boolean) =>
+      GitLabPullRequestCli.GitLabPullRequestCli.pipe(
+        Effect.flatMap((cli) =>
+          cli.getMergeRequestDetail({ cwd: "/w", repository: "acme/web", number: 7, includeJobs }),
+        ),
+      );
+
+    it.effect("reads them from the project the pipeline ran in, in place of the pipeline", () =>
+      Effect.gen(function* () {
+        answer({
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          jobs: JSON.stringify([
+            { id: 12, name: "lint", stage: "test", status: "failed" },
+            { id: 11, name: "build", stage: "build", status: "success" },
+          ]),
+          bridges: "[]",
+        });
+
+        const detail = yield* read(true);
+
+        expect(mockedExecute.mock.calls.map(([input]) => input.args[1]).toSorted()).toEqual([
+          "projects/42/pipelines/9/bridges?per_page=100",
+          "projects/42/pipelines/9/jobs?per_page=100",
+          "projects/acme%2Fweb/merge_requests/7?include_diverged_commits_count=true",
+        ]);
+        expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+          ["build", "success"],
+          ["lint", "failure"],
+        ]);
+      }),
+    );
+
+    it.effect("keeps the pipeline where its jobs cannot stand for all of it", () =>
+      Effect.gen(function* () {
+        // A full page may have left out the job that failed, and a pipeline with no jobs yet
+        // still has a status worth showing.
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const full = JSON.stringify(Array.from({ length: 100 }, (_, index) => job(index + 1)));
+        for (const pages of [
+          { jobs: null, bridges: "[]" },
+          { jobs: full, bridges: "[]" },
+          { jobs: "[]", bridges: full },
+          // A row that cannot be read may be the job that failed.
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          { jobs: JSON.stringify([job(1), { id: 2, status: "failed" }]), bridges: "[]" },
+          { jobs: "[]", bridges: "[]" },
+        ]) {
+          mockedExecute.mockReset();
+          answer(pages);
+
+          const detail = yield* read(true);
+
+          expect(detail.checks).toEqual([pipelineCheck]);
+        }
+      }),
+    );
+
+    it.effect("asks for no jobs when the caller only needs the merge request", () =>
+      Effect.gen(function* () {
+        answer({ jobs: "[]", bridges: "[]" });
+
+        const detail = yield* read(false);
+
+        expect(mockedExecute).toHaveBeenCalledTimes(1);
+        expect(detail.checks).toEqual([pipelineCheck]);
+      }),
+    );
+  });
 
   it.effect("fails when the authenticated account has no username", () =>
     Effect.gen(function* () {
