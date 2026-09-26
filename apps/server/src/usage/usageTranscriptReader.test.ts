@@ -628,6 +628,37 @@ describe("SQLite usage readers", () => {
     );
   });
 
+  it("prices a merged Antigravity alias by the model it adopts", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "adopt.db"));
+    try {
+      db.exec(
+        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
+      );
+      db.prepare("INSERT INTO steps VALUES (?, ?)").run(
+        5,
+        new Uint8Array(protoBytes(9, [...protoNumber(2, 100), ...protoText(11, "response")])),
+      );
+      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(
+        0,
+        new Uint8Array(
+          protoBytes(1, [
+            ...protoText(19, "Gemini 3.8 Flash High"),
+            ...protoBytes(4, [...protoNumber(2, 100), ...protoText(11, "response")]),
+          ]),
+        ),
+      );
+    } finally {
+      db.close();
+    }
+    const result = await readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(
+      result.files
+        .flatMap((file) => file.records)
+        .map((record) => [record.model, record.rateModel]),
+      [["gemini-3.8-flash-high", "gemini-3.8-flash"]],
+    );
+  });
+
   it("merges Antigravity aliases that bridge previously separate step records", async () => {
     const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "bridge.db"));
     try {

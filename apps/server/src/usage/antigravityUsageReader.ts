@@ -321,14 +321,16 @@ export async function readAntigravityUsage(
         : target;
     const x = target.record.totals;
     const y = source.record.totals;
+    const model =
+      first.record.model === "antigravity-unknown"
+        ? first === target
+          ? source.record.model
+          : target.record.model
+        : first.record.model;
     target.record = {
       ...first.record,
-      model:
-        first.record.model === "antigravity-unknown"
-          ? first === target
-            ? source.record.model
-            : target.record.model
-          : first.record.model,
+      model,
+      rateModel: antigravityRateModel(model),
       timestampMs: bestTime.record.timestampMs,
       totals: {
         uncachedInputTokens: Math.max(x.uncachedInputTokens, y.uncachedInputTokens),
