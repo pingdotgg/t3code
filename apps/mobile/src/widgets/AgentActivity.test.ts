@@ -11,6 +11,7 @@ vi.mock("@expo/ui/swift-ui", () => ({
 
 vi.mock("@expo/ui/swift-ui/modifiers", () => ({
   activityBackgroundTint: (value: unknown) => value,
+  containerBackground: (value: unknown) => value,
   font: (value: unknown) => value,
   foregroundStyle: (value: unknown) => value,
   frame: (value: unknown) => value,
@@ -22,6 +23,7 @@ vi.mock("@expo/ui/swift-ui/modifiers", () => ({
 }));
 
 vi.mock("expo-widgets", () => ({
+  createWidget: vi.fn((name: string, layout: unknown) => ({ layout, name })),
   createLiveActivity: vi.fn((name: string, layout: unknown) => ({ layout, name })),
 }));
 
@@ -30,6 +32,8 @@ import {
   type AgentActivityProps,
   type AgentActivityRowProps,
 } from "./AgentActivity";
+
+import { AgentActivityWidget } from "./AgentActivityWidget";
 
 function makeRow(overrides: Partial<AgentActivityRowProps>): AgentActivityRowProps {
   return {
@@ -281,4 +285,20 @@ describe("AgentActivity widget layout", () => {
     }
     expect(banner).not.toContain("Thread 6");
   });
+});
+
+describe("home-screen widget unknown activity", () => {
+  for (const widgetFamily of ["systemSmall", "systemMedium", "accessoryRectangular"] as const) {
+    it(`distinguishes unknown activity from idle in ${widgetFamily}`, () => {
+      const widgetEnvironment = { ...environment, widgetFamily };
+      const unknown = JSON.stringify(
+        AgentActivityWidget({ activeCount: null, activities: [] }, widgetEnvironment as never),
+      );
+      expect(unknown).toContain("Activity count unavailable");
+      expect(unknown).not.toContain("No active agents");
+      const idle = JSON.stringify(AgentActivityWidget({}, widgetEnvironment as never));
+      expect(idle).toContain("No active agents");
+      expect(idle).not.toContain("Activity count unavailable");
+    });
+  }
 });
