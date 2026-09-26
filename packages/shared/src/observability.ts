@@ -372,10 +372,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   });
 
   let buffer: Array<string> = [];
-  // Failure episode state. The latest write result says if the disk is
-  // failing. Flush checks it once per window, so a disk that fails and
-  // recovers more than once inside one window stays one episode. Records lost
-  // since the episode started are counted until a flush sees a good write.
+  // A failure episode starts at the first dropped record and ends when a flush
+  // sees that the latest write succeeded. Flush checks once per window, so a
+  // disk that flaps inside one window stays one episode.
   let writeFailing = false;
   let droppedCount = 0;
   let failureReported = false;
@@ -432,11 +431,8 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
-  // Logs only when writes start failing and when they recover, so a disk that
-  // stays broken costs one line, not one per flush. It drops the parent span:
-  // the timed fiber inherits the makeTraceSink span, which has ended but stays
-  // referenced for the life of the sink, and the tracer logger would add every
-  // log to it as an event.
+  // Logs once when writes start failing and once when they recover, so a disk
+  // that stays broken costs one line, not one per flush.
   const flush = Effect.gen(function* () {
     flushUnsafe();
     const stats = pendingFlushStats;
@@ -464,9 +460,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   }).pipe(
     Effect.withTracerEnabled(false),
-    Effect.updateContext((context: Context.Context<never>) =>
-      Context.omit(Tracer.ParentSpan)(context),
-    ),
+    // The timed fiber inherits the makeTraceSink span. That span has ended but
+    // lives as long as the sink, so the tracer logger must not add logs to it.
+    Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
   );
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
