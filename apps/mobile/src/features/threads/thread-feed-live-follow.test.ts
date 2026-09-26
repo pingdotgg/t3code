@@ -154,6 +154,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "scroll",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
@@ -164,6 +165,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(true, {
         type: "scroll",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: false,
       }),
     ).toBe(true);
@@ -174,16 +176,36 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "scroll",
         isAtEnd: true,
+        nearEnd: true,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
   });
 
+  it("re-arms within the maintain-at-end tolerance once the user scroll session ends", () => {
+    expect(
+      resolveThreadFeedLiveFollow(false, {
+        type: "scroll",
+        isAtEnd: false,
+        nearEnd: true,
+        userScrollSessionActive: false,
+      }),
+    ).toBe(true);
+    expect(
+      resolveThreadFeedLiveFollow(false, {
+        type: "user-scroll-end",
+        isAtEnd: false,
+        nearEnd: true,
+        userScrollSessionActive: true,
+      }),
+    ).toBe(true);
+  });
+
   it.each([
-    { isAtEnd: false, userScrollSessionActive: false, expected: false },
-    { isAtEnd: true, userScrollSessionActive: false, expected: true },
-    { isAtEnd: false, userScrollSessionActive: true, expected: false },
-    { isAtEnd: true, userScrollSessionActive: true, expected: false },
+    { isAtEnd: false, nearEnd: false, userScrollSessionActive: false, expected: false },
+    { isAtEnd: true, nearEnd: true, userScrollSessionActive: false, expected: true },
+    { isAtEnd: false, nearEnd: false, userScrollSessionActive: true, expected: false },
+    { isAtEnd: true, nearEnd: true, userScrollSessionActive: true, expected: false },
   ])("reconciles follow after a disclosure settles: %j", ({ expected, ...state }) => {
     expect(resolveThreadFeedLiveFollow(!expected, { type: "disclosure-settled", ...state })).toBe(
       expected,
@@ -195,6 +217,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "user-scroll-end",
         isAtEnd: true,
+        nearEnd: true,
         userScrollSessionActive: true,
       }),
     ).toBe(true);
@@ -202,6 +225,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "user-scroll-end",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
@@ -212,6 +236,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(true, {
         type: "user-scroll-end",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: false,
       }),
     ).toBe(true);

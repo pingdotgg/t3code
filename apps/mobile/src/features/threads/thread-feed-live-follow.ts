@@ -4,10 +4,22 @@ export type ThreadFeedLiveFollowEvent =
   | {
       readonly type: "user-scroll-end";
       readonly isAtEnd: boolean;
+      // LegendList's isWithinMaintainScrollAtEndThreshold: inside the
+      // maintain-at-end tolerance. Re-arming accepts it because a swipe back
+      // to the live edge usually rests a few pixels short of the exact end,
+      // in space the end inset covers; the tolerance only ever re-arms
+      // follow, never breaks it.
+      readonly nearEnd: boolean;
       readonly userScrollSessionActive: boolean;
     }
   | {
-      readonly type: "scroll" | "disclosure-settled";
+      readonly type: "scroll";
+      readonly isAtEnd: boolean;
+      readonly nearEnd: boolean;
+      readonly userScrollSessionActive: boolean;
+    }
+  | {
+      readonly type: "disclosure-settled";
       readonly isAtEnd: boolean;
       readonly userScrollSessionActive: boolean;
     };
@@ -75,14 +87,14 @@ export function resolveThreadFeedLiveFollow(
     case "user-scroll-begin":
       return false;
     case "user-scroll-end":
-      return event.userScrollSessionActive ? event.isAtEnd : current;
+      return event.userScrollSessionActive ? event.isAtEnd || event.nearEnd : current;
     case "disclosure-settled":
       return !event.userScrollSessionActive && event.isAtEnd;
     case "scroll":
       if (event.userScrollSessionActive) {
         return false;
       }
-      if (event.isAtEnd) {
+      if (event.isAtEnd || event.nearEnd) {
         return true;
       }
       return current;
