@@ -13,6 +13,7 @@ import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -58,6 +59,18 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
         getThreadShellById: () => Effect.succeedNone,
       }),
       Layer.mock(OrchestrationEngineService)({}),
+      NodeServices.layer,
+    ),
+  ),
+);
+
+const OrchestratorTestLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectionSnapshotQuery)({}),
+      Layer.mock(OrchestrationEngineService)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
       NodeServices.layer,
     ),
   ),
@@ -462,6 +475,28 @@ it.effect(
         { type: "text", text: "MCP credential does not grant the pull-requests capability." },
       ]);
     }).pipe(Effect.provide(PullRequestsTestLayer)),
+);
+
+it.effect("registers the V2 orchestrator tools and returns a denied capability as a result", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const names = server.tools.map(({ tool }) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(["orchestrator_capabilities", "create_threads"]));
+
+    // Same shape V2 returns: a declared failure is a result the agent can
+    // branch on by code, not a transport error.
+    const denied = yield* server
+      .callTool({ name: "create_threads", arguments: { threads: [{ prompt: "Do it" }] } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(denied.isError).toBe(false);
+    expect(denied.structuredContent).toMatchObject({
+      _tag: "OrchestratorMcpFailure",
+      code: "capability_denied",
+    });
+  }).pipe(Effect.provide(OrchestratorTestLayer)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
