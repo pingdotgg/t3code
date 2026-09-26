@@ -4,6 +4,7 @@ import {
   groupAdjacentElements,
   isDefaultSurfaceLayout,
   moveSurfaceElement,
+  moveSurfaceElementBefore,
   resetSurfaceLayout,
   resolveSurfaceLayout,
   setSurfaceElementHidden,
@@ -111,5 +112,31 @@ describe("groupAdjacentElements", () => {
       "branch",
       ["environment"],
     ]);
+  });
+});
+
+describe("moveSurfaceElementBefore", () => {
+  it("places an element before another", () => {
+    const layout = moveSurfaceElementBefore({}, "threadRow", "provider", "branch");
+    expect(resolveSurfaceLayout("threadRow", layout).order).toEqual([
+      "project",
+      "status",
+      "provider",
+      "branch",
+      "terminal",
+      "pullRequest",
+      "environment",
+    ]);
+  });
+
+  it("moves an element to the end when there is nothing after it", () => {
+    const layout = moveSurfaceElementBefore({}, "chatHeader", "scripts", null);
+    expect(resolveSurfaceLayout("chatHeader", layout).order).toEqual(["openIn", "git", "scripts"]);
+  });
+
+  it("leaves the layout untouched when the order would not change", () => {
+    const layout = {};
+    expect(moveSurfaceElementBefore(layout, "chatHeader", "scripts", "openIn")).toBe(layout);
+    expect(moveSurfaceElementBefore(layout, "chatHeader", "attach", null)).toBe(layout);
   });
 });

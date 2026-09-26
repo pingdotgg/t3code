@@ -5124,6 +5124,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <div
               key={def.id}
               data-resting-block={def.id}
+              data-customize-element={`composerToolbar:${def.id}`}
               data-composer-block-icon-only={
                 index >= restingBlockDefs.length - iconOnlyBlockCount ? "true" : "false"
               }
@@ -7020,6 +7021,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               onPointerDown={(event) => event.preventDefault()}
                               onClick={() => attachmentInputRef.current?.click()}
                               aria-label="Attach files"
+                              data-customize-element="composerToolbar:attach"
                             />
                           }
                         >
