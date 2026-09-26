@@ -76,6 +76,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "'self'",
     "'unsafe-inline'",
     "'wasm-unsafe-eval'",
+    // Installed trusted modules arrive through authenticated environment HTTP.
+    "blob:",
     ...(clerkOrigin ? [clerkOrigin] : []),
     "https://challenges.cloudflare.com",
   ];

@@ -11,6 +11,7 @@ import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@t3tools/contracts";
 import type {
+  BrowserFrameInputEvent,
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
@@ -48,6 +49,7 @@ import {
 } from "electron";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -112,6 +114,12 @@ export interface PreviewTabState {
   canGoForward: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  /**
+   * Whether pixels are being captured for remote `t3.browser/frames` viewers.
+   * Remote viewers keep the guest compositing even when no local surface
+   * presents it, so this is a capture-consumer flag, not a visibility flag.
+   */
+  remoteLive: boolean;
   colorScheme: DesktopPreviewColorScheme;
   /** User intent to silence this tab. Re-applied to each guest that attaches. */
   audioMuted: boolean;
@@ -444,14 +452,139 @@ interface ManagedListeners {
   readonly webContents: Electron.WebContents;
 }
 
-type FrameCaptureConsumer = "picture-in-picture" | "recording";
+/**
+ * Capture consumers sharing one `capturePage` loop per tab. `recording` only
+ * keeps the guest unthrottled (its frames come from CDP screencast);
+ * `picture-in-picture` and `remote-live` own the periodic JPEG capture and are
+ * delivered the encoded result.
+ */
+type FrameCaptureConsumer = "picture-in-picture" | "recording" | "remote-live";
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
   readonly scope: Scope.Closeable | null;
   readonly consumers: ReadonlySet<FrameCaptureConsumer>;
   readonly unthrottledWebContentsIds: ReadonlySet<number>;
-  readonly lastPictureInPictureFrame: Buffer | null;
+  /** Dedup for the last encoded frame delivered to any consumer. */
+  readonly lastDeliveredFrame: Buffer | null;
+  /**
+   * Monotonic per capture session, stamped on every delivered remote frame as
+   * `X-Frame-Seq`. Scoped to the capture, not to a viewer connection, so all
+   * viewers see the same sequence and gaps mean capture-side drops.
+   */
+  readonly frameSeq: number;
+}
+
+/**
+ * A JPEG frame delivered to remote `t3.browser/frames` viewers. `seq` is the
+ * capture-session sequence shared by every viewer of this tab. `geometryKey`
+ * is the capture-time geometry stamp (`generation:cssWxcssH@zoom`) — the hub
+ * maps it onto `geometrySeq` so a frame can never be painted against geometry
+ * read after its pixels were captured.
+ */
+export interface RemoteLiveFrame {
+  readonly tabId: string;
+  readonly seq: number;
+  readonly jpeg: Buffer;
+  readonly width: number;
+  readonly height: number;
+  readonly engineGeneration: string;
+  readonly geometryKey: string;
+}
+
+type RemoteFrameListener = (frame: RemoteLiveFrame) => Effect.Effect<void>;
+
+/** Session tuple parsed out of a runtime tab id (`previewRuntimeTabId`). */
+export interface RemoteFrameSessionTuple {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly serverEpoch: string;
+  readonly tabId: string;
+}
+
+export interface RemoteFrameSessionInfo extends RemoteFrameSessionTuple {
+  readonly runtimeTabId: string;
+  readonly engineGeneration: string;
+  readonly viewportCss: { readonly width: number; readonly height: number } | null;
+  readonly streaming: boolean;
+}
+
+export interface RemoteFrameConfigInfo {
+  readonly engineGeneration: string;
+  readonly zoomFactor: number;
+  readonly viewportCss: { readonly width: number; readonly height: number };
+}
+
+/**
+ * Geometry stamp shared by frame captures and config reads:
+ * `generation:cssWxcssH@zoom`. The hub maps distinct keys onto its own
+ * monotonic `geometrySeq`; identical keys always mean identical geometry.
+ */
+export const remoteFrameGeometryKey = (
+  engineGeneration: string,
+  viewportCss: { readonly width: number; readonly height: number },
+  zoomFactor: number,
+): string => `${engineGeneration}:${viewportCss.width}x${viewportCss.height}@${zoomFactor}`;
+
+/**
+ * Who last claimed a held input item or the guest-global focus state.
+ * `lease:<leaseId>` owns remote-input presses; `action:<token>` owns agent
+ * action presses. Ownership transfers on re-press (latest presser) and only
+ * the owner may send the matching release.
+ */
+type InputStateOwner = { readonly kind: "action" | "lease"; readonly id: string };
+
+/**
+ * Shared per-guest held-input ledger: every key/button pressed
+ * against this webContents generation, by any lane, records its owner BEFORE
+ * the CDP send — an applied-but-rejected send still owes cleanup. Mutated
+ * only inside `lane`, which serializes lease dispatches and deferred cleanup
+ * for the guest. Bound to `generation` (`String(wc.id)`): a replaced guest
+ * gets a fresh ledger and cleanup can never resolve into it.
+ */
+interface RemoteGuestInputLedger {
+  readonly generation: string;
+  readonly lane: Semaphore.Semaphore;
+  /** code -> the `keyUp` CDP params + owner that release this held key. */
+  readonly keys: Map<
+    string,
+    { readonly keyUp: Record<string, unknown>; readonly owner: InputStateOwner }
+  >;
+  readonly buttons: Map<string, InputStateOwner>;
+  /** Currently-held CDP modifier bitmask, mirrored onto mouse/wheel events. */
+  heldModifiers: number;
+  lastPointer: { readonly x: number; readonly y: number } | null;
+  /** Latest CSS viewport the hub asserted with a packet or a config read. */
+  viewportCss: { readonly width: number; readonly height: number } | null;
+}
+
+/**
+ * Per-(tab, lease) bookkeeping for `t3.browser/frames` remote input. The
+ * lease pins its `ledger` at bind: cleanup runs against that exact guest
+ * generation, never a replacement.
+ */
+interface RemoteInputLeaseState {
+  readonly ledger: RemoteGuestInputLedger;
+  /**
+   * Set when cleanup begins — a queued or arriving dispatch fails rather than
+   * sending into a guest whose held state is being released. The registry
+   * entry stays until release settles (sends/failures accounted).
+   */
+  ending: boolean;
+  /**
+   * Focus restore target, overwritten on each fresh claim — a lease that
+   * loses guest focus to an action (or another lease) re-claims and
+   * re-captures it (claim generations).
+   */
+  previouslyFocusedId: number | null;
+}
+
+/** Truthful release accounting for lease cleanup and geometry held-release. */
+export interface RemoteInputReleaseResult {
+  /** Cleanup sends actually attempted (dead guests need none). */
+  readonly attempted: number;
+  /** Sends that failed — cleanup is incomplete, never silently reported clean. */
+  readonly failed: number;
 }
 
 interface PictureInPictureSession {
@@ -637,6 +770,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
   const path = yield* Path.Path;
+  const cryptoService = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
@@ -657,6 +791,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const recordingFrameListenersRef = yield* Ref.make<ReadonlySet<RecordingFrameListener>>(
     new Set(),
   );
+  const remoteFrameListenersRef = yield* Ref.make<ReadonlySet<RemoteFrameListener>>(new Set());
+  const remoteInputStatesRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, RemoteInputLeaseState>
+  >(new Map());
+  const remoteGuestInputLedgersRef = yield* SynchronizedRef.make<
+    ReadonlyMap<string, RemoteGuestInputLedger>
+  >(new Map());
+  const inputStateOwnerRef = yield* Ref.make<ReadonlyMap<string, InputStateOwner>>(new Map());
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
   const controlSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<number, BrowserControlSession>
@@ -686,6 +828,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
+  /**
+   * Newest remote-capture channel seq seen per tab (hub-issued monotonic).
+   * A start/stop landing behind a newer op is dropped inside the same
+   * critical section as the consumer mutation, so an async stop cannot
+   * kill a capture a newer viewer already owns.
+   */
+  const remoteSeqs = new Map<string, number>();
   let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
@@ -871,9 +1020,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
+    remoteSeq?: number,
   ) {
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
+        if (remoteSeq !== undefined) {
+          const seen = remoteSeqs.get(tabId) ?? -1;
+          if (remoteSeq <= seen) return [undefined, sessions] as const;
+          remoteSeqs.set(tabId, remoteSeq);
+        }
         const current = sessions.get(tabId);
         if (!current || !current.consumers.has(consumer)) {
           return [undefined, sessions] as const;
@@ -890,15 +1045,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const consumers = new Set(current.consumers);
         consumers.delete(consumer);
         if (consumers.size > 0) {
+          // The capture loop's scope belongs to whichever loop-owning
+          // consumers remain, not to the consumer being removed.
+          const stillLooping = consumers.has("picture-in-picture") || consumers.has("remote-live");
+          const removedLoopConsumer = consumer !== "recording";
           return [
-            consumer === "picture-in-picture" ? current.scope : undefined,
+            stillLooping ? undefined : current.scope,
             replaceMap(sessions, (copy) => {
               copy.set(tabId, {
                 ...current,
-                scope: consumer === "picture-in-picture" ? null : current.scope,
+                scope: stillLooping ? current.scope : null,
                 consumers,
-                lastPictureInPictureFrame:
-                  consumer === "picture-in-picture" ? null : current.lastPictureInPictureFrame,
+                lastDeliveredFrame:
+                  stillLooping && !removedLoopConsumer ? current.lastDeliveredFrame : null,
               });
             }),
           ] as const;
@@ -937,7 +1096,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const deliverEvent = (
-    eventKind: "state-change" | "recording-frame" | "recording-input" | "pointer-event",
+    eventKind:
+      | "state-change"
+      | "recording-frame"
+      | "recording-input"
+      | "pointer-event"
+      | "remote-frame",
     tabId: string,
     delivery: () => Effect.Effect<void>,
   ) =>
@@ -1922,23 +2086,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (isPreviewInputSignal(rawSignal) && (yield* consumeExpectedAgentInput(tabId, rawSignal))) {
         return;
       }
-      yield* Ref.update(controlEpochRef, (epochs) =>
-        replaceMap(epochs, (copy) => {
-          copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
-        }),
-      );
-      yield* update(
+      yield* markHumanInputPresent(
         tabId,
-        { controller: "human" },
         isPreviewInputSignal(rawSignal) && rawSignal.kind === "pointer"
           ? { x: rawSignal.x, y: rawSignal.y }
           : undefined,
       );
-      yield* Effect.sleep(750);
-      const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (tabs.get(tabId)?.controller === "human") {
-        yield* update(tabId, { controller: "none" });
-      }
     });
     const recordingInput = (_event: unknown, input: unknown) => {
       if (!isRecordingInput(input)) return;
@@ -2124,6 +2277,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           canGoForward: false,
           zoomFactor: normalizeZoomFactor(defaults?.zoomFactor),
           pictureInPicture: false,
+          remoteLive: false,
           colorScheme: defaults?.colorScheme ?? "system",
           audioMuted: false,
           audible: false,
@@ -2160,6 +2314,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         cancelPickElement(tabId),
         closePictureInPicture(tabId),
         stopFrameCapture(tabId, "recording"),
+        stopFrameCapture(tabId, "remote-live"),
+        releaseAllRemoteInput(tabId),
       ],
       {
         concurrency: 3,
@@ -2193,6 +2349,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       canGoForward: false,
       zoomFactor: DEFAULT_ZOOM_FACTOR,
       pictureInPicture: false,
+      remoteLive: false,
       colorScheme: "system",
       audioMuted: false,
       audible: false,
@@ -2417,6 +2574,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audioMuted: current?.audioMuted ?? false,
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
+        remoteLive: current?.remoteLive ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
         updatedAt,
       };
@@ -2897,9 +3055,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
   ) {
     const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
-    if (!captureSession?.consumers.has("picture-in-picture") || captureSession.scope === null)
-      return;
+    const ownsCaptureLoop =
+      (captureSession?.consumers.has("picture-in-picture") ?? false) ||
+      (captureSession?.consumers.has("remote-live") ?? false);
+    if (!captureSession || !ownsCaptureLoop || captureSession.scope === null) return;
     const wc = yield* requireWebContents(tabId);
+    // Geometry is captured BEFORE the pixels so the frame's stamp can never
+    // describe geometry read after capture — a resize mid-capture produces a
+    // frame stamped with the old geometry, which the hub fences against.
+    const remoteLiveCapture = captureSession.consumers.has("remote-live");
+    const viewportAtCapture = remoteLiveCapture
+      ? yield* readRemoteViewport(tabId, wc).pipe(
+          Effect.map(Option.some),
+          Effect.catch((error) =>
+            Effect.logWarning("Remote frame geometry read failed; frame drops.", {
+              tabId,
+              error,
+            }).pipe(Effect.as(Option.none<{ width: number; height: number }>())),
+          ),
+        )
+      : Option.none<{ width: number; height: number }>();
+    if (remoteLiveCapture && Option.isNone(viewportAtCapture)) return;
     const image = yield* attemptPromise(
       {
         operation: "frameCapture.capturePage",
@@ -2922,6 +3098,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     );
     if (!currentCaptureSession) return;
+    // The capture spanned a possible resize: the pixels correspond to
+    // whatever geometry held mid-flight, so a changed geometry means this
+    // frame is unstable — drop it rather than emit a frame stamped with
+    // either side of the transition.
+    if (remoteLiveCapture && Option.isSome(viewportAtCapture)) {
+      const viewportAfterCapture = yield* readRemoteViewport(tabId, wc).pipe(
+        Effect.map(Option.some),
+        Effect.catch(() => Effect.succeed(Option.none<{ width: number; height: number }>())),
+      );
+      if (
+        Option.isNone(viewportAfterCapture) ||
+        viewportAfterCapture.value.width !== viewportAtCapture.value.width ||
+        viewportAfterCapture.value.height !== viewportAtCapture.value.height
+      ) {
+        return;
+      }
+    }
     const size = yield* attempt(
       {
         operation: "frameCapture.measureFrame",
@@ -2948,10 +3141,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
     if (frameSession?.scope !== captureSession.scope) return;
-    const pictureInPicture =
-      frameSession.consumers.has("picture-in-picture") &&
-      frameSession.lastPictureInPictureFrame?.equals(encoded) !== true;
-    if (!pictureInPicture) return;
+    const changed = frameSession.lastDeliveredFrame?.equals(encoded) !== true;
+    const pictureInPicture = frameSession.consumers.has("picture-in-picture") && changed;
+    const remoteLive = frameSession.consumers.has("remote-live") && changed;
+    if (!pictureInPicture && !remoteLive) return;
+    const frameSeq = frameSession.frameSeq + 1;
     const receivedAt = yield* currentIso;
     const frame: DesktopPreviewRecordingFrame = {
       tabId,
@@ -2961,6 +3155,41 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       receivedAt,
     };
     const deliveries: Array<Effect.Effect<void>> = [];
+    // A failed delivery must not mark the frame delivered: the dedup marker
+    // only advances when every active consumer received this capture, so the
+    // next tick retries the same bytes.
+    let delivered = true;
+    // A remote-live consumer that joined mid-capture lacks a geometry stamp;
+    // leave the dedup marker behind so the next tick retries with geometry.
+    if (remoteLive && Option.isNone(viewportAtCapture)) {
+      delivered = false;
+    }
+    if (remoteLive && Option.isSome(viewportAtCapture)) {
+      deliveries.push(
+        Effect.gen(function* () {
+          const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          const remoteFrame: RemoteLiveFrame = {
+            tabId,
+            seq: frameSeq,
+            jpeg: encoded,
+            width: size.width,
+            height: size.height,
+            engineGeneration: String(wc.id),
+            geometryKey: remoteFrameGeometryKey(
+              String(wc.id),
+              Option.getOrThrow(viewportAtCapture),
+              tab?.zoomFactor ?? 1,
+            ),
+          };
+          const listeners = yield* Ref.get(remoteFrameListenersRef);
+          yield* Effect.forEach(
+            listeners,
+            (listener) => deliverEvent("remote-frame", tabId, () => listener(remoteFrame)),
+            { discard: true },
+          );
+        }),
+      );
+    }
     if (pictureInPicture) {
       const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
         tabId,
@@ -3011,35 +3240,46 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 );
               },
             );
-            yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) => {
-              if (sessions.get(tabId) !== frameSession) return sessions;
-              return replaceMap(sessions, (copy) => {
-                copy.set(tabId, {
-                  ...frameSession,
-                  lastPictureInPictureFrame: encoded,
-                });
-              });
-            });
           }).pipe(
             Effect.catch((error) =>
               Effect.logWarning("Picture-in-picture frame delivery failed.", {
                 tabId,
                 error,
-              }),
+              }).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    delivered = false;
+                  }),
+                ),
+              ),
             ),
           ),
         );
       }
     }
     yield* Effect.all(deliveries, { concurrency: 2, discard: true });
+    yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) => {
+      const current = sessions.get(tabId);
+      if (current?.scope !== captureSession.scope) return sessions;
+      return replaceMap(sessions, (copy) => {
+        copy.set(tabId, {
+          ...current,
+          frameSeq,
+          lastDeliveredFrame: delivered ? encoded : current.lastDeliveredFrame,
+        });
+      });
+    });
   });
 
   const startFrameCapture = Effect.fn("PreviewManager.startFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
+    remoteSeq?: number,
   ) {
-    // Recording keeps only the activity lease. Picture-in-picture owns the
-    // capturePage loop and tolerates transient compositor warmup failures.
+    // Recording keeps only the activity lease. Picture-in-picture and
+    // remote-live own the capturePage loop and tolerate transient compositor
+    // warmup failures.
+    const ownsCaptureLoop = consumer !== "recording";
     const captureNextFrame = Effect.sleep(PICTURE_IN_PICTURE_FRAME_INTERVAL_MS).pipe(
       Effect.andThen(capturePreviewFrame(tabId)),
       Effect.catch((error) =>
@@ -3053,6 +3293,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       frameCaptureSessionsRef,
       (sessions) => {
         return Effect.gen(function* () {
+          if (remoteSeq !== undefined) {
+            const seen = remoteSeqs.get(tabId) ?? -1;
+            if (remoteSeq <= seen) return [false, sessions] as const;
+            remoteSeqs.set(tabId, remoteSeq);
+          }
           if (!frameCaptureWindowOpen) {
             return yield* new PreviewMainWindowClosedError({ tabId });
           }
@@ -3070,12 +3315,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false);
             }
             let scope = current.scope;
-            if (consumer === "picture-in-picture" && scope === null) {
+            if (ownsCaptureLoop && scope === null) {
               scope = yield* Scope.fork(parentScope, "sequential");
               yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
             }
             return [
-              consumer === "picture-in-picture",
+              ownsCaptureLoop,
               replaceMap(sessions, (copy) => {
                 copy.set(tabId, {
                   ...current,
@@ -3096,19 +3341,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 : Effect.void,
             ),
           );
-          const scope =
-            consumer === "picture-in-picture" ? yield* Scope.fork(parentScope, "sequential") : null;
+          const scope = ownsCaptureLoop ? yield* Scope.fork(parentScope, "sequential") : null;
           if (scope !== null) {
             yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
           }
           return [
-            consumer === "picture-in-picture",
+            ownsCaptureLoop,
             replaceMap(sessions, (copy) => {
               copy.set(tabId, {
                 scope,
                 consumers: new Set([consumer]),
                 unthrottledWebContentsIds: new Set([wc.id]),
-                lastPictureInPictureFrame: null,
+                lastDeliveredFrame: null,
+                frameSeq: 0,
               });
             }),
           ] as const;
@@ -3270,7 +3515,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               const current = sessions.get(tabId);
               if (!current?.consumers.has("picture-in-picture")) return sessions;
               return replaceMap(sessions, (copy) => {
-                copy.set(tabId, { ...current, lastPictureInPictureFrame: null });
+                copy.set(tabId, { ...current, lastDeliveredFrame: null });
               });
             }),
           );
@@ -4227,6 +4472,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const keySequence = makePreviewAutomationNativeKeySequence(input, {
       isMac: hostPlatform === "darwin",
     });
+    const keyCdpSequence = makePreviewAutomationKeySequence(input, {
+      isMac: hostPlatform === "darwin",
+    });
     const recording = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
     if (recording?.consumers.has("recording") && recording.recordingInputOptions?.showKeyPresses) {
       yield* attempt({ operation: "recording.key", tabId, webContentsId: wc.id }, () =>
@@ -4239,10 +4487,63 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       );
     }
+    // The input-state owner record gates who may unwind guest-global focus
+    // state: an exiting action skips the emulation disable when a remote
+    // input lease has since claimed the guest (and vice versa).
+    const ownerToken = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie);
+    // Focus claim and release both ride the guest ledger lane: an action
+    // press and a remote lease's focus claim/cleanup serialize against each
+    // other, so neither can interleave an emulation toggle into the other's
+    // still-running claim.
+    const actionLedger = yield* remoteGuestLedgerFor(tabId, String(wc.id));
+    // A press that re-presses a key another lane holds takes over its ledger
+    // entry before the keyDown sends (latest presser owns); the action's
+    // keyUp then clears only its own claim and recomputes the modifier mask,
+    // so a stale lease entry never mirrors onto later remote pointer/wheel
+    // packets or owes a duplicate release at lease cleanup.
+    const heldKey =
+      keyCdpSequence.keyDown.code.length > 0
+        ? keyCdpSequence.keyDown.code
+        : keyCdpSequence.keyDown.key;
+    const recordHeldKey = () => {
+      if (heldKey.length === 0) return;
+      actionLedger.keys.set(heldKey, {
+        keyUp: keyCdpSequence.keyUp,
+        owner: { kind: "action", id: ownerToken },
+      });
+      actionLedger.heldModifiers = ledgerModifiers(actionLedger);
+    };
+    const clearHeldKey = Effect.sync(() => {
+      const entry = actionLedger.keys.get(heldKey);
+      if (entry?.owner.kind === "action" && entry.owner.id === ownerToken) {
+        actionLedger.keys.delete(heldKey);
+        actionLedger.heldModifiers = ledgerModifiers(actionLedger);
+      }
+    });
+    const releaseInput = actionLedger.lane.withPermits(1)(
+      Effect.gen(function* () {
+        const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+        if (owner?.kind === "action" && owner.id === ownerToken) {
+          yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
+            Effect.ignore,
+          );
+          yield* Ref.update(inputStateOwnerRef, (owners) =>
+            replaceMap(owners, (copy) => {
+              copy.delete(tabId);
+            }),
+          );
+        }
+      }),
+    );
     // CDP keyboard dispatch follows the embedder's focused renderer, and
     // WebContents.focus() is a no-op for webview guests. Native input targets
     // this guest's widget directly, so Enter cannot submit the host composer.
-    yield* Effect.gen(function* () {
+    const dispatch = Effect.gen(function* () {
+      yield* Ref.update(inputStateOwnerRef, (owners) =>
+        replaceMap(owners, (copy) => {
+          copy.set(tabId, { kind: "action", id: ownerToken });
+        }),
+      );
       const { sessionId, contextId } = yield* resolveKeyboardTarget(
         tabId,
         send,
@@ -4251,7 +4552,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       // Only descendant renderer sessions bypass Chromium's desktop focus lookup.
       if (sessionId) {
-        const keys = makePreviewAutomationKeySequence(input, { isMac: hostPlatform === "darwin" });
         yield* Effect.acquireRelease(Effect.void, () =>
           sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }, sessionId).pipe(
             Effect.ignore,
@@ -4259,9 +4559,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
         yield* send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId);
         yield* Effect.acquireRelease(Effect.void, () =>
-          sendCleanup("Input.dispatchKeyEvent", keys.keyUp, sessionId).pipe(Effect.ignore),
+          clearHeldKey.pipe(
+            Effect.andThen(sendCleanup("Input.dispatchKeyEvent", keyCdpSequence.keyUp, sessionId)),
+            Effect.ignore,
+          ),
         );
-        yield* send("Input.dispatchKeyEvent", keys.keyDown, sessionId);
+        recordHeldKey();
+        yield* send("Input.dispatchKeyEvent", keyCdpSequence.keyDown, sessionId);
         return;
       }
       if (keySequence.commands?.length) {
@@ -4350,6 +4654,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc,
         Effect.gen(function* () {
           yield* expectAgentInput(tabId, keySequence.signal);
+          recordHeldKey();
           yield* attempt(
             { operation: "automationPress.sendInputEvent", tabId, webContentsId: wc.id },
             () => {
@@ -4361,15 +4666,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }
             },
           );
-        }),
+        }).pipe(Effect.ensuring(clearHeldKey)),
         checkControl,
       );
-    }).pipe(
-      Effect.scoped,
-      Effect.ensuring(
-        sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(Effect.ignore),
-      ),
-    );
+    }).pipe(Effect.scoped);
+    yield* actionLedger.lane.withPermits(1)(dispatch).pipe(Effect.ensuring(releaseInput));
   });
 
   const automationPress = Effect.fn("PreviewManager.automationPress")(function* (
@@ -4576,6 +4877,794 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  // -----------------------------------------------------------------------
+  // Remote frames (`t3.browser/frames`) — human-lane input + remote capture
+  // -----------------------------------------------------------------------
+
+  const bumpHumanInputEpoch = Effect.fn("PreviewManager.bumpHumanInputEpoch")(function* (
+    tabId: string,
+    humanPoint?: { readonly x: number; readonly y: number },
+  ) {
+    yield* Ref.update(controlEpochRef, (epochs) =>
+      replaceMap(epochs, (copy) => {
+        copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
+      }),
+    );
+    yield* update(tabId, { controller: "human" }, humanPoint);
+  });
+
+  const settleHumanInputMarking = Effect.fn("PreviewManager.settleHumanInputMarking")(function* (
+    tabId: string,
+  ) {
+    yield* Effect.sleep(750);
+    const tabs = yield* SynchronizedRef.get(tabsRef);
+    if (tabs.get(tabId)?.controller === "human") {
+      yield* update(tabId, { controller: "none" });
+    }
+  });
+
+  /**
+   * The `preview:human-input` IPC path: bump the control epoch and mark the
+   * tab human-driven for 750 ms, preempting the semaphore-held action.
+   */
+  const markHumanInputPresent = Effect.fn("PreviewManager.markHumanInputPresent")(function* (
+    tabId: string,
+    humanPoint?: { readonly x: number; readonly y: number },
+  ) {
+    yield* bumpHumanInputEpoch(tabId, humanPoint);
+    yield* settleHumanInputMarking(tabId);
+  });
+
+  const parseRemoteFrameSessionTuple = (runtimeTabId: string): RemoteFrameSessionTuple | null => {
+    try {
+      const parsed: unknown = JSON.parse(runtimeTabId);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length === 4 &&
+        typeof parsed[0] === "string" &&
+        typeof parsed[1] === "string" &&
+        typeof parsed[3] === "string"
+      ) {
+        return {
+          environmentId: parsed[0],
+          threadId: parsed[1],
+          serverEpoch: typeof parsed[2] === "string" ? parsed[2] : "none",
+          tabId: parsed[3],
+        };
+      }
+    } catch {
+      // Not a runtime-scoped tab id (e.g. a hand-created tab) — not streamable.
+    }
+    return null;
+  };
+
+  const readRemoteViewport = Effect.fn("PreviewManager.readRemoteViewport")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+  ) {
+    const raw = yield* attemptPromise(
+      { operation: "remoteFrames.readViewport", tabId, webContentsId: wc.id },
+      () =>
+        wc.executeJavaScript("({ width: window.innerWidth, height: window.innerHeight })", true),
+    );
+    const viewport = raw as { readonly width?: unknown; readonly height?: unknown } | null;
+    if (
+      typeof viewport?.width !== "number" ||
+      typeof viewport?.height !== "number" ||
+      !Number.isFinite(viewport.width) ||
+      !Number.isFinite(viewport.height) ||
+      viewport.width <= 0 ||
+      viewport.height <= 0
+    ) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.readViewport",
+        tabId,
+        webContentsId: wc.id,
+        cause: new Error("Guest viewport is not readable."),
+      });
+    }
+    return { width: Math.round(viewport.width), height: Math.round(viewport.height) } as const;
+  });
+
+  const remoteFrameSessions = Effect.fn("PreviewManager.remoteFrameSessions")(function* () {
+    const [tabs, captures] = yield* Effect.all(
+      [SynchronizedRef.get(tabsRef), SynchronizedRef.get(frameCaptureSessionsRef)],
+      { concurrency: 2 },
+    );
+    const sessions: Array<RemoteFrameSessionInfo> = [];
+    for (const [runtimeTabId, tab] of tabs) {
+      const tuple = parseRemoteFrameSessionTuple(runtimeTabId);
+      if (!tuple || tab.webContentsId === null) continue;
+      const wc = webContents.fromId(tab.webContentsId);
+      if (!wc || wc.isDestroyed()) continue;
+      const viewport = yield* readRemoteViewport(runtimeTabId, wc).pipe(
+        Effect.map((value) => ({ width: value.width, height: value.height }) as const),
+        Effect.option,
+      );
+      // The viewport read can outlive the guest it describes: re-resolve so
+      // a session whose webContents was replaced mid-enumeration is not
+      // reported under the superseded generation.
+      const current = (yield* SynchronizedRef.get(tabsRef)).get(runtimeTabId);
+      if (wc.isDestroyed() || current?.webContentsId !== wc.id) continue;
+      sessions.push({
+        ...tuple,
+        runtimeTabId,
+        engineGeneration: String(wc.id),
+        viewportCss: Option.getOrNull(viewport),
+        streaming: captures.get(runtimeTabId)?.consumers.has("remote-live") ?? false,
+      });
+    }
+    return sessions;
+  });
+
+  const remoteFrameConfig = Effect.fn("PreviewManager.remoteFrameConfig")(function* (
+    tabId: string,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    const viewportCss = yield* readRemoteViewport(tabId, wc);
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    // The awaited reads above can outlive the guest they describe: a
+    // replaced webContents makes the result obsolete — returning it would
+    // publish a superseded generation to the hub.
+    if (wc.isDestroyed() || tab?.webContentsId !== wc.id) {
+      return yield* new PreviewWebContentsNotFoundError({
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
+    return {
+      engineGeneration: String(wc.id),
+      zoomFactor: tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR,
+      viewportCss,
+    } satisfies RemoteFrameConfigInfo;
+  });
+
+  const captureFrameJpeg = Effect.fn("PreviewManager.captureFrameJpeg")(function* (tabId: string) {
+    const readGeometry = (wc: Electron.WebContents) =>
+      Effect.gen(function* () {
+        const viewportCss = yield* readRemoteViewport(tabId, wc);
+        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        // The awaited viewport read can outlive the guest it describes: a
+        // replaced webContents makes every value derived from `wc` obsolete —
+        // stamping or publishing against it would attribute old-guest pixels
+        // (and old-guest geometry) to the live generation. Failing here feeds
+        // the capture retry, which re-resolves the live guest.
+        if (wc.isDestroyed() || tab?.webContentsId !== wc.id) {
+          return yield* new PreviewOperationError({
+            operation: "remoteFrames.capturePage",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error("Guest was replaced during capture."),
+          });
+        }
+        const engineGeneration = String(wc.id);
+        const zoomFactor = tab?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
+        return {
+          engineGeneration,
+          viewportCss,
+          geometryKey: remoteFrameGeometryKey(engineGeneration, viewportCss, zoomFactor),
+        } as const;
+      });
+    // The stamp must describe ONE geometry: generation, viewport, and zoom
+    // are read around the capture and the frame is kept only when both
+    // reads agree — a resize or zoom change mid-capture would otherwise
+    // stamp new-size pixels with the old viewport. Unstable captures retry;
+    // a still-unstable one drops rather than publishing a mixed stamp.
+    const capture = Effect.gen(function* () {
+      const wc = yield* requireWebContents(tabId);
+      const before = yield* readGeometry(wc);
+      const image = yield* capturePageWithRetry(
+        { operation: "remoteFrames.capturePage", tabId, webContentsId: wc.id },
+        tabId,
+        wc,
+      );
+      const after = yield* readGeometry(wc);
+      if (before.geometryKey !== after.geometryKey) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.capturePage",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Guest geometry changed during capture."),
+        });
+      }
+      const size = yield* attempt(
+        { operation: "remoteFrames.measureFrame", tabId, webContentsId: wc.id },
+        () => image.getSize(),
+      );
+      if (size.width <= 0 || size.height <= 0) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.measureFrame",
+          tabId,
+          webContentsId: wc.id,
+          cause: new Error("Captured frame has no size."),
+        });
+      }
+      const jpeg = yield* attempt(
+        { operation: "remoteFrames.encodeFrame", tabId, webContentsId: wc.id },
+        () => image.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY),
+      );
+      return {
+        jpeg,
+        width: size.width,
+        height: size.height,
+        engineGeneration: before.engineGeneration,
+        viewportCss: before.viewportCss,
+        geometryKey: before.geometryKey,
+      } as const;
+    });
+    return yield* capture.pipe(
+      Effect.retry({
+        times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+        schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+        while: isPreviewOperationError,
+      }),
+    );
+  });
+
+  const startRemoteCapture = Effect.fn("PreviewManager.startRemoteCapture")(function* (
+    tabId: string,
+    remoteSeq?: number,
+  ) {
+    yield* startFrameCapture(tabId, "remote-live", remoteSeq);
+    // A stop that landed while the acquisition was in flight already removed
+    // the consumer and cleared remoteLive — only reassert the flag when the
+    // consumer registration survived to here, or the state resurrects with
+    // no capture behind it.
+    const stillWanted =
+      (yield* SynchronizedRef.get(frameCaptureSessionsRef))
+        .get(tabId)
+        ?.consumers.has("remote-live") ?? false;
+    if (stillWanted) yield* update(tabId, { remoteLive: true });
+  });
+
+  const stopRemoteCapture = Effect.fn("PreviewManager.stopRemoteCapture")(function* (
+    tabId: string,
+    remoteSeq?: number,
+  ) {
+    yield* stopFrameCapture(tabId, "remote-live", remoteSeq);
+    const stillLive =
+      (yield* SynchronizedRef.get(frameCaptureSessionsRef))
+        .get(tabId)
+        ?.consumers.has("remote-live") ?? false;
+    if (!stillLive) yield* update(tabId, { remoteLive: false });
+  });
+
+  const remoteInputLeaseKey = (tabId: string, leaseId: string): string => `${tabId} ${leaseId}`;
+
+  /**
+   * The shared held-input ledger for one guest generation. The ledger binds
+   * to `String(wc.id)`: when the guest is replaced the old ledger is dropped —
+   * its held entries die with the destroyed webContents — and a fresh ledger
+   * starts against the new guest.
+   */
+  const remoteGuestLedgerFor = Effect.fn("PreviewManager.remoteGuestLedgerFor")(function* (
+    tabId: string,
+    generation: string,
+  ) {
+    return yield* SynchronizedRef.modifyEffect(remoteGuestInputLedgersRef, (ledgers) => {
+      const existing = ledgers.get(tabId);
+      if (existing && existing.generation === generation) {
+        return Effect.succeed([existing, ledgers] as const);
+      }
+      return Effect.map(Semaphore.make(1), (lane) => {
+        const created: RemoteGuestInputLedger = {
+          generation,
+          lane,
+          keys: new Map(),
+          buttons: new Map(),
+          heldModifiers: 0,
+          lastPointer: null,
+          viewportCss: null,
+        };
+        return [
+          created,
+          replaceMap(ledgers, (copy) => {
+            copy.set(tabId, created);
+          }),
+        ] as const;
+      });
+    });
+  });
+
+  /**
+   * Resolve (or create) the lease's input state, fenced to the guest
+   * generation the hub bound at socket attach. A packet naming a dead
+   * generation fails here — it can never reach the replacement guest.
+   */
+  const requireRemoteInputLease = Effect.fn("PreviewManager.requireRemoteInputLease")(function* (
+    tabId: string,
+    leaseId: string,
+    engineGeneration: string,
+  ) {
+    const existing = (yield* SynchronizedRef.get(remoteInputStatesRef)).get(
+      remoteInputLeaseKey(tabId, leaseId),
+    );
+    if (existing) {
+      if (existing.ending) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.inputLease",
+          tabId,
+          cause: new Error("Input lease is closing."),
+        });
+      }
+      if (existing.ledger.generation !== engineGeneration) {
+        return yield* new PreviewOperationError({
+          operation: "remoteFrames.inputLease",
+          tabId,
+          cause: new Error("Input lease does not match the bound guest generation."),
+        });
+      }
+      return existing;
+    }
+    const wc = yield* requireWebContents(tabId);
+    if (String(wc.id) !== engineGeneration) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.inputLease",
+        tabId,
+        webContentsId: wc.id,
+        cause: new Error("Bound guest generation was replaced."),
+      });
+    }
+    const ledger = yield* remoteGuestLedgerFor(tabId, engineGeneration);
+    const resolved = yield* SynchronizedRef.modify(remoteInputStatesRef, (states) => {
+      const current = states.get(remoteInputLeaseKey(tabId, leaseId));
+      if (current) return [current, states] as const;
+      const created: RemoteInputLeaseState = {
+        ledger,
+        ending: false,
+        previouslyFocusedId: null,
+      };
+      return [
+        created,
+        replaceMap(states, (copy) => {
+          copy.set(remoteInputLeaseKey(tabId, leaseId), created);
+        }),
+      ] as const;
+    });
+    if (resolved.ending) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.inputLease",
+        tabId,
+        cause: new Error("Input lease is closing."),
+      });
+    }
+    return resolved;
+  });
+
+  const REMOTE_INPUT_MODIFIER_CODES: ReadonlyMap<string, number> = new Map([
+    ["AltLeft", 1],
+    ["AltRight", 1],
+    ["ControlLeft", 2],
+    ["ControlRight", 2],
+    ["MetaLeft", 4],
+    ["MetaRight", 4],
+    ["OSLeft", 4],
+    ["OSRight", 4],
+    ["ShiftLeft", 8],
+    ["ShiftRight", 8],
+  ]);
+
+  /** Recompute the CDP modifier bitmask from every key currently held. */
+  const ledgerModifiers = (ledger: RemoteGuestInputLedger): number => {
+    let bits = 0;
+    for (const heldKey of ledger.keys.keys()) {
+      bits |= REMOTE_INPUT_MODIFIER_CODES.get(heldKey) ?? 0;
+    }
+    return bits;
+  };
+
+  /**
+   * One validated remote-input event, run inside the guest ledger's ordered
+   * lane. This is the human lane: it bumps the control epoch and dispatches
+   * directly on the control debugger, never queuing behind agent actions.
+   * Held ownership is recorded BEFORE each press send — an applied-but-
+   * rejected send still owes cleanup — and releases only send when the
+   * lease still owns the ledger entry.
+   */
+  const dispatchRemoteInputSerialized = Effect.fn("PreviewManager.dispatchRemoteInput")(function* (
+    tabId: string,
+    leaseId: string,
+    state: RemoteInputLeaseState,
+    event: BrowserFrameInputEvent,
+    viewportCss: { readonly width: number; readonly height: number } | null,
+    geometryKey: string | null,
+  ) {
+    const ledger = state.ledger;
+    // Cleanup began after this packet was admitted: it drops here rather than
+    // dispatching into a guest whose held state is being released.
+    if (state.ending) {
+      return yield* new PreviewOperationError({
+        operation: "remoteFrames.dispatch",
+        tabId,
+        cause: new Error("Input lease is closing."),
+      });
+    }
+    const wc = yield* requireWebContents(tabId);
+    /**
+     * The dispatch fences, re-runnable at any point in the lane: the tab
+     * must still resolve to THIS webContents and the admitted geometry key
+     * must still describe the guest's live viewport. Every await below —
+     * the admitted-geometry viewport read, the fallback viewport read, and
+     * the focus grabs — is a window for a guest swap or resize to land
+     * between an earlier check and the real actuation, so the fence runs
+     * again immediately before the input send, not just at lane entry.
+     */
+    const refence = Effect.fn("PreviewManager.dispatchRemoteInput.refence")(function* () {
+      const sameGuest = Effect.fn("PreviewManager.dispatchRemoteInput.sameGuest")(function* () {
+        const currentWc = yield* requireWebContents(tabId);
+        if (currentWc.id !== wc.id || String(wc.id) !== ledger.generation) {
+          return yield* new PreviewOperationError({
+            operation: "remoteFrames.dispatch",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error("Bound guest generation was replaced."),
+          });
+        }
+      });
+      yield* sameGuest();
+      if (geometryKey !== null) {
+        const currentViewport = yield* readRemoteViewport(tabId, wc);
+        const currentZoom =
+          (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.zoomFactor ?? DEFAULT_ZOOM_FACTOR;
+        if (
+          remoteFrameGeometryKey(ledger.generation, currentViewport, currentZoom) !== geometryKey
+        ) {
+          return yield* new PreviewOperationError({
+            operation: "remoteFrames.dispatch",
+            tabId,
+            webContentsId: wc.id,
+            cause: new Error("Bound geometry changed before dispatch."),
+          });
+        }
+      }
+      // The viewport read itself was an await — a guest swap landing inside
+      // it would otherwise pass both checks above and still actuate into the
+      // replaced webContents.
+      yield* sameGuest();
+    });
+    // Re-fence inside the lane: a packet admitted before a guest replacement
+    // must fail here rather than dispatch into the new webContents, and a
+    // resize landing while the packet waited for the permit must not let it
+    // actuate with coordinates authored for the old viewport.
+    yield* refence();
+    const owner: InputStateOwner = { kind: "lease", id: leaseId };
+    const control = yield* ensureControlSession(wc);
+    const send = (method: string, params: Record<string, unknown>) =>
+      attemptPromise({ operation: `remoteInput.${method}`, tabId, webContentsId: wc.id }, () =>
+        control.debugger.sendCommand(method, params),
+      );
+    const viewport = viewportCss ?? ledger.viewportCss ?? (yield* readRemoteViewport(tabId, wc));
+    ledger.viewportCss = viewport;
+    const toCssPoint = (x: number, y: number) => ({
+      x: Math.min(Math.max(Math.round(x * viewport.width), 0), viewport.width),
+      y: Math.min(Math.max(Math.round(y * viewport.height), 0), viewport.height),
+    });
+
+    const isActuation = !(event.type === "pointer" && event.phase === "move");
+    if (isActuation) {
+      // Remote input is human input: the epoch bump preempts semaphore-held
+      // actions before dispatch, and must not register expectAgentInput.
+      yield* bumpHumanInputEpoch(tabId);
+      runFork(settleHumanInputMarking(tabId));
+    }
+
+    // Focus-affecting classes hold the guest-global input state, mirroring
+    // the action path's focus grab. Ownership is re-checked inside the lane
+    // on EVERY such event (claim generations): a lease that lost focus to
+    // an action or another lease re-claims and re-captures the previously
+    // focused target — a one-way flag could never re-acquire.
+    const focusAffecting =
+      (event.type === "pointer" && event.phase === "down") ||
+      (event.type === "key" && event.phase === "down") ||
+      event.type === "text";
+    if (focusAffecting) {
+      const focusOwner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+      if (!(focusOwner?.kind === "lease" && focusOwner.id === leaseId)) {
+        const previouslyFocused = yield* attempt(
+          { operation: "remoteInput.getFocusedWebContents", tabId, webContentsId: wc.id },
+          () => webContents.getFocusedWebContents(),
+        );
+        state.previouslyFocusedId =
+          previouslyFocused && previouslyFocused.id !== wc.id ? previouslyFocused.id : null;
+        yield* attempt(
+          { operation: "remoteInput.focusWebContents", tabId, webContentsId: wc.id },
+          () => wc.focus(),
+        );
+        yield* send("Page.bringToFront", {});
+        yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
+        yield* Ref.update(inputStateOwnerRef, (owners) =>
+          replaceMap(owners, (copy) => {
+            copy.set(tabId, { kind: "lease", id: leaseId });
+          }),
+        );
+      }
+    }
+
+    // Every await since lane entry — the viewport reads and the focus grabs —
+    // let a guest swap or resize land between the first fence and this point.
+    // Revalidate immediately before actuation: coordinates and focus were
+    // claimed for the guest+geometry the packet was admitted against.
+    yield* refence();
+
+    switch (event.type) {
+      case "pointer": {
+        const point = toCssPoint(event.x, event.y);
+        ledger.lastPointer = point;
+        if (event.phase === "move") {
+          yield* send("Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            ...point,
+            modifiers: ledger.heldModifiers,
+          });
+          return;
+        }
+        const button = event.button ?? "left";
+        if (event.phase === "down") {
+          // Latest presser owns the held button — recorded before the send so
+          // an applied-but-rejected dispatch still owes cleanup.
+          ledger.buttons.set(button, owner);
+          yield* send("Input.dispatchMouseEvent", {
+            type: "mousePressed",
+            ...point,
+            button,
+            clickCount: 1,
+            modifiers: ledger.heldModifiers,
+          });
+          return;
+        }
+        // Physical up is honored regardless of the ledger owner: the
+        // pointer is physically released, so the entry clears for whichever
+        // lane owns it and the release dispatches unconditionally.
+        ledger.buttons.delete(button);
+        yield* send("Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          ...point,
+          button,
+          clickCount: 1,
+          modifiers: ledger.heldModifiers,
+        });
+        return;
+      }
+      case "wheel": {
+        const point = toCssPoint(event.x, event.y);
+        ledger.lastPointer = point;
+        yield* send("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          ...point,
+          deltaX: event.deltaX,
+          deltaY: event.deltaY,
+          modifiers: ledger.heldModifiers,
+        });
+        return;
+      }
+      case "key": {
+        const sequence = makePreviewAutomationKeySequence(
+          { key: event.key, modifiers: event.modifiers },
+          { isMac: hostPlatform === "darwin" },
+        );
+        // The client supplies the DOM `code`; use it when it names a physical
+        // key the resolver could not infer (e.g. non-US layouts).
+        const code = sequence.keyDown.code.length > 0 ? sequence.keyDown.code : event.code;
+        const heldKey = code.length > 0 ? code : event.code;
+        if (event.phase === "down") {
+          const keyDown = { ...sequence.keyDown, code };
+          if (heldKey.length > 0) {
+            ledger.keys.set(heldKey, { keyUp: { ...sequence.keyUp, code }, owner });
+            ledger.heldModifiers = ledgerModifiers(ledger);
+          }
+          yield* send("Input.dispatchKeyEvent", keyDown);
+          return;
+        }
+        // Physical key-up is honored regardless of the ledger owner:
+        // the key is physically up, so the entry clears for whichever lane
+        // owns it and the release dispatches unconditionally.
+        const entry = ledger.keys.get(heldKey);
+        if (entry !== undefined) {
+          ledger.keys.delete(heldKey);
+          ledger.heldModifiers = ledgerModifiers(ledger);
+          yield* send("Input.dispatchKeyEvent", entry.keyUp);
+          return;
+        }
+        yield* send("Input.dispatchKeyEvent", { ...sequence.keyUp, code });
+        return;
+      }
+      case "text": {
+        // `Input.insertText` drops into a guest that no pointer event has
+        // activated; the focus claim above runs first for this event class.
+        yield* send("Input.insertText", { text: event.text });
+        return;
+      }
+    }
+  });
+
+  const dispatchRemoteInput = Effect.fn("PreviewManager.dispatchRemoteInputEntry")(function* (
+    tabId: string,
+    leaseId: string,
+    engineGeneration: string,
+    event: BrowserFrameInputEvent,
+    viewportCss: { readonly width: number; readonly height: number } | null,
+    geometryKey: string | null,
+  ) {
+    const state = yield* requireRemoteInputLease(tabId, leaseId, engineGeneration);
+    yield* state.ledger.lane.withPermits(1)(
+      dispatchRemoteInputSerialized(tabId, leaseId, state, event, viewportCss, geometryKey),
+    );
+  });
+
+  /**
+   * Held-state release shared by lease cleanup and geometry reset. Runs on
+   * the guest ledger's lane so releases join behind that lane's queued
+   * dispatches, targets the ledger's OWN generation (`webContents.fromId`),
+   * never the live tab lookup — a replaced guest gets nothing, its entries
+   * are just dropped.
+   */
+  const releaseLeaseHeldState = Effect.fn("PreviewManager.releaseLeaseHeldState")(function* (
+    tabId: string,
+    leaseId: string,
+    ledger: RemoteGuestInputLedger,
+    options?: { readonly releaseFocus?: boolean; readonly previouslyFocusedId?: number | null },
+  ) {
+    const releaseFocus = options?.releaseFocus ?? false;
+    const previouslyFocusedId = options?.previouslyFocusedId ?? null;
+    return yield* ledger.lane.withPermits(1)(
+      Effect.gen(function* () {
+        const generationId = Number(ledger.generation);
+        const wc = Number.isFinite(generationId) ? webContents.fromId(generationId) : undefined;
+        const live = wc !== undefined && !wc.isDestroyed();
+        const control = live
+          ? (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id)
+          : undefined;
+        // Truthful accounting: every send attempt is counted before it
+        // runs; a failed send keeps `failed` nonzero so callers can surface
+        // cleanup-incomplete instead of reporting a clean release.
+        let attempted = 0;
+        let failed = 0;
+        const sendCleanup = (method: string, params: Record<string, unknown>) =>
+          live && control
+            ? Effect.andThen(
+                Effect.sync(() => {
+                  attempted += 1;
+                }),
+                attemptPromise(
+                  {
+                    operation: `remoteInput.cleanup.${method}`,
+                    tabId,
+                    webContentsId: wc.id,
+                  },
+                  () => control.debugger.sendCommand(method, params),
+                ),
+              ).pipe(
+                Effect.catch(() =>
+                  Effect.sync(() => {
+                    failed += 1;
+                  }),
+                ),
+              )
+            : Effect.void;
+        for (const [button, buttonOwner] of Array.from(ledger.buttons.entries())) {
+          if (buttonOwner.kind !== "lease" || buttonOwner.id !== leaseId) continue;
+          ledger.buttons.delete(button);
+          yield* sendCleanup("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: ledger.lastPointer?.x ?? 0,
+            y: ledger.lastPointer?.y ?? 0,
+            button,
+            clickCount: 1,
+          });
+        }
+        for (const [heldKey, entry] of Array.from(ledger.keys.entries())) {
+          if (entry.owner.kind !== "lease" || entry.owner.id !== leaseId) continue;
+          ledger.keys.delete(heldKey);
+          yield* sendCleanup("Input.dispatchKeyEvent", entry.keyUp);
+        }
+        ledger.heldModifiers = ledgerModifiers(ledger);
+        if (releaseFocus) {
+          const owner = (yield* Ref.get(inputStateOwnerRef)).get(tabId);
+          if (owner?.kind === "lease" && owner.id === leaseId) {
+            yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false });
+            if (previouslyFocusedId !== null) {
+              const previous = webContents.fromId(previouslyFocusedId);
+              if (previous && !previous.isDestroyed()) {
+                yield* attempt(
+                  {
+                    operation: "remoteInput.restoreFocusedWebContents",
+                    tabId,
+                    webContentsId: previous.id,
+                  },
+                  () => previous.focus(),
+                ).pipe(
+                  Effect.catch(() =>
+                    Effect.sync(() => {
+                      attempted += 1;
+                      failed += 1;
+                    }),
+                  ),
+                );
+              }
+            }
+            yield* Ref.update(inputStateOwnerRef, (owners) =>
+              replaceMap(owners, (copy) => {
+                copy.delete(tabId);
+              }),
+            );
+          }
+        }
+        return { attempted, failed } satisfies RemoteInputReleaseResult;
+      }),
+    );
+  });
+
+  /**
+   * Lease cleanup: marks the lease `ending` inside the registry (queued lane
+   * work and fresh dispatches fail from here), releases everything the lease
+   * holds on the guest ledger's lane so a `keyUp` can never dispatch ahead of
+   * a still-queued `keyDown`, and only then removes the entry — sends and
+   * failures are accounted before the record disappears. Runs on every
+   * lease end path — socket close, supersession, fence mismatch, revocation,
+   * expiry.
+   */
+  const releaseRemoteInput = Effect.fn("PreviewManager.releaseRemoteInput")(function* (
+    tabId: string,
+    leaseId: string,
+  ) {
+    const key = remoteInputLeaseKey(tabId, leaseId);
+    const state = yield* SynchronizedRef.modify(remoteInputStatesRef, (states) => {
+      const current = states.get(key);
+      if (!current || current.ending) return [undefined, states] as const;
+      current.ending = true;
+      return [current, states] as const;
+    });
+    if (!state) return { attempted: 0, failed: 0 };
+    const result = yield* releaseLeaseHeldState(tabId, leaseId, state.ledger, {
+      // Focus unwind is gated inside on who currently owns the claim — a lease
+      // that re-lost focus before cleanup does not touch another lane's claim.
+      releaseFocus: true,
+      previouslyFocusedId: state.previouslyFocusedId,
+    });
+    yield* SynchronizedRef.update(remoteInputStatesRef, (states) =>
+      replaceMap(states, (copy) => {
+        if (copy.get(key) === state) copy.delete(key);
+      }),
+    );
+    return result;
+  });
+
+  /**
+   * Ordered held-state release WITHOUT ending the lease: used when the
+   * session geometry changes, so stale up events cannot strand
+   * keys/buttons across the geometry bump. Focus is left claimed. Failures
+   * aggregate so the hub can flag the bound socket cleanup-incomplete.
+   */
+  const releaseRemoteInputHeld = Effect.fn("PreviewManager.releaseRemoteInputHeld")(function* (
+    tabId: string,
+  ) {
+    const states = yield* SynchronizedRef.get(remoteInputStatesRef);
+    const results = yield* Effect.forEach(
+      Array.from(states.entries()).filter(([key]) => key.startsWith(`${tabId} `)),
+      ([key, state]) => releaseLeaseHeldState(tabId, key.slice(tabId.length + 1), state.ledger),
+    );
+    return {
+      attempted: results.reduce((sum, result) => sum + result.attempted, 0),
+      failed: results.reduce((sum, result) => sum + result.failed, 0),
+    };
+  });
+
+  const releaseAllRemoteInput = Effect.fn("PreviewManager.releaseAllRemoteInput")(function* (
+    tabId: string,
+  ) {
+    const states = yield* SynchronizedRef.get(remoteInputStatesRef);
+    yield* Effect.forEach(
+      Array.from(states.keys()).filter((key) => key.startsWith(`${tabId} `)),
+      (key) => releaseRemoteInput(tabId, key.slice(tabId.length + 1)),
+      { discard: true },
+    );
+    yield* SynchronizedRef.update(remoteGuestInputLedgersRef, (ledgers) =>
+      replaceMap(ledgers, (copy) => {
+        copy.delete(tabId);
+      }),
+    );
+  });
+
   const subscribe = <A>(
     ref: Ref.Ref<ReadonlySet<A>>,
     listener: A,
@@ -4599,6 +5688,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Ref.set(expectedAgentInputsRef, new Map()),
         Ref.set(pointerEventListenersRef, new Set()),
         Ref.set(recordingFrameListenersRef, new Set()),
+        Ref.set(remoteFrameListenersRef, new Set()),
+        SynchronizedRef.set(remoteInputStatesRef, new Map()),
+        Ref.set(inputStateOwnerRef, new Map()),
         Ref.set(recordingInputListenersRef, new Set()),
       ],
       { discard: true },
@@ -4647,7 +5739,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       subscribe(recordingInputListenersRef, listener),
     subscribeRecordingFrames: (listener: RecordingFrameListener) =>
       subscribe(recordingFrameListenersRef, listener),
+    subscribeRemoteFrames: (listener: RemoteFrameListener) =>
+      subscribe(remoteFrameListenersRef, listener),
+    releaseRemoteInputHeld,
     subscribeStateChanges: (listener: Listener) => subscribe(listenersRef, listener),
+    remoteFrameSessions,
+    remoteFrameConfig,
+    captureFrameJpeg,
+    startRemoteCapture,
+    stopRemoteCapture,
+    dispatchRemoteInput,
+    releaseRemoteInput,
     zoomIn: (tabId: string) => applyZoom(tabId, (current) => nextZoomLevel(current, "in")),
     zoomOut: (tabId: string) => applyZoom(tabId, (current) => nextZoomLevel(current, "out")),
   };
@@ -5059,6 +6161,57 @@ export class PreviewManager extends Context.Service<
     readonly subscribeRecordingFrames: (
       listener: RecordingFrameListener,
     ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly subscribeRemoteFrames: (
+      listener: RemoteFrameListener,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    readonly remoteFrameSessions: () => Effect.Effect<
+      ReadonlyArray<RemoteFrameSessionInfo>,
+      PreviewManagerError
+    >;
+    readonly remoteFrameConfig: (
+      tabId: string,
+    ) => Effect.Effect<RemoteFrameConfigInfo, PreviewManagerError>;
+    readonly captureFrameJpeg: (tabId: string) => Effect.Effect<
+      {
+        readonly jpeg: Buffer;
+        readonly width: number;
+        readonly height: number;
+        readonly engineGeneration: string;
+        readonly viewportCss: { readonly width: number; readonly height: number };
+        readonly geometryKey: string;
+      },
+      PreviewManagerError
+    >;
+    readonly startRemoteCapture: (
+      tabId: string,
+      remoteSeq?: number,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly stopRemoteCapture: (tabId: string, remoteSeq?: number) => Effect.Effect<void>;
+    readonly dispatchRemoteInput: (
+      tabId: string,
+      leaseId: string,
+      engineGeneration: string,
+      event: BrowserFrameInputEvent,
+      viewportCss: { readonly width: number; readonly height: number } | null,
+      /**
+       * The geometry the packet was admitted under, as a
+       * `remoteFrameGeometryKey`; `null` skips the lane-internal geometry
+       * re-fence (callers that never asserted a geometry).
+       */
+      geometryKey: string | null,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly releaseRemoteInput: (
+      tabId: string,
+      leaseId: string,
+    ) => Effect.Effect<RemoteInputReleaseResult>;
+    /**
+     * Ordered held-state release across every remote-input lease on the tab,
+     * keeping the leases alive. Called on a geometry bump before the new
+     * geometry is advertised. `failed > 0` means cleanup did
+     * not fully settle — callers should flag the surface cleanup-incomplete
+     * rather than report a clean release.
+     */
+    readonly releaseRemoteInputHeld: (tabId: string) => Effect.Effect<RemoteInputReleaseResult>;
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
@@ -5149,6 +6302,15 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     subscribeStateChanges: operations.subscribeStateChanges,
     subscribePointerEvents: operations.subscribePointerEvents,
     subscribeRecordingFrames: operations.subscribeRecordingFrames,
+    subscribeRemoteFrames: operations.subscribeRemoteFrames,
+    remoteFrameSessions: operations.remoteFrameSessions,
+    remoteFrameConfig: operations.remoteFrameConfig,
+    captureFrameJpeg: operations.captureFrameJpeg,
+    startRemoteCapture: operations.startRemoteCapture,
+    stopRemoteCapture: operations.stopRemoteCapture,
+    dispatchRemoteInput: operations.dispatchRemoteInput,
+    releaseRemoteInput: operations.releaseRemoteInput,
+    releaseRemoteInputHeld: operations.releaseRemoteInputHeld,
     subscribeRecordingInputs: operations.subscribeRecordingInputs,
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));

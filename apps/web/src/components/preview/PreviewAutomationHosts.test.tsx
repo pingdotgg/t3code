@@ -230,6 +230,7 @@ describe("PreviewAutomationHosts ownership", () => {
       loading: false,
       zoomFactor: 1,
       pictureInPicture: false,
+      remoteLive: false,
       colorScheme: "system" as const,
       audioMuted: false,
       audible: false,

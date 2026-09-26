@@ -52,6 +52,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PuzzleIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -66,9 +67,16 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import {
+  dispatchExtensionCommand,
+  extensionCommandRevision,
+  listPaletteExtensionCommands,
+  subscribeExtensionCommands,
+} from "../extensions/extensionCommandRegistry";
 import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -1744,6 +1752,16 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  const extensionCommandsRevision = useSyncExternalStore(
+    subscribeExtensionCommands,
+    extensionCommandRevision,
+    extensionCommandRevision,
+  );
+  const extensionCommands = useMemo(
+    () => listPaletteExtensionCommands(),
+    [extensionCommandsRevision],
+  );
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -2084,6 +2102,21 @@ function OpenCommandPaletteDialog(props: {
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
         });
+      },
+    });
+  }
+
+  for (const extensionCommand of extensionCommands) {
+    actionItems.push({
+      kind: "action",
+      value: `action:extension:${extensionCommand.environmentId}:${extensionCommand.command}`,
+      searchTerms: [extensionCommand.title, extensionCommand.installationId],
+      title: extensionCommand.title,
+      description: extensionCommand.installationId,
+      icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+      disabled: !extensionCommand.enabled,
+      run: async () => {
+        dispatchExtensionCommand(extensionCommand.command, extensionCommand.environmentId);
       },
     });
   }

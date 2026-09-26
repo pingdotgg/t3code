@@ -192,6 +192,9 @@ importers:
       react-grab:
         specifier: ^0.1.32
         version: 0.1.44(react@19.2.6)
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-rc.115
@@ -199,6 +202,9 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       acorn:
         specifier: 8.16.0
         version: 8.16.0
@@ -640,6 +646,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@t3tools/extension-sdk':
+        specifier: workspace:*
+        version: link:../../packages/extension-sdk
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared

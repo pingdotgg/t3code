@@ -1,3 +1,4 @@
+import { useWorkspaceSurfaceTitles } from "../extensions/workspaceRegistry";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -23,6 +24,7 @@ import {
   Files,
   Globe2,
   Plus,
+  Puzzle,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -34,6 +36,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -198,6 +201,30 @@ type TabContextMenuAction =
   | "close-all";
 
 const TAB_SCROLL_EDGE_TOLERANCE = 1;
+// Matches the tab row's gap-1 so the last control keeps its spacing from the overlay.
+const TITLEBAR_OVERLAY_GAP = 4;
+
+type OverlayRect = Pick<DOMRectReadOnly, "left" | "top" | "bottom" | "width">;
+
+/**
+ * Right padding the inline tab bar needs so its trailing controls ("+", scroll
+ * buttons) clear the fixed titlebar controls. The overlay's width follows the
+ * controls it hosts (maximize, extension menu, dock toggle), so a fixed inset
+ * lets it cover the strip. Null means nothing overlaps the row.
+ */
+export function titlebarOverlayInset(
+  tabBar: Pick<DOMRectReadOnly, "top" | "bottom" | "right">,
+  overlays: readonly OverlayRect[],
+): number | null {
+  let inset: number | null = null;
+  for (const overlay of overlays) {
+    if (overlay.width <= 0 || overlay.left >= tabBar.right) continue;
+    if (overlay.bottom <= tabBar.top || overlay.top >= tabBar.bottom) continue;
+    const overlap = Math.ceil(tabBar.right - overlay.left) + TITLEBAR_OVERLAY_GAP;
+    inset = Math.max(inset ?? 0, overlap);
+  }
+  return inset;
+}
 
 function tabScrollViewport(root: HTMLDivElement | null): HTMLDivElement | null {
   return root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null;
@@ -609,8 +636,11 @@ function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  extensionTitles: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
+    case "extension":
+      return extensionTitles.get(surface.record.surfaceId) ?? surface.record.fallback;
     case "diff":
       return "Diff";
     case "files":
@@ -680,6 +710,8 @@ function SurfaceIcon({
   pullRequestStatusSeeds: Readonly<Record<string, PullRequestTabStatusSeed>> | undefined;
 }) {
   switch (surface.kind) {
+    case "extension":
+      return <Puzzle className="size-3 shrink-0" />;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -825,10 +857,15 @@ function PullRequestSurfaceIcon({
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
+  const extensionTitles = useWorkspaceSurfaceTitles(props.environmentId ?? undefined);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  // Inline without layoutControls: the route's fixed titlebar controls sit over this row.
+  const sharesTitlebarOverlay = props.mode === "inline" && !props.layoutControls;
+  const [overlayInset, setOverlayInset] = useState<number | null>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -1076,6 +1113,30 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     };
   }, [updateTabScrollState]);
 
+  useLayoutEffect(() => {
+    const tabBar = tabBarRef.current;
+    if (!sharesTitlebarOverlay || !tabBar) {
+      setOverlayInset(null);
+      return;
+    }
+    const overlays = [
+      ...tabBar.ownerDocument.querySelectorAll<HTMLElement>("[data-workspace-titlebar-controls]"),
+    ];
+    const measure = () => {
+      const next = titlebarOverlayInset(
+        tabBar.getBoundingClientRect(),
+        overlays.map((overlay) => overlay.getBoundingClientRect()),
+      );
+      setOverlayInset((current) => (current === next ? current : next));
+    };
+    // Both boxes resize when the overlay gains or loses controls or the window resizes.
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(tabBar);
+    for (const overlay of overlays) resizeObserver.observe(overlay);
+    measure();
+    return () => resizeObserver.disconnect();
+  }, [sharesTitlebarOverlay]);
+
   useEffect(() => {
     const viewport = tabScrollViewport(tabListRef.current);
     if (!viewport) return;
@@ -1117,6 +1178,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
+        // The classes above are the first-paint fallback; the measured
+        // overlay width replaces them once known.
+        style={overlayInset === null ? undefined : { paddingRight: overlayInset }}
+        ref={tabBarRef}
         data-right-panel-tabbar
       >
         <ScrollArea
@@ -1131,7 +1196,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title = surfaceTitle(
+                surface,
+                props.previewSessions,
+                props.terminalLabelsById,
+                extensionTitles,
+              );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.

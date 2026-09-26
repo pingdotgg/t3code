@@ -18,6 +18,7 @@ function state(navStatus: DesktopPreviewTabState["navStatus"]): DesktopPreviewTa
     canGoForward: false,
     zoomFactor: 1,
     pictureInPicture: false,
+    remoteLive: false,
     colorScheme: "system",
     audioMuted: false,
     audible: false,

@@ -1,3 +1,5 @@
+import { readableContextPrompt } from "@t3tools/extension-sdk/context";
+import { MessageDecorations } from "../../extensions/MessageDecorations";
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -2191,12 +2193,22 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         <div onCopyCapture={onBodyCopyCapture}>
           <CollapsibleUserMessageBody
-            text={resolvedContext.text}
+            text={readableContextPrompt(resolvedContext.text)}
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
           />
         </div>
+        {ctx.threadRef && !row.message.streaming && (
+          <MessageDecorations
+            message={{
+              environmentId: ctx.activeThreadEnvironmentId,
+              threadId: ctx.threadRef.threadId,
+              messageId: row.message.id,
+              text: row.message.text,
+            }}
+          />
+        )}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">

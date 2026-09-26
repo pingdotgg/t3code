@@ -163,6 +163,16 @@ function stubDomGlobals() {
     removeItem: () => {},
     clear: () => {},
   });
+  const FakeNode = class {};
+  vi.stubGlobal("Node", FakeNode);
+  vi.stubGlobal("HTMLElement", class extends (globalThis.Element as typeof FakeNode) {});
+  vi.stubGlobal("SVGElement", class extends (globalThis.Element as typeof FakeNode) {});
+  vi.stubGlobal("ShadowRoot", class extends FakeNode {});
+  vi.stubGlobal("customElements", {
+    define: () => {},
+    get: () => undefined,
+    whenDefined: () => Promise.resolve(),
+  });
   vi.stubGlobal("window", {
     Element: ElementStub,
     matchMedia,
@@ -174,12 +184,17 @@ function stubDomGlobals() {
     },
     cancelAnimationFrame: () => {},
     desktopBridge: undefined,
+    Node: globalThis.Node,
+    HTMLElement: globalThis.HTMLElement,
+    SVGElement: globalThis.SVGElement,
+    ShadowRoot: globalThis.ShadowRoot,
   });
   vi.stubGlobal("document", {
     documentElement: {
       classList,
       offsetHeight: 0,
     },
+    querySelectorAll: () => [],
   });
 }
 
@@ -1285,6 +1300,45 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("terminal_context");
     expect(markup).toContain("Show full message");
   }, 20_000);
+
+  it("does not warn about duplicate keys for repeated terminal context headers", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      const { MessagesTimeline } = await import("./MessagesTimeline");
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              buildUserTimelineEntry(
+                [
+                  "compare these",
+                  "",
+                  "<terminal_context>",
+                  "- Terminal 1 lines 1-5:",
+                  "  1 | first body",
+                  "- Terminal 1 lines 1-5:",
+                  "  1 | second body",
+                  "</terminal_context>",
+                ].join("\n"),
+              ),
+            ]}
+          />,
+        );
+      });
+      await act(() => renderer?.unmount());
+      const keyWarnings = errorSpy.mock.calls.filter((call) =>
+        call.some((arg) => typeof arg === "string" && /same key|unique .?key/i.test(arg)),
+      );
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 
   it("renders chips for standalone element-pick context messages", () => {
     const markup = renderToStaticMarkup(

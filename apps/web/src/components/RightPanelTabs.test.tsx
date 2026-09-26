@@ -10,7 +10,38 @@ import {
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
   tabMuteMenuItem,
+  titlebarOverlayInset,
 } from "./RightPanelTabs";
+
+describe("titlebar overlay inset", () => {
+  // A 1440px window: the inline tab bar spans the right panel's top row.
+  const tabBar = { top: 0, bottom: 40, right: 1440 };
+  const overlay = (width: number) => ({ left: 1440 - 13 - width, top: 0, bottom: 40, width });
+
+  it("grows with the overlay so a wide extension cluster clears the trailing controls", () => {
+    // Base cluster (maximize + terminal + panel toggles) vs one carrying the
+    // Extensions menu and dock toggle, as in the six-tab certification run.
+    expect(titlebarOverlayInset(tabBar, [overlay(96)])).toBe(96 + 13 + 4);
+    expect(titlebarOverlayInset(tabBar, [overlay(236)])).toBe(236 + 13 + 4);
+    expect(titlebarOverlayInset(tabBar, [overlay(236)])!).toBeGreaterThan(112);
+  });
+
+  it("reserves nothing for overlays that are hidden or off the tab row", () => {
+    expect(titlebarOverlayInset(tabBar, [])).toBeNull();
+    expect(titlebarOverlayInset(tabBar, [overlay(0)])).toBeNull();
+    expect(titlebarOverlayInset(tabBar, [{ ...overlay(96), top: 40, bottom: 80 }])).toBeNull();
+    // A tab bar that ends before the overlay starts (sidebar-side panel).
+    expect(titlebarOverlayInset({ ...tabBar, right: 900 }, [overlay(96)])).toBeNull();
+  });
+
+  it("clears the widest of several overlapping overlays", () => {
+    expect(titlebarOverlayInset(tabBar, [overlay(96), overlay(180)])).toBe(180 + 13 + 4);
+  });
+
+  it("rounds fractional geometry up so no sub-pixel sliver stays covered", () => {
+    expect(titlebarOverlayInset(tabBar, [{ ...overlay(96), left: 1330.4 }])).toBe(110 + 4);
+  });
+});
 
 describe("browser profile submenu", () => {
   it("reserves touch clicks for opening the choices while mouse clicks use the default", () => {
@@ -81,6 +112,7 @@ function overlay(
     loading: false,
     zoomFactor: 1,
     pictureInPicture: false,
+    remoteLive: false,
     colorScheme: "system" as const,
     audioMuted: audio?.audioMuted ?? false,
     audible: audio?.audible ?? false,

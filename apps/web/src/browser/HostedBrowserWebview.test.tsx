@@ -127,6 +127,7 @@ describe("HostedBrowserWebview settings hydration", () => {
           initialUrl="https://example.com"
           viewport={FILL_PREVIEW_VIEWPORT}
           pictureInPicture={false}
+          remoteLive={false}
           profileId="work"
           zoomFactor={1.25}
         />,

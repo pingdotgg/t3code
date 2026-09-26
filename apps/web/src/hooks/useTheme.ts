@@ -508,80 +508,175 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+function writeStoredTheme(next: Theme): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    // Preserve the current mode before replacing a legacy or inferred theme
+    // preference. Otherwise a fresh System preference is re-inferred from
+    // the new theme's base appearance, which can switch a dark UI to light.
+    writeAppearanceModePreference(readAppearanceModePreference(getStored()));
+    // Choosing a whole theme replaces any automatic-mode mix. The mix is
+    // captured first so a failed preference write can put it back instead
+    // of erasing it or leaving it attached to the new theme.
+    const previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
+    window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
+    try {
+      writeThemePreference(next);
+    } catch (cause) {
+      if (previousHalvesRaw !== null) {
+        try {
+          window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, previousHalvesRaw);
+        } catch {
+          // Storage is failing wholesale; the outer handler reports it.
+        }
+      }
+      throw cause;
+    }
+  } catch (cause) {
+    const error = isThemeStorageError(cause)
+      ? cause
+      : new ThemeStorageError({
+          operation: "write",
+          storageKey: STORAGE_KEY,
+          theme: next,
+          cause,
+        });
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      theme: next,
+      ...safeErrorLogAttributes(error),
+    });
+    return false;
+  }
+  applyTheme(next, { suppressTransitions: true });
+  emitChange();
+  return true;
+}
+
+function writeAppearanceMode(nextAppearanceMode: ThemePreferenceMode): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    writeAppearanceModePreference(nextAppearanceMode);
+  } catch (cause) {
+    const error = isThemeStorageError(cause)
+      ? cause
+      : new ThemeStorageError({
+          operation: "write",
+          storageKey: THEME_APPEARANCE_MODE_STORAGE_KEY,
+          cause,
+        });
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      ...safeErrorLogAttributes(error),
+    });
+    return false;
+  }
+  themeStorageReadFailure = null;
+  applyTheme(getStored(), { suppressTransitions: true });
+  emitChange();
+  return true;
+}
+
+function writeThemeHalf(appearance: ThemeAppearance, themeId: string | null): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const current = readStoredThemeHalvesRaw();
+    const next: { light?: string; dark?: string } = { ...current };
+    if (themeId === null) delete next[appearance];
+    else next[appearance] = themeId;
+    if (next.light === undefined && next.dark === undefined) {
+      window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
+    }
+  } catch (cause) {
+    const error = new ThemeStorageError({
+      operation: "write",
+      storageKey: THEME_HALVES_STORAGE_KEY,
+      cause,
+    });
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      ...safeErrorLogAttributes(error),
+    });
+    return false;
+  }
+  applyTheme(getStored(), { suppressTransitions: true });
+  emitChange();
+  return true;
+}
+
+function writeThemeHalves(halves: { light?: string; dark?: string } | null): boolean {
+  if (halves === null || (halves.light === undefined && halves.dark === undefined)) {
+    return clearStoredThemeHalves();
+  }
+  let applied = true;
+  for (const appearance of ["light", "dark"] as const) {
+    if (halves[appearance] !== undefined) {
+      applied = writeThemeHalf(appearance, halves[appearance] ?? null) && applied;
+    }
+  }
+  return applied;
+}
+
+function clearStoredThemeHalves(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
+  } catch (cause) {
+    const error = new ThemeStorageError({
+      operation: "write",
+      storageKey: THEME_HALVES_STORAGE_KEY,
+      cause,
+    });
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      ...safeErrorLogAttributes(error),
+    });
+    return false;
+  }
+  applyTheme(getStored(), { suppressTransitions: true });
+  emitChange();
+  return true;
+}
+
+function refreshStoredTheme({ preservePreview = false } = {}) {
+  if (typeof window === "undefined") return;
+  lastAppliedTheme = null;
+  applyTheme(getStored(), { suppressTransitions: true, preservePreview });
+  emitChange();
+}
+
+/**
+ * Imperative view over the same module-level store `useTheme` subscribes to —
+ * used by the `t3.client/theme` provider and other non-React callers.
+ */
+export const themeStore = {
+  getSnapshot,
+  subscribe,
+  setTheme: writeStoredTheme,
+  setAppearanceMode: writeAppearanceMode,
+  setThemeHalf: writeThemeHalf,
+  setThemeHalves: writeThemeHalves,
+  clearThemeHalves: clearStoredThemeHalves,
+  refreshTheme: refreshStoredTheme,
+  emitChange,
+} as const;
+
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const { theme, resolvedTheme } = snapshot;
 
-  const setTheme = useCallback((next: Theme): boolean => {
-    if (typeof window === "undefined") return false;
-    try {
-      // Preserve the current mode before replacing a legacy or inferred theme
-      // preference. Otherwise a fresh System preference is re-inferred from
-      // the new theme's base appearance, which can switch a dark UI to light.
-      writeAppearanceModePreference(readAppearanceModePreference(getStored()));
-      // Choosing a whole theme replaces any automatic-mode mix. The mix is
-      // captured first so a failed preference write can put it back instead
-      // of erasing it or leaving it attached to the new theme.
-      const previousHalvesRaw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
-      window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
-      try {
-        writeThemePreference(next);
-      } catch (cause) {
-        if (previousHalvesRaw !== null) {
-          try {
-            window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, previousHalvesRaw);
-          } catch {
-            // Storage is failing wholesale; the outer handler reports it.
-          }
-        }
-        throw cause;
-      }
-    } catch (cause) {
-      const error = isThemeStorageError(cause)
-        ? cause
-        : new ThemeStorageError({
-            operation: "write",
-            storageKey: STORAGE_KEY,
-            theme: next,
-            cause,
-          });
-      console.error(error.message, {
-        operation: error.operation,
-        storageKey: error.storageKey,
-        theme: next,
-        ...safeErrorLogAttributes(error),
-      });
-      return false;
-    }
-    applyTheme(next, { suppressTransitions: true });
-    emitChange();
-    return true;
-  }, []);
+  const setTheme = useCallback((next: Theme): boolean => writeStoredTheme(next), []);
 
-  const setAppearanceMode = useCallback((nextAppearanceMode: ThemePreferenceMode): boolean => {
-    if (typeof window === "undefined") return false;
-    try {
-      writeAppearanceModePreference(nextAppearanceMode);
-    } catch (cause) {
-      const error = isThemeStorageError(cause)
-        ? cause
-        : new ThemeStorageError({
-            operation: "write",
-            storageKey: THEME_APPEARANCE_MODE_STORAGE_KEY,
-            cause,
-          });
-      console.error(error.message, {
-        operation: error.operation,
-        storageKey: error.storageKey,
-        ...safeErrorLogAttributes(error),
-      });
-      return false;
-    }
-    themeStorageReadFailure = null;
-    applyTheme(getStored(), { suppressTransitions: true });
-    emitChange();
-    return true;
-  }, []);
+  const setAppearanceMode = useCallback(
+    (nextAppearanceMode: ThemePreferenceMode): boolean => writeAppearanceMode(nextAppearanceMode),
+    [],
+  );
 
   const setFollowSystem = useCallback(
     (nextFollowSystem: boolean): boolean => {
@@ -597,66 +692,17 @@ export function useTheme() {
   );
 
   const setThemeHalf = useCallback(
-    (appearance: ThemeAppearance, themeId: string | null): boolean => {
-      if (typeof window === "undefined") return false;
-      try {
-        const current = readStoredThemeHalvesRaw();
-        const next: { light?: string; dark?: string } = { ...current };
-        if (themeId === null) delete next[appearance];
-        else next[appearance] = themeId;
-        if (next.light === undefined && next.dark === undefined) {
-          window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
-        } else {
-          window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
-        }
-      } catch (cause) {
-        const error = new ThemeStorageError({
-          operation: "write",
-          storageKey: THEME_HALVES_STORAGE_KEY,
-          cause,
-        });
-        console.error(error.message, {
-          operation: error.operation,
-          storageKey: error.storageKey,
-          ...safeErrorLogAttributes(error),
-        });
-        return false;
-      }
-      applyTheme(getStored(), { suppressTransitions: true });
-      emitChange();
-      return true;
-    },
+    (appearance: ThemeAppearance, themeId: string | null): boolean =>
+      writeThemeHalf(appearance, themeId),
     [],
   );
 
-  const clearThemeHalves = useCallback((): boolean => {
-    if (typeof window === "undefined") return false;
-    try {
-      window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);
-    } catch (cause) {
-      const error = new ThemeStorageError({
-        operation: "write",
-        storageKey: THEME_HALVES_STORAGE_KEY,
-        cause,
-      });
-      console.error(error.message, {
-        operation: error.operation,
-        storageKey: error.storageKey,
-        ...safeErrorLogAttributes(error),
-      });
-      return false;
-    }
-    applyTheme(getStored(), { suppressTransitions: true });
-    emitChange();
-    return true;
-  }, []);
+  const clearThemeHalves = useCallback((): boolean => clearStoredThemeHalves(), []);
 
-  const refreshTheme = useCallback(({ preservePreview = false } = {}) => {
-    if (typeof window === "undefined") return;
-    lastAppliedTheme = null;
-    applyTheme(getStored(), { suppressTransitions: true, preservePreview });
-    emitChange();
-  }, []);
+  const refreshTheme = useCallback(
+    ({ preservePreview = false } = {}) => refreshStoredTheme({ preservePreview }),
+    [],
+  );
 
   // Keep DOM in sync on mount/change
   useEffect(() => {

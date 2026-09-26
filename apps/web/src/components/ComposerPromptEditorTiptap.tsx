@@ -1,3 +1,4 @@
+import { readContextSnapshots } from "@t3tools/extension-sdk/context";
 import { Extension, Node, wrappingInputRule, type JSONContent } from "@tiptap/core";
 import { TaskList } from "@tiptap/extension-task-list";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
@@ -439,6 +440,39 @@ function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   );
 }
 
+/** Core chip keeps a captured extension context's exact source, installed or not. */
+const ComposerExtensionContextExtension = Node.create({
+  name: "composer-extension-context",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return { source: { default: "" } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-composer-extension-context]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", { "data-composer-extension-context": "", ...HTMLAttributes }];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ComposerExtensionContextNodeView);
+  },
+});
+
+function ComposerExtensionContextNodeView({ node }: NodeViewProps) {
+  const source = typeof node.attrs.source === "string" ? node.attrs.source : "";
+  const snapshot = readContextSnapshots(source)[0]?.snapshot;
+  return (
+    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+      <span className="rounded border border-border/70 bg-muted px-1.5 py-0.5 text-xs">
+        {snapshot?.title ?? "Captured context"}
+      </span>
+    </NodeViewWrapper>
+  );
+}
+
 // ── Marker reveal (show ** when the cursor is on styled text) ──────────────
 
 type StyledRange = {
@@ -752,6 +786,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerSkillExtension,
         ComposerCitationExtension,
         ComposerContextReferenceExtension,
+        ComposerExtensionContextExtension,
         ComposerMarkersExtension,
         ...(richText
           ? [

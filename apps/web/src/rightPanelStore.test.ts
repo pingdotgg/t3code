@@ -17,7 +17,11 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    extensionDockByThreadKey: {},
+    userActionRevisionByThreadKey: {},
+  });
 });
 
 describe("rightPanelStore", () => {
@@ -230,6 +234,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -252,6 +257,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -282,6 +288,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -325,6 +332,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -369,7 +377,7 @@ describe("rightPanelStore", () => {
           "env-1:thread-A": panelState,
         },
       }),
-    ).toEqual({ byThreadKey: { "env-1:thread-A": panelState } });
+    ).toEqual({ extensionDockByThreadKey: {}, byThreadKey: { "env-1:thread-A": panelState } });
   });
 
   it("drops persisted plan surfaces and does not reopen an empty panel", () => {
@@ -392,6 +400,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      extensionDockByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -463,6 +472,7 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 2,
+          presentationRequestId: expect.any(String),
         },
         {
           id: "file:README.md",
@@ -470,6 +480,7 @@ describe("rightPanelStore", () => {
           relativePath: "README.md",
           revealLine: null,
           revealRequestId: 1,
+          presentationRequestId: expect.any(String),
         },
       ],
     });
@@ -563,6 +574,7 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: 87,
           revealRequestId: 2,
+          presentationRequestId: expect.any(String),
         },
       ],
     });
@@ -579,6 +591,7 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 3,
+          presentationRequestId: expect.any(String),
         },
       ],
     });
@@ -911,6 +924,7 @@ describe("rightPanelStore", () => {
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 1,
+          presentationRequestId: expect.any(String),
         },
       ],
     });
@@ -955,4 +969,25 @@ describe("rightPanelStore", () => {
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
   });
+});
+
+it("gives explicit file opens new durable intent identities, including close and reopen", () => {
+  const store = useRightPanelStore.getState();
+  store.openFile(refA, "README.md");
+  const first = selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+  if (first?.kind !== "file") throw new Error("Expected file surface");
+  const restored = migratePersistedRightPanelState({
+    byThreadKey: useRightPanelStore.getState().byThreadKey,
+  });
+  expect(JSON.stringify(restored)).toContain(first.presentationRequestId!);
+  store.openFile(refA, "README.md", 7);
+  const revealed = selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+  if (revealed?.kind !== "file") throw new Error("Expected file surface");
+  expect(revealed.presentationRequestId).not.toBe(first.presentationRequestId);
+  store.closeSurface(refA, first.id);
+  store.openFile(refA, "README.md");
+  const reopened = selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+  if (reopened?.kind !== "file") throw new Error("Expected file surface");
+  expect(reopened.presentationRequestId).not.toBe(first.presentationRequestId);
+  expect(reopened.presentationRequestId).not.toBe(revealed.presentationRequestId);
 });

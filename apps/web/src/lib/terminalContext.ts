@@ -53,7 +53,8 @@ export function filterTerminalContextsWithText<T extends { text: string }>(
   return contexts.filter((context) => hasTerminalContextText(context));
 }
 
-function normalizeTerminalContextSelection(
+/** The one selection normalizer: CRLF-folded text, trimmed ids, clamped integer lines; null when anything empties. */
+export function normalizeTerminalContextSelection(
   selection: TerminalContextSelection,
 ): TerminalContextSelection | null {
   const text = normalizeTerminalContextText(selection.text);

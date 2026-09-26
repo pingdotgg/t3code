@@ -10,7 +10,9 @@ import {
   applyPreviewServerEvent,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
+  recordPreviewListFailure,
 } from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
@@ -42,8 +44,18 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     let eventsVersion = 0;
 
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
-      if (!AsyncResult.isSuccess(result)) return;
-      reconcilePreviewServerSessions(threadRef, result.value);
+      // A refresh re-emits the previous result with `waiting` while the
+      // request is in flight — replayed data is not fresh authority for a
+      // tab's absence, so only completed responses update the store: a
+      // Success reconciles (advancing listSeq), a Failure records the
+      // completed attempt (advancing listFailures) so arbitration waiters
+      // can retry instead of hanging on a request that already resolved.
+      if (result.waiting) return;
+      if (AsyncResult.isSuccess(result)) {
+        reconcilePreviewServerSessions(threadRef, result.value);
+      } else if (AsyncResult.isFailure(result)) {
+        recordPreviewListFailure(threadRef);
+      }
     };
 
     const applyLatestEvent = (result: Atom.Type<typeof eventsAtom>) => {
@@ -60,6 +72,10 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
+    // `get.subscribe` alone never evaluates a lazy query atom — read the
+    // current result so `preview.list` actually runs; sessions that predate
+    // this mount (restored views, extension surface leases) only surface here.
+    reconcileSessions(get.once(sessionsAtom));
     get.subscribe(sessionsAtom, (result) => {
       reconcileSessions(result);
     });
@@ -80,4 +96,27 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
   useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+}
+
+/**
+ * Non-React mount for hosts that must keep a thread's preview session index
+ * live without rendering preview chrome (extension surface leases).
+ * Returns the unmount function; the atom's own idle TTL still applies.
+ */
+export function mountPreviewSessionSync(threadRef: ScopedThreadRef): () => void {
+  return appAtomRegistry.mount(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+}
+
+/**
+ * Force a fresh authoritative preview.list for the thread. Surface leases use
+ * it to arbitrate absent sessions: a list that lands after this call proves a
+ * missing tab is gone rather than merely unobserved.
+ */
+export function refreshPreviewSessionList(threadRef: ScopedThreadRef): void {
+  appAtomRegistry.refresh(
+    previewEnvironment.list({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId },
+    }),
+  );
 }

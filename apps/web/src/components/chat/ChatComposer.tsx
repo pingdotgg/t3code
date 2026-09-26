@@ -1,3 +1,7 @@
+import type { ViewContext } from "@t3tools/extension-sdk/contracts";
+import { readableContextPrompt } from "@t3tools/extension-sdk/context";
+import { ComposerExtensionContext } from "../../extensions/ComposerExtensionContext";
+import { isElectron } from "../../env";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -1318,6 +1322,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  extensionContext?: ViewContext;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -5673,6 +5678,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (options?.clipboardData) {
         text = importPastedComposerText(options.clipboardData, importContextFragment);
       }
+      // A store-only prompt write (extension insertMention, remote draft sync)
+      // lands in the draft store before the ref-sync effect above runs. The
+      // store draft is authoritative: adopt it so this insertion extends the
+      // newest prompt instead of replacing it with the pre-write ref. The
+      // guards above already excluded the pending-answer mode, where the ref
+      // legitimately holds text the draft store does not.
+      const draftPrompt = getComposerDraft(composerDraftTarget)?.prompt;
+      if (draftPrompt !== undefined && draftPrompt !== promptRef.current) {
+        promptRef.current = draftPrompt;
+      }
       const prompt = promptRef.current;
       const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
       const needsLeadingSpace =
@@ -5697,6 +5712,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       applyPromptReplacement,
+      composerDraftTarget,
+      getComposerDraft,
       isComposerApprovalState,
       isConnecting,
       pendingUserInputs.length,
@@ -6373,6 +6390,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               composerProviderState.composerSurfaceClassName,
             )}
           >
+            {!isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
+              activeThread &&
+              !projectSelectionRequired && (
+                <ComposerExtensionContext
+                  prompt={prompt}
+                  context={
+                    props.extensionContext ?? {
+                      resource: {
+                        namespace: "t3.composer",
+                        id: activeThread.id,
+                        environmentId,
+                        projectId: activeThread.projectId,
+                        threadId: activeThread.id,
+                      },
+                      client: isElectron ? "desktop" : "web",
+                    }
+                  }
+                  onChange={(nextPrompt) =>
+                    onPromptChange(
+                      nextPrompt,
+                      nextPrompt.length,
+                      nextPrompt.length,
+                      false,
+                      collectInlineContextIds(nextPrompt),
+                    )
+                  }
+                />
+              )}
             {showCollapsedMobilePromptRow ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2">
                 <button
@@ -6394,7 +6440,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? "Choose an option above"
                       : activePendingProgress.customAnswer ||
                         "Type your own answer, or leave this blank to use the selected option"
-                    : prompt.trim() ||
+                    : readableContextPrompt(prompt).trim() ||
                       (showProviderUnavailable
                         ? "Enable a provider in Settings"
                         : "Ask anything...")}

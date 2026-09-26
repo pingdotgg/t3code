@@ -1,39 +1,10 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import { latestWorkspaceMutationId } from "@t3tools/shared/workspaceMutations";
 import { useEffect, useRef } from "react";
 
-const WORKSPACE_MUTATION_ITEM_TYPES = new Set(["command_execution", "file_change"]);
-
-function activityPayload(activity: OrchestrationThreadActivity): Record<string, unknown> | null {
-  return activity.payload !== null && typeof activity.payload === "object"
-    ? (activity.payload as Record<string, unknown>)
-    : null;
-}
-
-/**
- * The latest provider event after which files on disk may have changed.
- * File tools are explicit; completed commands are included because a shell
- * command can mutate the workspace without reporting the paths it touched.
- */
-export function latestWorkspaceMutationId(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): string | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (!activity) continue;
-    const payload = activityPayload(activity);
-    const terminalUpdate =
-      activity.kind === "tool.updated" &&
-      typeof payload?.status === "string" &&
-      payload.status !== "inProgress" &&
-      payload.status !== "in_progress";
-    if (activity.kind !== "tool.completed" && !terminalUpdate) continue;
-    const itemType = payload?.itemType;
-    if (typeof itemType === "string" && WORKSPACE_MUTATION_ITEM_TYPES.has(itemType)) {
-      return activity.id;
-    }
-  }
-  return null;
-}
+// The fold itself lives in @t3tools/shared/workspaceMutations so the server's
+// t3.workspace/changes adapter applies identical semantics without payloads
+// crossing the extension wire.
+export { latestWorkspaceMutationId };
 
 export function workspaceMutationRefreshToken(
   resourceKey: string,

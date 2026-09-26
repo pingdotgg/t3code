@@ -1,3 +1,4 @@
+import { NativeVersionControlPanel } from "../extensions/nativeVersionControl";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -94,7 +95,6 @@ import {
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
-import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
   PullRequestFiltersMenu,
   PullRequestFilterOptionIcon,
@@ -2123,78 +2123,93 @@ function PullRequestsRouteView() {
             liveAgentCount={0}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
-            <PullRequestDetailPanel
-              getShortcutContext={getShortcutContext}
-              shortcutsEnabled={activePullRequestSurface?.id === renderedPullRequestSurface.id}
+            <NativeVersionControlPanel
               key={renderedPullRequestSurface.id}
-              environmentId={panelEnvironmentId}
-              onSelectPullRequest={(reference) => {
-                if (rightPanelRef === null) return;
-                useRightPanelStore.getState().openPullRequest(rightPanelRef, {
-                  projectId: reference.projectId,
-                  repository: reference.repository,
-                  number: reference.number,
-                  ...(reference.host ? { host: reference.host } : {}),
+              visible={rightPanelState.isOpen}
+              context={{
+                client: isElectron ? "desktop" : "web",
+                resource: {
+                  namespace: "t3.repository",
+                  id: renderedPullRequestSurface.id,
                   environmentId: panelEnvironmentId,
-                });
-                updateSearch({
-                  repository: reference.repository,
-                  number: reference.number,
-                  selectedHost: reference.host,
-                  selectedProjectId: reference.projectId,
-                  selectedEnvironmentId: panelEnvironmentId,
-                });
+                  projectId: renderedPullRequestSurface.projectId,
+                },
               }}
-              reference={{
-                projectId: renderedPullRequestSurface.projectId as ProjectId,
-                repository: renderedPullRequestSurface.repository,
-                number: renderedPullRequestSurface.number,
-                ...(renderedPullRequestSurface.host
-                  ? { host: renderedPullRequestSurface.host }
-                  : {}),
-              }}
-              listEntry={
-                listedPullRequestsBySurface.get(
-                  pullRequestListEntryId(renderedPullRequestSurface),
-                ) ?? null
-              }
-              refreshToken={detailRefreshToken}
-              // Host actions can change both readiness and diff size, so refresh the counts
-              // alongside the list. The panel already refreshes itself after each action.
-              onActed={(action, phase = "done") => {
-                // An action that only moves a row's state is written onto the row as it is
-                // sent, and taken back if the host refuses; the host invalidates its caches,
-                // so the next scheduled read confirms it. The rest change what the counts and
-                // checks say, and those need the reads once they are done.
-                // From every row held, not the ones on screen: a pull request closed from an
-                // open list has left the screen, and reopening it has to find it anyway.
-                const acted = heldPullRequestsBySurface.get(
-                  pullRequestListEntryId(renderedPullRequestSurface),
-                );
-                const stateOnly =
-                  action !== undefined &&
-                  acted !== undefined &&
-                  pullRequestOverrideAfterAction(acted, action, new Date(), 0) !== null;
-                if (stateOnly) {
-                  const key = pullRequestEntryKey(acted);
-                  // A merge is written on once the host has done it, since a host that only
-                  // queues one leaves the pull request open; the rest go on as they are sent.
-                  if (phase === "sent" && action !== "merge") {
-                    detailOverrideTokens.current.set(key, overrideEntry(acted, action));
-                  }
-                  // A merge wrote nothing on the way out, so its failure has nothing to take
-                  // back; an earlier action's note on the same row is left standing.
-                  if (phase === "failed" && action !== "merge") {
-                    revertOverride(key, detailOverrideTokens.current.get(key) ?? null);
-                  }
-                  if (phase !== "sent") detailOverrideTokens.current.delete(key);
-                  if (phase === "done" && action === "merge") {
-                    overrideEntry(acted, action);
-                    refreshListAndStats(undefined, panelEnvironmentId);
-                  }
-                  return;
-                }
-                if (phase === "done") refreshListAndStats(undefined, panelEnvironmentId);
+              bindings={{
+                status: "ready",
+                detail: {
+                  getShortcutContext,
+                  shortcutsEnabled: activePullRequestSurface?.id === renderedPullRequestSurface.id,
+                  environmentId: panelEnvironmentId,
+                  reference: {
+                    projectId: renderedPullRequestSurface.projectId as ProjectId,
+                    repository: renderedPullRequestSurface.repository,
+                    number: renderedPullRequestSurface.number,
+                    ...(renderedPullRequestSurface.host
+                      ? { host: renderedPullRequestSurface.host }
+                      : {}),
+                  },
+                  listEntry:
+                    listedPullRequestsBySurface.get(
+                      pullRequestListEntryId(renderedPullRequestSurface),
+                    ) ?? null,
+                  refreshToken: detailRefreshToken,
+                  onSelectPullRequest: (reference) => {
+                    if (rightPanelRef === null) return;
+                    useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                      projectId: reference.projectId,
+                      repository: reference.repository,
+                      number: reference.number,
+                      ...(reference.host ? { host: reference.host } : {}),
+                      environmentId: panelEnvironmentId,
+                    });
+                    updateSearch({
+                      repository: reference.repository,
+                      number: reference.number,
+                      selectedHost: reference.host,
+                      selectedProjectId: reference.projectId,
+                      selectedEnvironmentId: panelEnvironmentId,
+                    });
+                  },
+                  // Host actions can change both readiness and diff size, so refresh the counts
+                  // alongside the list. The panel already refreshes itself after each action.
+                  onActed: (action, phase = "done") => {
+                    // An action that only moves a row's state is written onto the row as it is
+                    // sent, and taken back if the host refuses; the host invalidates its caches,
+                    // so the next scheduled read confirms it. The rest change what the counts
+                    // and checks say, and those need the reads once they are done.
+                    // From every row held, not the ones on screen: a pull request closed from
+                    // an open list has left the screen, and reopening it has to find it anyway.
+                    const acted = heldPullRequestsBySurface.get(
+                      pullRequestListEntryId(renderedPullRequestSurface),
+                    );
+                    const stateOnly =
+                      action !== undefined &&
+                      acted !== undefined &&
+                      pullRequestOverrideAfterAction(acted, action, new Date(), 0) !== null;
+                    if (stateOnly) {
+                      const key = pullRequestEntryKey(acted);
+                      // A merge is written on once the host has done it, since a host that
+                      // only queues one leaves the pull request open; the rest go on as they
+                      // are sent.
+                      if (phase === "sent" && action !== "merge") {
+                        detailOverrideTokens.current.set(key, overrideEntry(acted, action));
+                      }
+                      // A merge wrote nothing on the way out, so its failure has nothing to
+                      // take back; an earlier action's note on the same row is left standing.
+                      if (phase === "failed" && action !== "merge") {
+                        revertOverride(key, detailOverrideTokens.current.get(key) ?? null);
+                      }
+                      if (phase !== "sent") detailOverrideTokens.current.delete(key);
+                      if (phase === "done" && action === "merge") {
+                        overrideEntry(acted, action);
+                        refreshListAndStats(undefined, panelEnvironmentId);
+                      }
+                      return;
+                    }
+                    if (phase === "done") refreshListAndStats(undefined, panelEnvironmentId);
+                  },
+                },
               }}
             />
           </RightPanelTabs>

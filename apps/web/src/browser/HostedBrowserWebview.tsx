@@ -51,6 +51,12 @@ export function HostedBrowserWebview(props: {
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
   /**
+   * A remote `t3.browser/frames` viewer is attached to this tab. Counts as
+   * compositor activity so the guest keeps painting for captures while the
+   * local panel is inactive.
+   */
+  readonly remoteLive: boolean;
+  /**
    * Fixed for the tab's lifetime: Electron only honours `partition` before the
    * guest attaches, so a live change here would not move the tab anyway.
    */
@@ -64,6 +70,7 @@ export function HostedBrowserWebview(props: {
     initialUrl,
     viewport,
     pictureInPicture,
+    remoteLive,
     zoomFactor,
     profileId,
   } = props;
@@ -264,7 +271,8 @@ export function HostedBrowserWebview(props: {
 
   if (!clientSettingsHydrated || !config) return null;
 
-  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
+  const renderingActive =
+    active || backgroundActivity || pictureInPicture || remoteLive || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
     renderingActive,

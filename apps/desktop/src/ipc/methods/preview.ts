@@ -35,6 +35,7 @@ import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
+import * as BrowserFrameHub from "../../preview/FrameHub.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
@@ -389,6 +390,23 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.copyArtifactToClipboard")(function* ({ path }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.copyArtifactToClipboard(path);
+  }),
+});
+
+/**
+ * Registered separately from `methods`: it carries `BrowserFrameHub` in its
+ * context rather than `PreviewManager`, so it does not unify with the shared
+ * loop in `DesktopIpcHandlers`. Returns the loopback origin AND the hub
+ * secret — the renderer forwards both inside the automation-host
+ * registration; the broker stores the secret server-side only.
+ */
+export const frameHubEndpoint = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_FRAME_HUB_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(Schema.Struct({ origin: Schema.String, secret: Schema.String })),
+  handler: Effect.fn("desktop.ipc.preview.frameHubEndpoint")(function* () {
+    const hub = yield* BrowserFrameHub.BrowserFrameHub;
+    return { origin: hub.origin, secret: hub.secret };
   }),
 });
 

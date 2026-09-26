@@ -29,11 +29,13 @@
     "electron-updater": "^6.8.9",
     "ffi-rs": "1.3.2",
     "playwright-core": "1.60.0",
-    "react-grab": "^0.1.32"
+    "react-grab": "^0.1.32",
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "@types/ws": "8.18.1",
     "acorn": "8.16.0",
     "cross-env": "^10.1.0",
     "electron-builder": "26.15.6",

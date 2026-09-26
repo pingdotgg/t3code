@@ -89,7 +89,12 @@ function setClientSettingsHydrationStatus(nextStatus: ClientSettingsHydrationSta
   emitClientSettingsHydrationChange();
 }
 
-function subscribeClientSettings(listener: () => void): () => void {
+/**
+ * Non-hook subscription to merged client settings — the terminal appearance
+ * provider watches font changes through this without a React component.
+ * Subscribing kicks hydration so late imperative readers see real values.
+ */
+export function subscribeClientSettings(listener: () => void): () => void {
   clientSettingsListeners.add(listener);
   void hydrateClientSettings().catch(() => undefined);
   return () => {

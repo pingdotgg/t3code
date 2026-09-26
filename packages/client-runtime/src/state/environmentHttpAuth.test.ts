@@ -31,6 +31,7 @@ import {
   PullRequestDiffLoader,
   pullRequestDiffLoaderLayer,
 } from "./pullRequestDiffHttp.ts";
+import { environmentExtensionsHttp } from "./extensions.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import { fetchEnvironmentThreadSnapshot } from "./threadSnapshotHttp.ts";
@@ -543,3 +544,58 @@ describe("authenticated environment HTTP requests", () => {
     }),
   );
 });
+
+it.effect(
+  "retries an asset using renewed relay origin and request-bound proof without JSON binary conversion",
+  () =>
+    Effect.gen(function* () {
+      const bytes = new Uint8Array([0, 97, 115, 109, 0, 255]);
+      const harness = makeHarness((number) =>
+        number === 1
+          ? credentialRejectedResponse()
+          : new Response(bytes, {
+              headers: {
+                "content-type": "application/octet-stream",
+                "cache-control": "no-store",
+                "x-content-type-options": "nosniff",
+              },
+            }),
+      );
+      const result = yield* environmentExtensionsHttp
+        .asset(PREPARED, {
+          id: "example.asset",
+          expectedContentHash: "a".repeat(64),
+          path: "assets/core.wasm",
+        })
+        .pipe(
+          Effect.provideService(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
+          Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(harness.input.signer)),
+          Effect.provide(harness.httpLayer),
+        );
+      expect(result).toEqual(bytes);
+      expect(harness.calls.map((call) => call.url)).toEqual([
+        CURRENT_ORIGIN + "/api/extensions/asset",
+        RENEWED_ORIGIN + "/api/extensions/asset",
+      ]);
+      expect(harness.proofs).toEqual([
+        {
+          method: "POST",
+          url: CURRENT_ORIGIN + "/api/extensions/asset",
+          accessToken: "current-token",
+        },
+        {
+          method: "POST",
+          url: RENEWED_ORIGIN + "/api/extensions/asset",
+          accessToken: "renewed-token",
+        },
+      ]);
+      expect(harness.authorizations).toEqual([
+        { expectedEnvironmentId: TARGET.environmentId },
+        { expectedEnvironmentId: TARGET.environmentId, rejectedAccessToken: "current-token" },
+      ]);
+      expect(new Headers(harness.calls[1]?.init.headers).get("authorization")).toBe(
+        "DPoP renewed-token",
+      );
+      expect(new Headers(harness.calls[1]?.init.headers).get("dpop")).toBe("proof-2");
+    }),
+);
