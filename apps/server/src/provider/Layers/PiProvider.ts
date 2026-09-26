@@ -29,6 +29,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "../piT3McpInjection.ts";
 import {
   makePiRpcConnection,
+  PiRpcError,
   piRecordField as recordField,
   piRecordString as recordString,
 } from "../PiRpc.ts";
@@ -123,11 +124,12 @@ function parseDiscoveredModels(
   return parsed;
 }
 
-const discoverPiViaRpc = (
+/** A scoped `pi --mode rpc --no-session` whose session events are drained unread. */
+const openPiDiscoveryConnection = (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
-  cwd?: string,
+  cwd: string | undefined,
 ) =>
   Effect.gen(function* () {
     const launch = buildPiRpcLaunch({
@@ -148,6 +150,17 @@ const discoverPiViaRpc = (
       Effect.ignore,
       Effect.forkScoped,
     );
+    return connection;
+  });
+
+const discoverPiViaRpc = (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  cwd?: string,
+) =>
+  Effect.gen(function* () {
+    const connection = yield* openPiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
     const stateData = yield* connection.request({ type: "get_state" });
     const modelsData = yield* connection.request({ type: "get_available_models" });
     const commandsData = yield* connection
@@ -165,6 +178,37 @@ const discoverPiViaRpc = (
       authenticated: discoveredModels.length > 0,
     } satisfies PiDiscovery;
   }).pipe(Effect.scoped);
+
+/**
+ * The commands and skills Pi sees in one workspace, including project skills.
+ * Used by the driver's `snapshotForCwd`; health and models stay on the
+ * machine-wide snapshot. Fails instead of returning an empty list, so a failed
+ * probe keeps the machine-wide commands.
+ */
+export const discoverPiWorkspaceCommands = (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+) =>
+  Effect.gen(function* () {
+    const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+    if (!resolvedLaunchArgs.ok) {
+      return yield* new PiRpcError({ operation: "spawn", detail: "invalid launch arguments" });
+    }
+    const connection = yield* openPiDiscoveryConnection(
+      piSettings,
+      environment,
+      resolvedLaunchArgs.args,
+      cwd,
+    );
+    const { slashCommands, skills } = parsePiDiscoveredCommands(
+      yield* connection.request({ type: "get_commands" }),
+    );
+    return {
+      slashCommands: withPiBuiltinSlashCommands(slashCommands),
+      skills,
+    } satisfies PiDiscoveredCommands;
+  }).pipe(Effect.scoped, Effect.timeout(PI_RPC_DISCOVERY_TIMEOUT_MS));
 
 const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {

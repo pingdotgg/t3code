@@ -24,6 +24,7 @@ import { makePiAdapter } from "../Layers/PiAdapter.ts";
 import {
   buildInitialPiProviderSnapshot,
   checkPiProviderStatus,
+  discoverPiWorkspaceCommands,
   enrichPiSnapshot,
 } from "../Layers/PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -148,6 +149,29 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         ),
       );
 
+      // Project skills live in the workspace, so each project gets its own
+      // command and skill list on top of the machine-wide snapshot.
+      const snapshotForCwd = (workspaceCwd: string) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              discoverPiWorkspaceCommands(effectiveConfig, processEnv, workspaceCwd).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderDriverError({
+                      driver: DRIVER_KIND,
+                      instanceId,
+                      detail: "Failed to discover Pi commands and skills for the workspace.",
+                      cause,
+                    }),
+                ),
+              ),
+            ]).pipe(
+              Effect.map(([machineSnapshot, commands]) => ({ ...machineSnapshot, ...commands })),
+            );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -156,6 +180,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
