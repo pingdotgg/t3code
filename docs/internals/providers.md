@@ -35,6 +35,17 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
+Kimi Code keeps sub-agent work isolated by design: an `Agent` or `AgentSwarm` dispatch arrives as
+one ACP `tool_call` whose title is the tool name, with the final result in `rawOutput`. There is
+no nested activity stream and no parent linkage `_meta`, so the adapter classifies by title and
+renders spawn rows only. Kimi also curates its own ACP command list: TUI commands such as `/goal`
+and `/model` are rejected when sent as prompt text (0.43.x), so the adapter surfaces only what
+`available_commands_update` advertises instead of maintaining its own allowlist. Model, thinking,
+and mode state arrive in `session/new` `configOptions` as `{type:"select", options:[{value,name}]}`
+(note the `value` field name), and Kimi has no `acceptEdits` permission mode, so
+`auto-accept-edits` maps to its `auto` mode. Auth detection reads only the existence of
+`$KIMI_CODE_HOME/credentials/kimi-code.json`; the file is never read.
+
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.

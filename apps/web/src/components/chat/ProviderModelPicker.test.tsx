@@ -114,7 +114,7 @@ describe("ProviderModelPicker", () => {
     },
   );
 
-  it.each(["codex", "claudeAgent", "cursor", "grok"])(
+  it.each(["codex", "claudeAgent", "cursor", "grok", "kimi"])(
     "uses the first option label for a missing %s model",
     (driver) => {
       const markup = renderPicker({
