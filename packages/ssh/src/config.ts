@@ -170,8 +170,8 @@ function normalizeKnownHostsHostname(rawHost: string): string {
   return firstColonIndex === lastColonIndex ? rawHost.slice(0, lastColonIndex) : rawHost;
 }
 
-export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
-  const hostnames = new Set<string>();
+function parseKnownHostsTargets(raw: string): ReadonlyArray<DesktopDiscoveredSshHost> {
+  const targets = new Map<string, DesktopDiscoveredSshHost>();
 
   for (const line of raw.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -192,19 +192,29 @@ export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
       if (host.length === 0 || hasSshPattern(host)) {
         continue;
       }
-      hostnames.add(host);
+      const portText =
+        /^\[[^\]]+\]:(\d+)$/.exec(rawHost)?.[1] ?? /^[^:]+:(\d+)$/.exec(rawHost)?.[1];
+      const port = portText === undefined ? null : Number(portText);
+      if (port !== null && (!Number.isSafeInteger(port) || port < 1 || port > 65535)) continue;
+      const alias =
+        port === null ? host : `ssh://${host.includes(":") ? `[${host}]` : host}:${port}`;
+      targets.set(alias, { alias, hostname: host, username: null, port, source: "known-hosts" });
     }
   }
 
-  return [...hostnames].toSorted((left, right) => left.localeCompare(right));
+  return [...targets.values()].toSorted((left, right) => left.alias.localeCompare(right.alias));
 }
 
-const readKnownHostsHostnames = Effect.fnUntraced(function* (filePath: string) {
+export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
+  return [...new Set(parseKnownHostsTargets(raw).map((target) => target.hostname))].toSorted(
+    (left, right) => left.localeCompare(right),
+  );
+}
+
+const readKnownHostsTargets = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  if (!(yield* fs.exists(filePath))) {
-    return NO_HOSTS;
-  }
-  return parseKnownHostsHostnames(yield* fs.readFileString(filePath));
+  if (!(yield* fs.exists(filePath))) return [];
+  return parseKnownHostsTargets(yield* fs.readFileString(filePath));
 });
 
 export const discoverSshHosts = Effect.fnUntraced(
@@ -229,7 +239,7 @@ export const discoverSshHosts = Effect.fnUntraced(
       new Set<string>(),
       homeDir,
     );
-    const knownHosts = yield* readKnownHostsHostnames(path.join(sshDirectory, "known_hosts"));
+    const knownHosts = yield* readKnownHostsTargets(path.join(sshDirectory, "known_hosts"));
     const discovered = new Map<string, DesktopDiscoveredSshHost>();
 
     for (const alias of configAliases) {
@@ -242,17 +252,8 @@ export const discoverSshHosts = Effect.fnUntraced(
       });
     }
 
-    for (const hostname of knownHosts) {
-      if (discovered.has(hostname)) {
-        continue;
-      }
-      discovered.set(hostname, {
-        alias: hostname,
-        hostname,
-        username: null,
-        port: null,
-        source: "known-hosts",
-      });
+    for (const target of knownHosts) {
+      if (!discovered.has(target.alias)) discovered.set(target.alias, target);
     }
 
     return [...discovered.values()].toSorted((left, right) =>
