@@ -122,11 +122,16 @@ export function normalizePastedCloneUrl(input: string): string {
   return `https://github.com/${repository}`;
 }
 
-/** GitHub and Forgejo default to HTTPS; other providers retain their existing SSH default. */
+/**
+ * GitHub, GitLab, and Forgejo default to HTTPS: their CLIs install a Git credential helper on
+ * sign-in, while SSH needs a separately registered key. Other providers keep their SSH default.
+ */
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
-  return repository.provider === "github" || repository.provider === "forgejo"
+  return repository.provider === "github" ||
+    repository.provider === "gitlab" ||
+    repository.provider === "forgejo"
     ? repository.url
     : repository.sshUrl;
 }
