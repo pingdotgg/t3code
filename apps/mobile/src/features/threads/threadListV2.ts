@@ -14,6 +14,7 @@ import {
   sortActiveThreadsByOrderKey,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
+  sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -606,11 +607,7 @@ export function buildThreadListV2Items(input: {
       : orderedSnoozed.filter(
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
-  const orderedSettled = [...settled].sort(
-    (left, right) =>
-      parseTimestampMs(resolveSettledThreadTimestamp(right) ?? "") -
-      parseTimestampMs(resolveSettledThreadTimestamp(left) ?? ""),
-  );
+  const orderedSettled = sortSettledThreads(settled);
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
   const pagedSettled =
     orderedSettled.length > settledLimit ? orderedSettled.slice(0, settledLimit) : orderedSettled;
