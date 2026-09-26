@@ -1,4 +1,5 @@
 import type { TranscriptionResult } from "@react-native-ai/apple/src/NativeAppleTranscription";
+import type { Spec as AppleLLM } from "@react-native-ai/apple/src/NativeAppleLLM";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { VoiceTranscriptionError } from "@t3tools/client-runtime/voice-input";
@@ -8,6 +9,12 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn<(locale: string) => Promise<string>>(),
   transcribe: vi.fn<(audio: ArrayBufferLike, locale: string) => Promise<TranscriptionResult>>(),
   readAudio: vi.fn<() => Promise<ArrayBuffer>>(),
+  modelAvailable: vi.fn<AppleLLM["isAvailable"]>(),
+  generateText: vi.fn<AppleLLM["generateText"]>(),
+}));
+
+vi.mock("@react-native-ai/apple/src/NativeAppleLLM", () => ({
+  default: { isAvailable: mocks.modelAvailable, generateText: mocks.generateText },
 }));
 
 vi.mock("@react-native-ai/apple/src/NativeAppleTranscription", () => ({
@@ -49,6 +56,7 @@ beforeEach(() => {
   mocks.prepare.mockResolvedValue("sv-SE");
   mocks.readAudio.mockResolvedValue(audio);
   mocks.transcribe.mockResolvedValue(nativeTranscript);
+  mocks.modelAvailable.mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -72,6 +80,83 @@ describe("getLocalVoiceTranscriber", () => {
     expect(mocks.prepare).toHaveBeenCalledWith("sv-FI");
     expect(prepared.locale).toBe("sv-SE");
     expect(mocks.transcribe).toHaveBeenCalledWith(audio, "sv-SE");
+    expect(mocks.generateText).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Uh, fix umm the bug. Ahh.", "fix the bug.", "fix the bug."],
+    ["Eh, ändra um färgen.", "ändra färgen.", "ändra färgen."],
+    [
+      "Unm, use the uh useVoiceInput hook.",
+      "use the useVoiceInput hook.",
+      "use the useVoiceInput hook.",
+    ],
+    ["Uh, fix the bug.", "Fix the bug.", "Uh, fix the bug."],
+    ["Uh, do not delete it.", "do delete it.", "Uh, do not delete it."],
+    ["Uh, keep foo_bar.ts.", "keep fooBar.ts.", "Uh, keep foo_bar.ts."],
+    ["Uh, first then second.", "second then first.", "Uh, first then second."],
+    ["Uh, fix it.", "Here is the transcript: fix it.", "Uh, fix it."],
+    ["Uh, fix it.", "", "Uh, fix it."],
+    ["Uh, umm.", "", "Uh, umm."],
+    ['Uh, explain "um".', "explain", 'Uh, explain "um".'],
+    ["Uh, explain the word um.", "explain the word um.", "explain the word um."],
+  ])("accepts only filler deletions from %s", async (text, cleaned, expected) => {
+    mocks.transcribe.mockResolvedValue({
+      duration: 2,
+      segments: [{ text, startSecond: 0, endSecond: 2 }],
+    });
+    mocks.generateText.mockResolvedValue([{ type: "text", text: cleaned }]);
+    const options = { signal: new AbortController().signal };
+    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+
+    await expect(prepared.transcribe("file:///voice.m4a", options)).resolves.toBe(expected);
+    expect(mocks.generateText).toHaveBeenCalledOnce();
+  });
+
+  it.each(["unavailable", "failure", "unexpected-response"])(
+    "keeps successful transcription when cleanup has %s",
+    async (failure) => {
+      const text = "Uh, fix it.";
+      mocks.transcribe.mockResolvedValue({
+        duration: 2,
+        segments: [{ text, startSecond: 0, endSecond: 2 }],
+      });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      if (failure === "unavailable") mocks.modelAvailable.mockReturnValue(false);
+      if (failure === "failure") mocks.generateText.mockRejectedValue(new Error("Model refused"));
+      if (failure === "unexpected-response") mocks.generateText.mockResolvedValue([]);
+      const options = { signal: new AbortController().signal };
+      const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+
+      await expect(prepared.transcribe("file:///voice.m4a", options)).resolves.toBe(text);
+      if (failure === "unavailable") expect(mocks.generateText).not.toHaveBeenCalled();
+      if (failure === "failure") expect(warning).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("discards cleanup after cancellation", async () => {
+    const enteredCleanup = deferred<void>();
+    const finishCleanup = deferred<Awaited<ReturnType<AppleLLM["generateText"]>>>();
+    mocks.transcribe.mockResolvedValue({
+      duration: 2,
+      segments: [{ text: "Uh, fix it.", startSecond: 0, endSecond: 2 }],
+    });
+    mocks.generateText.mockImplementation(() => {
+      enteredCleanup.resolve();
+      return finishCleanup.promise;
+    });
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
+    const prepared = await getLocalVoiceTranscriber()!.prepare(options);
+    const result = prepared
+      .transcribe("file:///voice.m4a", options)
+      .catch((error: unknown) => error);
+
+    await enteredCleanup.promise;
+    controller.abort();
+    finishCleanup.resolve([{ type: "text", text: "fix it." }]);
+
+    expect(await result).toMatchObject({ code: "cancelled" });
   });
 
   it("does not start native transcription after cancellation during a file read", async () => {
