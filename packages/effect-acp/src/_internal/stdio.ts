@@ -49,15 +49,31 @@ type ChildProcessTerminationHandle = Pick<
   "exitCode" | "pid"
 >;
 
+const signalPattern = /receipt of signal: '(SIG[A-Z0-9]+)'/u;
+
+/** The spawner reports a signal death as a failed exit code whose root error names it. */
+function terminationSignal(cause: unknown): string | undefined {
+  for (let current = cause, depth = 0; current instanceof Object && depth < 4; depth += 1) {
+    const match = "message" in current ? signalPattern.exec(String(current.message)) : null;
+    if (match) return match[1];
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return undefined;
+}
+
 export const makeTerminationError = (
   handle: ChildProcessTerminationHandle,
 ): Effect.Effect<AcpError.AcpError> =>
   Effect.match(handle.exitCode, {
-    onFailure: (cause) =>
-      new AcpError.AcpTransportError({
-        operation: "read-process-exit-status",
-        pid: handle.pid,
-        cause,
-      }),
+    onFailure: (cause) => {
+      const signal = terminationSignal(cause);
+      return signal
+        ? new AcpError.AcpProcessExitedError({ signal, pid: handle.pid, cause })
+        : new AcpError.AcpTransportError({
+            operation: "read-process-exit-status",
+            pid: handle.pid,
+            cause,
+          });
+    },
     onSuccess: (code) => new AcpError.AcpProcessExitedError({ code, pid: handle.pid }),
   });

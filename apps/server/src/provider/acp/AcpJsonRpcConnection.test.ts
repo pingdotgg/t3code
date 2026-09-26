@@ -16,7 +16,10 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { describeAntigravityStartupFailure } from "./AntigravityAcpSupport.ts";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -386,6 +389,29 @@ describe("AcpSessionRuntime", () => {
       expect(error.message).toContain("Unrecognized key");
       expect(error.message).not.toContain("ACP process exited with code 1\nACP process exited");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // Windows has no POSIX signals to raise.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "names the signal and keeps stderr when a signal kills the ACP process",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: {
+            command: process.execPath,
+            args: [
+              "-e",
+              "process.stderr.write('enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)\\n', () => process.kill(process.pid, 'SIGABRT'));",
+            ],
+          },
+        });
+        const error = yield* runtime.initialize().pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "AcpProcessExitedError", signal: "SIGABRT" });
+        expect(error.message).toContain("ACP process was killed by SIGABRT");
+        expect(error.message).toContain("AF_INET6");
+        expect(describeAntigravityStartupFailure(error)).toContain("IPv6");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>

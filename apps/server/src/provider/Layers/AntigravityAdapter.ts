@@ -40,6 +40,7 @@ import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
+  ProviderAdapterProcessError,
   ProviderAdapterRequestError,
   ProviderAdapterSessionClosedError,
   ProviderAdapterSessionNotFoundError,
@@ -67,6 +68,7 @@ import {
   antigravityModelOptions,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
+  describeAntigravityStartupFailure,
   type AntigravityAcpRuntimeInput,
   resolveAntigravityModel,
 } from "../acp/AntigravityAcpSupport.ts";
@@ -933,16 +935,28 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 ? (options.onAuthRequired ?? Effect.void)
                 : Effect.void,
             ),
-            Effect.mapError((cause) =>
-              isAcpError(cause)
+            Effect.mapError((cause) => {
+              const startup = describeAntigravityStartupFailure(cause);
+              if (startup) {
+                return new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: startup,
+                  cause,
+                });
+              }
+              return isAcpError(cause)
                 ? mapAntigravityError(input.threadId, "session/start", cause)
                 : new ProviderAdapterRequestError({
                     provider: PROVIDER,
                     method: "session/start",
-                    detail: "Could not start Antigravity. Check the provider setup status.",
+                    detail:
+                      cause._tag === "ProviderSetupError"
+                        ? cause.detail
+                        : "Could not start Antigravity. Check the provider setup status.",
                     cause,
-                  }),
-            ),
+                  });
+            }),
           );
       }).pipe(Effect.scoped),
     );

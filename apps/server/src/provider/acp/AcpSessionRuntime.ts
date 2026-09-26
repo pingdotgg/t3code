@@ -397,6 +397,7 @@ export const make = (
                 ? error
                 : new EffectAcpErrors.AcpProcessExitedError({
                     ...(error.code !== undefined ? { code: error.code } : {}),
+                    ...(error.signal !== undefined ? { signal: error.signal } : {}),
                     ...(error.pid !== undefined ? { pid: error.pid } : {}),
                     stderr,
                     ...(error.cause !== undefined ? { cause: error.cause } : {}),

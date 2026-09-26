@@ -20,6 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import { describeAntigravityStartupFailure } from "./acp/AntigravityAcpSupport.ts";
 import {
   parseAntigravityAuthorizationUrl,
   type AntigravityAuthorizationUrl,
@@ -107,6 +108,8 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
     if (isSetupError(error.value)) {
       return error.value.detail;
     }
+    const startup = describeAntigravityStartupFailure(error.value);
+    if (startup) return startup;
     if (isAcpRequestError(error.value)) {
       if (error.value.errorMessage.includes("SUBSCRIPTION_REQUIRED")) {
         return "Google requires an eligible Antigravity subscription for this account.";

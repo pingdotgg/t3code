@@ -19,6 +19,8 @@ describe("AcpStderr", () => {
         "Authorization: Bearer secret-token-value",
         "Visit http://localhost:5733/pair#token=ABCDEF for pairing",
         "key=sk-abcdefghijklmnopqrstuv",
+        "Open the following link to authenticate the ACP server: https://accounts.google.com/o/oauth2/v2/auth?state=private-state&redirect_uri=http%3A%2F%2F127.0.0.1%3A4000%2F",
+        '__T3_ANTIGRAVITY_AUTH_URL__"https://accounts.google.com/o/oauth2/v2/auth?state=other-state"',
       ].join("\n"),
       { HOME: "/Users/ada" },
     );
@@ -30,6 +32,9 @@ describe("AcpStderr", () => {
     expect(excerpt).not.toContain("secret-token-value");
     expect(excerpt).not.toContain("ABCDEF");
     expect(excerpt).not.toContain("sk-abcdefghijklmnopqrstuv");
+    expect(excerpt).toContain("[sign-in-url]");
+    expect(excerpt).not.toContain("private-state");
+    expect(excerpt).not.toContain("other-state");
   });
 
   it("redacts hyphenated OpenAI project keys and header credentials", () => {

@@ -251,6 +251,20 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       }),
   );
 
+  it.effect("says why sign-in failed when the runtime crashes before a sign-in page", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpProcessExitedError({ signal: "SIGILL", pid: 7 }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.include(failed.message ?? "", "illegal CPU instruction");
+    }),
+  );
+
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

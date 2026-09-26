@@ -94,6 +94,8 @@ export class AcpProcessExitedError extends Schema.TaggedError<AcpProcessExitedEr
   "AcpProcessExitedError",
   {
     code: Schema.optional(Schema.Number),
+    /** Set instead of `code` when a signal such as SIGILL killed the process. */
+    signal: Schema.optionalKey(Schema.String),
     pid: Schema.optionalKey(Schema.Int),
     stderr: Schema.optionalKey(Schema.String),
     cause: Schema.optional(Schema.Defect()),
@@ -101,7 +103,11 @@ export class AcpProcessExitedError extends Schema.TaggedError<AcpProcessExitedEr
 ) {
   override get message() {
     const base =
-      this.code === undefined ? "ACP process exited" : `ACP process exited with code ${this.code}`;
+      this.signal !== undefined
+        ? `ACP process was killed by ${this.signal}`
+        : this.code === undefined
+          ? "ACP process exited"
+          : `ACP process exited with code ${this.code}`;
     const excerpt = this.stderr?.trim();
     return excerpt && excerpt.length > 0 ? `${base}\n${excerpt}` : base;
   }

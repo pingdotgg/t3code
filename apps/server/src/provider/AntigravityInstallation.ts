@@ -31,7 +31,10 @@ import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 
 import { ServerConfig } from "../config.ts";
-import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
+import {
+  describeAntigravityStartupFailure,
+  makeAntigravityAcpRuntime,
+} from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
   prepareAntigravityProfile,
@@ -511,12 +514,15 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(Path.Path, path),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Crypto.Crypto, crypto),
-      Effect.mapError(
-        wrapFailure(
-          "verify",
-          "The downloaded Antigravity runtime could not start in this environment.",
-        ),
-      ),
+      Effect.mapError((cause) => {
+        const startup = describeAntigravityStartupFailure(cause);
+        return startup
+          ? installationError("verify", startup, cause)
+          : wrapFailure(
+              "verify",
+              "The downloaded Antigravity runtime could not start in this environment.",
+            )(cause);
+      }),
     );
 
   const install = Effect.fn("AntigravityInstallation.install")(

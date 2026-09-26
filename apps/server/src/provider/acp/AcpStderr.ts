@@ -5,6 +5,8 @@ import * as NodeOS from "node:os";
 export const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
 
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;
+// Antigravity prints its Google sign-in URL, with the OAuth state, to stderr.
+const OAUTH_URL_PATTERN = /https:\/\/accounts\.google\.com\/[^\s"]*/gi;
 const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9._\-+=/]+/gi;
 const BASIC_AUTH_PATTERN = /\bAuthorization:\s*Basic\s+\S+/gi;
 const API_KEY_HEADER_PATTERN = /\bx-api-key:\s*\S+/gi;
@@ -30,6 +32,7 @@ export function sanitizeAcpStderrExcerpt(
   }
   result = result
     .replace(PAIRING_URL_PATTERN, "[pairing-url]")
+    .replace(OAUTH_URL_PATTERN, "[sign-in-url]")
     .replace(BEARER_TOKEN_PATTERN, "Bearer [redacted]")
     .replace(BASIC_AUTH_PATTERN, "Authorization: Basic [redacted]")
     .replace(API_KEY_HEADER_PATTERN, "x-api-key: [redacted]")

@@ -37,6 +37,7 @@ import {
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
+  describeAntigravityStartupFailure,
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
 } from "../acp/AntigravityAcpSupport.ts";
@@ -456,10 +457,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                 instanceId,
                 detail: isAntigravitySignInRequiredError(cause)
                   ? "Sign in to Antigravity in provider settings before refreshing models."
-                  : cause._tag === "ProviderSetupError" &&
-                      (cause.operation === "configure" || cause.operation === "start")
-                    ? cause.detail
-                    : "Could not refresh Antigravity models. The previous model list is unchanged.",
+                  : (describeAntigravityStartupFailure(cause) ??
+                    (cause._tag === "ProviderSetupError" &&
+                    (cause.operation === "configure" || cause.operation === "start")
+                      ? cause.detail
+                      : "Could not refresh Antigravity models. The previous model list is unchanged.")),
                 cause,
               }),
         ),

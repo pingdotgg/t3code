@@ -21,6 +21,26 @@ describe("ACP child process termination", () => {
     }),
   );
 
+  it.effect("reports a signal death as a process exit that names the signal", () =>
+    Effect.gen(function* () {
+      const cause = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "exitCode",
+        cause: new Error("Process interrupted due to receipt of signal: 'SIGILL'"),
+      });
+      const error = yield* makeTerminationError({
+        pid: ChildProcessSpawner.ProcessId(43),
+        exitCode: Effect.fail(cause),
+      });
+
+      assert.instanceOf(error, AcpError.AcpProcessExitedError);
+      assert.equal(error.signal, "SIGILL");
+      assert.isUndefined(error.code);
+      assert.equal(error.message, "ACP process was killed by SIGILL");
+    }),
+  );
+
   it.effect("retains the process identifier and exact exit-status cause", () =>
     Effect.gen(function* () {
       const rootCause = new Error("private process diagnostics");

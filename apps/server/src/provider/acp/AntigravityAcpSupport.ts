@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -387,3 +388,27 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
   }
   return blocks;
 });
+
+// Windows reports an illegal instruction as this NTSTATUS exit code.
+const WINDOWS_ILLEGAL_INSTRUCTION = 0xc000001d;
+const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
+
+/**
+ * Explains why Google's runtime died before it answered, or undefined when
+ * the error is not a process exit. Unknown exits keep the exit code or signal
+ * and the redacted stderr tail, which is still more than a generic line.
+ */
+export function describeAntigravityStartupFailure(error: unknown): string | undefined {
+  if (!isAcpProcessExitedError(error)) return undefined;
+  const stderr = error.stderr ?? "";
+  if (error.signal === "SIGILL" || error.code === WINDOWS_ILLEGAL_INSTRUCTION) {
+    return "Antigravity crashed with an illegal CPU instruction. Google's runtime needs a CPU with AVX2; run it on a machine that supports AVX2.";
+  }
+  if (/AF_INET6|enforce_kernel_ipv6_support/u.test(stderr)) {
+    return "Antigravity needs IPv6 sockets, which this kernel has disabled. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown.";
+  }
+  if (/Failed to extract .*failed to (?:open target file|write data chunk)/u.test(stderr)) {
+    return "Antigravity could not unpack its runtime into its temp directory. Check that the disk has a few GB free.";
+  }
+  return `Antigravity stopped while starting. ${error.message}`;
+}

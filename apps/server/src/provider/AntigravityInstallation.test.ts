@@ -440,6 +440,63 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
+  // A real process dies by signal, which only POSIX hosts can raise.
+  it.effect.each([
+    { name: "a CPU without AVX", stderr: "", signal: "ILL", message: "illegal CPU instruction" },
+    {
+      name: "a kernel without IPv6",
+      stderr: "enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6)",
+      signal: "ABRT",
+      message: "IPv6",
+    },
+  ])("explains why the runtime cannot start on $name", (testCase) =>
+    Effect.gen(function* () {
+      if (hostPlatform === "win32") return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-crash-" });
+      // A downloaded release that dies the way Google's runtime does on this host.
+      const runtime = `#!/bin/sh\nprintf '%s\\n' '${testCase.stderr}' >&2\nkill -${testCase.signal} $$\n`;
+      const asset = {
+        ...releaseAsset(),
+        executable: { name: executableName, bytes: Buffer.byteLength(runtime) },
+      };
+      const directory = path.join(
+        baseDir,
+        "tools",
+        "antigravity-acp",
+        `${hostPlatform}-x64`,
+        "versions",
+        asset.sha256,
+      );
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(path.join(directory, executableName), runtime, { mode: 0o755 });
+      yield* fs.writeFileString(path.join(directory, harnessName), harnessContents, {
+        mode: 0o755,
+      });
+      yield* fs.writeFileString(
+        path.join(directory, ".install-complete.json"),
+        encodeJsonString({
+          releaseId: asset.sha256,
+          version: asset.version,
+          executable: asset.executable,
+          harness: asset.harness,
+        }),
+      );
+      const { installation } = yield* makeHarness({
+        baseDir,
+        asset,
+        previous: true,
+        useDefaultValidation: true,
+      });
+      yield* installation.start;
+      const state = yield* terminalState(installation);
+      expect(state.phase).toBe("failed");
+      expect(state.message).toContain(testCase.message);
+      yield* expectPreviousRelease(installation);
+    }),
+  );
+
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
     Effect.gen(function* () {
       // dl.google.com gzips the archive and reports the encoded size. The decoded
