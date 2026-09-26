@@ -106,7 +106,7 @@ const testLayer = (
 
 describe("ProjectSetupScriptRunner", () => {
   it.effect(
-    "seeds dependencies before setup launch only when an effective setup script exists",
+    "seeds dependencies only when the effective command matches the opted-in setup script",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -176,48 +176,52 @@ describe("ProjectSetupScriptRunner", () => {
           icon: "configure" as const,
           runOnWorktreeCreate: true,
         };
-        const started = yield* Effect.gen(function* () {
-          const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-          return yield* runner.runForThread({
-            threadId: "thread-1",
-            projectId: project.id,
-            worktreePath: target,
-          });
-        }).pipe(
-          Effect.provide(
-            testLayer(
-              project,
-              {
-                open: () =>
-                  Effect.gen(function* () {
-                    expect(
-                      yield* fs
-                        .exists(path.join(target, "node_modules", "pkg", "index.js"))
-                        .pipe(Effect.orDie),
-                    ).toBe(probe._tag === "Success");
-                    return {
-                      threadId: "thread-1",
-                      terminalId: "setup-install",
-                      cwd: target,
-                      worktreePath: target,
-                      status: "running" as const,
-                      pid: 123,
-                      history: "",
-                      exitCode: null,
-                      exitSignal: null,
-                      label: "setup-install",
-                      updatedAt: "2026-01-01T00:00:00.000Z",
-                    };
-                  }),
-                write: () => Effect.void,
-              },
-              ServerSettings.layerTest({
-                projectSettingsOverrides: { [project.id]: { defaultProjectScripts: [setup] } },
-              }),
+        for (const command of ["echo ready", setup.command]) {
+          const started = yield* Effect.gen(function* () {
+            const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+            return yield* runner.runForThread({
+              threadId: "thread-1",
+              projectId: project.id,
+              worktreePath: target,
+            });
+          }).pipe(
+            Effect.provide(
+              testLayer(
+                project,
+                {
+                  open: () =>
+                    Effect.gen(function* () {
+                      expect(
+                        yield* fs
+                          .exists(path.join(target, "node_modules", "pkg", "index.js"))
+                          .pipe(Effect.orDie),
+                      ).toBe(command === setup.command && probe._tag === "Success");
+                      return {
+                        threadId: "thread-1",
+                        terminalId: "setup-install",
+                        cwd: target,
+                        worktreePath: target,
+                        status: "running" as const,
+                        pid: 123,
+                        history: "",
+                        exitCode: null,
+                        exitSignal: null,
+                        label: "setup-install",
+                        updatedAt: "2026-01-01T00:00:00.000Z",
+                      };
+                    }),
+                  write: () => Effect.void,
+                },
+                ServerSettings.layerTest({
+                  projectSettingsOverrides: {
+                    [project.id]: { defaultProjectScripts: [{ ...setup, command }] },
+                  },
+                }),
+              ),
             ),
-          ),
-        );
-        expect(started.status).toBe("started");
+          );
+          expect(started.status).toBe("started");
+        }
       }).pipe(Effect.provide(GitTestLayer)),
   );
 

@@ -27,16 +27,19 @@ export const makeWorktreeDependencies = Effect.fn("makeWorktreeDependencies")(fu
   const warmDependencies = Effect.fn("WorktreeDependencies.warmDependencies")(function* (
     cwd: string,
     destination: string,
+    setupCommand: string,
   ) {
     if (!supported) return;
-    // Seeding is only an install accelerator. Require the repository to declare
-    // a setup step so this never silently replaces dependency reconciliation.
+    // The opt-in trusts the repository's setup command to reconcile dependencies.
+    // A settings override must not seed them before running a different command.
     const project = yield* decodeProjectFile(
       yield* fs.readFileString(path.join(destination, "t3.json")),
     );
     if (
       !project.worktreeCloneDependencies ||
-      !project.scripts?.some((script) => script.runOnWorktreeCreate)
+      !project.scripts?.some(
+        (script) => script.runOnWorktreeCreate && script.command === setupCommand,
+      )
     )
       return;
     const root = (yield* git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();

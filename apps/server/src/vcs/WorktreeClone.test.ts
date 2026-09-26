@@ -78,7 +78,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       const warmDependencies = yield* makeWorktreeDependencies().pipe(
         Effect.provideService(HostProcessPlatform, "linux"),
       );
-      yield* warmDependencies(f.cwd, f.target);
+      yield* warmDependencies(f.cwd, f.target, "npm ci");
       assert.isFalse(yield* f.fs.exists(f.target));
     }),
   );
@@ -415,7 +415,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
           refName: "main",
           newRefName: "feature",
         });
-        yield* f.warmDependencies(f.cwd, f.target);
+        yield* f.warmDependencies(f.cwd, f.target, "npm ci");
         assert.equal(
           yield* f.fs.readFileString(f.path.join(f.target, "node_modules/pkg/index.js")),
           "module.exports = 1",
@@ -455,14 +455,14 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
             refName: "main",
             newRefName: "feature",
           });
-          yield* f.warmDependencies(f.cwd, f.target);
+          yield* f.warmDependencies(f.cwd, f.target, "npm ci");
           assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
           assert.isFalse(
             (yield* f.fs.readDirectory(f.target)).some((name) => name.startsWith(".t3-deps-")),
           );
           yield* f.fs.makeDirectory(f.path.join(f.target, "node_modules"));
           yield* f.fs.writeFileString(f.path.join(f.target, "node_modules/marker"), "hook");
-          yield* f.warmDependencies(f.cwd, f.target);
+          yield* f.warmDependencies(f.cwd, f.target, "npm ci");
           assert.equal(
             yield* f.fs.readFileString(f.path.join(f.target, "node_modules/marker")),
             "hook",
@@ -480,7 +480,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
           { worktreeCloneDependencies: true },
         ]) {
           yield* f.fs.writeFileString(f.path.join(f.target, "t3.json"), encodeProject(config));
-          yield* f.warmDependencies(f.cwd, f.target);
+          yield* f.warmDependencies(f.cwd, f.target, "npm ci");
           assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
         }
       }),

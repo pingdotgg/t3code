@@ -62,16 +62,16 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
-## APFS worktree copies on macOS
+## Space-saving worktrees on macOS
 
-T3 uses APFS copies for regular tracked files in eligible clean, same-commit
-worktrees. The copies share disk blocks until edited; changes remain independent.
-This saves disk space, but verification can make checkout slower than Git. Set
+Eligible clean, same-commit worktrees use less disk space while edits remain
+independent. Verification can make checkout slower than Git. Set
 `"worktreeCloneFiles": false` in `t3.json` to opt out. Unsupported checkouts and
 filesystems use Git as usual.
 
 To seed dependencies too, set `"worktreeCloneDependencies": true` in `t3.json` and
-keep a `runOnWorktreeCreate` script that installs dependencies. T3 copies ignored
+keep a `runOnWorktreeCreate` script that installs dependencies. The effective setup
+action must use the same command as that script. T3 copies ignored
 `node_modules` directories when the source and new worktree are clean and at the
 same commit, just before running the effective setup action. Worktree creation
 that skips setup does not seed dependencies. Setup still runs to reconcile dependencies and rebuild executable

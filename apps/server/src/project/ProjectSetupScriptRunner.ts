@@ -347,7 +347,7 @@ export const make = Effect.gen(function* () {
       } as const;
     }
 
-    yield* warmDependencies(project.workspaceRoot, input.worktreePath);
+    yield* warmDependencies(project.workspaceRoot, input.worktreePath, script.command);
 
     const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;
