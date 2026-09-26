@@ -26,7 +26,7 @@ import {
   type ServerProvider,
   type ServerProviderSkill,
   type RunId,
-  type ThreadId,
+  ThreadId,
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -194,6 +194,8 @@ import {
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
+  threadReadLabelPrefix,
+  threadReadTargetId,
   toolGroupAction,
   workEntryDisplayLabel,
   workEntryIsVisibleInGroup,
@@ -3531,16 +3533,64 @@ function LiveActivityContent({
   );
 }
 
+/** The thread a `t3_thread_read` call targets, titled from live shell state so renames show. */
+function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
+  const rawThreadId = threadReadTargetId(entry);
+  const threadId = rawThreadId === null ? null : ThreadId.make(rawThreadId);
+  const title = useThreadShell(
+    threadId ? scopeThreadRef(environmentId, threadId) : null,
+  )?.title.trim();
+  return threadId && title ? { threadId, title } : null;
+}
+
+function threadReadLabel(label: string, target: ReturnType<typeof useThreadReadTarget>) {
+  const prefix = target && threadReadLabelPrefix(label);
+  return prefix ? { ...target, prefix, text: `${prefix} “${target.title}”` } : null;
+}
+
+/** Only settled rows link the title; the live row is itself a button. */
+function ThreadReadLabel({
+  label,
+  environmentId,
+  linked,
+}: {
+  label: NonNullable<ReturnType<typeof threadReadLabel>>;
+  environmentId: EnvironmentId;
+  linked: boolean;
+}) {
+  return (
+    <span className="flex min-w-0">
+      <span className="shrink-0">{label.prefix} “</span>
+      {linked ? (
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId, threadId: label.threadId }}
+          className="min-w-0 truncate rounded-sm text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          onClick={stopRowToggle}
+          onKeyDown={stopRowToggle}
+        >
+          {label.title}
+        </Link>
+      ) : (
+        <span className="min-w-0 truncate">{label.title}</span>
+      )}
+      <span className="shrink-0">”</span>
+    </span>
+  );
+}
+
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
+  const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const threadLabel = threadReadLabel(label, threadTarget);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
     <button
       type="button"
       className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={failed ? `${label}, tool call failed` : undefined}
+      aria-label={failed ? `${threadLabel?.text ?? label}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
@@ -3569,6 +3619,12 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             >
               {row.entry.detail ?? label}
             </ReactMarkdown>
+          ) : threadLabel ? (
+            <ThreadReadLabel
+              label={threadLabel}
+              environmentId={ctx.activeThreadEnvironmentId}
+              linked={false}
+            />
           ) : (
             label
           )
@@ -4884,6 +4940,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
+  const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -5016,7 +5073,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";
-  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
+  const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
+  const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
+    .filter(Boolean)
+    .join(": ");
   const accessibleDisplayText = showFailedIndicator
     ? `${accessiblePreview}, tool call failed`
     : accessiblePreview;
@@ -5077,6 +5137,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 >
                   {workEntry.detail ?? previewText}
                 </ReactMarkdown>
+              ) : threadLabel ? (
+                <ThreadReadLabel
+                  label={threadLabel}
+                  environmentId={ctx.activeThreadEnvironmentId}
+                  linked
+                />
               ) : (
                 previewText
               )}
