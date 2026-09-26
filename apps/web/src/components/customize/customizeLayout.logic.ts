@@ -34,7 +34,7 @@ export const PALETTE_MARGIN = 12;
  * How much of a palette must stay on screen. A taller palette keeps its
  * anchored top and scrolls its body rather than climbing over its neighbours.
  */
-export const MIN_VISIBLE_PALETTE_HEIGHT = 200;
+const MIN_VISIBLE_PALETTE_HEIGHT = 200;
 /** Below this width the palettes collapse into one tabbed sheet. */
 const COMPACT_LAYOUT_MAX_WIDTH = 960;
 
