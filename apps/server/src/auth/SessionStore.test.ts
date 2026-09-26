@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -114,6 +116,74 @@ const failingSessionLookupCredentialLayer = Layer.effect(
 );
 
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+  it.effect.each([undefined, "90 days"])("uses the configured default session lifetime %s", (ttl) =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const now = yield* DateTime.now;
+      for (const method of ["browser-session-cookie", "bearer-access-token"] as const) {
+        const issued = yield* sessions.issue({ method });
+        expect(issued.expiresAt.epochMilliseconds - now.epochMilliseconds).toBe(
+          Duration.toMillis(Duration.days(ttl === undefined ? 30 : 90)),
+        );
+        expect((yield* sessions.verify(issued.token)).sessionId).toBe(issued.sessionId);
+      }
+      const relay = yield* sessions.issue(relaySessionInput);
+      expect(relay.expiresAt.epochMilliseconds - now.epochMilliseconds).toBe(
+        Duration.toMillis(Duration.hours(1)),
+      );
+      const explicit = yield* sessions.issue({ ttl: Duration.minutes(10) });
+      expect(explicit.expiresAt.epochMilliseconds - now.epochMilliseconds).toBe(600_000);
+    }).pipe(
+      Effect.provide(
+        makeSessionStoreLayer().pipe(
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown(ttl === undefined ? {} : { T3CODE_SESSION_TTL: ttl }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("expires sessions at the configured lifetime", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue();
+      yield* TestClock.adjust(Duration.seconds(3));
+      expect((yield* Effect.flip(sessions.verify(issued.token)))._tag).toBe(
+        "SessionTokenExpiredError",
+      );
+    }).pipe(
+      Effect.provide(
+        makeSessionStoreLayer().pipe(
+          Layer.provide(
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ T3CODE_SESSION_TTL: "2 seconds" })),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["0 seconds", "-1 day", "Infinity", "invalid"])(
+    "rejects invalid default session lifetime %s",
+    (ttl) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          SessionStore.SessionStore.pipe(
+            Effect.provide(
+              makeSessionStoreLayer().pipe(
+                Layer.provide(
+                  ConfigProvider.layer(ConfigProvider.fromUnknown({ T3CODE_SESSION_TTL: ttl })),
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(error._tag).toBe("ConfigError");
+      }),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>

@@ -9,6 +9,7 @@ import {
   type ClientSurface,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -420,7 +421,14 @@ export class SessionStore extends Context.Service<
 >()("t3/auth/SessionStore") {}
 
 const SIGNING_SECRET_NAME = "server-signing-key";
-const DEFAULT_SESSION_TTL = Duration.days(30);
+const sessionTtlConfig = Config.schema(
+  Schema.DurationFromString.check(
+    Schema.makeFilter((ttl) => Duration.isFinite(ttl) && Duration.isPositive(ttl), {
+      message: "Session lifetime must be a finite, positive duration.",
+    }),
+  ),
+  "T3CODE_SESSION_TTL",
+).pipe(Config.withDefault(Duration.days(30)));
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 const SessionClaims = Schema.Struct({
   v: Schema.Literal(1),
@@ -479,6 +487,7 @@ function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthCli
 }
 
 export const make = Effect.gen(function* () {
+  const defaultSessionTtl = yield* sessionTtlConfig;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
@@ -655,7 +664,7 @@ export const make = Effect.gen(function* () {
       );
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {
-        milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
+        milliseconds: Duration.toMillis(input?.ttl ?? defaultSessionTtl),
       });
       const claims: SessionClaims = {
         v: 1,
