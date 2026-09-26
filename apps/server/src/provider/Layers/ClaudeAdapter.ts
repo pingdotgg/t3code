@@ -28,6 +28,7 @@ import {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
+import { fitClaudeImage } from "./claudeImageSize.ts";
 import {
   ApprovalRequestId,
   classifyTaskAgentKind,
@@ -1602,6 +1603,8 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly modelCatalog: ClaudeModelCatalog;
     /** Names of the skills Claude Code can run for this session's cwd. */
     readonly skillNames: ReadonlySet<string>;
+    /** Whether the message steers a running turn instead of opening one. */
+    readonly steering: boolean;
   },
 ) {
   const text = buildPromptText(input, dependencies.boundInstanceId, dependencies.modelCatalog);
@@ -1655,10 +1658,23 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
       ),
     );
 
+    // Claude Code scales the images in a turn's opening message, but stores
+    // steered ones as sent. A corrupt image is still sent; the provider
+    // reports it.
+    const fittedBytes = dependencies.steering
+      ? yield* Effect.try(() => fitClaudeImage(attachment.mimeType, bytes)).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to downscale Claude image attachment.", { cause }).pipe(
+              Effect.as(bytes),
+            ),
+          ),
+        )
+      : bytes;
+
     sdkContent.push(
       buildClaudeImageContentBlock({
         mimeType: attachment.mimeType,
-        bytes,
+        bytes: fittedBytes,
       }),
     );
   }
@@ -5252,6 +5268,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           .filter((skill) => skill.enabled && skill.userInvocable !== false)
           .map((skill) => skill.name),
       ),
+      steering: steeringTurnState !== null,
     });
 
     if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);

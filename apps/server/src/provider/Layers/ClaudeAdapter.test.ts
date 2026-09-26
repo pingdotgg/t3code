@@ -4,6 +4,7 @@ import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { PNG } from "pngjs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
@@ -23,6 +24,7 @@ import {
   ThreadId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -997,6 +999,64 @@ describe("ClaudeAdapterLive", () => {
           type: "text",
           text: "What's in this image?",
         },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  // Claude Code scales a turn's opening images but stores steered ones as
+  // sent, and the API rejects any image over 2000px once a request holds more
+  // than 20 images.
+  it.effect("scales images over 2000px only when steering a running turn", () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
+    const harness = makeHarness({ cwd: "/tmp/project-claude-steered-image", baseDir });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+
+      const attachment = {
+        type: "image" as const,
+        id: "thread-claude-attachment-12345678-1234-1234-1234-123456789abd",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 0,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment)!);
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, PNG.sync.write(new PNG({ width: 1080, height: 2424 })));
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "opening",
+        attachments: [attachment],
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "steer",
+        attachments: [attachment],
+      });
+
+      const messages = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
+      );
+      const imageSizes = messages.map(({ message }) => {
+        const [block] = message.content as Array<{ source: { data: string } }>;
+        return readImageDimensions(Buffer.from(block!.source.data, "base64"));
+      });
+      assert.deepEqual(imageSizes, [
+        { width: 1080, height: 2424 },
+        { width: 891, height: 2000 },
       ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
