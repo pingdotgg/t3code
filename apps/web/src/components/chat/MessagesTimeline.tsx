@@ -3422,7 +3422,7 @@ function AssistantChangedFilesSectionInner({
           {
             environmentId,
             filePath,
-            workspaceRoot: project?.workspaceRoot ?? ctx.workspaceRoot,
+            workspaceRoot: thread?.worktreePath ?? project?.workspaceRoot ?? ctx.workspaceRoot,
             repositoryRoot:
               thread?.worktreePath == null ? project?.repositoryIdentity?.rootPath : undefined,
           },
