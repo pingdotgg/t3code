@@ -489,7 +489,7 @@ const makeBrowserOtlpPayload = (spanName: string) =>
         url: collector.url,
         exportInterval: "10 millis",
         resource: {
-          serviceName: "t3-web",
+          serviceName: "t3code-web",
           attributes: {
             "service.runtime": "t3-web",
             "service.mode": "browser",
@@ -588,7 +588,6 @@ const buildAppUnderTest = (options?: {
       otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
       otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
       otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpServiceName: "t3-server",
       otelEnvironment: OtelEnvironment.none,
       mode: "desktop",
       port: 0,
@@ -5283,7 +5282,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               attributes: [
                 {
                   key: "service.name",
-                  value: { stringValue: "t3-web" },
+                  value: { stringValue: "t3code-web" },
                 },
               ],
             },
@@ -5425,7 +5424,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             "rpc.method": "server.getSettings",
           },
           resourceAttributes: {
-            "service.name": "t3-web",
+            "service.name": "t3code-web",
           },
           scope: {
             name: "effect",
@@ -5556,7 +5555,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       // the stub's utf8 decode even though the surrounding bytes don't.
       assert.notEqual(forwarded.body[0], "{");
       assert.include(forwarded.body, "client.protobuf.test");
-      assert.include(forwarded.body, "t3-web");
+      assert.include(forwarded.body, "t3code-web");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -5657,7 +5656,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(record.links, []);
         assert.equal(record.scope.name, scopeSpan.scope.name);
         assert.deepEqual(record.scope.attributes, {});
-        assert.equal(record.resourceAttributes["service.name"], "t3-web");
+        assert.equal(record.resourceAttributes["service.name"], "t3code-web");
         assert.equal(record.status?.code, String(span.status.code));
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

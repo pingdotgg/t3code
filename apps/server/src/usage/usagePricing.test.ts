@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { cursorRateModel } from "./cursorUsageReader.ts";
 import {
   cacheSavingsUsd,
   createOverrideRateTable,
@@ -47,6 +48,26 @@ describe("usage pricing", () => {
       });
     }
     expect(cacheSavingsUsd(table, record("example-model"), overrides)).toBe(1.5);
+  });
+
+  it("prices Cursor cache savings at the base model rate", () => {
+    const table = parseRateTable({
+      "claude-fable-5-1": rate(10e-6, 1e-6),
+      "xai/grok-4.7": rate(2e-6, 0.5e-6),
+      "openrouter/x-ai/grok-4.7": rate(3e-6, 0.5e-6),
+    });
+    const cursorRecord = (model: string) => ({
+      ...record(model, 0.25),
+      rateModel: cursorRateModel(model),
+    });
+
+    expect(cacheSavingsUsd(table, cursorRecord("claude-fable-5-1-thinking-high"))).toBeCloseTo(9);
+    expect(cacheSavingsUsd(table, cursorRecord("cursor-grok-4.7-high-fast"))).toBeCloseTo(1.5);
+    expect(cacheSavingsUsd(table, cursorRecord("default"))).toBe(0);
+    expect(priceUsage(table, cursorRecord("grok-4.7-xhigh-fast"))).toEqual({
+      costUsd: 0.25,
+      costSource: "providerReported",
+    });
   });
 
   it("prices unknown models offline and uses input prices for omitted cache rates", () => {
