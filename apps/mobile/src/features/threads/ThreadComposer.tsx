@@ -121,6 +121,7 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
  * Used by the parent to compute the larger feed bottom inset when the composer is focused.
  */
 export const COMPOSER_EXPANDED_CHROME = 156;
+export const COMPOSER_DICTATION_REVIEW_CHROME = COMPOSER_EXPANDED_CHROME + 160 - 72;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -140,6 +141,8 @@ export interface ThreadComposerProps {
   readonly sendBlockedReason?: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
+  readonly isReviewingDictation: boolean;
+  readonly onDictationComplete: () => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
@@ -394,7 +397,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ownerKey: composerOwnerKey,
     draftMessage: props.draftMessage,
     selection: composerMenu.selection,
-    onChangeDraftMessage: props.onChangeDraftMessage,
+    onChangeDraftMessage: (message) => {
+      props.onChangeDraftMessage(message);
+      props.onDictationComplete();
+    },
     onChangeSelection: composerMenu.onSelectionChange,
   });
   const voicePresentation = resolveVoiceComposerPresentation(
@@ -403,7 +409,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
+  const isExpanded =
+    isFocused || props.isReviewingDictation || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -467,11 +474,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    if (!settingsSheetPresentation.keepsComposerExpanded) {
+    if (!props.isReviewingDictation && !settingsSheetPresentation.keepsComposerExpanded) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
+  }, [
+    onEditorFocusChange,
+    onExpandedChange,
+    props.isReviewingDictation,
+    settingsSheetPresentation.keepsComposerExpanded,
+  ]);
   const handleSend = useCallback(async () => {
     if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     // Typed out in full rather than picked from the menu. Attachments mean the
@@ -844,7 +856,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 style={
                   isExpanded
                     ? {
-                        minHeight: 72,
+                        minHeight: props.isReviewingDictation ? 160 : 72,
                         maxHeight: 160,
                         paddingVertical: 4,
                       }
