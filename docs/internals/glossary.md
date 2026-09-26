@@ -64,3 +64,10 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Attachment inventory | The ordered image records shown as thumbnails above the prose, including images with no inline references.                          |
 
 See [composer context references](./composer-context-references.md) for the contract and lifecycle.
+
+## File surfaces
+
+| Term              | Meaning                                                                                                                                                           |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File chip         | An inline, clickable file path rendered as a pill in chat markdown, activity, or the composer. Not every file surface is a chip.                                  |
+| File context menu | The shared right-click menu for any shown workspace file: reveal in the file manager and an Open with submenu. See [file context menus](./file-context-menus.md). |
