@@ -188,6 +188,10 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
+  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+}
+
 export interface GhosttyKeyboardLayoutMap {
   get(code: string): string | undefined;
 }
