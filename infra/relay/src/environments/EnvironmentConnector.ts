@@ -126,8 +126,28 @@ export type EnvironmentConnectorError =
   | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
   | ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError;
 
-export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 10_000;
+// Must stay below the relay request deadline (RELAY_REQUEST_DEADLINE_MS in
+// http/Api.ts): a slower downstream budget can never surface its own typed
+// timeout — the deadline 504s first and the extra downstream work is waste.
+export const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 7_000;
 const ENVIRONMENT_HEALTH_CLOCK_SKEW_MILLIS = 60 * 1_000;
+
+export const withEnvironmentMintTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  environmentId: string,
+) =>
+  effect.pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS),
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentMintRequestTimedOut({
+            environmentId,
+            timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
+          }),
+        ),
+    }),
+  );
 
 export class EnvironmentConnector extends Context.Service<
   EnvironmentConnector,
@@ -538,56 +558,43 @@ const make = Effect.gen(function* () {
         descriptor: decoded.descriptor,
       };
     }),
-    connect: Effect.fn("relay.environment_connector.connect")(function* (input) {
-      yield* Effect.annotateCurrentSpan({
-        "relay.environment_id": input.environmentId,
-        "relay.operation": "connect",
-        "relay.connect.has_device_id": input.deviceId !== undefined,
-        ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
-      });
-      if (input.clientProofKeyThumbprint.trim().length === 0) {
-        return yield* new EnvironmentConnectNotAuthorized({
-          environmentId: input.environmentId,
-          operation: "connect",
-          reason: "client_proof_key_thumbprint_missing",
+    connect: Effect.fn("relay.environment_connector.connect")(
+      function* (input) {
+        yield* Effect.annotateCurrentSpan({
+          "relay.environment_id": input.environmentId,
+          "relay.operation": "connect",
+          "relay.connect.has_device_id": input.deviceId !== undefined,
+          ...(input.deviceId ? { "relay.mobile.device_id": input.deviceId } : {}),
         });
-      }
-      const { link, allocation } = yield* Effect.all(
-        {
-          link: links.getForUser(input),
-          allocation: allocations.get(input),
-        },
-        { concurrency: 2 },
-      );
-      if (!link) {
-        return yield* new EnvironmentConnectNotAuthorized({
-          environmentId: input.environmentId,
+        if (input.clientProofKeyThumbprint.trim().length === 0) {
+          return yield* new EnvironmentConnectNotAuthorized({
+            environmentId: input.environmentId,
+            operation: "connect",
+            reason: "client_proof_key_thumbprint_missing",
+          });
+        }
+        const { link, allocation } = yield* Effect.all(
+          {
+            link: links.getForUser(input),
+            allocation: allocations.get(input),
+          },
+          { concurrency: 2 },
+        );
+        if (!link) {
+          return yield* new EnvironmentConnectNotAuthorized({
+            environmentId: input.environmentId,
+            operation: "connect",
+            reason: "environment_link_not_found",
+          });
+        }
+        const endpoint = yield* resolveManagedEndpoint({
           operation: "connect",
-          reason: "environment_link_not_found",
+          link,
+          allocation,
         });
-      }
-      const endpoint = yield* resolveManagedEndpoint({
-        operation: "connect",
-        link,
-        allocation,
-      });
-      const now = yield* DateTime.now;
-      const expiresAt = DateTime.add(now, { minutes: 2 });
-      const nonce = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentMintRequestFailed({
-              environmentId: input.environmentId,
-              operation: "connect",
-              cause,
-            }),
-        ),
-      );
-      const payload = {
-        iss: relayIssuer,
-        aud: `t3-env:${link.environmentId}`,
-        sub: input.userId,
-        jti: yield* crypto.randomUUIDv4.pipe(
+        const now = yield* DateTime.now;
+        const expiresAt = DateTime.add(now, { minutes: 2 });
+        const nonce = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError(
             (cause) =>
               new EnvironmentMintRequestFailed({
@@ -595,80 +602,83 @@ const make = Effect.gen(function* () {
                 operation: "connect",
                 cause,
               }),
-          ),
-        ),
-        iat: Math.floor(now.epochMilliseconds / 1_000),
-        exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
-        environmentId: link.environmentId,
-        clientProofKeyThumbprint: input.clientProofKeyThumbprint,
-        cnf: { jkt: input.clientProofKeyThumbprint },
-        ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-        nonce,
-        scope: ["environment:connect"],
-      } satisfies RelayCloudMintCredentialProofPayload;
-      const proof = yield* signRelayJwt({
-        privateKey: Redacted.value(settings.cloudMintPrivateKey),
-        typ: RELAY_MINT_REQUEST_TYP,
-        payload,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentMintRequestFailed({
-              environmentId: input.environmentId,
-              operation: "connect",
-              cause,
-            }),
-        ),
-      );
-      const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
-      const decoded = yield* environmentClient.connect
-        .t3MintCredential({ payload: { proof } })
-        .pipe(
-          withoutRedirects,
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentMintRequestFailed({
-                environmentId: input.environmentId,
-                operation: "connect",
-                cause,
-              }),
-          ),
-          Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new EnvironmentMintRequestTimedOut({
-                    environmentId: input.environmentId,
-                    timeoutMs: ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS,
-                  }),
-                ),
-              onSome: Effect.succeed,
-            }),
           ),
         );
-      const verified = yield* verifyEnvironmentResponse({
-        response: decoded,
-        environmentId: input.environmentId,
-        requestNonce: nonce,
-        clientProofKeyThumbprint: input.clientProofKeyThumbprint,
-        environmentPublicKeys: [link.environmentPublicKey],
-        relayIssuer,
-        nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-      });
-      if (!verified) {
-        return yield* new EnvironmentMintResponseInvalid({
+        const payload = {
+          iss: relayIssuer,
+          aud: `t3-env:${link.environmentId}`,
+          sub: input.userId,
+          jti: yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentMintRequestFailed({
+                  environmentId: input.environmentId,
+                  operation: "connect",
+                  cause,
+                }),
+            ),
+          ),
+          iat: Math.floor(now.epochMilliseconds / 1_000),
+          exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+          environmentId: link.environmentId,
+          clientProofKeyThumbprint: input.clientProofKeyThumbprint,
+          cnf: { jkt: input.clientProofKeyThumbprint },
+          ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+          nonce,
+          scope: ["environment:connect"],
+        } satisfies RelayCloudMintCredentialProofPayload;
+        const proof = yield* signRelayJwt({
+          privateKey: Redacted.value(settings.cloudMintPrivateKey),
+          typ: RELAY_MINT_REQUEST_TYP,
+          payload,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentMintRequestFailed({
+                environmentId: input.environmentId,
+                operation: "connect",
+                cause,
+              }),
+          ),
+        );
+        const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
+        const decoded = yield* environmentClient.connect
+          .t3MintCredential({ payload: { proof } })
+          .pipe(
+            withoutRedirects,
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentMintRequestFailed({
+                  environmentId: input.environmentId,
+                  operation: "connect",
+                  cause,
+                }),
+            ),
+          );
+        const verified = yield* verifyEnvironmentResponse({
+          response: decoded,
           environmentId: input.environmentId,
-          operation: "connect",
+          requestNonce: nonce,
+          clientProofKeyThumbprint: input.clientProofKeyThumbprint,
+          environmentPublicKeys: [link.environmentPublicKey],
+          relayIssuer,
+          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
         });
-      }
-      return {
-        environmentId: link.environmentId,
-        endpoint,
-        credential: decoded.credential,
-        expiresAt: decoded.expiresAt,
-      };
-    }),
+        if (!verified) {
+          return yield* new EnvironmentMintResponseInvalid({
+            environmentId: input.environmentId,
+            operation: "connect",
+          });
+        }
+        return {
+          environmentId: link.environmentId,
+          endpoint,
+          credential: decoded.credential,
+          expiresAt: decoded.expiresAt,
+        };
+      },
+      (effect, input) => withEnvironmentMintTimeout(effect, input.environmentId),
+    ),
   });
 });
 
