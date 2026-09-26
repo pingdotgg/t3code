@@ -87,6 +87,29 @@ describe("makeCatalogBackend", () => {
       expect(setConnectionCatalog).toHaveBeenCalledWith("{}");
     }),
   );
+
+  it.effect("fails IndexedDB writes whose commit aborts", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const transaction = Object.assign(new EventTarget(), {
+        error: null as DOMException | null,
+        objectStore: () => ({
+          put: () => {
+            // A failed commit aborts the transaction without an "error" event.
+            queueMicrotask(() => {
+              transaction.error = new DOMException("Quota exceeded", "QuotaExceededError");
+              transaction.dispatchEvent(new Event("abort"));
+            });
+          },
+        }),
+      });
+      const backend = makeCatalogBackend({ transaction: () => transaction } as never);
+
+      const error = yield* backend.write("{}").pipe(Effect.flip);
+
+      expect(error.message).toContain("QuotaExceededError");
+    }),
+  );
 });
 
 describe("browser GitHub routing permissions", () => {
