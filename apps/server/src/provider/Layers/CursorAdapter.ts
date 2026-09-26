@@ -149,6 +149,9 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** Resolved by interruptTurn; a prompt of that turn still queued behind
+   * the running one (a steer) is dropped instead of reaching the agent. */
+  turnInterrupted: Deferred.Deferred<void>;
   assistantReply: CursorTransportFailure;
   stopped: boolean;
 }
@@ -801,6 +804,7 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            turnInterrupted: yield* Deferred.make<void>(),
             assistantReply: new CursorTransportFailure(),
             stopped: false,
           };
@@ -972,10 +976,17 @@ export function makeCursorAdapter(
         // reused instead of opening a new turn.
         const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        const nextTurnInterrupted = yield* Deferred.make<void>();
         // Count this prompt immediately so a superseded in-flight prompt
         // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
+        // decrement is the `ensuring` below. The first prompt of a turn
+        // installs its interrupt signal in the same synchronous step, so
+        // every send that sees a positive count shares that signal.
+        if (ctx.promptsInFlight === 0) {
+          ctx.turnInterrupted = nextTurnInterrupted;
+        }
         ctx.promptsInFlight += 1;
+        const turnInterrupted = ctx.turnInterrupted;
 
         return yield* Effect.gen(function* () {
           const turnModelSelection =
@@ -1102,6 +1113,15 @@ export function makeCursorAdapter(
                   ],
             })
             .pipe(
+              // The runtime sends prompts one at a time, so a steer waits
+              // behind the running prompt. If the turn is interrupted while it
+              // waits, it must not be sent once the cancelled prompt frees
+              // the slot.
+              Effect.raceFirst(
+                Deferred.await(turnInterrupted).pipe(
+                  Effect.as({ stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse),
+                ),
+              ),
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
@@ -1165,6 +1185,7 @@ export function makeCursorAdapter(
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        yield* Deferred.succeed(ctx.turnInterrupted, undefined);
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         yield* Effect.ignore(

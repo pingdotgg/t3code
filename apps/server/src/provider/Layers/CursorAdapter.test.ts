@@ -443,6 +443,80 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("drops a queued steer when the turn is interrupted", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-interrupt-queued-steer");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-steer-interrupt-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      // Keep the first prompt in flight so the steer queues behind it.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_PROMPT_DELAY_MS: "1500",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "run 5 commands", attachments: [] })
+        .pipe(Effect.forkChild);
+      // Wait until the agent has the first prompt, so the steer queues behind it.
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 500; attempt += 1) {
+          const requests = yield* Effect.promise(() =>
+            readJsonLines(requestLogPath).catch(() => []),
+          );
+          if (requests.some((entry) => entry.method === "session/prompt")) {
+            return;
+          }
+          yield* TestClock.adjust("10 millis");
+        }
+        throw new Error("Timed out waiting for the first prompt to reach the agent.");
+      });
+
+      const steerFiber = yield* adapter
+        .sendTurn({ threadId, input: "actually run 15", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      yield* adapter.interruptTurn(threadId);
+      yield* Fiber.join(firstTurnFiber);
+      yield* Fiber.join(steerFiber);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completed = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(completed.length, 1);
+      assert.equal(
+        completed[0]?.type === "turn.completed" && completed[0].payload.state,
+        "cancelled",
+      );
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const prompts = requests.filter((entry) => entry.method === "session/prompt");
+      assert.equal(prompts.length, 1, "the queued steer must never reach the agent");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect.skipIf(windowsHost)("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
