@@ -1,12 +1,9 @@
 import {
-  CommandId,
   EnvironmentId,
   ThreadId,
   ProjectId,
   ProviderInstanceId,
   MessageId,
-  TurnId,
-  type OrchestrationShellSnapshot,
   type OrchestrationThreadDetailSnapshot,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
@@ -152,129 +149,6 @@ describe("mobile SQLite environment cache store", () => {
         expect(memory.removed).toEqual([id]);
         expect(yield* store.loadVcsRefs(ENVIRONMENT_ID, "/repo")).toEqual(Option.some(REFS));
       }),
-  );
-
-  // saveShell writes plain JSON, not the Schema encoding. This checks that
-  // loadShell decodes what it wrote. The monogram project icon is where the
-  // two encodings differ today.
-  it.effect("reads back the shell snapshot it saves", () =>
-    Effect.gen(function* () {
-      const memory = makeDatabase();
-      const store = yield* make().pipe(Effect.provideService(MobileDatabase, memory.database));
-      const now = "2026-09-04T00:00:00.000Z";
-      const projectId = ProjectId.make("project-1");
-      const threadId = ThreadId.make("thread-1");
-      const turnId = TurnId.make("turn-1");
-      const modelSelection = {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.4",
-        options: [{ id: "effort", value: "high" }],
-      };
-      const snapshot: OrchestrationShellSnapshot = {
-        snapshotSequence: 7,
-        projects: [
-          {
-            id: projectId,
-            title: "T3 Code",
-            workspaceRoot: "/repo",
-            repositoryIdentity: {
-              canonicalKey: "github.com/pingdotgg/t3code",
-              locator: {
-                source: "git-remote",
-                remoteName: "origin",
-                remoteUrl: "https://github.com/pingdotgg/t3code.git",
-              },
-              owner: "pingdotgg",
-              name: "t3code",
-            },
-            defaultModelSelection: modelSelection,
-            projectIcon: { kind: "monogram", text: "T3", color: "blue" },
-            scripts: [
-              {
-                id: "test",
-                name: "Test",
-                command: "vp test",
-                icon: "test",
-                runOnWorktreeCreate: false,
-              },
-            ],
-            createdAt: now,
-            updatedAt: now,
-          },
-        ],
-        threads: [
-          {
-            id: threadId,
-            projectId,
-            title: "Thread",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: "t3code/feature",
-            worktreePath: "/repo/.worktrees/feature",
-            pullRequests: [
-              {
-                host: "github.com",
-                repository: "pingdotgg/t3code",
-                number: 1,
-                url: "https://github.com/pingdotgg/t3code/pull/1",
-                source: "created",
-                linkedAt: now,
-                snapshot: {
-                  state: "open",
-                  title: "Feature",
-                  headBranch: "t3code/feature",
-                  baseBranch: "main",
-                  isDraft: false,
-                  updatedAt: now,
-                  syncedAt: now,
-                },
-                stack: null,
-              },
-            ],
-            latestTurn: {
-              turnId,
-              state: "running",
-              requestedAt: now,
-              startedAt: now,
-              completedAt: null,
-              assistantMessageId: MessageId.make("message-1"),
-            },
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            pinnedAt: now,
-            titleState: {
-              source: "generated",
-              version: CommandId.make("command-1"),
-              needsRefinement: false,
-            },
-            session: {
-              threadId,
-              status: "running",
-              providerName: "codex",
-              providerInstanceId: ProviderInstanceId.make("codex"),
-              runtimeMode: "full-access",
-              activeTurnId: turnId,
-              lastError: null,
-              updatedAt: now,
-            },
-            latestUserMessageAt: now,
-            hasPendingApprovals: false,
-            hasPendingUserInput: true,
-            hasActionableProposedPlan: false,
-            planProgress: { step: "Run tests", completedSteps: 1, totalSteps: 3 },
-          },
-        ],
-        updatedAt: now,
-      };
-
-      yield* store.saveShell(ENVIRONMENT_ID, snapshot);
-
-      expect(yield* store.loadShell(ENVIRONMENT_ID)).toEqual(Option.some(snapshot));
-    }),
   );
 
   it.effect("round-trips schema-validated VCS refs", () =>

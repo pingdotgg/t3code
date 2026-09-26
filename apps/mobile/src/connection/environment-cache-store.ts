@@ -1,6 +1,7 @@
 import {
   ConnectionPersistenceError,
   EnvironmentCacheStore,
+  encodeShellSnapshotForCache,
 } from "@t3tools/client-runtime/platform";
 import {
   type EnvironmentId,
@@ -135,18 +136,15 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       }).pipe(Effect.tap(() => Effect.promise(() => projectFaviconDatabaseCache.hydrate()))),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
-      // Plain JSON: Schema encoding a snapshot with thousands of threads
-      // blocks the JS thread. This skips encode transforms, so a monogram
-      // project icon keeps its decoded shape. loadShell decodes through the
-      // schema, which also accepts the decoded shape. The round-trip test
-      // covers this. Builds from before monogram icons cannot read that
-      // shape, so they drop the cache and load the server snapshot.
+      const encodedSnapshot = yield* encodeShellSnapshotForCache(snapshot).pipe(
+        Effect.mapError((cause) => persistenceError("save-shell", cause)),
+      );
       const payload = yield* Effect.try({
         try: () =>
           JSON.stringify({
             schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
             environmentId,
-            snapshot,
+            snapshot: encodedSnapshot,
           } satisfies typeof StoredShellSnapshot.Encoded),
         catch: (cause) => persistenceError("save-shell", cause),
       });

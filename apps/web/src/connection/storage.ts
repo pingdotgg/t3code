@@ -6,6 +6,7 @@ import {
   ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
+  encodeShellSnapshotForCache,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
@@ -607,20 +608,14 @@ export const connectionStorageLayer = Layer.effectContext(
         ),
       saveShell: (environmentId, snapshot) =>
         Effect.gen(function* () {
-          // Plain JSON: Schema encoding a snapshot with thousands of threads
-          // blocks the main thread. This skips encode transforms, so a
-          // monogram project icon keeps its decoded shape. loadShell decodes
-          // through the schema, which also accepts the decoded shape. The
-          // mobile cache store round-trip test covers this. Builds from
-          // before monogram icons cannot read that shape, so they drop the
-          // cache and load the server snapshot.
+          const encodedSnapshot = yield* encodeShellSnapshotForCache(snapshot);
           const encoded = yield* Effect.try({
             try: () =>
-              // @effect-diagnostics-next-line preferSchemaOverJson:off - see the comment above.
+              // @effect-diagnostics-next-line preferSchemaOverJson:off - the snapshot is already encoded.
               JSON.stringify({
                 schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
                 environmentId,
-                snapshot,
+                snapshot: encodedSnapshot,
               } satisfies typeof StoredShellSnapshot.Encoded),
             catch: (cause) => persistenceError("save-shell", cause),
           });
