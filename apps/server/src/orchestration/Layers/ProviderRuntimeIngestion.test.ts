@@ -4680,6 +4680,109 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity?.payload).toMatchObject({ requestId: "message-compact" });
   });
 
+  it("keeps background liveness through a provider resume until the follow-up turn starts", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+    const provider = ProviderDriverKind.make("claudeAgent");
+
+    await harness.emitAndDrain([
+      {
+        type: "task.started",
+        eventId: asEventId("evt-resume-task-started"),
+        provider,
+        createdAt: now,
+        threadId,
+        payload: {
+          taskId: "subagent-1",
+          taskType: "local_agent",
+          description: "Review the diff",
+        },
+      },
+    ]);
+    expect((await harness.readThreadShell()).backgroundLiveness).toBe("working");
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.completed",
+        eventId: asEventId("evt-resume-turn-completed"),
+        provider,
+        createdAt: now,
+        threadId,
+        turnId: asTurnId("turn-parent"),
+        payload: { state: "completed" },
+      },
+    ]);
+    expect((await harness.readThreadShell()).session?.status).toBe("ready");
+    expect((await harness.readThreadShell()).backgroundLiveness).toBe("working");
+
+    await harness.emitAndDrain([
+      {
+        type: "task.completed",
+        eventId: asEventId("evt-resume-task-completed"),
+        provider,
+        createdAt: now,
+        threadId,
+        payload: {
+          taskId: "subagent-1",
+          status: "completed",
+          resumesProvider: true,
+        },
+      },
+    ]);
+    const held = await harness.readThreadShell();
+    expect(held.session?.status).toBe("ready");
+    expect(held.backgroundLiveness).toBe("working");
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-resume-follow-up"),
+        provider,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId,
+        turnId: asTurnId("turn-follow-up"),
+      },
+    ]);
+    const resumed = await harness.readThreadShell();
+    expect(resumed.session?.status).toBe("running");
+    expect(resumed.backgroundLiveness).toBeNull();
+  });
+
+  it("clears background liveness when a completion will not resume the provider", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+    const provider = ProviderDriverKind.make("claudeAgent");
+
+    await harness.emitAndDrain([
+      {
+        type: "task.started",
+        eventId: asEventId("evt-settle-task-started"),
+        provider,
+        createdAt: now,
+        threadId,
+        payload: {
+          taskId: "monitor-1",
+          taskType: "local_bash",
+          description: "Watch the checks",
+        },
+      },
+      {
+        type: "task.completed",
+        eventId: asEventId("evt-settle-task-completed"),
+        provider,
+        createdAt: now,
+        threadId,
+        payload: {
+          taskId: "monitor-1",
+          status: "completed",
+        },
+      },
+    ]);
+    expect((await harness.readThreadShell()).backgroundLiveness).toBeNull();
+  });
+
   it("projects Codex task lifecycle chunks into thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -226,4 +226,78 @@ describe("ThreadBackgroundLiveness", () => {
     a.clearThreadLiveness("t");
     expect(a.getThreadBackgroundLiveness("t")).toBeNull();
   });
+
+  it("holds working after a waking completion until the provider resumes", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "thread-resume";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "subagent",
+      taskType: "local_agent",
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "monitor",
+      taskType: "local_bash",
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "subagent",
+      taskType: "local_agent",
+      status: "completed",
+      kind: "completed",
+      awaitsProviderResume: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "monitor",
+      taskType: "local_bash",
+      status: "completed",
+      kind: "completed",
+      awaitsProviderResume: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    liveness.releaseProviderResume(threadId);
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+
+  it("does not hold a completion that will not resume the provider", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "thread-settle";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "monitor",
+      taskType: "local_bash",
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "monitor",
+      taskType: "local_bash",
+      status: "completed",
+      kind: "completed",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+
+  it("drops a resume hold when the thread's background work is cleared", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "subagent",
+      taskType: "local_agent",
+      status: "completed",
+      kind: "completed",
+      awaitsProviderResume: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBe("working");
+    liveness.clearThreadLiveness("thread");
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
+  });
 });

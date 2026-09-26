@@ -8,7 +8,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments } from "../state/environments";
@@ -21,6 +21,11 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
+import {
+  BACKGROUND_RESUME_GAP_MS,
+  resolveThreadNotification,
+  type ThreadNotificationMarker,
+} from "./ThreadNotificationCoordinator.logic";
 import { toastManager } from "./ui/toast";
 
 export function ThreadNotificationCoordinator() {
@@ -103,40 +108,83 @@ function EnvironmentNotifications({
   const { environmentId: activeEnvironmentId, threadId: activeThreadId } = useParams({
     strict: false,
   });
-  const previous = useRef(
-    new Map<ThreadId, { attention: string | null; completion: number | null }>(),
-  );
+  const previous = useRef(new Map<ThreadId, ThreadNotificationMarker>());
+  const deferrals = useRef(new Map<ThreadId, ReturnType<typeof setTimeout>>());
+  const deferralsDue = useRef(new Set<ThreadId>());
+  const [deferralNonce, setDeferralNonce] = useState(0);
+
+  useEffect(() => {
+    const timers = deferrals.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (shell.status !== "live" || Option.isNone(shell.snapshot)) {
       previous.current.clear();
+      for (const timer of deferrals.current.values()) clearTimeout(timer);
+      deferrals.current.clear();
+      deferralsDue.current.clear();
       return;
     }
-    const next = new Map<ThreadId, { attention: string | null; completion: number | null }>();
+    void deferralNonce;
+    const next = new Map<ThreadId, ThreadNotificationMarker>();
     for (const thread of shell.snapshot.value.threads) {
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestTurn?.state === "error") status = "failed";
-      const prior = previous.current.get(thread.id);
-      const attention =
-        status === "input" || status === "approval" || status === "failed"
-          ? `${thread.latestTurn?.turnId ?? ""}:${status}`
-          : null;
+      const sessionLive =
+        thread.session?.status === "running" || thread.session?.status === "starting";
+      const background =
+        thread.backgroundLiveness === "working" || thread.backgroundLiveness === "monitoring";
       const completedAt = Date.parse(thread.latestTurn?.completedAt ?? "");
-      const completion =
-        status === "ready" &&
-        thread.latestTurn?.state === "completed" &&
-        Number.isFinite(completedAt)
-          ? completedAt
-          : (prior?.completion ?? null);
-      next.set(thread.id, { attention, completion });
-      if (!prior || thread.archivedAt !== null) continue;
-      const kind =
-        attention && attention !== prior.attention
-          ? "input"
-          : completion !== null && (prior.completion === null || completion > prior.completion)
-            ? "completion"
-            : null;
-      if (!kind) continue;
+      const prior = previous.current.get(thread.id) ?? null;
+      const decision = resolveThreadNotification({
+        status,
+        attentionKey: `${thread.latestTurn?.turnId ?? ""}:${status}`,
+        settledCompletion:
+          status === "ready" &&
+          thread.latestTurn?.state === "completed" &&
+          Number.isFinite(completedAt)
+            ? completedAt
+            : null,
+        background,
+        sessionLive,
+        prior,
+        deferralDue: deferralsDue.current.delete(thread.id),
+      });
+      const quiet = prior === null || thread.archivedAt !== null;
+      next.set(
+        thread.id,
+        quiet && decision.marker.deferredCompletion !== null
+          ? {
+              ...decision.marker,
+              completion: decision.marker.deferredCompletion,
+              deferredCompletion: null,
+            }
+          : decision.marker,
+      );
+      if (decision.clearDeferral || quiet) {
+        const timer = deferrals.current.get(thread.id);
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          deferrals.current.delete(thread.id);
+        }
+      }
+      if (!quiet && decision.armDeferral && !deferrals.current.has(thread.id)) {
+        const threadId = thread.id;
+        deferrals.current.set(
+          threadId,
+          setTimeout(() => {
+            deferrals.current.delete(threadId);
+            deferralsDue.current.add(threadId);
+            setDeferralNonce((nonce) => nonce + 1);
+          }, BACKGROUND_RESUME_GAP_MS),
+        );
+      }
+      if (quiet || decision.kind === null) continue;
+      const kind = decision.kind;
       const title =
         kind === "completion"
           ? "Thread completed"
@@ -220,6 +268,7 @@ function EnvironmentNotifications({
     inAppNotificationsEnabled,
     mode,
     navigate,
+    deferralNonce,
     onNotification,
     shell,
   ]);

@@ -13,6 +13,12 @@
  * shells) when they are the ONLY live work; any agent work presents as
  * "working".
  *
+ * A waking completion (the provider is about to resume) arms a resume hold
+ * once nothing else is live. The shell keeps reading "working" until the
+ * follow-up turn starts, so the gap after the last subagent or monitor
+ * settles is not a finished run. A completion that does not wake the
+ * provider clears normally and can still alert.
+ *
  * @module ThreadBackgroundLivenessService
  */
 import { INERT_TASK_TYPES, MONITOR_TASK_TYPES } from "@t3tools/contracts";
@@ -59,7 +65,17 @@ export class ThreadBackgroundLivenessService extends Context.Service<
       readonly status: string | undefined;
       readonly kind: "started" | "progress" | "updated" | "completed";
       readonly agentId?: string | undefined;
+      /**
+       * The provider will resume after this transition (Claude
+       * task_notification once the parent turn has settled). When the
+       * transition leaves nothing live, the thread stays "working" until
+       * `releaseProviderResume`.
+       */
+      readonly awaitsProviderResume?: boolean | undefined;
     }) => void;
+
+    /** The follow-up turn started; the handoff is no longer pending. */
+    readonly releaseProviderResume: (threadId: string) => void;
 
     /** Session death orphans all of a thread's background work. */
     readonly clearThreadLiveness: (threadId: string) => void;
@@ -74,6 +90,7 @@ export class ThreadBackgroundLivenessService extends Context.Service<
 
 export function make(): ThreadBackgroundLivenessService["Service"] {
   const stateByThreadId = new Map<string, ThreadLivenessState>();
+  const resumeHolds = new Set<string>();
 
   const stateFor = (threadId: string): ThreadLivenessState => {
     const existing = stateByThreadId.get(threadId);
@@ -103,9 +120,19 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
 
   return {
     recordTaskLiveness: (input) => {
+      const settleResume = () => {
+        if (input.awaitsProviderResume !== true) return;
+        const state = stateByThreadId.get(input.threadId);
+        const stillLive = state !== undefined && (state.agents.size > 0 || state.monitors.size > 0);
+        if (!stillLive) {
+          resumeHolds.add(input.threadId);
+        }
+      };
+
       const taskType = input.taskType;
       if (taskType !== undefined && INERT_TASK_TYPES.has(taskType)) {
         drop(input.threadId, input.taskId);
+        settleResume();
         return;
       }
       // A subagent's internal non-agent work (its own shells/monitors) is
@@ -116,6 +143,7 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         (taskType === undefined || MONITOR_TASK_TYPES.has(taskType))
       ) {
         drop(input.threadId, input.taskId);
+        settleResume();
         return;
       }
 
@@ -127,6 +155,7 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
       if (terminal) {
         drop(input.threadId, input.taskId);
+        settleResume();
         return;
       }
 
@@ -138,6 +167,7 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
           existing !== undefined &&
           (existing.agents.has(input.taskId) || existing.monitors.has(input.taskId));
         if (!stillLive) {
+          settleResume();
           return;
         }
       }
@@ -147,21 +177,29 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
       const bucket =
         taskType !== undefined && MONITOR_TASK_TYPES.has(taskType) ? state.monitors : state.agents;
       bucket.add(input.taskId);
+      settleResume();
+    },
+
+    releaseProviderResume: (threadId) => {
+      resumeHolds.delete(threadId);
     },
 
     clearThreadLiveness: (threadId) => {
       stateByThreadId.delete(threadId);
+      resumeHolds.delete(threadId);
     },
 
     getThreadBackgroundLiveness: (threadId) => {
       const state = stateByThreadId.get(threadId);
-      if (!state) {
-        return null;
-      }
-      if (state.agents.size > 0) {
+      if (state && state.agents.size > 0) {
         return "working";
       }
-      if (state.monitors.size > 0) {
+      // The provider is about to resume. That outranks a quiet monitor set
+      // and a fully cleared registry — the run has not settled yet.
+      if (resumeHolds.has(threadId)) {
+        return "working";
+      }
+      if (state && state.monitors.size > 0) {
         return "monitoring";
       }
       return null;

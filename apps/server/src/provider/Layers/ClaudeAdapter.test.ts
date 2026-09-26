@@ -3255,6 +3255,69 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("marks a settled-turn task notification as resuming the provider", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn agents",
+        attachments: [],
+      });
+
+      // streamEvents is one queue, so a single consumer has to see both
+      // notifications and the turn boundary between them.
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "task.completed" && event.payload.resumesProvider === true,
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const notify = (uuid: string) => {
+        harness.query.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "task-done",
+          status: "completed",
+          summary: "done",
+          uuid,
+          session_id: "sdk-session",
+        } as unknown as SDKMessage);
+      };
+      notify("task-during-turn");
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "",
+        stop_reason: null,
+        session_id: "sdk-session",
+        uuid: "result-before-resume",
+      } as unknown as SDKMessage);
+      notify("task-after-turn");
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const taskEvents = events.filter((event) => event.type === "task.completed");
+      assert.equal(taskEvents.length, 2);
+      const turnCompletedAt = events.findIndex((event) => event.type === "turn.completed");
+      assert.equal(turnCompletedAt > events.indexOf(taskEvents[0]!), true);
+      assert.equal(events.indexOf(taskEvents[1]!) > turnCompletedAt, true);
+      if (taskEvents[0]?.type === "task.completed" && taskEvents[1]?.type === "task.completed") {
+        assert.equal(taskEvents[0].payload.resumesProvider, undefined);
+        assert.equal(taskEvents[1].payload.resumesProvider, true);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps the session available when process close fails", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

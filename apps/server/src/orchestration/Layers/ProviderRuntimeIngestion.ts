@@ -2504,6 +2504,7 @@ const make = Effect.gen(function* () {
             taskType?: string;
             status?: string;
             agentId?: string;
+            resumesProvider?: boolean;
           };
           threadBackgroundLiveness.recordTaskLiveness({
             threadId: thread.id,
@@ -2519,9 +2520,24 @@ const make = Effect.gen(function* () {
                   : event.type === "task.updated"
                     ? "updated"
                     : "completed",
+            awaitsProviderResume:
+              event.type === "task.completed" && payload.resumesProvider === true,
           });
           break;
         }
+        case "turn.started":
+          // The follow-up turn is running, so the handoff after a waking
+          // background completion is over. Session status now keeps the
+          // thread working until that turn settles.
+          if (shouldApplyThreadLifecycle) {
+            threadBackgroundLiveness.releaseProviderResume(thread.id);
+          }
+          break;
+        case "session.state.changed":
+          if (event.payload.state === "error" || event.payload.state === "stopped") {
+            threadBackgroundLiveness.releaseProviderResume(thread.id);
+          }
+          break;
         case "session.exited":
           threadBackgroundLiveness.clearThreadLiveness(thread.id);
           break;

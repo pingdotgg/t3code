@@ -675,6 +675,12 @@ const TaskCompletedPayload = Schema.Struct({
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
   usage: Schema.optional(Schema.Unknown),
   typedUsage: Schema.optional(RuntimeTaskUsage),
+  /**
+   * Set when this completion is delivered back to the provider and the
+   * agent will resume (Claude `task_notification` after the parent turn
+   * has already settled). Absent on ordinary terminal rows.
+   */
+  resumesProvider: Schema.optional(Schema.Boolean),
   ...taskAgentLinkageFields,
 });
 export type TaskCompletedPayload = typeof TaskCompletedPayload.Type;

@@ -843,6 +843,19 @@ describe("resolveSidebarThreadStatus", () => {
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
   });
+
+  it("keeps a ready session working while background liveness is held", () => {
+    const ready = { ...session, status: "ready" as const };
+    expect(
+      resolveSidebarThreadStatus({ ...idle, session: ready, backgroundLiveness: "working" }),
+    ).toBe("working");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, session: ready, backgroundLiveness: "monitoring" }),
+    ).toBe("monitoring");
+    expect(resolveSidebarThreadStatus({ ...idle, session: ready, backgroundLiveness: null })).toBe(
+      "ready",
+    );
+  });
 });
 
 describe("searchSidebarThreads", () => {

@@ -3835,6 +3835,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       case "task_notification": {
         context.liveTaskIds.delete(message.task_id);
+        // No turn is open: the CLI delivers this result back to the model and
+        // the next assistant message starts the follow-up. Hold sidebar
+        // liveness across that gap so the waiting turn is not announced done.
+        const resumesProvider = context.turnState === undefined;
         yield* emitThreadTokenUsage(
           context,
           normalizeClaudeTaskProgressTokenUsage(message.usage, context),
@@ -3854,6 +3858,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.usage ? { usage: message.usage } : {}),
             ...(typedUsage ? { typedUsage } : {}),
             ...(message.output_file ? { outputFile: message.output_file } : {}),
+            ...(resumesProvider ? { resumesProvider: true } : {}),
             ...taskLinkageFor(context.taskAgents, message.task_id),
           },
         });
