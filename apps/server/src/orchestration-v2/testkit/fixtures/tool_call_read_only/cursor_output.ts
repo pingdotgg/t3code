@@ -23,7 +23,7 @@ export function assertToolCallReadOnlyCursorOutput(
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
   assertVisibleTurnItemsMirrorLocalTurnItems(projection);
-  assertTurnItemTypes(projection, ["user_message", "file_search", "assistant_message"]);
+  assertTurnItemTypes(projection, ["user_message", "dynamic_tool", "assistant_message"]);
   assertUserMessagesInclude(projection, [TOOL_CALL_READ_ONLY_PROMPT]);
   assertAssistantTextIncludes(projection, "read only tool fixture complete");
   assertRuntimeRequestCounts(projection, { total: 0 });
@@ -38,28 +38,21 @@ export function assertToolCallReadOnlyCursorOutput(
     "Cursor progress text and the final response must be separate messages",
   );
 
-  const fileSearches = projection.turnItems.filter((item) => item.type === "file_search");
-  assert.lengthOf(fileSearches, 2);
-  assert.isBelow(assistantMessages[0]?.ordinal ?? Infinity, fileSearches[0]?.ordinal ?? -Infinity);
-  assert.isBelow(fileSearches[1]?.ordinal ?? Infinity, assistantMessages[1]?.ordinal ?? -Infinity);
+  const reads = projection.turnItems.filter((item) => item.type === "dynamic_tool");
+  assert.lengthOf(reads, 2);
+  assert.isBelow(assistantMessages[0]?.ordinal ?? Infinity, reads[0]?.ordinal ?? -Infinity);
+  assert.isBelow(reads[1]?.ordinal ?? Infinity, assistantMessages[1]?.ordinal ?? -Infinity);
   assert.isTrue(
-    fileSearches.some((item) =>
-      JSON.stringify(item.results ?? []).includes("cursor-read-only-fixture"),
-    ),
+    reads.some((item) => JSON.stringify(item.output ?? []).includes("cursor-read-only-fixture")),
   );
-  assert.isTrue(fileSearches.some((item) => JSON.stringify(item.results ?? []).includes("ES2022")));
+  assert.isTrue(reads.some((item) => JSON.stringify(item.output ?? []).includes("ES2022")));
   const expectedPaths = [
     "/tmp/claude-replay-tool_call_read_only/package.json",
     "/tmp/claude-replay-tool_call_read_only/tsconfig.json",
   ];
   assert.deepEqual(
-    fileSearches.map((item) => item.pattern).toSorted(),
+    reads.map((item) => (item.input as { path: string }).path).toSorted(),
     expectedPaths,
-    "Cursor file_search patterns must match the files named in the recorded prompt",
-  );
-  assert.deepEqual(
-    fileSearches.flatMap((item) => item.results?.map((result) => result.fileName) ?? []).toSorted(),
-    expectedPaths,
-    "Cursor file_search paths must match the files named in the recorded prompt",
+    "Cursor read paths must match the files named in the recorded prompt",
   );
 }

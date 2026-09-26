@@ -711,6 +711,80 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("projects OpenCode code search as a file search", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-search";
+      const harness = yield* makeOpenCodeRuntimeHarness("search-projection", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      for (const [tool, input] of [
+        ["codesearch", { query: "restore icon", path: "apps/web" }],
+        ["websearch", { query: "OpenCode documentation" }],
+      ] as const) {
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: `part-${tool}`,
+                sessionID: nativeSessionId,
+                messageID: "assistant-search",
+                type: "tool",
+                callID: `call-${tool}`,
+                tool,
+                state: {
+                  status: "completed",
+                  input,
+                  output: "Found results",
+                  title: tool,
+                  metadata: {},
+                  time: { start: 1, end: 2 },
+                },
+              },
+            },
+          }),
+        );
+      }
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.compacted",
+          properties: { sessionID: nativeSessionId },
+        }),
+      );
+      const items = (yield* Fiber.join(received)).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const codeSearch = items.find((item) => item.type === "file_search");
+      assert.equal(codeSearch?.title, "Searched restore icon in web");
+      assert.equal(codeSearch?.type === "file_search" ? codeSearch.pattern : null, "restore icon");
+      const webSearch = items.find((item) => item.type === "web_search");
+      assert.deepEqual(webSearch?.type === "web_search" ? webSearch.patterns : null, [
+        "OpenCode documentation",
+      ]);
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("admits a native command on its user receipt before generation completes", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -2066,10 +2140,11 @@ describe("OpenCodeAdapterV2", () => {
   it("maps OpenCode tools to semantic turn-item families", () => {
     assert.equal(openCodeToolProjectionKind("bash"), "command_execution");
     assert.equal(openCodeToolProjectionKind("edit"), "file_change");
-    assert.equal(openCodeToolProjectionKind("read"), "file_search");
+    assert.equal(openCodeToolProjectionKind("read"), "dynamic_tool");
     assert.equal(openCodeToolProjectionKind("lsp"), "file_search");
     assert.equal(openCodeToolProjectionKind("websearch"), "web_search");
-    assert.equal(openCodeToolProjectionKind("codesearch"), "web_search");
+    assert.equal(openCodeToolProjectionKind("codesearch"), "file_search");
+    assert.equal(openCodeToolProjectionKind("code_search"), "file_search");
     assert.equal(openCodeToolProjectionKind("todowrite"), "dynamic_tool");
     assert.equal(openCodeToolProjectionKind("custom_tool"), "dynamic_tool");
   });

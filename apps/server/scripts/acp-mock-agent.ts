@@ -1055,6 +1055,27 @@ const program = Effect.gen(function* () {
             ],
           },
           {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "late-read-path",
+            title: "Read `src/env.ts`",
+            kind: "read",
+            status: "pending",
+            rawInput: {},
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "late-read-path",
+            status: "in_progress",
+            locations: [{ path: "src/env.ts", line: 4 }],
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "late-read-path",
+            status: "completed",
+            rawInput: {},
+            rawOutput: { content: "---\nfile body" },
+          },
+          {
             sessionUpdate: "compaction_update",
             compactionId: "compact-1",
             status: "in_progress",

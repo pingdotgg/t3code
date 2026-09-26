@@ -2654,6 +2654,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const tools = [
         { id: "image", name: "Read", input: { file_path: " /workspace/reference.png " } },
         { id: "text", name: "Read", input: { file_path: "/workspace/README.md" } },
+        { id: "search", name: "Grep", input: { pattern: "TODO", path: "/workspace/src" } },
         {
           id: "write",
           name: "Write",
@@ -2715,6 +2716,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(image?.type, "dynamic_tool");
       if (image?.type === "dynamic_tool")
         assert.equal(image.viewedImagePath, "/workspace/reference.png");
+      assert.equal(image?.title, "Read /workspace/reference.png");
+      assert.equal(
+        items.find((item) => item.nativeItemRef?.nativeId === "text")?.title,
+        "Read /workspace/README.md",
+      );
+      assert.equal(
+        items.find((item) => item.nativeItemRef?.nativeId === "search")?.title,
+        "Searched TODO in src",
+      );
       for (const item of items.filter((item) => item.nativeItemRef?.nativeId !== "image"))
         assert.notProperty(item, "viewedImagePath");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),

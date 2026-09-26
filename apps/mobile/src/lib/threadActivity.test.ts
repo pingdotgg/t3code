@@ -59,6 +59,31 @@ it("keeps historical plan detail accessible from its paged turn item", () => {
   expect(activity?.getFullDetail()).toContain("Full historical plan text");
 });
 
+it("shows only the structured path in expanded mobile read details", () => {
+  const item: OrchestrationV2TurnItem = {
+    ...base("read-detail", "2026-06-20T00:00:03.000Z", 2),
+    type: "dynamic_tool",
+    toolName: "Read",
+    title: "Read src/env.ts",
+    input: { path: "src/env.ts" },
+    output: "---\nname: env\n---\nsecret content",
+  };
+  const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  )[0];
+
+  expect(activity?.getFullDetail()).toBe("src/env.ts");
+  expect(activity?.canExpand).toBe(true);
+  expect(activity?.getCopyText()).not.toContain("secret content");
+  expect(activity?.getFullDetail()).not.toContain("sourceThreadId");
+
+  const withoutPath = buildThreadFeed([
+    projected({ ...item, id: TurnItemId.make("read-without-path"), input: {} }, 0),
+  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))[0];
+  expect(withoutPath?.getFullDetail()).toBeNull();
+  expect(withoutPath?.canExpand).toBe(false);
+});
+
 function base(id: string, updatedAt: string, ordinal: number) {
   const timestamp = DateTime.makeUnsafe(updatedAt);
   return {
@@ -2047,6 +2072,21 @@ it("uses a compact reasoning preview and a short expanded heading", () => {
   expect(workEntryRowLabel(entry)).toBe("Check **ordering**. Then run the test.");
   expect(workEntryRowLabel(entry, true)).toBe("Thinking");
   expect(workEntryRowLabel({ ...entry, toolLifecycleStatus: "completed" }, true)).toBe("Thought");
+});
+
+it("keeps search output in expanded details rather than the compact label", () => {
+  const entry = {
+    id: "search",
+    label: "Grep",
+    toolTitle: "Grep",
+    createdAt: "2026-09-17T12:00:00Z",
+    itemType: "dynamic_tool" as const,
+    tone: "tool" as const,
+    detail: "---\nfile body",
+    toolData: {},
+  };
+  expect(workEntryRowLabel(entry)).toBe("Grep");
+  expect(workEntryRowLabel(entry, true)).toBe("---\nfile body");
 });
 
 it.each(["First paragraph.\n\nSecond paragraph.", ""])(

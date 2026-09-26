@@ -362,6 +362,19 @@ describe("CursorAdapterV2", () => {
         {
           type: "tool-call-completed",
           modelCallId: "native-model-call",
+          callId: "read-file",
+          toolCall: {
+            type: "read",
+            args: { path: "src/env.ts" },
+            result: {
+              status: "success",
+              value: { fileSize: 12, content: "---\nfile body", totalLines: 2 },
+            },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
           callId: "ls-nested",
           toolCall: {
             type: "ls",
@@ -598,6 +611,18 @@ describe("CursorAdapterV2", () => {
         event.turnItem.status !== "running"
           ? [event.turnItem]
           : [],
+      );
+      const readItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "dynamic_tool" &&
+        event.turnItem.toolName === "Read" &&
+        event.turnItem.status === "completed"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        readItems.map((item) => ({ title: item.title, input: item.input })),
+        [{ title: "Read src/env.ts", input: { path: "src/env.ts" } }],
       );
       assert.deepEqual(
         fileSearchItems.map((item) => ({

@@ -1335,6 +1335,17 @@ describe("AcpAdapterV2", () => {
             item.changes[0]?.oldPath === "/workspace/old.ts",
         ),
       );
+      const read = items
+        .filter((item) => item.type === "dynamic_tool")
+        .filter((item) => item.toolName === "Read");
+      assert.deepEqual(
+        read.map((item) => ({ title: item.title, input: item.input, status: item.status })),
+        [
+          { title: "Read file", input: {}, status: "pending" },
+          { title: "Read src/env.ts", input: { path: "src/env.ts" }, status: "running" },
+          { title: "Read src/env.ts", input: { path: "src/env.ts" }, status: "completed" },
+        ],
+      );
       const completedCompaction = items.find(
         (item) =>
           item.type === "compaction" &&

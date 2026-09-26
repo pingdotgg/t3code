@@ -15,6 +15,12 @@ import {
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
+  classifyToolActivity,
+  collectToolFilePaths,
+  formatReadToolLabel,
+  formatSearchToolLabel,
+} from "@t3tools/shared/toolActivity";
+import {
   contextCompactionLabel,
   workEntryIndicatesToolFailure,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -450,7 +456,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "file_search":
       return {
         ...common,
-        label: title ?? "Searched files",
+        label: title ?? formatSearchToolLabel(item) ?? "Searched files",
         ...(item.pattern ? { detail: item.pattern } : {}),
         toolTitle: title ?? "File search",
         toolData: item,
@@ -489,13 +495,25 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         toolData: item,
       };
     }
-    case "dynamic_tool":
+    case "dynamic_tool": {
+      const classified = classifyToolActivity({
+        itemType: "dynamic_tool_call",
+        data: { toolName: item.toolName ?? undefined, input: item.input },
+      });
+      const [readPath] = collectToolFilePaths({ input: item.input });
       return {
         ...common,
-        label: title ?? item.toolName ?? "Tool call",
+        label:
+          title ??
+          (classified === "read"
+            ? formatReadToolLabel(readPath ?? "")
+            : classified === "search"
+              ? (formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call")
+              : (item.toolName ?? "Tool call")),
         toolTitle: title ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
       };
+    }
     case "approval_request":
       return {
         ...common,

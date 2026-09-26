@@ -1084,6 +1084,21 @@ describe("native provider presentation in the v2 timeline", () => {
     });
   });
 
+  it("labels a read of a bare filename from its structured input", () => {
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "Read",
+      input: { file_path: "README" },
+      output: "project notes",
+    } satisfies OrchestrationV2TurnItem;
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    expect(entry).toMatchObject({ kind: "work", entry: { label: "Read README" } });
+  });
+
   it("keeps browser identity and its source on a completed tool row", () => {
     const item = {
       ...base,
