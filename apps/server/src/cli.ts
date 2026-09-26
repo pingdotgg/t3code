@@ -11,6 +11,7 @@ import {
   ChildWaitAssignmentIdentity,
   ChildWaitCondition,
   CommandId,
+  PendingPullRequestAssociation,
   EditorId,
   KeybindingRule,
   MessageId,
@@ -54,6 +55,7 @@ import {
   Layer,
   LogLevel,
   Option,
+  Result,
   Path,
   Redacted,
   References,
@@ -124,9 +126,15 @@ import {
   withLiveSnapshotClient,
   withLiveSnapshotAndRpc,
   watchShell,
+  nowIso,
   CliPayloadError,
   type CliLiveTargetFlags,
 } from "./cli/client.ts";
+import { resolveThreadWorkspaceCwd } from "./checkpointing/Utils.ts";
+import {
+  pullRequestAssociationBlockReason,
+  pullRequestAssociationRetryAt,
+} from "./pullRequestMonitor/pullRequestAssociationValidation.ts";
 import {
   discoverCliEnvironmentCandidates,
   resolveCliEnvironmentCandidate,
@@ -2085,6 +2093,45 @@ const chatSetBranchCommand = Command.make("set-branch", {
 );
 
 const cwdFlag = Flag.string("cwd").pipe(Flag.withDefault(process.cwd()));
+const ASSOCIATION_RECOVERY_DELAY_MS = 60_000;
+
+const updatePendingPullRequestAssociation = (
+  flags: CliLiveTargetFlags,
+  chat: string,
+  requestId: CommandId,
+  workspaceCwd: string,
+  pendingPullRequestAssociation: PendingPullRequestAssociation,
+) =>
+  withThreadDispatch(flags, chat, ({ thread, dispatch }) => {
+    if (thread.pendingPullRequestAssociation?.requestId !== requestId) {
+      return Effect.succeed(false);
+    }
+    return dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.make(`cli:associate-pr-pending:${crypto.randomUUID()}`),
+      threadId: thread.id,
+      expectedUpdatedAt: thread.updatedAt,
+      expectedWorkspaceCwd: workspaceCwd,
+      pendingPullRequestAssociation,
+    }).pipe(
+      Effect.flatMap(() =>
+        withThreadDispatch(flags, chat, ({ thread: updatedThread }) => {
+          const current = updatedThread.pendingPullRequestAssociation;
+          return Effect.succeed(
+            current?.requestId === pendingPullRequestAssociation.requestId &&
+              current.reference === pendingPullRequestAssociation.reference &&
+              current.requestedAt === pendingPullRequestAssociation.requestedAt &&
+              current.status === pendingPullRequestAssociation.status &&
+              (current.status === "pending" && pendingPullRequestAssociation.status === "pending"
+                ? current.nextAttemptAt === pendingPullRequestAssociation.nextAttemptAt
+                : current.status === "blocked" &&
+                  pendingPullRequestAssociation.status === "blocked" &&
+                  current.reason === pendingPullRequestAssociation.reason),
+          );
+        }),
+      ),
+    );
+  });
 
 const chatAssociatePrCommand = Command.make("associate-pr", {
   ...liveTargetFlags,
@@ -2097,31 +2144,232 @@ const chatAssociatePrCommand = Command.make("associate-pr", {
   Command.withDescription("Durably associate a pull request with a chat."),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      const resolved = yield* callWsRpc(flags, (client) =>
-        client[WS_METHODS.gitResolvePullRequest]({
-          cwd: flags.cwd,
-          reference: flags.reference,
-        }),
+      const reference = flags.reference.trim();
+      if (reference.length === 0) {
+        return yield* Effect.fail(new Error("A pull request URL or number is required."));
+      }
+      const requestId = CommandId.make(`cli:associate-pr:${crypto.randomUUID()}`);
+      const requestedAt = nowIso();
+      const pending: PendingPullRequestAssociation = {
+        requestId,
+        reference,
+        requestedAt,
+        nextAttemptAt: new Date(
+          Date.parse(requestedAt) + ASSOCIATION_RECOVERY_DELAY_MS,
+        ).toISOString(),
+        status: "pending",
+      };
+      const context = yield* withThreadDispatch(
+        flags,
+        flags.chat,
+        ({ thread, snapshot, dispatch }) =>
+          Effect.gen(function* () {
+            const workspaceCwd = resolveThreadWorkspaceCwd({
+              thread,
+              projects: snapshot.projects,
+            });
+            if (!workspaceCwd || workspaceCwd !== flags.cwd) {
+              return yield* Effect.fail(
+                new Error("The requested checkout is not the current workspace for this chat."),
+              );
+            }
+            yield* dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make(`cli:associate-pr-intent:${crypto.randomUUID()}`),
+              threadId: thread.id,
+              expectedUpdatedAt: thread.updatedAt,
+              expectedWorkspaceCwd: workspaceCwd,
+              pendingPullRequestAssociation: pending,
+            });
+            return {
+              threadId: thread.id,
+              projectId: thread.projectId,
+              branch: thread.branch,
+              worktreePath: thread.worktreePath,
+              pullRequestUrl: thread.pullRequest?.url ?? null,
+              workspaceCwd,
+            };
+          }),
       );
-      yield* withThreadDispatch(flags, flags.chat, ({ thread, dispatch }) =>
-        Effect.gen(function* () {
-          const result = yield* dispatch({
-            type: "thread.meta.update",
-            commandId: CommandId.make(crypto.randomUUID()),
-            threadId: thread.id,
-            pullRequest: resolved.pullRequest,
-            pullRequestOwnership: "transfer",
-          });
-          yield* dispatch({
-            type: "thread.pull-request.link",
-            commandId: CommandId.make(crypto.randomUUID()),
-            threadId: thread.id,
-            pullRequest: resolved.pullRequest,
-            source: "agent",
-          });
-          yield* printJson({ pullRequest: resolved.pullRequest, result });
-        }),
+      const intentPersisted = yield* withThreadDispatch(flags, flags.chat, ({ thread }) =>
+        Effect.succeed(thread.pendingPullRequestAssociation?.requestId === requestId),
       );
+      if (!intentPersisted) {
+        return yield* Effect.fail(
+          new Error("The pull request association request was superseded before resolution."),
+        );
+      }
+
+      const localStatus = yield* callWsRpc(flags, (client) =>
+        client[WS_METHODS.gitLocalStatus]({ cwd: context.workspaceCwd }),
+      );
+      if (
+        !localStatus.isRepo ||
+        !localStatus.hasOriginRemote ||
+        localStatus.isDefaultBranch ||
+        context.branch === null ||
+        localStatus.branch !== context.branch
+      ) {
+        const blocked: PendingPullRequestAssociation = {
+          ...pending,
+          status: "blocked",
+          reason: "workspace-changed",
+        };
+        const updated = yield* updatePendingPullRequestAssociation(
+          flags,
+          flags.chat,
+          requestId,
+          context.workspaceCwd,
+          blocked,
+        );
+        yield* printJson({
+          status: updated ? "blocked" : "superseded",
+          reference,
+          ...(updated ? { reason: blocked.reason } : {}),
+        });
+        return;
+      }
+
+      const resolution = yield* Effect.result(
+        callWsRpc(flags, (client) =>
+          client[WS_METHODS.gitResolvePullRequest]({
+            cwd: context.workspaceCwd,
+            reference,
+          }),
+        ),
+      );
+      if (Result.isFailure(resolution)) {
+        const retryAt = pullRequestAssociationRetryAt(resolution.failure);
+        if (retryAt) {
+          const retryPending: PendingPullRequestAssociation = {
+            ...pending,
+            nextAttemptAt: retryAt,
+          };
+          const updated = yield* updatePendingPullRequestAssociation(
+            flags,
+            flags.chat,
+            requestId,
+            context.workspaceCwd,
+            retryPending,
+          );
+          yield* printJson(
+            updated
+              ? {
+                  status: "pending",
+                  reference,
+                  retryAt,
+                  message: "GitHub reads are rate-limited; no pull request has been associated.",
+                }
+              : { status: "superseded", reference },
+          );
+          return;
+        }
+
+        const blocked: PendingPullRequestAssociation = {
+          ...pending,
+          status: "blocked",
+          reason: "resolve-failed",
+        };
+        yield* updatePendingPullRequestAssociation(
+          flags,
+          flags.chat,
+          requestId,
+          context.workspaceCwd,
+          blocked,
+        );
+        return yield* Effect.fail(resolution.failure);
+      }
+
+      const verifiedLocalStatus = yield* callWsRpc(flags, (client) =>
+        client[WS_METHODS.gitLocalStatus]({ cwd: context.workspaceCwd }),
+      );
+      const associationResult = yield* withThreadDispatch(
+        flags,
+        flags.chat,
+        ({ thread, snapshot, dispatch }) =>
+          Effect.gen(function* () {
+            if (thread.pendingPullRequestAssociation?.requestId !== requestId) {
+              return { status: "superseded" as const };
+            }
+            if (
+              thread.projectId !== context.projectId ||
+              thread.branch !== context.branch ||
+              thread.worktreePath !== context.worktreePath ||
+              (thread.pullRequest?.url ?? null) !== context.pullRequestUrl ||
+              resolveThreadWorkspaceCwd({ thread, projects: snapshot.projects }) !==
+                context.workspaceCwd
+            ) {
+              const blocked: PendingPullRequestAssociation = {
+                ...pending,
+                status: "blocked",
+                reason: "thread-changed",
+              };
+              yield* dispatch({
+                type: "thread.meta.update",
+                commandId: CommandId.make(`cli:associate-pr-block:${crypto.randomUUID()}`),
+                threadId: thread.id,
+                expectedUpdatedAt: thread.updatedAt,
+                expectedWorkspaceCwd: context.workspaceCwd,
+                pendingPullRequestAssociation: blocked,
+              });
+              return { status: "blocked" as const, reason: blocked.reason };
+            }
+
+            const project = snapshot.projects.find((entry) => entry.id === thread.projectId);
+            const reason = pullRequestAssociationBlockReason({
+              thread,
+              project,
+              localStatus: verifiedLocalStatus,
+              pullRequest: resolution.success.pullRequest,
+            });
+            if (reason) {
+              const blocked: PendingPullRequestAssociation = {
+                ...pending,
+                status: "blocked",
+                reason,
+              };
+              yield* dispatch({
+                type: "thread.meta.update",
+                commandId: CommandId.make(`cli:associate-pr-block:${crypto.randomUUID()}`),
+                threadId: thread.id,
+                expectedUpdatedAt: thread.updatedAt,
+                expectedWorkspaceCwd: context.workspaceCwd,
+                pendingPullRequestAssociation: blocked,
+              });
+              return { status: "blocked" as const, reason };
+            }
+
+            const result = yield* dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make(`cli:associate-pr:${crypto.randomUUID()}`),
+              threadId: thread.id,
+              expectedUpdatedAt: thread.updatedAt,
+              expectedWorkspaceCwd: context.workspaceCwd,
+              pullRequest: resolution.success.pullRequest,
+              pullRequestSource: "agent",
+              pullRequestOwnership: "transfer",
+              pendingPullRequestAssociation: null,
+            });
+            return {
+              status: "associated" as const,
+              pullRequest: resolution.success.pullRequest,
+              result,
+            };
+          }),
+      );
+      if (associationResult.status === "associated") {
+        const confirmed = yield* withThreadDispatch(flags, flags.chat, ({ thread }) =>
+          Effect.succeed(
+            thread.pullRequest?.url === associationResult.pullRequest.url &&
+              thread.pendingPullRequestAssociation == null,
+          ),
+        );
+        if (!confirmed) {
+          yield* printJson({ status: "superseded", reference });
+          return;
+        }
+      }
+      yield* printJson(associationResult);
     }),
   ),
 );

@@ -2434,6 +2434,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             baseRefName: "main",
             headRefName: "feature/resolve-pr",
             state: "open",
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "octocat/codething-mvp",
           },
         },
       });
@@ -2450,6 +2452,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseBranch: "main",
         headBranch: "feature/resolve-pr",
         state: "open",
+        isCrossRepository: true,
+        headRepositoryNameWithOwner: "octocat/codething-mvp",
       });
       expect(ghCalls.some((call) => call.startsWith("pr view 42 "))).toBe(true);
     }),

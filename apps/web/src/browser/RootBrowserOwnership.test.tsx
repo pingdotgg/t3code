@@ -1,4 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+} from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -10,8 +16,6 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
-  useLocation: () => state.pathname,
-  useNavigate: () => vi.fn(),
   Outlet: () => null,
 }));
 vi.mock("../env", () => ({
@@ -53,30 +57,36 @@ describe("root browser ownership", () => {
     }));
   });
 
-  function renderRoot() {
+  async function renderRoot() {
     const Root = Route.options.component;
     if (!Root) throw new Error("Root route has no component");
+    const routeTree = createRootRoute({ component: Root });
+    const router = createRouter({
+      routeTree,
+      history: createMemoryHistory({ initialEntries: [state.pathname] }),
+    });
+    await router.load();
     return renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>
-        <Root />
+        <RouterProvider router={router} />
       </QueryClientProvider>,
     );
   }
 
-  it("mounts exactly one native browser host for the authenticated app", () => {
-    expect(renderRoot().match(/data-test-browser-host/g)).toHaveLength(1);
+  it("mounts exactly one native browser host for the authenticated app", async () => {
+    expect((await renderRoot()).match(/data-test-browser-host/g)).toHaveLength(1);
   });
 
   it.each(["/pair", "/connect", "/connect/callback"])(
     "does not mount a native browser host on %s",
-    (pathname) => {
+    async (pathname) => {
       state.pathname = pathname;
-      expect(renderRoot()).not.toContain("data-test-browser-host");
+      expect(await renderRoot()).not.toContain("data-test-browser-host");
     },
   );
 
-  it("does not mount a native browser host outside Electron", () => {
+  it("does not mount a native browser host outside Electron", async () => {
     state.electron = false;
-    expect(renderRoot()).not.toContain("data-test-browser-host");
+    expect(await renderRoot()).not.toContain("data-test-browser-host");
   });
 });

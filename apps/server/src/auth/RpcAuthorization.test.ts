@@ -23,6 +23,7 @@ it("separates orchestration reads from access-management reads", () => {
   expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
     AuthOrchestrationReadScope,
   );
+  expect(requiredScopeForRpcMethod(WS_METHODS.gitLocalStatus)).toBe(AuthOrchestrationReadScope);
   expect(requiredScopeForRpcMethod(WS_METHODS.serverReportHostPowerState)).toBe(
     AuthOrchestrationOperateScope,
   );

@@ -2,7 +2,9 @@
 
 ## Browser access and initial navigation
 
+- Vite Plus runner options must precede the task name; arguments after `dev` are forwarded to the app and can re-enter the root dev runner. Run persistent dev tasks with `--parallel` so a dependency's watcher cannot block backend startup. Cover every dev mode and extra runner flags.
 - When starting Vite separately from the dev runner, set `VITE_DEV_SERVER_URL` as well as backend HTTP/WS URLs. Without the dev origin, cookie-auth requests bypass the same-origin proxy and can fail CORS despite a healthy backend.
+- Keep default preview, web, HTTP, and WebSocket hosts identical. `localhost` can bind only IPv6 while environment-port navigation uses IPv4, and a cookie paired on `127.0.0.1` will not authenticate a `localhost` WebSocket.
 
 - Browser cookie import must use the registered environment ID and selected persistent profile; a literal `default` environment silently writes into a partition no real tab uses. Reset consent when the target changes.
 - Guest keyboard isolation must route zoom directly to the preview's tab-owned zoom operations. Reject unsupported popup URLs without loading them into the opener; Electron cannot harden inherited `about:blank` preferences.
@@ -150,7 +152,7 @@
 
 - Review findings must never be silently dropped: reviewers cite file line numbers that often land on unchanged context, so anchor findings to any line the diff renders and only discard ones naming a file outside the reviewed diff. Review threads stay conversational — refresh the result on every turn that emits reviewer JSON, re-resolve the snapshot it is anchored to, and identify the raw-JSON message by content rather than assuming it is the last assistant message.
 - PR metadata writes preserve monitor ownership by default. Only commands carrying explicit transfer intent may replace an owner; inherited/refresh writes use ancestry only as an ownerless fallback, validated before a compare-and-swap claim.
-- Agent PR creation can succeed without the follow-up association tool. Recover from persisted, unambiguous assistant PR URLs only after fresh checkout validation; retry missing metadata after restart and guard dispatch against concurrent thread updates. Never infer an association from branch equality alone.
+- Agent PR creation can succeed without the follow-up association tool. Recover from persisted, unambiguous assistant PR URLs only after fresh checkout validation; retry missing metadata after restart and guard dispatch against concurrent thread updates. For fork PRs, compare the checkout origin with the PR head repository, not the base URL; during pending recovery ignore timestamp-only thread changes but revalidate the request reference, branch, worktree, and checkout before dispatch. Never infer an association from branch equality alone.
 - PR existence checks must include `state`: `gh pr view --json url` alone reuses MERGED/CLOSED PRs and pushes follow-up work onto dead branches. Require `state == OPEN` before reusing a branch/PR; otherwise branch fresh from the base for a new PR.
 - When replacing a thread's legacy `pullRequest`, seed any missing legacy association ahead of newer `pullRequests` in both live and durable projections; otherwise the first-created PR disappears or loses primary badge order.
 - Conditional metadata no-ops must be accepted and receipted by the real orchestration engine, not only the decider; the normal dispatch path rejects empty event batches. Exercise stale writes and receipt replay through the production engine.
@@ -389,6 +391,7 @@
 - Once `ChatMarkdown` reads the workspace entries index, its browser suite must mock `projectFilesQueryState`; the `environmentApi` mock alone fails the import.
 - `@pierre/trees` captures `useFileTree` options once at construction, so live data (selection guards, row decorations) must flow through refs; `collapse-non-matches` is type-only with no runtime branch — use `expand-matches` for hierarchy-preserving filter. The tree opens its own `Search…` overlay whenever the model search value is set, so a panel-owned filter input must hide `[data-file-tree-search-container]` via tree CSS. Row decorations render as bare spans — style them through the `div[data-item-section='decoration']` lane wrapper.
 - Stopping a `pnpm dev` wrapper does not stop its backend/watch children, and a surviving backend keeps the isolated state-dir lock so the next server fails to claim it with `ECONNREFUSED` proxies. Kill the backend processes (same worktree cwd), never another worktree's.
+- Automation snapshots must capture through the guest's CDP target, not native `capturePage()`: a cold/hidden guest can return a zero-sized native image while DOM evaluation still works. Validate decoded pixels and preserve page diagnostics when reporting the typed visual-capture failure.
 
 ## Checkpoint and snapshot atomicity
 

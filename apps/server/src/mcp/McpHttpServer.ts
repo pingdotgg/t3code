@@ -199,6 +199,10 @@ export const encodePreviewSnapshotResult = async (
       readonly width: number;
       readonly height: number;
     };
+    readonly screenshotCaptureFailure?: {
+      readonly _tag: "PreviewScreenshotCaptureFailed";
+      readonly operation: "Page.captureScreenshot";
+    };
     readonly [key: string]: unknown;
   };
   // A host-provided screenshotPath is never trusted: only the path returned
@@ -240,7 +244,15 @@ export const encodePreviewSnapshotResult = async (
       height: screenshot.height,
     },
   };
+  const screenshotCaptureFailure = snapshot.screenshotCaptureFailure
+    ? {
+        ...snapshot.screenshotCaptureFailure,
+        message:
+          "The browser could not capture a screenshot. Page text is diagnostic only; visual validation did not pass.",
+      }
+    : null;
   if (
+    screenshotCaptureFailure ||
     !decoded ||
     decoded.width !== screenshot.width ||
     decoded.height !== screenshot.height ||
@@ -250,7 +262,7 @@ export const encodePreviewSnapshotResult = async (
     // appended, so neither can exceed the ceiling.
     const structured = enforceFinalSnapshotTextBudget({
       ...metadata,
-      error: {
+      error: screenshotCaptureFailure ?? {
         _tag: "PreviewScreenshotInvalid",
         operation: "snapshot",
         message:

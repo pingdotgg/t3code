@@ -54,15 +54,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
-    it.effect("forwards additional arguments after the selected task", () =>
+    it.effect("keeps runner arguments before the task", () =>
       Effect.sync(() => {
         assert.deepStrictEqual(buildDevRunnerArgs("dev:web", ["--host", "127.0.0.1"]), [
           "run",
           "--filter",
           "@t3tools/web",
-          "dev",
           "--host",
           "127.0.0.1",
+          "dev",
         ]);
       }),
     );
@@ -205,6 +205,37 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("createDevRunnerEnv", () => {
+    for (const mode of ["dev", "dev:server", "dev:web", "dev:desktop"] as const) {
+      it.effect(`uses one loopback hostname for ${mode} web, HTTP, and WebSocket URLs`, () =>
+        Effect.gen(function* () {
+          const env = yield* createDevRunnerEnv({
+            mode,
+            baseEnv: {
+              VITE_DEV_SERVER_URL: "http://localhost:9999",
+              VITE_HTTP_URL: "http://localhost:9998",
+              VITE_WS_URL: "ws://localhost:9998",
+            },
+            serverOffset: 3,
+            webOffset: 3,
+            t3Home: "/tmp/dev-runner-test",
+            noBrowser: true,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.HOST, "127.0.0.1");
+          assert.equal(env.PORT, "5736");
+          assert.equal(env.T3CODE_PORT, "13776");
+          assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5736");
+          assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:13776");
+          assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:13776");
+        }),
+      );
+    }
+
     it.effect("defaults T3CODE_HOME to isolated development state when not provided", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -266,6 +297,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
         assert.equal(env.T3CODE_PORT, "4222");
+        assert.equal(env.HOST, "localhost");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
         assert.equal(env.T3CODE_NO_BROWSER, "1");
@@ -395,8 +427,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_PORT, "13773");
-        assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
-        assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
+        assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:13773");
+        assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:13773");
       }),
     );
 

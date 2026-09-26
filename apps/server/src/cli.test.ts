@@ -967,6 +967,23 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             "--base-dir",
             baseDir,
           ]);
+          yield* runCliWithRuntime([
+            "project",
+            "set-default-model",
+            workspaceRoot,
+            "--payload",
+            '{"instanceId":"codex","model":"gpt-5.4"}',
+            "--base-dir",
+            baseDir,
+          ]);
+          const orchestrationEngine = yield* OrchestrationEngineService;
+          const configuredProject = (yield* orchestrationEngine.getReadModel()).projects.find(
+            (project) => project.workspaceRoot === workspaceRoot,
+          );
+          assert.deepStrictEqual(configuredProject?.defaultModelSelection, {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          });
           const createdOutput = yield* captureStdout(
             runCli([
               "chat",
@@ -1267,7 +1284,6 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             baseDir,
           ]);
 
-          const orchestrationEngine = yield* OrchestrationEngineService;
           const readModel = yield* orchestrationEngine.getReadModel();
           const sentThread = readModel.threads.find(
             (candidate) => candidate.id === created.threadId,

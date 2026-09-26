@@ -54,6 +54,7 @@ describe("fitPictureInPictureContentSize", () => {
 const {
   browserWindowConstructor,
   createFromPath,
+  createFromBuffer,
   fromId,
   getFocusedWebContents,
   mkdir,
@@ -64,6 +65,7 @@ const {
 } = vi.hoisted(() => ({
   browserWindowConstructor: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
+  createFromBuffer: vi.fn(),
   fromId: vi.fn((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
@@ -80,6 +82,7 @@ vi.mock("electron", () => ({
   },
   nativeImage: {
     createFromPath,
+    createFromBuffer,
   },
   shell: {
     showItemInFolder,
@@ -151,6 +154,8 @@ const withManager = <A>(
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
+  readonly toPNG: () => Buffer;
+  readonly isEmpty: () => boolean;
   readonly getSize: () => { readonly width: number; readonly height: number };
   readonly resize: (size: {
     readonly width: number;
@@ -184,6 +189,10 @@ const makeTestPreviewWebContents = (
   capturePage: () => Promise<TestCapturedPreviewImage>,
   id: number,
   host = makeTestHostWebContents(),
+  debuggerSendCommand: (
+    method: string,
+    commandParams?: Record<string, unknown>,
+  ) => Promise<unknown> = vi.fn(async () => undefined),
 ) =>
   ({
     id,
@@ -207,7 +216,7 @@ const makeTestPreviewWebContents = (
     debugger: {
       isAttached: () => false,
       attach: vi.fn(),
-      sendCommand: vi.fn(async () => undefined),
+      sendCommand: debuggerSendCommand,
       on: vi.fn(),
       off: vi.fn(),
     },
@@ -220,6 +229,8 @@ const makeTestCapturedPreviewImage = (
   height: number,
 ): TestCapturedPreviewImage => ({
   toJPEG: () => data,
+  toPNG: () => data,
+  isEmpty: () => width <= 0 || height <= 0,
   getSize: () => ({ width, height }),
   resize: ({ width: resizedWidth, height: resizedHeight }) =>
     makeTestCapturedPreviewImage(data, resizedWidth, resizedHeight),
@@ -236,6 +247,7 @@ describe("PreviewManager", () => {
     showItemInFolder.mockClear();
     writeImage.mockClear();
     createFromPath.mockClear();
+    createFromBuffer.mockReset();
     webviewSend.mockClear();
   });
 
@@ -1175,6 +1187,141 @@ describe("PreviewManager", () => {
         });
       }),
     ),
+  );
+
+  effectIt.effect(
+    "captures automation screenshots from CDP when the guest surface is unavailable",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const png = Buffer.from("captured-cdp-png");
+          const image = makeTestCapturedPreviewImage(png, 1280, 800);
+          const capturePage = vi.fn(async () => {
+            throw new Error("UnknownVizError");
+          });
+          const sendCommand = vi.fn(async (method: string) => {
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value: {
+                    url: "about:blank",
+                    title: "",
+                    loading: false,
+                    visibleText: "",
+                    interactiveElements: [],
+                  },
+                },
+              };
+            }
+            if (method === "Page.captureScreenshot") return { data: png.toString("base64") };
+            return undefined;
+          });
+          createFromBuffer.mockReturnValue(image);
+          fromId.mockReturnValue(
+            makeTestPreviewWebContents(capturePage, 42, undefined, sendCommand),
+          );
+
+          yield* manager.createTab("tab_snapshot_cdp");
+          yield* manager.registerWebview("tab_snapshot_cdp", 42);
+          const snapshot = yield* manager.automationSnapshot("tab_snapshot_cdp");
+
+          expect(capturePage).not.toHaveBeenCalled();
+          expect(sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", {
+            format: "png",
+            fromSurface: true,
+          });
+          expect(createFromBuffer).toHaveBeenCalledWith(png);
+          expect(snapshot).toMatchObject({
+            url: "about:blank",
+            visibleText: "",
+            screenshot: {
+              data: png.toString("base64"),
+              width: 1280,
+              height: 800,
+            },
+          });
+        }),
+      ),
+  );
+
+  effectIt.effect(
+    "retains page diagnostics and releases control after stalled screenshot capture",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const png = Buffer.from("recovered-cdp-png");
+          const image = makeTestCapturedPreviewImage(png, 1280, 800);
+          const capturePage = vi.fn(async () =>
+            makeTestCapturedPreviewImage(Buffer.alloc(0), 0, 0),
+          );
+          let stalled = true;
+          const sendCommand = vi.fn((method: string) => {
+            if (method === "Runtime.evaluate") {
+              return Promise.resolve({
+                result: {
+                  value: {
+                    url: "https://example.com/",
+                    title: "Example",
+                    loading: false,
+                    visibleText: "Rendered page diagnostics",
+                    interactiveElements: [],
+                  },
+                },
+              });
+            }
+            if (method === "Page.captureScreenshot") {
+              return stalled
+                ? new Promise<never>(() => {})
+                : Promise.resolve({ data: png.toString("base64") });
+            }
+            return Promise.resolve(undefined);
+          });
+          createFromBuffer.mockReturnValue(image);
+          fromId.mockReturnValue(
+            makeTestPreviewWebContents(capturePage, 42, undefined, sendCommand),
+          );
+
+          yield* manager.createTab("tab_snapshot_timeout");
+          yield* manager.registerWebview("tab_snapshot_timeout", 42);
+          const snapshotFiber = yield* manager
+            .automationSnapshot("tab_snapshot_timeout")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.yieldNow;
+
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            yield* TestClock.adjust("1 second");
+            yield* Effect.yieldNow;
+            if (attempt < 2) {
+              yield* TestClock.adjust(200);
+              yield* Effect.yieldNow;
+            }
+          }
+
+          const failedCaptureSnapshot = yield* Fiber.join(snapshotFiber);
+          expect(failedCaptureSnapshot).toMatchObject({
+            url: "https://example.com/",
+            visibleText: "Rendered page diagnostics",
+            screenshot: { data: "", width: 0, height: 0 },
+            screenshotCaptureFailure: {
+              _tag: "PreviewScreenshotCaptureFailed",
+              operation: "Page.captureScreenshot",
+            },
+            diagnosticsSummary: expect.stringContaining("visibleText: 25 chars"),
+          });
+          expect(
+            sendCommand.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
+          ).toHaveLength(3);
+
+          stalled = false;
+          const recoveredSnapshot = yield* manager.automationSnapshot("tab_snapshot_timeout");
+          expect(recoveredSnapshot.screenshot).toMatchObject({
+            data: png.toString("base64"),
+            width: 1280,
+            height: 800,
+          });
+          expect(capturePage).not.toHaveBeenCalled();
+        }),
+      ),
   );
 
   effectIt.effect("arms native recording capture without delivering JPEG frames", () =>

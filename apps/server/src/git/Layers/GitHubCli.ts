@@ -5,6 +5,7 @@ import { runProcess } from "../../processRunner.ts";
 import { GitHubCliError } from "@t3tools/contracts";
 import {
   GitHubCli,
+  type GitHubPullRequestSummary,
   type GitHubRepositoryCloneUrls,
   type GitHubCliShape,
 } from "../Services/GitHubCli.ts";
@@ -15,6 +16,20 @@ import {
 } from "../githubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+function retryAfterAtFromMessage(message: string): string | undefined {
+  const retryAfter = /(?:^|\r?\n)\s*retry-after\s*:\s*([^\r\n]+)/iu.exec(message)?.[1]?.trim();
+  const resetAt = /(?:^|\r?\n)\s*x-ratelimit-reset\s*:\s*(\d+)/iu.exec(message)?.[1];
+  const retryAt =
+    retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter)
+      ? Date.now() + Number(retryAfter) * 1_000
+      : retryAfter
+        ? Date.parse(retryAfter)
+        : resetAt
+          ? Number(resetAt) * 1_000
+          : Number.NaN;
+  return Number.isFinite(retryAt) ? new Date(retryAt).toISOString() : undefined;
+}
 
 function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
   if (error instanceof Error) {
@@ -53,12 +68,14 @@ function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown
       });
     }
 
+    const retryAfterAt = retryAfterAtFromMessage(error.message);
     return new GitHubCliError({
       operation,
       // An exhausted quota fails every call identically until the reset, so say that once in
       // stable words the PR caches and the client can match on — instead of echoing the raw
       // `gh` argv and stderr on every failure.
       detail: rewriteGitHubRateLimitDetail(`GitHub CLI command failed: ${error.message}`),
+      ...(retryAfterAt ? { retryAfterAt } : {}),
       cause: error,
     });
   }
@@ -75,6 +92,122 @@ const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
 });
+
+const PULL_REQUEST_BY_URL_QUERY = `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      title
+      url
+      baseRefName
+      headRefName
+      headRefOid
+      state
+      mergedAt
+      isCrossRepository
+      headRepository { nameWithOwner }
+      headRepositoryOwner { login }
+    }
+  }
+}`;
+
+function explicitPullRequestUrl(reference: string): {
+  readonly hostname: string;
+  readonly owner: string;
+  readonly repository: string;
+  readonly number: number;
+} | null {
+  try {
+    const url = new URL(reference);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    const path = /^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)\/?$/u.exec(url.pathname);
+    if (!path) return null;
+    const owner = decodeURIComponent(path[1]!);
+    const repository = decodeURIComponent(path[2]!);
+    if (
+      !/^[\w.-]+$/u.test(owner) ||
+      !/^[\w.-]+$/u.test(repository) ||
+      !/^[a-zA-Z0-9.-]+$/u.test(url.hostname)
+    ) {
+      return null;
+    }
+    const number = Number(path[3]);
+    return Number.isSafeInteger(number)
+      ? { hostname: url.hostname, owner, repository, number }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseIncludedApiResponse(raw: string): {
+  readonly status: number;
+  readonly body: string;
+  readonly retryAfterAt: string | undefined;
+} | null {
+  const blocks = Array.from(
+    raw.matchAll(/^HTTP\/\S+\s+(\d+)[^\r\n]*\r?\n([\s\S]*?)\r?\n\r?\n/gimu),
+  );
+  const block = blocks.at(-1);
+  if (!block || block.index === undefined) return null;
+  return {
+    status: Number(block[1]),
+    body: raw.slice(block.index + block[0].length).trim(),
+    retryAfterAt: retryAfterAtFromMessage(block[2] ?? ""),
+  };
+}
+
+function errorMessageFromResponse(body: unknown): string | null {
+  if (!isRecord(body) || !("errors" in body)) return null;
+  const errors = body.errors;
+  if (errors === null) return null;
+  if (!Array.isArray(errors)) return "GitHub returned an invalid GraphQL error response.";
+  const messages = errors
+    .map((error) => (isRecord(error) && typeof error.message === "string" ? error.message : null))
+    .filter((message): message is string => message !== null)
+    .join("; ");
+  return messages.length > 0 ? messages : null;
+}
+
+function apiErrorMessageFromResponse(body: unknown): string | null {
+  return isRecord(body) && typeof body.message === "string" ? body.message : null;
+}
+
+function mapPullRequestSummary(
+  pullRequest: Record<string, unknown>,
+): Effect.Effect<GitHubPullRequestSummary, GitHubCliError> {
+  const raw = {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    baseRefName: pullRequest.baseRefName,
+    headRefName: pullRequest.headRefName,
+    headRefOid: pullRequest.headRefOid,
+    state: pullRequest.state,
+    mergedAt: pullRequest.mergedAt,
+    isCrossRepository: pullRequest.isCrossRepository,
+    headRepository: pullRequest.headRepository,
+    headRepositoryOwner: pullRequest.headRepositoryOwner,
+  };
+  return Effect.sync(() => decodeGitHubPullRequestJson(JSON.stringify(raw))).pipe(
+    Effect.flatMap((decoded) =>
+      Result.isSuccess(decoded)
+        ? Effect.succeed((({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success))
+        : Effect.fail(
+            new GitHubCliError({
+              operation: "getPullRequest",
+              detail: `GitHub API returned invalid PR JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
+              cause: decoded.failure,
+            }),
+          ),
+    ),
+  );
+}
 
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitHubRepositoryCloneUrlsSchema>,
@@ -111,6 +244,7 @@ const makeGitHubCli = Effect.sync(() => {
         runProcess("gh", input.args, {
           cwd: input.cwd,
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.allowNonZeroExit ? { allowNonZeroExit: true } : {}),
           ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
           ...(input.maxOutputBytes === undefined
             ? {}
@@ -197,35 +331,97 @@ const makeGitHubCli = Effect.sync(() => {
         ),
       ),
     getPullRequest: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: [
-          "pr",
-          "view",
-          input.reference,
-          "--json",
-          "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
-        ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          Effect.sync(() => decodeGitHubPullRequestJson(raw)).pipe(
-            Effect.flatMap((decoded) =>
-              Result.isSuccess(decoded)
-                ? Effect.succeed(
-                    (({ updatedAt: _updatedAt, ...summary }) => summary)(decoded.success),
-                  )
-                : Effect.fail(
-                    new GitHubCliError({
-                      operation: "getPullRequest",
-                      detail: `GitHub CLI returned invalid PR JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
-                      cause: decoded.failure,
-                    }),
-                  ),
-            ),
-          ),
-        ),
-      ),
+      Effect.gen(function* () {
+        const reference = explicitPullRequestUrl(input.reference);
+        if (!reference) {
+          const result = yield* execute({
+            cwd: input.cwd,
+            args: [
+              "pr",
+              "view",
+              input.reference,
+              "--json",
+              "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            ],
+          });
+          const decoded = decodeGitHubPullRequestJson(result.stdout.trim());
+          if (Result.isSuccess(decoded)) {
+            const { updatedAt: _updatedAt, ...summary } = decoded.success;
+            return summary;
+          }
+          return yield* new GitHubCliError({
+            operation: "getPullRequest",
+            detail: `GitHub CLI returned invalid PR JSON: ${formatGitHubJsonDecodeError(decoded.failure)}`,
+            cause: decoded.failure,
+          });
+        }
+
+        const result = yield* execute({
+          cwd: input.cwd,
+          allowNonZeroExit: true,
+          args: [
+            "api",
+            "--hostname",
+            reference.hostname,
+            "--include",
+            "graphql",
+            "-f",
+            `query=${PULL_REQUEST_BY_URL_QUERY}`,
+            "-f",
+            `owner=${reference.owner}`,
+            "-f",
+            `name=${reference.repository}`,
+            "-F",
+            `number=${reference.number}`,
+          ],
+        });
+        const response = parseIncludedApiResponse(result.stdout);
+        if (!response) {
+          return yield* normalizeGitHubCliError(
+            "execute",
+            new Error(result.stderr || "GitHub CLI did not return an HTTP response."),
+          );
+        }
+
+        const body = yield* Effect.try({
+          try: () => JSON.parse(response.body) as unknown,
+          catch: (cause) =>
+            new GitHubCliError({
+              operation: "getPullRequest",
+              detail: "GitHub API returned invalid response JSON.",
+              cause,
+            }),
+        });
+
+        const graphQlError = errorMessageFromResponse(body);
+        if (response.status < 200 || response.status >= 300 || graphQlError !== null) {
+          const detail =
+            graphQlError ||
+            apiErrorMessageFromResponse(body) ||
+            `GitHub API request failed with HTTP ${response.status}.`;
+          const rateLimited =
+            response.status === 429 || /rate[\s-]?limit|secondary rate/iu.test(detail);
+          return yield* new GitHubCliError({
+            operation: "getPullRequest",
+            detail: `GitHub API failed to resolve pull request: ${detail}`,
+            ...(rateLimited && response.retryAfterAt
+              ? { retryAfterAt: response.retryAfterAt }
+              : {}),
+          });
+        }
+
+        const data = isRecord(body) && isRecord(body.data) ? body.data : null;
+        const repository = data && isRecord(data.repository) ? data.repository : null;
+        const resolved =
+          repository && isRecord(repository.pullRequest) ? repository.pullRequest : null;
+        if (!resolved) {
+          return yield* new GitHubCliError({
+            operation: "getPullRequest",
+            detail: "Pull request not found. Check the PR number or URL and try again.",
+          });
+        }
+        return yield* mapPullRequestSummary(resolved);
+      }),
     getPullRequestPatch: (input) =>
       execute({
         cwd: input.cwd,

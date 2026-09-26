@@ -2649,6 +2649,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.pullRequestSource !== undefined
             ? { pullRequestSource: command.pullRequestSource }
             : {}),
+          ...(command.pendingPullRequestAssociation !== undefined
+            ? { pendingPullRequestAssociation: command.pendingPullRequestAssociation }
+            : command.pullRequest !== undefined
+              ? { pendingPullRequestAssociation: null }
+              : {}),
           ...(command.pullRequestOwnership !== undefined
             ? { pullRequestOwnership: command.pullRequestOwnership }
             : {}),
@@ -2974,7 +2979,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (
         existing &&
         existing.source === source &&
-        sameThreadPullRequestAssociation(existing.pullRequest, command.pullRequest)
+        sameThreadPullRequestAssociation(existing.pullRequest, command.pullRequest) &&
+        thread.pendingPullRequestAssociation == null
       ) {
         return [];
       }
@@ -3011,7 +3017,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.pullRequest !== null &&
         thread.pullRequest !== undefined &&
         sameThreadPullRequest(thread.pullRequest, command.pullRequest);
-      if (!hasLink && !clearsLegacyPullRequest) {
+      if (!hasLink && !clearsLegacyPullRequest && thread.pendingPullRequestAssociation == null) {
         return [];
       }
       const occurredAt = nowIso();

@@ -19,7 +19,7 @@ const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
-const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
+const DEV_LOOPBACK_HOST = "127.0.0.1";
 // HTTP(S) requests to these ports are blocked by the Fetch standard before a
 // browser reaches the network. Keep the complete list here so explicit or
 // future wider offsets cannot produce a URL that curl accepts but browsers
@@ -64,7 +64,6 @@ export const DEFAULT_DEV_T3_HOME = Effect.map(Effect.service(Path.Path), (path) 
 
 const MODE_ARGS = {
   dev: [
-    "run",
     "--parallel",
     "--filter",
     "@t3tools/contracts",
@@ -72,19 +71,10 @@ const MODE_ARGS = {
     "@t3tools/web",
     "--filter",
     "t3",
-    "dev",
   ],
-  "dev:server": ["run", "--filter", "t3", "dev"],
-  "dev:web": ["run", "--filter", "@t3tools/web", "dev"],
-  "dev:desktop": [
-    "run",
-    "--parallel",
-    "--filter",
-    "@t3tools/desktop",
-    "--filter",
-    "@t3tools/web",
-    "dev",
-  ],
+  "dev:server": ["--filter", "t3"],
+  "dev:web": ["--filter", "@t3tools/web"],
+  "dev:desktop": ["--parallel", "--filter", "@t3tools/desktop", "--filter", "@t3tools/web"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
@@ -94,7 +84,8 @@ export function buildDevRunnerArgs(
   mode: DevMode,
   runnerArgs: ReadonlyArray<string>,
 ): Array<string> {
-  return [...MODE_ARGS[mode], ...runnerArgs];
+  // Watch tasks cannot wait for dependencies to exit; runner flags must precede the task.
+  return ["run", ...MODE_ARGS[mode], ...runnerArgs, "dev"];
 }
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
@@ -244,24 +235,21 @@ export function createDevRunnerEnv({
     const webPort = BASE_WEB_PORT + webOffset;
     const resolvedBaseDir = yield* resolveBaseDir(t3Home);
     const isDesktopMode = mode === "dev:desktop";
+    const loopbackHost =
+      !isDesktopMode && devUrl?.hostname === "localhost" ? "localhost" : DEV_LOOPBACK_HOST;
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
+      HOST: baseEnv.HOST?.trim() || loopbackHost,
       PORT: String(webPort),
-      VITE_DEV_SERVER_URL:
-        devUrl?.toString() ??
-        `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
+      VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://${DEV_LOOPBACK_HOST}:${webPort}`,
       T3CODE_HOME: resolvedBaseDir,
+      T3CODE_PORT: String(serverPort),
+      VITE_HTTP_URL: `http://${loopbackHost}:${serverPort}`,
+      VITE_WS_URL: `ws://${loopbackHost}:${serverPort}`,
     };
 
-    if (!isDesktopMode) {
-      output.T3CODE_PORT = String(serverPort);
-      output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
-      output.VITE_WS_URL = `ws://localhost:${serverPort}`;
-    } else {
-      output.T3CODE_PORT = String(serverPort);
-      output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
-      output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
+    if (isDesktopMode) {
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
       delete output.T3CODE_HOST;
@@ -303,7 +291,7 @@ export function createDevRunnerEnv({
     }
 
     if (isDesktopMode) {
-      output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
+      output.HOST = DEV_LOOPBACK_HOST;
       delete output.T3CODE_DESKTOP_WS_URL;
     }
 

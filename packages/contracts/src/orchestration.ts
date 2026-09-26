@@ -819,11 +819,36 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+export const PendingPullRequestAssociation = Schema.Union([
+  Schema.Struct({
+    requestId: CommandId,
+    reference: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+    requestedAt: IsoDateTime,
+    nextAttemptAt: IsoDateTime,
+    status: Schema.Literal("pending"),
+  }),
+  Schema.Struct({
+    requestId: CommandId,
+    reference: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+    requestedAt: IsoDateTime,
+    status: Schema.Literal("blocked"),
+    reason: Schema.Literals([
+      "repository-mismatch",
+      "head-mismatch",
+      "workspace-changed",
+      "thread-changed",
+      "resolve-failed",
+    ]),
+  }),
+]);
+export type PendingPullRequestAssociation = typeof PendingPullRequestAssociation.Type;
+
 export const OrchestrationThread = Schema.Struct({
   nudging: Schema.optional(ThreadNudging),
   collaborationRequests: Schema.optionalKey(Schema.Array(CollaborationRequest)),
   linkedPullRequest: Schema.optionalKey(Schema.NullOr(ThreadLinkedPullRequest)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  pendingPullRequestAssociation: Schema.optionalKey(Schema.NullOr(PendingPullRequestAssociation)),
   unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   id: ThreadId,
   projectId: ProjectId,
@@ -917,6 +942,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   nudging: Schema.optional(ThreadNudging),
   linkedPullRequest: Schema.optionalKey(Schema.NullOr(ThreadLinkedPullRequest)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  pendingPullRequestAssociation: Schema.optionalKey(Schema.NullOr(PendingPullRequestAssociation)),
   unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   id: ThreadId,
   projectId: ProjectId,
@@ -1164,6 +1190,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   pullRequest: Schema.optional(Schema.NullOr(GitPullRequestAssociation)),
   pullRequestSource: Schema.optional(ThreadPullRequestLinkSource),
   pullRequestOwnership: Schema.optional(Schema.Literal("transfer")),
+  pendingPullRequestAssociation: Schema.optional(Schema.NullOr(PendingPullRequestAssociation)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -2287,6 +2314,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   pullRequest: Schema.optional(Schema.NullOr(GitPullRequestAssociation)),
   pullRequestSource: Schema.optional(ThreadPullRequestLinkSource),
   pullRequestOwnership: Schema.optional(Schema.Literal("transfer")),
+  pendingPullRequestAssociation: Schema.optional(Schema.NullOr(PendingPullRequestAssociation)),
   updatedAt: IsoDateTime,
 });
 

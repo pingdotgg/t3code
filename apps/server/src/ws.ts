@@ -2324,6 +2324,16 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "git",
             },
           ),
+        [WS_METHODS.gitLocalStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitLocalStatus,
+            gitManager
+              .invalidateLocalStatus(input.cwd)
+              .pipe(Effect.andThen(gitManager.localStatus(input))),
+            {
+              "rpc.aggregate": "git",
+            },
+          ),
         [WS_METHODS.gitPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPull,

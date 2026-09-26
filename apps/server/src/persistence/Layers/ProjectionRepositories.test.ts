@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import { CommandId, ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -86,6 +86,13 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         branch: null,
         worktreePath: null,
         pullRequest: null,
+        pendingPullRequestAssociation: {
+          requestId: CommandId.make("associate-pr"),
+          reference: "https://github.com/acme/app/pull/42",
+          requestedAt: "2026-03-24T00:00:00.000Z",
+          nextAttemptAt: "2026-03-24T00:01:00.000Z",
+          status: "pending",
+        },
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -135,6 +142,13 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         Option.getOrNull(persisted)?.latestChildNotificationAt,
         "2026-03-24T00:05:00.000Z",
       );
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.pendingPullRequestAssociation, {
+        requestId: CommandId.make("associate-pr"),
+        reference: "https://github.com/acme/app/pull/42",
+        requestedAt: "2026-03-24T00:00:00.000Z",
+        nextAttemptAt: "2026-03-24T00:01:00.000Z",
+        status: "pending",
+      });
     }),
   );
 });

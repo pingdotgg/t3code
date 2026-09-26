@@ -590,6 +590,9 @@ export function projectEvent(
                       : {}),
                   }
                 : {}),
+              ...(payload.pendingPullRequestAssociation !== undefined
+                ? { pendingPullRequestAssociation: payload.pendingPullRequestAssociation }
+                : {}),
               updatedAt: payload.updatedAt,
             }),
           };
@@ -659,6 +662,7 @@ export function projectEvent(
                 ? [...existing, payload.link]
                 : existing.map((link, linkIndex) => (linkIndex === index ? payload.link : link));
             })(),
+            pendingPullRequestAssociation: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -686,6 +690,7 @@ export function projectEvent(
                 pullRequests: (thread?.pullRequests ?? []).filter(
                   (link) => !sameThreadPullRequest(link.pullRequest, payload.pullRequest),
                 ),
+                pendingPullRequestAssociation: null,
                 updatedAt: payload.updatedAt,
               };
             })(),

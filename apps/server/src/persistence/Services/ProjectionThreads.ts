@@ -13,6 +13,7 @@ import {
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
+  PendingPullRequestAssociation,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -48,6 +49,7 @@ export const ProjectionThread = Schema.Struct({
   pullRequest: Schema.NullOr(GitPullRequestAssociation).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  pendingPullRequestAssociation: Schema.optionalKey(Schema.NullOr(PendingPullRequestAssociation)),
   reviewSnapshot: Schema.optionalKey(Schema.NullOr(ReviewSnapshot)),
   reviewResult: Schema.optionalKey(Schema.NullOr(ReviewResult)),
   validationRequest: Schema.optionalKey(Schema.NullOr(ValidationRequest)),

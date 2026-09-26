@@ -5,6 +5,7 @@ import {
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
+  IsoDateTime,
 } from "./baseSchemas.ts";
 import { ReviewChangesScope } from "./agentWorkflows.ts";
 import { ReviewSnapshot } from "./reviewSchemas.ts";
@@ -107,6 +108,8 @@ export const GitResolvedPullRequest = Schema.Struct({
   url: Schema.String,
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
+  isCrossRepository: Schema.optional(Schema.Boolean),
+  headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   state: Schema.NullOr(GitPullRequestState).pipe(
     Schema.decodeTo(
       GitPullRequestState,
@@ -519,6 +522,7 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
   operation: Schema.String,
   detail: Schema.String,
+  retryAfterAt: Schema.optional(IsoDateTime),
   cause: Schema.optional(Schema.Unknown),
 }) {
   override get message(): string {

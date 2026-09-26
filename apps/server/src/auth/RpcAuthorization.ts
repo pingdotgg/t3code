@@ -64,6 +64,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewAutomationFocusHost]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitPull]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitRefreshStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.gitLocalStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.gitRunStackedAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.gitListOpenPullRequests]: AuthOrchestrationReadScope,

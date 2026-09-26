@@ -23,6 +23,7 @@ import type {
   PreviewAutomationEvaluateInput,
   PreviewAutomationPressInput,
   PreviewAutomationNetworkEntry,
+  PreviewAutomationScreenshotCaptureFailure,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationSnapshotInput,
@@ -120,6 +121,10 @@ const RECORDING_MAX_FRAME_HEIGHT = 1200;
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
+const SCREENSHOT_CAPTURE_FAILURE = {
+  _tag: "PreviewScreenshotCaptureFailed",
+  operation: "Page.captureScreenshot",
+} satisfies PreviewAutomationScreenshotCaptureFailure;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -568,6 +573,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       try: evaluate,
       catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
     });
+  const requireCurrentGuest = (tabId: string, wc: Electron.WebContents) =>
+    Effect.gen(function* () {
+      const tabs = yield* SynchronizedRef.get(tabsRef);
+      if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
+        return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
+      }
+    });
   const capturePageWithRetry = Effect.fn("PreviewManager.capturePageWithRetry")(function* (
     errorContext: PreviewOperationContext,
     tabId: string,
@@ -576,15 +588,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     attempts = CAPTURE_PAGE_RETRY_ATTEMPTS,
     retryDelayMs = CAPTURE_PAGE_RETRY_DELAY_MS,
   ) {
-    const requireCurrentGuest = Effect.gen(function* () {
-      const tabs = yield* SynchronizedRef.get(tabsRef);
-      if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
-        return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
-      }
-    });
     const capture = Effect.gen(function* () {
       // Check after the retry delay, and again before accepting its result.
-      yield* requireCurrentGuest;
+      yield* requireCurrentGuest(tabId, wc);
       const image = yield* Effect.tryPromise({
         // An abort-signal parameter makes a stalled promise interruptible.
         try: (_signal) => wc.capturePage(rectangle),
@@ -596,7 +602,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
         }),
       );
-      yield* requireCurrentGuest;
+      yield* requireCurrentGuest(tabId, wc);
       return image;
     });
     return yield* capture.pipe(
@@ -1243,6 +1249,55 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     method: string,
     commandParams?: Record<string, unknown>,
   ) => Effect.Effect<unknown, PreviewManagerError>;
+
+  const captureAutomationScreenshotWithRetry = Effect.fn(
+    "PreviewManager.captureAutomationScreenshotWithRetry",
+  )(function* (tabId: string, wc: Electron.WebContents, send: SendCommand) {
+    const errorContext = {
+      operation: "automationSnapshot.captureScreenshot",
+      tabId,
+      webContentsId: wc.id,
+    };
+    const capture = Effect.gen(function* () {
+      yield* requireCurrentGuest(tabId, wc);
+      const result = yield* send("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+      }).pipe(
+        Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+        }),
+      );
+      const data = (result as { readonly data?: unknown } | null)?.data;
+      if (typeof data !== "string" || data.length === 0) {
+        return yield* new PreviewOperationError({
+          ...errorContext,
+          cause: new Error("The browser returned no screenshot data."),
+        });
+      }
+      const image = yield* attempt(errorContext, () =>
+        nativeImage.createFromBuffer(Buffer.from(data, "base64")),
+      );
+      const size = image.getSize();
+      if (image.isEmpty() || size.width <= 0 || size.height <= 0) {
+        return yield* new PreviewOperationError({
+          ...errorContext,
+          cause: new Error("The browser returned an empty screenshot."),
+        });
+      }
+      yield* requireCurrentGuest(tabId, wc);
+      return image;
+    });
+    return yield* capture.pipe(
+      Effect.retry({
+        times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+        schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+        while: isPreviewOperationError,
+      }),
+    );
+  });
 
   const prepareAutomationInput = Effect.fn("PreviewManager.prepareAutomationInput")(function* (
     send: SendCommand,
@@ -3231,6 +3286,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* Effect.all(
         [
           send("Runtime.enable"),
+          send("Page.enable"),
           ...(budgets.includeAccessibilityTree ? [send("Accessibility.enable")] : []),
         ],
         {
@@ -3246,34 +3302,44 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         interactiveElements: PreviewAutomationSnapshot["interactiveElements"];
       }>(tabId, send, collectInteractiveElementsScript(captureMaxElements, captureMaxText), true);
 
-      const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all(
+      const [accessibility, screenshotCapture, diagnostics, timelines] = yield* Effect.all(
         [
           budgets.includeAccessibilityTree
             ? send("Accessibility.getFullAXTree")
             : Effect.succeed(null),
-          capturePageWithRetry(
-            {
-              operation: "automationSnapshot.capturePage",
-              tabId,
-              webContentsId: wc.id,
-            },
-            tabId,
-            wc,
+          captureAutomationScreenshotWithRetry(tabId, wc, send).pipe(
+            Effect.map(
+              (
+                image,
+              ): {
+                readonly image: Electron.NativeImage | null;
+                readonly failure: PreviewAutomationScreenshotCaptureFailure | null;
+              } => ({ image, failure: null }),
+            ),
+            Effect.catchTag("PreviewOperationError", () =>
+              Effect.succeed({
+                image: null,
+                failure: SCREENSHOT_CAPTURE_FAILURE,
+              }),
+            ),
           ),
           Ref.get(diagnosticsRef),
           Ref.get(actionTimelineRef),
         ],
         { concurrency: 4 },
       );
-      const sourceSize = sourceImage.getSize();
-      const longestEdge = Math.max(sourceSize.width, sourceSize.height);
+      const { image: sourceImage, failure: screenshotCaptureFailure } = screenshotCapture;
+      const sourceSize = sourceImage?.getSize();
+      const longestEdge = sourceSize ? Math.max(sourceSize.width, sourceSize.height) : 0;
       const image =
-        longestEdge > captureMaxScreenshotEdge
-          ? sourceSize.width >= sourceSize.height
-            ? sourceImage.resize({ width: captureMaxScreenshotEdge })
-            : sourceImage.resize({ height: captureMaxScreenshotEdge })
-          : sourceImage;
-      const size = image.getSize();
+        sourceImage && sourceSize
+          ? longestEdge > captureMaxScreenshotEdge
+            ? sourceSize.width >= sourceSize.height
+              ? sourceImage.resize({ width: captureMaxScreenshotEdge })
+              : sourceImage.resize({ height: captureMaxScreenshotEdge })
+            : sourceImage
+          : null;
+      const size = image?.getSize() ?? { width: 0, height: 0 };
       const browserDiagnostics = diagnostics.get(wc.id);
       const raw: PreviewAutomationSnapshot = {
         ...page,
@@ -3283,10 +3349,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         actionTimeline: [...(timelines.get(tabId) ?? [])],
         screenshot: {
           mimeType: "image/png" as const,
-          data: image.toPNG().toString("base64"),
+          data: image?.toPNG().toString("base64") ?? "",
           width: size.width,
           height: size.height,
         },
+        ...(screenshotCaptureFailure ? { screenshotCaptureFailure } : {}),
       };
       return applySnapshotBudgets(raw, budgets);
     },

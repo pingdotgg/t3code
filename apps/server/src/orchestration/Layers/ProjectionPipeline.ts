@@ -288,6 +288,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { workspaceBinding: event.payload.workspaceBinding }
               : {}),
             pullRequest: initialPullRequest ?? null,
+            pendingPullRequestAssociation: null,
             reviewSnapshot: event.payload.reviewSnapshot ?? null,
             reviewResult: null,
             validationRun: null,
@@ -550,6 +551,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.pullRequest !== undefined
               ? { pullRequest: event.payload.pullRequest }
               : {}),
+            ...(event.payload.pendingPullRequestAssociation !== undefined
+              ? { pendingPullRequestAssociation: event.payload.pendingPullRequestAssociation }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           if (event.payload.pullRequest !== undefined) {
@@ -630,6 +634,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
+            pendingPullRequestAssociation: null,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -650,6 +655,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sameThreadPullRequest(existingRow.value.pullRequest, event.payload.pullRequest)
               ? { pullRequest: null }
               : {}),
+            pendingPullRequestAssociation: null,
             updatedAt: event.payload.updatedAt,
           });
           return;

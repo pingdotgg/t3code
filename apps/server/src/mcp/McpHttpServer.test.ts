@@ -107,12 +107,35 @@ it.each([
   async (screenshot) => {
     const result = await McpHttpServer.encodePreviewSnapshotResult({
       visibleText: "Pair with this environment",
+      consoleEntries: [
+        { level: "error", text: "Expected page diagnostic", timestamp: "2026-09-24T00:00:00Z" },
+      ],
+      networkEntries: [
+        {
+          url: "https://example.com/resource",
+          method: "GET",
+          status: 503,
+          failed: true,
+          timestamp: "2026-09-24T00:00:00Z",
+        },
+      ],
+      actionTimeline: [
+        {
+          id: "browser-action-test",
+          action: "snapshot",
+          status: "succeeded",
+          startedAt: "2026-09-24T00:00:00Z",
+        },
+      ],
       screenshot: { mimeType: "image/png", ...screenshot },
     });
     expect(result.isError).toBe(true);
     expect(result.content.some((item) => item.type === "image")).toBe(false);
     expect(result.structuredContent).toMatchObject({
       visibleText: "Pair with this environment",
+      consoleEntries: [{ text: "Expected page diagnostic" }],
+      networkEntries: [{ url: "https://example.com/resource", status: 503 }],
+      actionTimeline: [{ action: "snapshot" }],
       error: { _tag: "PreviewScreenshotInvalid" },
     });
   },
@@ -188,6 +211,40 @@ it("never trusts a host-provided screenshotPath", async () => {
   expect(result.structuredContent).not.toHaveProperty("screenshotPath");
   const text = result.content.find((item) => item.type === "text") as { text: string };
   expect(text.text).not.toContain("/host-only/evil.png");
+});
+
+it("reports screenshot capture failures as typed errors while retaining diagnostics", async () => {
+  const result = await McpHttpServer.encodePreviewSnapshotResult({
+    visibleText: "Rendered page diagnostics",
+    consoleEntries: [{ level: "warn", text: "Page warning", timestamp: "2026-09-24T00:00:00Z" }],
+    networkEntries: [
+      {
+        url: "https://example.com/resource",
+        method: "GET",
+        status: null,
+        failed: true,
+        timestamp: "2026-09-24T00:00:00Z",
+      },
+    ],
+    screenshot: { mimeType: "image/png", data: "", width: 0, height: 0 },
+    screenshotCaptureFailure: {
+      _tag: "PreviewScreenshotCaptureFailed",
+      operation: "Page.captureScreenshot",
+    },
+  });
+
+  expect(result.isError).toBe(true);
+  expect(result.content.some((item) => item.type === "image")).toBe(false);
+  expect(result.structuredContent).toMatchObject({
+    visibleText: "Rendered page diagnostics",
+    consoleEntries: [{ text: "Page warning" }],
+    networkEntries: [{ url: "https://example.com/resource", failed: true }],
+    error: {
+      _tag: "PreviewScreenshotCaptureFailed",
+      operation: "Page.captureScreenshot",
+      message: expect.stringContaining("visual validation did not pass"),
+    },
+  });
 });
 
 it("returns an actionable expired-session response with a Bearer challenge", () => {

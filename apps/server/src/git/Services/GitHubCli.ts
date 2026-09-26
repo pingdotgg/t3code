@@ -42,6 +42,7 @@ export interface GitHubCliShape {
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
     readonly stdin?: string;
+    readonly allowNonZeroExit?: boolean;
     /**
      * Bounded reads are needed for pull-request diffs and file expansions, where a complete
      * response is not always safe to retain in memory.

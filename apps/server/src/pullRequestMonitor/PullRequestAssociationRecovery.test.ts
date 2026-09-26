@@ -1,6 +1,7 @@
 import {
   CommandId,
   EventId,
+  GitHubCliError,
   GitManagerError,
   MessageId,
   OrchestrationEvent,
@@ -8,8 +9,11 @@ import {
   ProviderInstanceId,
   ThreadId,
   type GitStatusResult,
+  type GitStatusLocalResult,
+  type GitResolvedPullRequest,
   type OrchestrationCommand,
   type OrchestrationMessage,
+  type PendingPullRequestAssociation,
 } from "@t3tools/contracts";
 import { Effect, Schema, Stream } from "effect";
 import { describe, expect, it } from "vitest";
@@ -56,6 +60,21 @@ const status: GitStatusResult = {
     state: "open",
   },
 };
+const localStatus: GitStatusLocalResult = {
+  isRepo: true,
+  hasOriginRemote: true,
+  isDefaultBranch: false,
+  branch: "feature",
+  hasWorkingTreeChanges: false,
+  workingTree: status.workingTree,
+};
+const pendingIntent = (nextAttemptAt = now): PendingPullRequestAssociation => ({
+  requestId: CommandId.make("association-request"),
+  reference: url,
+  requestedAt: now,
+  nextAttemptAt,
+  status: "pending",
+});
 
 async function harness() {
   const commandId = CommandId.make("create");
@@ -88,16 +107,43 @@ async function harness() {
   model = {
     ...model,
     threads: model.threads.map((thread) => ({ ...thread, messages: [message()] })),
+    projects: [
+      {
+        id: ProjectId.make("project"),
+        title: "Feature",
+        workspaceRoot: "/repo",
+        repositoryIdentity: {
+          canonicalKey: "github.com/acme/app",
+          locator: {
+            source: "git-remote" as const,
+            remoteName: "origin",
+            remoteUrl: "https://github.com/acme/app.git",
+          },
+        },
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      },
+    ],
   };
   const commands: OrchestrationCommand[] = [];
   let lookups = 0;
   let invalidations = 0;
+  let localInvalidations = 0;
+  let resolveLookups = 0;
   let gitStatus = status;
+  let gitLocalStatus = localStatus;
+  let resolvedPullRequest: GitResolvedPullRequest = status.pr!;
   let failLookup = false;
   let onLookup = () => {};
+  let failResolve: GitHubCliError | null = null;
+  let onResolve = () => {};
+  let currentTime = Date.parse(now);
   const unexpected = () => Effect.die("Unexpected service call");
-  const recovery = await Effect.runPromise(
-    makePullRequestAssociationRecovery.pipe(
+  const makeRecovery = () =>
+    makePullRequestAssociationRecovery(() => currentTime).pipe(
       Effect.provideService(OrchestrationEngineService, {
         getReadModel: () => Effect.succeed(model),
         dispatch: (command) =>
@@ -140,22 +186,84 @@ async function harness() {
           Effect.sync(() => {
             invalidations++;
           }),
-        localStatus: unexpected,
+        localStatus: ({ cwd }) =>
+          Effect.sync(() => {
+            expect(cwd).toBe("/isolated/worktree");
+            return gitLocalStatus;
+          }),
         remoteStatus: unexpected,
-        invalidateLocalStatus: unexpected,
+        invalidateLocalStatus: () =>
+          Effect.sync(() => {
+            localInvalidations++;
+          }),
         invalidateRemoteStatus: unexpected,
-        resolvePullRequest: unexpected,
+        resolvePullRequest: ({ cwd, reference }) =>
+          Effect.gen(function* () {
+            expect(cwd).toBe("/isolated/worktree");
+            expect(reference).toBe(url);
+            resolveLookups++;
+            onResolve();
+            if (failResolve) return yield* failResolve;
+            return { pullRequest: resolvedPullRequest };
+          }),
         preparePullRequestThread: unexpected,
         runStackedAction: unexpected,
       }),
-    ),
-  );
+    );
+  let recovery = await Effect.runPromise(makeRecovery());
   return {
-    recovery,
+    get recovery() {
+      return recovery;
+    },
     commands,
     lookups: () => lookups,
+    resolveLookups: () => resolveLookups,
+    localInvalidations: () => localInvalidations,
     setFailure: (value: boolean) => {
       failLookup = value;
+    },
+    setResolveFailure: (error: GitHubCliError | null) => {
+      failResolve = error;
+    },
+    onResolve: (callback: () => void) => {
+      onResolve = callback;
+    },
+    setLocalStatus: (value: GitStatusLocalResult) => {
+      gitLocalStatus = value;
+    },
+    setResolvedPullRequest: (value: typeof resolvedPullRequest) => {
+      resolvedPullRequest = value;
+    },
+    setProjectRepositoryIdentity: (canonicalKey: string) => {
+      model = {
+        ...model,
+        projects: model.projects.map((project) => ({
+          ...project,
+          repositoryIdentity: {
+            canonicalKey,
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: `https://${canonicalKey}.git`,
+            },
+          },
+        })),
+      };
+    },
+    setPendingIntent: (value: PendingPullRequestAssociation) => {
+      model = {
+        ...model,
+        threads: model.threads.map((thread) => ({
+          ...thread,
+          pendingPullRequestAssociation: value,
+        })),
+      };
+    },
+    advanceTo: (value: string) => {
+      currentTime = Date.parse(value);
+    },
+    restart: async () => {
+      recovery = await Effect.runPromise(makeRecovery());
     },
     onLookup: (callback: () => void) => {
       onLookup = callback;
@@ -455,6 +563,180 @@ describe("pull request association recovery", () => {
       h.setStatus({ ...status, ...update });
       await Effect.runPromise(h.recovery.sweep);
     }
+    expect(h.commands).toEqual([]);
+  });
+
+  it("keeps rate-limited requests pending until Retry-After, then retries after restart once", async () => {
+    const h = await harness();
+    const retryAt = new Date(Date.parse(now) + 60_000).toISOString();
+    h.setPendingIntent(pendingIntent());
+    h.setResolveFailure(
+      new GitHubCliError({
+        operation: "getPullRequest",
+        detail: "API rate limit exceeded",
+        retryAfterAt: retryAt,
+      }),
+    );
+
+    await Effect.runPromise(h.recovery.sweep);
+    expect(h.thread()?.pullRequest).toBeFalsy();
+    expect(h.thread()?.pendingPullRequestAssociation).toMatchObject({
+      status: "pending",
+      nextAttemptAt: retryAt,
+    });
+    expect(h.resolveLookups()).toBe(1);
+
+    await h.restart();
+    await Effect.runPromise(h.recovery.sweep);
+    expect(h.resolveLookups()).toBe(1);
+
+    h.advanceTo(retryAt);
+    h.setResolveFailure(null);
+    await h.restart();
+    await Effect.runPromise(h.recovery.sweep);
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.resolveLookups()).toBe(2);
+    expect(h.thread()?.pullRequest).toEqual(status.pr);
+    expect(h.thread()?.pendingPullRequestAssociation).toBeNull();
+  });
+
+  it("associates an explicit pending reference without assistant-output inference", async () => {
+    const h = await harness();
+    h.updateThread({ messages: [] });
+    h.setPendingIntent(pendingIntent());
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.pendingPullRequestAssociation).toBeFalsy();
+    expect(h.thread()?.pullRequest).toEqual(status.pr);
+    expect(h.thread()?.pendingPullRequestAssociation).toBeNull();
+    expect(h.commands).toContainEqual(
+      expect.objectContaining({
+        type: "thread.meta.update",
+        threadId,
+        pullRequest: status.pr,
+        pullRequestSource: "agent",
+        pullRequestOwnership: "transfer",
+        pendingPullRequestAssociation: null,
+      }),
+    );
+    const associatedThread = h.thread();
+    if (!associatedThread) throw new Error("Expected the associated thread.");
+    expect(createdPullRequestLinks(associatedThread)).toMatchObject([
+      { source: "agent", pullRequest: { url } },
+    ]);
+  });
+
+  it("blocks repository and head mismatches without setting a successful association", async () => {
+    for (const [pullRequest, reason] of [
+      [{ ...status.pr!, url: "https://github.com/other/app/pull/42" }, "repository-mismatch"],
+      [
+        { ...status.pr!, isCrossRepository: true, headRepositoryNameWithOwner: "attacker/app" },
+        "repository-mismatch",
+      ],
+      [{ ...status.pr!, headBranch: "other" }, "head-mismatch"],
+    ] as const) {
+      const h = await harness();
+      h.setPendingIntent(pendingIntent());
+      h.setResolvedPullRequest(pullRequest);
+
+      await Effect.runPromise(h.recovery.sweep);
+
+      expect(h.thread()?.pullRequest).toBeFalsy();
+      expect(h.thread()?.pendingPullRequestAssociation).toMatchObject({
+        status: "blocked",
+        reason,
+      });
+    }
+  });
+
+  it("accepts an upstream PR when the checked-out origin owns its fork head", async () => {
+    const h = await harness();
+    const forkPullRequest = {
+      ...status.pr!,
+      isCrossRepository: true,
+      headRepositoryNameWithOwner: "contributor/app",
+    };
+    h.setProjectRepositoryIdentity("github.com/contributor/app");
+    h.setResolvedPullRequest(forkPullRequest);
+    h.setPendingIntent(pendingIntent());
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.pullRequest).toMatchObject({
+      url,
+      headRepositoryNameWithOwner: "contributor/app",
+    });
+    expect(h.thread()?.pendingPullRequestAssociation).toBeNull();
+  });
+
+  it("does not transfer after a competing association supersedes the pending request", async () => {
+    const h = await harness();
+    const competing = {
+      ...status.pr!,
+      number: 43,
+      url: "https://github.com/acme/app/pull/43",
+    };
+    h.setPendingIntent(pendingIntent());
+    h.onResolve(() =>
+      h.updateThread({
+        pullRequest: competing,
+        pendingPullRequestAssociation: null,
+        updatedAt: "2026-09-08T00:00:01.000Z",
+      }),
+    );
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.pullRequest).toEqual(competing);
+    expect(h.commands).toEqual([]);
+  });
+
+  it("keeps pending association retryable when only the thread title changes during lookup", async () => {
+    const h = await harness();
+    h.setPendingIntent(pendingIntent());
+    h.onResolve(() =>
+      h.updateThread({
+        title: "Renamed while resolving",
+        updatedAt: "2026-09-08T00:00:01.000Z",
+      }),
+    );
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.title).toBe("Renamed while resolving");
+    expect(h.thread()?.pullRequest).toEqual(status.pr);
+    expect(h.thread()?.pendingPullRequestAssociation).toBeNull();
+    expect(h.commands).toContainEqual(
+      expect.objectContaining({
+        type: "thread.meta.update",
+        expectedUpdatedAt: "2026-09-08T00:00:01.000Z",
+        pullRequest: status.pr,
+      }),
+    );
+  });
+
+  it("does not apply a resolved PR after the pending reference changes", async () => {
+    const h = await harness();
+    h.setPendingIntent(pendingIntent());
+    h.onResolve(() =>
+      h.updateThread({
+        pendingPullRequestAssociation: {
+          ...pendingIntent(),
+          reference: "https://github.com/acme/app/pull/43",
+        },
+        updatedAt: "2026-09-08T00:00:01.000Z",
+      }),
+    );
+
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.thread()?.pullRequest).toBeFalsy();
+    expect(h.thread()?.pendingPullRequestAssociation).toMatchObject({
+      status: "pending",
+      reference: "https://github.com/acme/app/pull/43",
+    });
     expect(h.commands).toEqual([]);
   });
 });

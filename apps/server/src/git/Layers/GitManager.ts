@@ -86,6 +86,8 @@ interface ResolvedPullRequest {
   baseBranch: string;
   headBranch: string;
   state: "open" | "closed" | "merged";
+  isCrossRepository?: boolean;
+  headRepositoryNameWithOwner?: string | null;
 }
 
 interface PullRequestHeadRemoteInfo {
@@ -458,6 +460,8 @@ function toResolvedPullRequest(pr: {
   baseRefName: string;
   headRefName: string;
   state?: "open" | "closed" | "merged";
+  isCrossRepository?: boolean;
+  headRepositoryNameWithOwner?: string | null;
 }): ResolvedPullRequest {
   return {
     number: pr.number,
@@ -466,6 +470,10 @@ function toResolvedPullRequest(pr: {
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
     state: pr.state ?? "open",
+    ...(pr.isCrossRepository !== undefined ? { isCrossRepository: pr.isCrossRepository } : {}),
+    ...(pr.headRepositoryNameWithOwner !== undefined
+      ? { headRepositoryNameWithOwner: pr.headRepositoryNameWithOwner }
+      : {}),
   };
 }
 

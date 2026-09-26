@@ -94,6 +94,7 @@ import {
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   GitStatusInput,
+  GitStatusLocalResult,
   GitStatusResult,
   GitStatusStreamEvent,
 } from "./git.ts";
@@ -341,6 +342,7 @@ export const WS_METHODS = {
   // Git methods
   gitPull: "git.pull",
   gitRefreshStatus: "git.refreshStatus",
+  gitLocalStatus: "git.localStatus",
   gitRunStackedAction: "git.runStackedAction",
   gitListBranches: "git.listBranches",
   gitCreateWorktree: "git.createWorktree",
@@ -925,6 +927,12 @@ export const WsGitRefreshStatusRpc = Rpc.make(WS_METHODS.gitRefreshStatus, {
   error: GitManagerServiceError,
 });
 
+export const WsGitLocalStatusRpc = Rpc.make(WS_METHODS.gitLocalStatus, {
+  payload: GitStatusInput,
+  success: GitStatusLocalResult,
+  error: GitManagerServiceError,
+});
+
 export const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
   payload: GitRunStackedActionInput,
   success: GitActionProgressEvent,
@@ -1485,6 +1493,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
   WsGitRefreshStatusRpc,
+  WsGitLocalStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitListOpenPullRequestsRpc,

@@ -553,6 +553,13 @@ export const PreviewAutomationActionEvent = Schema.Struct({
 });
 export type PreviewAutomationActionEvent = typeof PreviewAutomationActionEvent.Type;
 
+export const PreviewAutomationScreenshotCaptureFailure = Schema.Struct({
+  _tag: Schema.Literal("PreviewScreenshotCaptureFailed"),
+  operation: Schema.Literal("Page.captureScreenshot"),
+});
+export type PreviewAutomationScreenshotCaptureFailure =
+  typeof PreviewAutomationScreenshotCaptureFailure.Type;
+
 const PreviewAutomationSnapshotBodyFields = {
   url: Schema.String,
   title: Schema.String,
@@ -574,6 +581,7 @@ const PreviewAutomationSnapshotBodyFields = {
    * requested with `save: true` and the capture was stored as evidence.
    */
   screenshotPath: Schema.optional(Schema.String),
+  screenshotCaptureFailure: Schema.optional(PreviewAutomationScreenshotCaptureFailure),
   /** Optional compact diagnostic summary for model context. */
   diagnosticsSummary: Schema.optional(Schema.String),
 };

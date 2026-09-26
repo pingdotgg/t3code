@@ -533,6 +533,78 @@ describe("decider thread lifecycle", () => {
     });
   });
 
+  it("persists pending pull request association intent without associating it", async () => {
+    const readModel = await lifecycleReadModel();
+    const pendingPullRequestAssociation = {
+      requestId: CommandId.make("associate-pr"),
+      reference: "https://github.com/acme/app/pull/42",
+      requestedAt: "2026-09-08T00:00:00.000Z",
+      nextAttemptAt: "2026-09-08T00:01:00.000Z",
+      status: "pending" as const,
+    };
+    const updated = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId,
+          threadId,
+          pendingPullRequestAssociation,
+        } satisfies OrchestrationCommand,
+        readModel,
+      }),
+    );
+
+    expect(updated).toMatchObject({
+      type: "thread.meta-updated",
+      payload: {
+        threadId,
+        pendingPullRequestAssociation,
+      },
+    });
+    expect(updated).not.toHaveProperty("payload.pullRequest");
+  });
+
+  it("emits an unlink when it is needed to cancel pending association intent", async () => {
+    const readModel = await lifecycleReadModel();
+    const pendingPullRequestAssociation = {
+      requestId: CommandId.make("associate-pr"),
+      reference: "https://github.com/acme/app/pull/42",
+      requestedAt: "2026-09-08T00:00:00.000Z",
+      nextAttemptAt: "2026-09-08T00:01:00.000Z",
+      status: "pending" as const,
+    };
+    const modelWithPendingIntent = {
+      ...readModel,
+      threads: readModel.threads.map((thread) => ({
+        ...thread,
+        pendingPullRequestAssociation,
+      })),
+    };
+    const event = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: modelWithPendingIntent,
+        command: {
+          type: "thread.pull-request.unlink",
+          commandId,
+          threadId,
+          pullRequest: {
+            number: 42,
+            title: "Pending association",
+            url: "https://github.com/acme/app/pull/42",
+            baseBranch: "main",
+            headBranch: "feature",
+            state: "open",
+          },
+        },
+      }),
+    );
+
+    expect(event).toMatchObject({
+      type: "thread.pull-request-unlinked",
+      payload: { threadId },
+    });
+  });
+
   it("ignores stale recovery writes after another thread update", async () => {
     const readModel = await lifecycleReadModel();
     const result = await Effect.runPromise(
