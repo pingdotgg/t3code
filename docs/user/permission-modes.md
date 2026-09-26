@@ -24,6 +24,13 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 **Auto** uses automatic review on Codex, Claude, and Cursor; providers without an equivalent,
 including OpenCode and Antigravity, fall back to asking.
 
+Claude refuses to skip permission prompts when the server runs as the root user, so Claude
+threads in **Full access** fail to start and report `turn/setPermissionMode failed`. The provider
+card still shows a signed-in account, since only full-access turns are affected. Run the server as
+a normal user, or set `IS_SANDBOX=1` in the instance's **Environment variables** in
+**Settings → Providers** when an agent running as root without approval prompts is acceptable on
+that machine.
+
 For Grok, **Always allow this session** remembers the matching command or tool input. Other
 actions still require approval.
 
