@@ -9629,7 +9629,12 @@ export default function ChatView(props: ChatViewProps) {
             "flex shrink-0",
             panelAnimationsActive &&
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
-            rightPanelOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+            // Closed, the control leaves the flex flow so the cluster is only as wide as the two
+            // toggles the header reserves room for; anchored to the cluster's left edge, it fades
+            // out where it stood rather than over the terminal toggle.
+            rightPanelOpen
+              ? "pointer-events-auto opacity-100"
+              : "pointer-events-none absolute right-full mr-1 opacity-0",
           )}
           inert={!rightPanelOpen}
         >
