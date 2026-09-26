@@ -92,14 +92,9 @@ Skills for every project go in `~/.gemini/config/skills` or
 `~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
 so a skill there only appears when the project itself is your home directory.
 
-Antigravity accepts images, PDFs, text files, and supported audio formats directly.
-Its limits are 1 MiB per text file, 10 MiB per image, 20 MiB per audio clip, and
-50 MiB total native attachments per message. PDFs, text, and audio that exceed
-their native limits or the remaining native budget are passed as file paths
-for the agent to inspect with tools. ZIP archives and videos also use file paths.
-These files do not count toward the native attachment budget or enable native video input.
-Unsupported image formats are rejected. The native limits can be lower than
-the general upload limit.
+Antigravity receives images directly. Every other attachment, including PDFs,
+text, audio, archives, and videos, is passed as a saved file path for the agent
+to inspect with its tools. A video path does not enable native video input.
 
 ### Subagents
 
