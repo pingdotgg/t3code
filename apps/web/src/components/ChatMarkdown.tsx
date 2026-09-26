@@ -139,6 +139,7 @@ import { GitHubIcon } from "./Icons";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -227,6 +228,8 @@ interface ChatMarkdownProps {
   /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
       uploads need; without it those images and videos load unauthenticated and 404. */
   githubMedia?: boolean | undefined;
+  /** Draws `mermaid` fences as diagrams, for GitHub-authored text written to be rendered that way. */
+  mermaidDiagrams?: boolean | undefined;
   /** Levels added to each markdown heading in the accessibility tree so the
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
@@ -2286,6 +2289,7 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+/** State for one rendered message: the context its node renderers read, plus copy and media handlers. */
 function useChatMarkdownState({
   text,
   cwd,
@@ -2302,6 +2306,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  mermaidDiagrams = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2701,6 +2706,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      mermaidDiagrams,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -2732,6 +2738,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      mermaidDiagrams,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -3265,10 +3272,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
+  /** Fenced code: a highlighted block, or a mermaid diagram when the renderer opts in. */
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const { resolvedTheme, diffThemeName, isStreaming, onRunShellCommand, text, mermaidDiagrams } =
+      use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3289,27 +3296,33 @@ const CHAT_MARKDOWN_COMPONENTS = {
         }
         isStreaming={isStreaming}
       >
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
+        {/* A half-written diagram cannot parse, so streaming text keeps showing its source. */}
+        <MermaidDiagram
+          code={mermaidDiagrams && !isStreaming && language === "mermaid" ? codeBlock.code : null}
+          theme={resolvedTheme}
         >
-          {/* Reserve the block's height but stay hidden until Shiki has colored
-              it, so plain text never flashes before the highlighted version. */}
-          <Suspense
-            fallback={
-              <pre {...props} className="invisible" aria-hidden>
-                {children}
-              </pre>
-            }
+          <RenderErrorBoundary
+            resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+            fallback={<pre {...props}>{children}</pre>}
           >
-            <SuspenseShikiCodeBlock
-              className={codeBlock.className}
-              code={codeBlock.code}
-              themeName={diffThemeName}
-              isStreaming={isStreaming}
-            />
-          </Suspense>
-        </RenderErrorBoundary>
+            {/* Reserve the block's height but stay hidden until Shiki has colored
+                it, so plain text never flashes before the highlighted version. */}
+            <Suspense
+              fallback={
+                <pre {...props} className="invisible" aria-hidden>
+                  {children}
+                </pre>
+              }
+            >
+              <SuspenseShikiCodeBlock
+                className={codeBlock.className}
+                code={codeBlock.code}
+                themeName={diffThemeName}
+                isStreaming={isStreaming}
+              />
+            </Suspense>
+          </RenderErrorBoundary>
+        </MermaidDiagram>
       </MarkdownCodeBlock>
     );
   },

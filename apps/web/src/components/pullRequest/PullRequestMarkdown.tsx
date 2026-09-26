@@ -101,6 +101,7 @@ export function PullRequestMarkdown({
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
+              mermaidDiagrams
             />
           );
         }
