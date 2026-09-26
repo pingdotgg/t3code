@@ -33,7 +33,9 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
-const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
+// `--version` can exceed 4s on cold wrappers or loaded ARM hosts. The cap
+// still interrupts the scoped spawn so the process group is killed (#8750).
+const OPENCODE_VERSION_PROBE_TIMEOUT = "10 seconds";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause?: unknown;

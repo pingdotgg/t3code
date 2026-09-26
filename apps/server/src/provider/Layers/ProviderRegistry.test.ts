@@ -909,6 +909,89 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
       });
 
+      it("keeps a ready OpenCode snapshot through a single version-probe timeout", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated", type: "opencode" },
+          checkedAt: "2026-07-17T00:00:00.000Z",
+          version: "1.18.19",
+          models: [
+            {
+              slug: "github/gpt-5",
+              name: "GPT-5",
+              subProvider: "GitHub",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [
+            {
+              name: "typescript",
+              description: "TypeScript help",
+              path: "/skills/typescript/SKILL.md",
+              enabled: true,
+            },
+          ],
+        } as const satisfies ServerProvider;
+        const timedOutProvider = {
+          ...previousProvider,
+          status: "error",
+          auth: { status: "unknown" },
+          checkedAt: "2026-07-17T00:01:00.000Z",
+          version: null,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          message:
+            "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 10 seconds.",
+        } satisfies ServerProvider;
+
+        const merged = mergeProviderSnapshot(previousProvider, timedOutProvider);
+        assert.equal(merged.status, "ready");
+        assert.equal(merged.version, previousProvider.version);
+        assert.deepStrictEqual(merged.auth, previousProvider.auth);
+        assert.deepStrictEqual(merged.models, [...previousProvider.models]);
+        assert.deepStrictEqual(merged.slashCommands, previousProvider.slashCommands);
+        assert.deepStrictEqual(merged.skills, previousProvider.skills);
+        assert.equal(merged.message, timedOutProvider.message);
+        assert.equal(merged.checkedAt, timedOutProvider.checkedAt);
+      });
+
+      it("does not keep last-known-good OpenCode state without a ready versioned snapshot", () => {
+        const pendingProvider = {
+          instanceId: ProviderInstanceId.make("opencode"),
+          driver: ProviderDriverKind.make("opencode"),
+          status: "warning",
+          enabled: true,
+          installed: false,
+          auth: { status: "unknown" },
+          checkedAt: "2026-07-17T00:00:00.000Z",
+          version: null,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          message: "OpenCode provider status has not been checked in this session yet.",
+        } as const satisfies ServerProvider;
+        const timedOutProvider = {
+          ...pendingProvider,
+          status: "error",
+          installed: true,
+          checkedAt: "2026-07-17T00:01:00.000Z",
+          message:
+            "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 10 seconds.",
+        } satisfies ServerProvider;
+
+        const merged = mergeProviderSnapshot(pendingProvider, timedOutProvider);
+        assert.equal(merged.status, "error");
+        assert.equal(merged.version, null);
+        assert.equal(merged.message, timedOutProvider.message);
+      });
+
       describe("Codex model inventories", () => {
         const cachedProvider = {
           instanceId: ProviderInstanceId.make("codex-personal"),

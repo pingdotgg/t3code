@@ -164,6 +164,39 @@ const mergeProviderModels = (
     : mergedModels;
 };
 
+const isOpenCodeVersionProbeTimeout = (provider: ServerProvider): boolean =>
+  provider.driver === ProviderDriverKind.make("opencode") &&
+  provider.installed &&
+  provider.status === "error" &&
+  provider.version == null &&
+  (provider.message?.includes("version probe timed out") ?? false);
+
+/**
+ * A single slow OpenCode `--version` must not wipe a ready, versioned
+ * snapshot. The probe still dies at its cap; only status, version, and
+ * auth stay last-known-good until a later probe succeeds or fails for
+ * another reason.
+ */
+const carryLastKnownOpenCodeOnVersionProbeTimeout = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+): Pick<ServerProvider, "auth" | "status" | "version"> | undefined => {
+  if (
+    !isOpenCodeVersionProbeTimeout(nextProvider) ||
+    previousProvider.driver !== ProviderDriverKind.make("opencode") ||
+    previousProvider.status !== "ready" ||
+    previousProvider.version == null
+  ) {
+    return undefined;
+  }
+
+  return {
+    auth: previousProvider.auth,
+    status: previousProvider.status,
+    version: previousProvider.version,
+  };
+};
+
 /**
  * Antigravity's health check only initializes the agent, so after a server
  * restart it reports the account as unchecked. The saved Google login still
@@ -204,12 +237,17 @@ export const mergeProviderSnapshot = (
     return nextProvider;
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
+  const lastKnownOpenCode = carryLastKnownOpenCodeOnVersionProbeTimeout(
+    previousProvider,
+    nextProvider,
+  );
   // "Google account access is not checked yet" describes the probe, not the
   // account; it must not outlive the state it explained.
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
+    ...lastKnownOpenCode,
     models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
