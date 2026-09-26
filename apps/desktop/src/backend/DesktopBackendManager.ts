@@ -472,6 +472,14 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         type: "output",
       };
     }
+    // Nothing writes to or closes this pipe, so the OS closes it only when
+    // this process exits. The backend shuts down on its EOF, which covers
+    // crashes and SIGKILL that skip the backend shutdown here.
+    if (options.bootstrap.desktopLifetimeFd !== undefined) {
+      additionalFds[`fd${options.bootstrap.desktopLifetimeFd}`] = {
+        type: "input",
+      };
+    }
   }
   const command = ChildProcess.make(options.executablePath, options.args, {
     cwd: options.cwd,
