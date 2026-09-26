@@ -406,6 +406,51 @@ describe("ThreadPullRequestReactor", () => {
       ),
   );
 
+  it.effect("refreshes the project identity when a turn adds the remote", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const current = thread("new-remote");
+        const fixture = yield* makeHarness({
+          threads: [current],
+          project: { ...project, repositoryIdentity: null },
+          branchPullRequest: () => Effect.succeed(branchPullRequest()),
+          resolveRepositoryIdentity: (_cwd, options) =>
+            Effect.succeed(options?.refresh ? project.repositoryIdentity : null),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* fixture.start();
+          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
+
+          yield* fixture.publish({
+            type: "thread.turn-diff-completed",
+            sequence: 2,
+            eventId: EventId.make("checkpoint-finished"),
+            aggregateKind: "thread",
+            aggregateId: current.id,
+            occurredAt: NOW,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: {
+              threadId: current.id,
+              turnId: TurnId.make("turn"),
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make("checkpoint"),
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: NOW,
+            },
+          });
+          yield* Queue.take(fixture.reads);
+          yield* reactor.drain;
+          expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("uses live worktrees and falls back to the project for removed worktrees", () =>
     Effect.scoped(
       Effect.gen(function* () {
