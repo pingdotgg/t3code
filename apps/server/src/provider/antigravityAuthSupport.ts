@@ -430,7 +430,10 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   return profile;
 });
 
-/** Applies the same subscription-only launch settings to every ACP process. */
+/**
+ * Applies the same subscription-only launch settings to every ACP process.
+ * `installation.executablePath` must be the ACP binary, not a Windows launcher.
+ */
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {
     readonly executablePath: string;

@@ -27,6 +27,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 
@@ -46,7 +47,10 @@ const DOWNLOAD_TIMEOUT = "45 minutes";
 const VALIDATION_TIMEOUT = "90 seconds";
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
+const WRAPPER_MAX_BYTES = 64 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
+const WINDOWS_LAUNCHER_EXTENSIONS = new Set([".cmd", ".bat"]);
+const WINDOWS_OVERRIDE_EXTENSIONS = [".exe", ".cmd", ".bat"] as const;
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
@@ -140,6 +144,101 @@ function executableNames(platform: NodeJS.Platform) {
   return platform === "win32"
     ? { executable: "agy_acp_server.exe", harness: "localharness_external.exe" }
     : { executable: "agy_acp_server.par", harness: "localharness_external" };
+}
+
+function isWindowsLauncherPath(filePath: string) {
+  return WINDOWS_LAUNCHER_EXTENSIONS.has(NodePath.win32.extname(filePath).toLowerCase());
+}
+
+function windowsOverrideCandidates(candidate: string, platform: NodeJS.Platform) {
+  if (platform !== "win32" || NodePath.win32.extname(candidate)) return [candidate];
+  return [candidate, ...WINDOWS_OVERRIDE_EXTENSIONS.map((extension) => `${candidate}${extension}`)];
+}
+
+function refersToAcpExecutable(value: string, executableName: string) {
+  const lower = value.trim().toLowerCase();
+  const name = executableName.toLowerCase();
+  return (
+    lower === name ||
+    lower.endsWith(`/${name}`) ||
+    lower.endsWith(`\\${name}`) ||
+    lower.endsWith(`%~dp0${name}`)
+  );
+}
+
+/** `%VAR%` / `!VAR!` paths are not expanded; only `%~dp0` is a proven location. */
+function isProvenLaunchPath(value: string, executableName: string) {
+  if (!refersToAcpExecutable(value, executableName)) return false;
+  return !/[%!]/u.test(value.replace(/%~dp0/giu, ""));
+}
+
+const BATCH_IGNORABLE_LINE =
+  /^(?:echo(?:\.|\s+.*)?|set(?:local)?\b.*|endlocal\b.*|(?:title|chcp|cls|color)\b.*)$/iu;
+// `cd`/`chdir`/`pushd`/`popd` change the effective directory a later relative
+// launch resolves against; we do not track that, so wrappers using them are
+// unprovable and rejected.
+const BATCH_CONTROL_FLOW_LINE = /^(?:if|else|goto|for|start|cd|chdir|pushd|popd)\b/iu;
+const BATCH_EXIT_LINE = /^exit\s+\/b\b.*$/iu;
+
+function provenBatchLaunchPath(command: string, executableName: string) {
+  const quoted = /^"([^"]+)"(?:\s+.*)?$/u.exec(command);
+  const unquoted = quoted === null ? /^([^\s]+)(?:\s+.*)?$/u.exec(command) : null;
+  const target = quoted?.[1] ?? unquoted?.[1];
+  return target !== undefined && isProvenLaunchPath(target, executableName) ? target : null;
+}
+
+/**
+ * The executable a `.cmd`/`.bat` wrapper actually starts, not a path mentioned
+ * in `echo`/`set` or an unexecuted branch. Returns null when control flow or
+ * quoting makes that target unprovable.
+ */
+function provenWrapperLaunchTarget(contents: string, executableName: string) {
+  let found: string | undefined;
+  for (const rawLine of contents.split(/\r?\n/u)) {
+    const line = rawLine.trim().replace(/^@+/u, "").trim();
+    if (line.length === 0 || /^(?:rem\b|::)/iu.test(line)) {
+      continue;
+    }
+    if (/[&|<>()]/.test(line.replace(/"[^"]*"/g, ""))) {
+      return null;
+    }
+    if (BATCH_EXIT_LINE.test(line)) {
+      // `exit /b` before a proven launch aborts the wrapper; a later launch
+      // line is unreachable and must not be resolved.
+      if (found === undefined) return null;
+      continue;
+    }
+    if (BATCH_IGNORABLE_LINE.test(line)) {
+      continue;
+    }
+    if (
+      BATCH_CONTROL_FLOW_LINE.test(line) ||
+      /^:[^:]/u.test(line) ||
+      (line.match(/"/g) ?? []).length % 2 !== 0
+    ) {
+      return null;
+    }
+    const target = provenBatchLaunchPath(line.replace(/^call\s+/iu, "").trim(), executableName);
+    if (target === null || (found !== undefined && found !== target)) return null;
+    found = target;
+  }
+  return found ?? null;
+}
+
+function expandWrapperPath(referenced: string, wrapperDirectory: string, path: Path.Path) {
+  const trimmed = referenced.trim();
+  const drivePath = /%~dp0/iu;
+  if (drivePath.test(trimmed)) {
+    const rest = trimmed
+      .replace(drivePath, "")
+      .split(/[\\/]+/u)
+      .filter(Boolean);
+    return path.join(wrapperDirectory, ...rest);
+  }
+  if (path.isAbsolute(trimmed) || /^[A-Za-z]:[\\/]/u.test(trimmed)) {
+    return path.normalize(trimmed);
+  }
+  return path.join(wrapperDirectory, ...trimmed.split(/[\\/]+/u).filter(Boolean));
 }
 
 function isRunning(state: ProviderInstallState) {
@@ -362,12 +461,41 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     } satisfies AntigravityExecutable;
   });
 
+  // Follow a proven .cmd/.bat launch to agy_acp_server.exe and use that
+  // file's sibling harness. ACP is JSON-RPC over stdin/stdout; spawning
+  // the launcher through cmd.exe breaks the handshake. A stale
+  // agy_acp_server.exe next to the wrapper is not a fallback.
+  const unwrapWindowsLauncher = Effect.fn("AntigravityInstallation.unwrapWindowsLauncher")(
+    function* (candidate: string) {
+      if (platform !== "win32" || !isWindowsLauncherPath(candidate)) return candidate;
+      const info = yield* fs.stat(candidate).pipe(Effect.option);
+      if (
+        Option.isNone(info) ||
+        info.value.type !== "File" ||
+        Number(info.value.size) > WRAPPER_MAX_BYTES
+      ) {
+        return null;
+      }
+      const referenced = provenWrapperLaunchTarget(
+        yield* fs.readFileString(candidate),
+        names.executable,
+      );
+      if (referenced === null) return null;
+      const resolved = expandWrapperPath(referenced, path.dirname(candidate), path);
+      if (!(yield* executableFile(resolved))) return null;
+      const real = yield* fs.realPath(resolved);
+      return path.basename(real).toLowerCase() === names.executable.toLowerCase() ? real : null;
+    },
+  );
+
   const fromExternal = Effect.fn("AntigravityInstallation.fromExternal")(function* (
     candidate: string,
     source: "override" | "path",
   ) {
     if (!(yield* executableFile(candidate))) return null;
-    const executablePath = yield* fs.realPath(candidate);
+    const resolvedCandidate = yield* fs.realPath(candidate);
+    const executablePath = yield* unwrapWindowsLauncher(resolvedCandidate);
+    if (!executablePath) return null;
     const directory = path.dirname(executablePath);
     const harnessPath = path.join(directory, names.harness);
     if (!(yield* executableFile(harnessPath))) return null;
@@ -412,8 +540,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             ? [path.resolve(override)]
             : pathCandidates(override, processEnvironment);
         for (const candidate of candidates) {
-          const selected = yield* fromExternal(candidate, "override");
-          if (selected) return selected;
+          for (const option of windowsOverrideCandidates(candidate, platform)) {
+            const selected = yield* fromExternal(option, "override");
+            if (selected) return selected;
+          }
         }
         return yield* installationError(
           "resolve",
