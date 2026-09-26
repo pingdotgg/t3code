@@ -118,7 +118,7 @@ export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
     colon-free prefix: scoped thread keys always contain a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
-export type SidebarListMarker =
+type SidebarSectionMarker =
   /** The top boundary is also a landing target when there are no pins. */
   | "pinned-header"
   /** Stand-in rows so an empty section has somewhere for the gap to open. */
@@ -129,16 +129,58 @@ export type SidebarListMarker =
   | "snoozed-header"
   | "settled-header";
 
+export type SidebarListMarker = SidebarSectionMarker;
+export type SidebarProjectHeaderMarker = `sidebar-project-header:${string}`;
+export type SidebarProjectMoreMarker = `sidebar-project-more:${string}`;
+
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
 }
 
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      readonly projectKey?: string;
+    }
+  | { readonly kind: "marker"; readonly marker: SidebarSectionMarker }
+  | {
+      readonly kind: "project-header";
+      readonly key: string;
+      readonly marker: SidebarProjectHeaderMarker;
+      readonly projectKey: string;
+      readonly title: string;
+      readonly section: "pinned" | "active";
+      readonly expanded: boolean;
+    }
+  | {
+      readonly kind: "project-more";
+      readonly key: string;
+      readonly marker: SidebarProjectMoreMarker;
+      readonly projectKey: string;
+      readonly title: string;
+      readonly section: "pinned" | "active";
+      readonly hiddenCount: number;
+    };
+
+export type SidebarProjectHeaderListItem = Extract<SidebarListItem, { readonly expanded: boolean }>;
+export type SidebarProjectMoreListItem = Extract<SidebarListItem, { readonly hiddenCount: number }>;
+
+export function isSidebarProjectHeaderItem(
+  item: SidebarListItem,
+): item is SidebarProjectHeaderListItem {
+  return item.kind === "project-header";
+}
+
+export function isSidebarProjectMoreItem(
+  item: SidebarListItem,
+): item is SidebarProjectMoreListItem {
+  return item.kind === "project-more";
+}
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  return item.kind === "marker" ? sidebarMarkerId(item.marker) : item.key;
 }
 
 /** The section a slot belongs to, read off the markers around it: from
@@ -184,8 +226,10 @@ export function resolveSidebarDropTarget(
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
       else if (item.marker === "snoozed-header" || item.marker === "settled-header") break;
-    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
-    else activeOrder.push(item.key);
+    } else if (item.kind === "thread") {
+      if (currentSection === "pinned") pinnedOrder.push(item.key);
+      else activeOrder.push(item.key);
+    }
   }
   return { section, pinnedOrder, activeOrder };
 }
