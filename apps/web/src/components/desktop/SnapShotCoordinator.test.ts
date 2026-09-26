@@ -16,6 +16,7 @@ import {
   resolveExistingSnapShotTarget,
   resolveSnapShotTargetOnce,
   resolveSnapShotDeliveryTarget,
+  shouldReportUndeliverableSnapShot,
 } from "./SnapShotCoordinator";
 import {
   beginSnapShotAnimation,
@@ -130,6 +131,20 @@ describe("window capture failures", () => {
     expect(getPendingSnapShotAnimations()).toEqual([]);
     expect(soundedIds.size).toBe(0);
     expect(pendingStarts.size).toBe(0);
+  });
+});
+
+describe("undeliverable capture reporting", () => {
+  it("reports a pending capture once however often the drain meets it again", () => {
+    const reported = new Set<string>();
+
+    expect(shouldReportUndeliverableSnapShot("capture-1", reported)).toBe(true);
+    expect(shouldReportUndeliverableSnapShot("capture-1", reported)).toBe(false);
+    expect(shouldReportUndeliverableSnapShot("capture-2", reported)).toBe(true);
+
+    // Delivery clears the id, so a later capture that reuses nothing is fresh.
+    reported.delete("capture-1");
+    expect(shouldReportUndeliverableSnapShot("capture-1", reported)).toBe(true);
   });
 });
 

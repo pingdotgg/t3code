@@ -3839,6 +3839,35 @@ it.effect("registers macOS modifier pairs through the flags poller", () => {
   ).pipe(Effect.provide(testLayer("darwin")));
 });
 
+it.effect("releases the macOS both-Shift poller when snapshots are turned off", () => {
+  spawnedPollers.length = 0;
+  accessibilityTrustedMock.mockReturnValue(true);
+  mediaAccessStatusMock.mockReturnValue("granted");
+  const settings = {
+    ...DEFAULT_CLIENT_SETTINGS,
+    snapShotEnabled: true,
+    snapShotShortcut: { kind: "both-shift-keys" },
+  } satisfies ClientSettings;
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      yield* service.configure(settings);
+      assert.lengthOf(spawnedPollers, 1);
+      const poller = spawnedPollers[0]!;
+      assert.deepEqual(poller.args.slice(-2), ["2", "4"]);
+      assert.lengthOf(poller.kill.mock.calls, 0);
+      assert.isTrue((yield* service.state).shortcutRegistered);
+
+      yield* service.configure({ ...settings, snapShotEnabled: false });
+      assert.lengthOf(poller.kill.mock.calls, 1);
+      assert.isFalse((yield* service.state).shortcutRegistered);
+      const failure = yield* Effect.flip(service.capture);
+      assert.equal(failure.operation, "disabled");
+    }),
+  ).pipe(Effect.provide(testLayer("darwin")));
+});
+
 it.effect("waits to apply settings while permissions are pending", () => {
   accessibilityTrustedMock.mockReturnValue(true);
   mediaAccessStatusMock.mockReturnValueOnce("not-determined").mockReturnValue("granted");
