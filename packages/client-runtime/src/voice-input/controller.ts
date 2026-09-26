@@ -121,18 +121,45 @@ export function resolveTranscriptCommit(
   };
 }
 
-let activeSession: symbol | null = null;
+type VoiceInputSession = {
+  readonly token: symbol;
+  abandoned: boolean;
+  readonly released: Promise<void>;
+  readonly resolveReleased: () => void;
+};
+
+let activeSession: VoiceInputSession | null = null;
 let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): symbol | null {
   if (activeSession) return null;
+  const released = Promise.withResolvers<void>();
   const token = Symbol("voice-input-session");
-  activeSession = token;
+  activeSession = {
+    token,
+    abandoned: false,
+    released: released.promise,
+    resolveReleased: released.resolve,
+  };
   return token;
 }
 
+function abandonSession(token: symbol | null): void {
+  if (token && activeSession?.token === token) activeSession.abandoned = true;
+}
+
+// The replacement start waits on this. Apple prepare/transcribe cannot be
+// aborted, and releaseRecording() is process-wide, so dropping the lock before
+// that cleanup finishes would let the new recording get torn down.
+function abandonedSessionRelease(): Promise<void> | null {
+  return activeSession?.abandoned === true ? activeSession.released : null;
+}
+
 function releaseSession(token: symbol | null): void {
-  if (token && activeSession === token) activeSession = null;
+  if (!token || activeSession?.token !== token) return;
+  const session = activeSession;
+  activeSession = null;
+  session.resolveReleased();
 }
 
 async function runTranscriptionOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -201,6 +228,15 @@ export class VoiceInputController {
       this.setError("This draft is no longer available.", "retry");
       return;
     }
+
+    const abandonedRelease = abandonedSessionRelease();
+    if (abandonedRelease) {
+      const waitToken = ++this.operationToken;
+      this.setState({ phase: "preparing", error: null, errorAction: null });
+      await abandonedRelease;
+      if (!this.isCurrent(waitToken)) return;
+    }
+
     const sessionToken = acquireSession();
     if (!sessionToken) {
       this.setError("Another voice recording is already active.", "retry");
@@ -281,15 +317,14 @@ export class VoiceInputController {
         this.setState(IDLE_STATE);
         return;
       case "preparing":
+      case "transcribing":
+        abandonSession(this.sessionToken);
         this.invalidateOperation();
         this.setState(IDLE_STATE);
         return;
       case "recording":
+        abandonSession(this.sessionToken);
         this.discardRecording(null);
-        return;
-      case "transcribing":
-        this.invalidateOperation();
-        this.setState(IDLE_STATE);
         return;
     }
   }
@@ -336,10 +371,12 @@ export class VoiceInputController {
 
   dispose(): void {
     if (this.state.phase === "recording") {
+      abandonSession(this.sessionToken);
       this.discardRecording(null);
       return;
     }
     if (this.state.phase === "preparing" || this.state.phase === "transcribing") {
+      abandonSession(this.sessionToken);
       this.invalidateOperation();
       this.setState(IDLE_STATE);
     }

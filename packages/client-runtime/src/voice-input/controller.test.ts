@@ -298,16 +298,20 @@ describe("VoiceInputController", () => {
   });
 
   it.each(["cancel", "dispose", "ownerChanged"] as const)(
-    "holds the session after %s until non-abortable transcription settles",
+    "starts the next session after %s once abandoned transcription settles",
     async (action) => {
       const transcription = deferred<string>();
       const transcriptionEntered = deferred<AbortSignal>();
+      const events: string[] = [];
       const harness = createHarness({
         getTranscriber: () => ({
           prepare: async () =>
             preparedTranscription((_uri, { signal }) => {
               transcriptionEntered.resolve(signal);
-              return transcription.promise;
+              return transcription.promise.then((text) => {
+                events.push("abandoned-transcribe");
+                return text;
+              });
             }),
         }),
       });
@@ -321,20 +325,36 @@ describe("VoiceInputController", () => {
       harness.controller[action]();
       expect(signal.aborted).toBe(true);
 
-      const next = createHarness();
-      await next.controller.start();
-      expect(next.controller.currentState.error).toContain("already active");
+      const next = createHarness({
+        getTranscriber: () => ({
+          prepare: async () => {
+            events.push("next-prepare");
+            return preparedTranscription();
+          },
+        }),
+      });
+      const nextStart = next.controller.start();
+      expect(next.controller.currentState).toEqual({
+        phase: "preparing",
+        error: null,
+        errorAction: null,
+      });
       expect(next.recorder.record).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
 
       transcription.resolve("late text");
       await stopping;
+      await nextStart;
 
+      expect(events).toEqual(["abandoned-transcribe", "next-prepare"]);
       expect(harness.commits).toEqual([]);
       expect(harness.deleted).toEqual(["file:///voice.m4a"]);
       expect(harness.controller.currentState.phase).toBe("idle");
-
-      await next.controller.start();
-      expect(next.controller.currentState.phase).toBe("recording");
+      expect(next.controller.currentState).toEqual({
+        phase: "recording",
+        error: null,
+        errorAction: null,
+      });
       await next.controller.interruptRecording();
     },
   );
@@ -431,34 +451,202 @@ describe("VoiceInputController", () => {
     expect(harness.controller.currentState.error).toContain("draft changed");
   });
 
-  it("keeps the app-wide session locked until canceled preparation settles", async () => {
+  it.each(["cancel", "dispose"] as const)(
+    "starts the next session after %s once abandoned preparation settles",
+    async (action) => {
+      const preparation = deferred<PreparedVoiceTranscription>();
+      const preparationEntered = deferred<AbortSignal>();
+      const events: string[] = [];
+      const first = createHarness({
+        getTranscriber: () => ({
+          prepare: ({ signal }) => {
+            preparationEntered.resolve(signal);
+            return preparation.promise.then((value) => {
+              events.push("abandoned-prepare");
+              return value;
+            });
+          },
+        }),
+      });
+      const firstStart = first.controller.start();
+      const signal = await preparationEntered.promise;
+      first.controller[action]();
+      expect(signal.aborted).toBe(true);
+
+      const next = createHarness({
+        getTranscriber: () => ({
+          prepare: async () => {
+            events.push("next-prepare");
+            return preparedTranscription();
+          },
+        }),
+      });
+      const nextStart = next.controller.start();
+      expect(next.controller.currentState).toEqual({
+        phase: "preparing",
+        error: null,
+        errorAction: null,
+      });
+      expect(events).toEqual([]);
+      expect(next.recorder.record).not.toHaveBeenCalled();
+
+      preparation.resolve(preparedTranscription());
+      await firstStart;
+      await nextStart;
+
+      expect(events).toEqual(["abandoned-prepare", "next-prepare"]);
+      expect(first.recorder.record).not.toHaveBeenCalled();
+      expect(next.controller.currentState).toEqual({
+        phase: "recording",
+        error: null,
+        errorAction: null,
+      });
+      await next.controller.interruptRecording();
+    },
+  );
+
+  it("rejects a second start while a session is still active", async () => {
     const preparation = deferred<PreparedVoiceTranscription>();
-    const preparationEntered = deferred<AbortSignal>();
+    const preparationEntered = deferred<void>();
+    const transcription = deferred<string>();
+    const transcriptionEntered = deferred<void>();
     const first = createHarness({
       getTranscriber: () => ({
-        prepare: ({ signal }) => {
-          preparationEntered.resolve(signal);
+        prepare: () => {
+          preparationEntered.resolve(undefined);
           return preparation.promise;
         },
       }),
     });
-    const firstStart = first.controller.start();
-    const signal = await preparationEntered.promise;
-    first.controller.cancel();
-    expect(signal.aborted).toBe(true);
 
-    const blocked = createHarness();
-    await blocked.controller.start();
-    expect(blocked.controller.currentState.error).toContain("already active");
+    const starting = first.controller.start();
+    await preparationEntered.promise;
+    const duringPrepare = createHarness();
+    await duringPrepare.controller.start();
+    expect(duringPrepare.controller.currentState.error).toContain("already active");
+    expect(duringPrepare.recorder.record).not.toHaveBeenCalled();
 
-    preparation.resolve(preparedTranscription());
-    await firstStart;
-    expect(first.recorder.record).not.toHaveBeenCalled();
-    blocked.controller.cancel();
+    preparation.resolve(
+      preparedTranscription(() => {
+        transcriptionEntered.resolve(undefined);
+        return transcription.promise;
+      }),
+    );
+    await starting;
+    const duringRecording = createHarness();
+    await duringRecording.controller.start();
+    expect(duringRecording.controller.currentState.error).toContain("already active");
+    expect(duringRecording.recorder.record).not.toHaveBeenCalled();
 
-    const next = createHarness();
-    await next.controller.start();
-    expect(next.controller.currentState.phase).toBe("recording");
+    const stopping = first.controller.stop();
+    await transcriptionEntered.promise;
+    const duringTranscription = createHarness();
+    await duringTranscription.controller.start();
+    expect(duringTranscription.controller.currentState.error).toContain("already active");
+    expect(duringTranscription.recorder.record).not.toHaveBeenCalled();
+
+    transcription.resolve("done");
+    await stopping;
+  });
+
+  it("does not start the next Apple call until abandoned audio cleanup finishes", async () => {
+    const transcription = deferred<string>();
+    const transcriptionEntered = deferred<void>();
+    const cleanupEntered = deferred<void>();
+    const cleanup = deferred<void>();
+    const events: string[] = [];
+    let releaseAttempts = 0;
+    const first = createHarness({
+      releaseRecording: async () => {
+        releaseAttempts += 1;
+        if (releaseAttempts === 1) throw new Error("busy");
+        cleanupEntered.resolve(undefined);
+        await cleanup.promise;
+        events.push("cleanup");
+      },
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription(() => {
+            transcriptionEntered.resolve(undefined);
+            return transcription.promise;
+          }),
+      }),
+    });
+    await first.controller.start();
+    const stopping = first.controller.stop();
+    await transcriptionEntered.promise;
+    first.controller.dispose();
+
+    const next = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => {
+          events.push("next-prepare");
+          return preparedTranscription();
+        },
+      }),
+    });
+    const nextStart = next.controller.start();
+    expect(next.controller.currentState.phase).toBe("preparing");
+
+    transcription.resolve("late text");
+    await cleanupEntered.promise;
+    expect(events).toEqual([]);
+    expect(next.recorder.record).not.toHaveBeenCalled();
+
+    cleanup.resolve(undefined);
+    await stopping;
+    await nextStart;
+
+    expect(events).toEqual(["cleanup", "next-prepare"]);
+    expect(next.controller.currentState).toEqual({
+      phase: "recording",
+      error: null,
+      errorAction: null,
+    });
+    await next.controller.interruptRecording();
+  });
+
+  it("starts the next session after dispose once an abandoned recording is cleaned up", async () => {
+    const cleanupEntered = deferred<void>();
+    const cleanup = deferred<void>();
+    const events: string[] = [];
+    const first = createHarness({
+      releaseRecording: async () => {
+        cleanupEntered.resolve(undefined);
+        await cleanup.promise;
+        events.push("cleanup");
+      },
+    });
+    await first.controller.start();
+    first.controller.dispose();
+
+    const next = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => {
+          events.push("next-prepare");
+          return preparedTranscription();
+        },
+      }),
+    });
+    const nextStart = next.controller.start();
+    await cleanupEntered.promise;
+    expect(next.controller.currentState).toEqual({
+      phase: "preparing",
+      error: null,
+      errorAction: null,
+    });
+    expect(events).toEqual([]);
+    expect(next.recorder.record).not.toHaveBeenCalled();
+
+    cleanup.resolve(undefined);
+    await nextStart;
+
+    expect(events).toEqual(["cleanup", "next-prepare"]);
+    expect(next.controller.currentState).toEqual({
+      phase: "recording",
+      error: null,
+      errorAction: null,
+    });
     await next.controller.interruptRecording();
   });
 
