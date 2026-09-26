@@ -90,6 +90,9 @@ make your first commit before pushing.
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
 messages, review titles, and descriptions from your changes.
 
+In a GitHub fork checkout, name the parent repository's remote `upstream`. T3 Code then pushes to
+your fork (`origin`) and finds and opens pull requests on `upstream`.
+
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 

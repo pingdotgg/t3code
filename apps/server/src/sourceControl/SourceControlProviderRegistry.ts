@@ -9,6 +9,7 @@ import {
   type SourceControlProviderDiscoveryItem,
 } from "@t3tools/contracts";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
@@ -126,6 +127,33 @@ function unsupportedProvider(
   });
 }
 
+/**
+ * Whether `upstream` is the repository `origin` was forked from: both on the
+ * same GitHub host under the same name, owned by different accounts. Pull
+ * requests from a fork checkout belong to that parent, not to the fork.
+ */
+function isGitHubForkUpstream(
+  origin: SourceControlProvider.SourceControlProviderContext,
+  upstream: SourceControlProvider.SourceControlProviderContext,
+): boolean {
+  if (origin.provider.kind !== "github" || upstream.provider.kind !== "github") return false;
+  const [originHost, originOwner, originName, ...originRest] = normalizeGitRemoteUrl(
+    origin.remoteUrl,
+  ).split("/");
+  const [upstreamHost, upstreamOwner, upstreamName, ...upstreamRest] = normalizeGitRemoteUrl(
+    upstream.remoteUrl,
+  ).split("/");
+  return (
+    originRest.length === 0 &&
+    upstreamRest.length === 0 &&
+    originOwner !== undefined &&
+    originName !== undefined &&
+    originHost === upstreamHost &&
+    originName === upstreamName &&
+    originOwner !== upstreamOwner
+  );
+}
+
 function selectProviderContext(
   remotes: ReadonlyArray<{
     readonly name: string;
@@ -144,8 +172,14 @@ function selectProviderContext(
     }
   }
 
+  const origin = candidates.find((candidate) => candidate.remoteName === "origin");
+  const upstream = candidates.find((candidate) => candidate.remoteName === "upstream");
+  if (origin && upstream && isGitHubForkUpstream(origin, upstream)) {
+    return upstream;
+  }
+
   return (
-    candidates.find((candidate) => candidate.remoteName === "origin") ??
+    origin ??
     candidates.find((candidate) => candidate.provider.kind !== "unknown") ??
     candidates[0] ??
     null

@@ -42,7 +42,10 @@ import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
 } from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -633,6 +636,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  providerContext?: SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -680,7 +684,8 @@ function makeManager(input?: {
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
+          resolveHandle: () =>
+            Effect.succeed({ provider, context: input?.providerContext ?? null }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
         }),
@@ -2343,6 +2348,124 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(ghCalls.some((call) => call.includes("--head contributor:"))).toBe(false);
         expect(ghCalls.some((call) => call.includes("--head main"))).toBe(false);
       }),
+  );
+
+  // A fork checkout pushes to its own origin and opens PRs on the parent, which
+  // the source control registry binds as the provider's `upstream` context.
+  const forkUpstreamContext: SourceControlProviderContext = {
+    provider: { kind: "github", name: "GitHub", baseUrl: "https://github.com" },
+    remoteName: "upstream",
+    remoteUrl: "git@github.com:pingdotgg/codething-mvp.git",
+  };
+
+  const initForkCheckout = Effect.fn("initForkCheckout")(function* () {
+    const repoDir = yield* makeTempDir("t3code-git-manager-");
+    yield* initRepo(repoDir);
+    const originDir = yield* createBareRemote();
+    const upstreamDir = yield* createBareRemote();
+    yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+    yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+    yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+    yield* runGit(repoDir, ["push", "upstream", "main"]);
+    yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+    yield* configureVisibleRemoteUrlWithLocalRewrite(
+      repoDir,
+      "origin",
+      "git@github.com:contributor/codething-mvp.git",
+      originDir,
+    );
+    yield* configureVisibleRemoteUrlWithLocalRewrite(
+      repoDir,
+      "upstream",
+      forkUpstreamContext.remoteUrl,
+      upstreamDir,
+    );
+    return repoDir;
+  });
+
+  it.effect("creates a fork PR on upstream from the fork-owned head", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* initForkCheckout();
+      // Upstream moved on while the fork's main went stale; the PR range must
+      // start from upstream's main, where the branch was cut.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "upstream.txt"), "upstream\n");
+      yield* runGit(repoDir, ["add", "upstream.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Upstream change"]);
+      yield* runGit(repoDir, ["push", "upstream", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/fork-pr"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork\n");
+      yield* runGit(repoDir, ["add", "fork.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork feature"]);
+      let commitSummary = "";
+
+      const { manager, ghCalls } = yield* makeManager({
+        providerContext: forkUpstreamContext,
+        textGeneration: {
+          generatePrContent: (input) => {
+            commitSummary = input.commitSummary;
+            return Effect.succeed({ title: "Fork feature", body: "Adds the fork feature." });
+          },
+        },
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            // Fake gh returns raw JSON stdout, matching the CLI boundary under test.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 11,
+                title: "Someone else's branch with the same name",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/11",
+                baseRefName: "main",
+                headRefName: "feature/fork-pr",
+                state: "OPEN",
+                isCrossRepository: true,
+                headRepository: { nameWithOwner: "someone/codething-mvp" },
+                headRepositoryOwner: { login: "someone" },
+              },
+              {
+                number: 12,
+                title: "Fork feature",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/12",
+                baseRefName: "main",
+                headRefName: "feature/fork-pr",
+                state: "OPEN",
+                isCrossRepository: true,
+                headRepository: { nameWithOwner: "contributor/codething-mvp" },
+                headRepositoryOwner: { login: "contributor" },
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.push.status).toBe("pushed");
+      expect(result.pr).toMatchObject({ status: "created", number: 12 });
+      expect(
+        ghCalls.some((call) =>
+          call.includes("pr create --base main --head contributor:feature/fork-pr"),
+        ),
+      ).toBe(true);
+      expect(commitSummary).toContain("Fork feature");
+      expect(commitSummary).not.toContain("Upstream change");
+    }),
+  );
+
+  it.effect("status does not look up a fork origin's default branch as a PR head", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* initForkCheckout();
+      yield* runGit(repoDir, ["checkout", "-b", "feature/from-fork-main", "origin/main"]);
+
+      const { manager, ghCalls } = yield* makeManager({ providerContext: forkUpstreamContext });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.refName).toBe("feature/from-fork-main");
+      expect(status.pr).toBeNull();
+      expect(ghCalls.some((call) => call.includes("pr list"))).toBe(false);
+    }),
   );
 
   it.effect("branch PR lookup verifies identity on the fork that holds the own-name ref", () =>

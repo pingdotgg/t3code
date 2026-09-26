@@ -1377,6 +1377,17 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // The remote whose repository change requests target: the one the source
+  // control provider is bound to, which is a fork's `upstream` rather than the
+  // fork itself. Null when no remote names a known provider.
+  const resolveProviderRemoteName = (cwd: string) =>
+    sourceControlProviders.resolveHandle({ cwd }).pipe(
+      Effect.map((handle) => handle.context?.remoteName ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+  const resolveTargetRemoteName = (cwd: string) =>
+    resolveProviderRemoteName(cwd).pipe(Effect.map((remoteName) => remoteName ?? "origin"));
+
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
@@ -1384,7 +1395,11 @@ export const make = Effect.gen(function* () {
       const [headRemote, targetRemote] = yield* Effect.all(
         [
           resolveRemoteRepositoryContext(cwd, remoteName),
-          resolveRemoteRepositoryContext(cwd, "origin"),
+          resolveTargetRemoteName(cwd).pipe(
+            Effect.flatMap((targetRemoteName) =>
+              resolveRemoteRepositoryContext(cwd, targetRemoteName),
+            ),
+          ),
         ],
         { concurrency: "unbounded" },
       );
@@ -1411,21 +1426,22 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* Effect.all(
+    const targetRemoteName = yield* resolveTargetRemoteName(cwd);
+    const [remoteRepository, targetRepository] = yield* Effect.all(
       [
         resolveRemoteRepositoryContext(cwd, remoteName),
-        resolveRemoteRepositoryContext(cwd, "origin"),
+        resolveRemoteRepositoryContext(cwd, targetRemoteName),
       ],
       { concurrency: "unbounded" },
     );
 
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
+      targetRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
+          targetRepository.repositoryNameWithOwner.toLowerCase()
         : remoteName !== null &&
-          remoteName !== "origin" &&
+          remoteName !== targetRemoteName &&
           remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
@@ -1435,7 +1451,7 @@ export const make = Effect.gen(function* () {
     const remoteAliasHeadSelector =
       remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
     const shouldProbeRemoteOwnedSelectors =
-      isCrossRepository || (remoteName !== null && remoteName !== "origin");
+      isCrossRepository || (remoteName !== null && remoteName !== targetRemoteName);
 
     const headSelectors: string[] = [];
     if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
@@ -1466,8 +1482,8 @@ export const make = Effect.gen(function* () {
       remoteName,
       headRemoteUrlKey:
         remoteRepository.remoteUrlKey ??
-        (remoteName === null ? originRepository.remoteUrlKey : null),
-      targetRemoteUrlKey: originRepository.remoteUrlKey,
+        (remoteName === null ? targetRepository.remoteUrlKey : null),
+      targetRemoteUrlKey: targetRepository.remoteUrlKey,
       headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
@@ -1531,6 +1547,10 @@ export const make = Effect.gen(function* () {
   // `lookup` is false and no API call is spent. Both the cached lookup and the
   // failure fallback resolve through here so the last-known PR compares
   // against the same head branch.
+  //
+  // A cross-repository default branch is still looked up, because a checked
+  // out fork PR can have `main` as its head. A fork checkout's own origin is
+  // the exception: its default branch is where feature branches start.
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
     details: {
@@ -1548,7 +1568,7 @@ export const make = Effect.gen(function* () {
     if (
       headContext.headBranch === details.branch ||
       !upstreamHeadIsDefault ||
-      headContext.isCrossRepository
+      (headContext.isCrossRepository && headContext.remoteName !== "origin")
     ) {
       return { headContext, lookup: true };
     }
@@ -1821,9 +1841,9 @@ export const make = Effect.gen(function* () {
     cwd: string,
     baseBranch: string,
   ) {
-    const remoteName = yield* gitCore
-      .resolvePrimaryRemoteName(cwd)
-      .pipe(Effect.orElseSucceed(() => null));
+    const remoteName =
+      (yield* resolveProviderRemoteName(cwd)) ??
+      (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null)));
     if (!remoteName) return baseBranch;
 
     return yield* gitCore

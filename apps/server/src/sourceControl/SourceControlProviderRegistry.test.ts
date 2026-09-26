@@ -299,6 +299,96 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
   }),
 );
 
+function recordGitHubTargets() {
+  const repositories: Array<string | undefined> = [];
+  const github: Partial<GitHubCli.GitHubCli["Service"]> = {
+    execute: (input) =>
+      Effect.sync(() => {
+        const repoIndex = input.args.indexOf("--repo");
+        repositories.push(repoIndex === -1 ? undefined : input.args[repoIndex + 1]);
+        return processOutput("[]");
+      }),
+    listOpenPullRequests: (input) =>
+      Effect.sync(() => {
+        repositories.push(input.repository);
+        return [];
+      }),
+    createPullRequest: (input) =>
+      Effect.sync(() => {
+        repositories.push(input.repository);
+      }),
+  };
+  return { repositories, github };
+}
+
+it.effect("targets a GitHub fork's upstream repository for change requests", () =>
+  Effect.gen(function* () {
+    const { repositories, github } = recordGitHubTargets();
+    const registry = yield* makeRegistry({
+      remotes: [
+        { name: "origin", url: "git@github.com:contributor/t3code.git" },
+        { name: "upstream", url: "https://github.com/pingdotgg/T3Code.git" },
+      ],
+      github,
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+    yield* handle.provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "open",
+    });
+    yield* handle.provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature",
+      state: "all",
+    });
+    yield* handle.provider.createChangeRequest({
+      cwd: "/repo",
+      baseRefName: "main",
+      headSelector: "contributor:feature",
+      title: "Feature",
+      bodyFile: "/tmp/body.md",
+    });
+
+    assert.strictEqual(handle.context?.remoteName, "upstream");
+    assert.deepStrictEqual(repositories, [
+      "github.com/pingdotgg/t3code",
+      "github.com/pingdotgg/t3code",
+      "github.com/pingdotgg/t3code",
+    ]);
+  }),
+);
+
+it.effect("keeps origin when upstream is not the repository it was forked from", () =>
+  Effect.gen(function* () {
+    for (const upstream of [
+      "git@github.com:someone/other-project.git",
+      "git@github.example.com:pingdotgg/t3code.git",
+      "https://dev.azure.com/acme/project/_git/t3code",
+    ]) {
+      const { repositories, github } = recordGitHubTargets();
+      const registry = yield* makeRegistry({
+        remotes: [
+          { name: "origin", url: "git@github.com:contributor/t3code.git" },
+          { name: "upstream", url: upstream },
+        ],
+        github,
+      });
+
+      const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+      yield* handle.provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "feature",
+        state: "open",
+      });
+
+      assert.strictEqual(handle.context?.remoteName, "origin");
+      assert.deepStrictEqual(repositories, [undefined]);
+    }
+  }),
+);
+
 it.effect(
   "routes linked subjects by URL independently of the checkout and skips unsupported links",
   () =>

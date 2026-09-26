@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import {
   SourceControlProviderError,
   type ChangeRequest,
@@ -53,6 +54,28 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
       ? { headRepositoryOwnerLogin: summary.headRepositoryOwnerLogin }
       : {}),
   };
+}
+
+/**
+ * The repository gh must target when the registry picked a remote other than
+ * origin, such as a fork's `upstream`. Left to itself, gh ranks the checkout's
+ * remotes (or follows `gh repo set-default`) and can disagree with that choice.
+ */
+function contextRepository(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  if (context === undefined || context.remoteName === "origin") return undefined;
+  const [, owner, name, ...rest] = normalizeGitRemoteUrl(context.remoteUrl).split("/");
+  return owner && name && rest.length === 0
+    ? `${new URL(context.provider.baseUrl).host}/${owner}/${name}`
+    : undefined;
+}
+
+function withContextRepository(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): { readonly repository?: string } {
+  const repository = contextRepository(context);
+  return repository === undefined ? {} : { repository };
 }
 
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
@@ -122,6 +145,7 @@ export const make = Effect.gen(function* () {
 
   const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
     (input) => {
+      const repository = contextRepository(input.context);
       if (input.state === "open") {
         return github
           .listOpenPullRequests({
@@ -131,6 +155,7 @@ export const make = Effect.gen(function* () {
               ? {}
               : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
+            ...(repository === undefined ? {} : { repository }),
           })
           .pipe(
             Effect.map((items) => items.map(toChangeRequest)),
@@ -167,6 +192,7 @@ export const make = Effect.gen(function* () {
             stateArg,
             "--limit",
             String(input.limit ?? 20),
+            ...(repository === undefined ? [] : ["--repo", repository]),
             "--json",
             "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
           ],
@@ -279,6 +305,7 @@ export const make = Effect.gen(function* () {
           ...(input.context === undefined
             ? {}
             : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
+          ...withContextRepository(input.context),
         })
         .pipe(
           Effect.map(toChangeRequest),
@@ -305,6 +332,7 @@ export const make = Effect.gen(function* () {
           headSelector: input.headSelector,
           title: input.title,
           bodyFile: input.bodyFile,
+          ...withContextRepository(input.context),
         })
         .pipe(
           Effect.mapError(
@@ -363,6 +391,7 @@ export const make = Effect.gen(function* () {
           ...(input.context === undefined
             ? {}
             : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
+          ...withContextRepository(input.context),
         })
         .pipe(
           Effect.mapError(
@@ -378,7 +407,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
     checkoutChangeRequest: (input) =>
-      github.checkoutPullRequest(input).pipe(
+      github.checkoutPullRequest({ ...input, ...withContextRepository(input.context) }).pipe(
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
