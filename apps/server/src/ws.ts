@@ -82,7 +82,12 @@ import {
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -3888,9 +3893,19 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        // Revoking a session ends its live socket too, not just future connects.
+        // Otherwise a revoked client keeps working until it reconnects on its own,
+        // which over a dropped Tailcat tunnel waits for a heartbeat timeout.
+        const sessionRevoked = sessions.streamChanges.pipe(
+          Stream.filter(
+            (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+          ),
+          Stream.runHead,
+          Effect.as(HttpServerResponse.empty()),
+        );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () => Effect.raceFirst(rpcWebSocketHttpEffect, sessionRevoked),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

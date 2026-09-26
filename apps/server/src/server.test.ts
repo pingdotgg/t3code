@@ -5286,6 +5286,66 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("closes a paired client's live websocket when its session is revoked", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+        body: yield* HttpBody.json({}),
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
+        readonly credential: string;
+      };
+      const pairedSessionCookie = yield* getAuthenticatedSessionCookieHeader(
+        pairingBody.credential,
+      );
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+      }>;
+      const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
+      assert.isDefined(pairedSessionId);
+
+      const socket = new NodeSocket.NodeWS.WebSocket(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        { headers: { cookie: pairedSessionCookie } },
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => socket.terminate()));
+      const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            socket.once("open", () => resolve());
+            socket.once("error", reject);
+          }),
+      );
+
+      const revokeResponse = yield* HttpClient.post("/api/auth/clients/revoke", {
+        headers: {
+          cookie: ownerCookie,
+          "content-type": "application/json",
+        },
+        body: HttpBody.text(jsonRequestBody({ sessionId: pairedSessionId }), "application/json"),
+      });
+      assert.equal(revokeResponse.status, 200);
+      // The server closes the socket itself; the client never reconnects here.
+      yield* Effect.promise(() => closed);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("allows reusing the desktop bootstrap credential", () =>
     Effect.gen(function* () {
       // The desktop-bootstrap grant is delivered over trusted IPC at
