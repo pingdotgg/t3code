@@ -128,11 +128,33 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on web
+
+In a supported browser, select the composer's microphone, speak, then select the
+checkmark to finish. Voice input inserts text at the selection captured when you
+started. Cancel or press Escape to discard the recording. Switching threads or
+hiding the page also cancels it.
+
+Enable **Settings → General → Send voice input immediately** to send the full
+composer message after recognition finishes. This includes existing text and
+attachments. The option is off by default and is saved for this browser. If sending
+is blocked, the transcript stays in the composer and is not sent later automatically.
+
+Voice input requires HTTPS or localhost and a browser that provides speech
+recognition, such as Chrome or Safari. Your browser may send audio to its speech
+service, so an internet connection may be required. Recognition uses your browser's
+language. The desktop app does not yet provide a speech-recognition service.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
+
+To send without reviewing, enable **Settings → Keyboard & voice → Send immediately**.
+This sends the full composer message, including existing text and attachments, after
+transcription. It applies to new tasks and existing threads on this device. If sending
+is blocked, the text stays in the composer. Turn the setting off to review text again.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five

@@ -620,6 +620,19 @@ describe("ClientSettings context window meter", () => {
   });
 });
 
+describe("ClientSettings voice input", () => {
+  it("defaults to review and accepts only a boolean send preference", () => {
+    expect(decodeClientSettings({}).voiceInputSendImmediately).toBe(false);
+    expect(
+      decodeClientSettings({ voiceInputSendImmediately: true }).voiceInputSendImmediately,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ voiceInputSendImmediately: false }).voiceInputSendImmediately,
+    ).toBe(false);
+    expect(() => decodeClientSettingsPatch({ voiceInputSendImmediately: "yes" })).toThrow();
+  });
+});
+
 describe("ClientSettings send shortcut", () => {
   it("defaults to Enter and validates the supported choices", () => {
     expect(decodeClientSettings({}).sendShortcut).toBe("enter");

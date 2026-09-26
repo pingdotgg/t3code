@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -13,6 +15,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 
+import { mobilePreferencesAtom } from "../../state/preferences";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
@@ -67,9 +70,15 @@ export function useVoiceInputController(input: {
   readonly draftMessage: string;
   readonly selection: ComposerEditorSelection;
   readonly disabled?: boolean;
+  readonly onSubmit: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onChangeSelection: (selection: ComposerEditorSelection) => void;
 }) {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const sendImmediately =
+    AsyncResult.isSuccess(preferences) && preferences.value.voiceInputSendImmediately === true;
+  const sendImmediatelyRef = useRef(false);
+  const pendingSubmissionRef = useRef<{ ownerKey: string; text: string } | null>(null);
   const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const keepAwakeId = useId();
@@ -123,6 +132,9 @@ export function useVoiceInputController(input: {
       },
       commitDraft: (text, selection) => {
         const current = latestInputRef.current;
+        if (sendImmediatelyRef.current && current.ownerKey) {
+          pendingSubmissionRef.current = { ownerKey: current.ownerKey, text };
+        }
         current.onChangeSelection(selection);
         current.onChangeDraftMessage(text);
       },
@@ -131,6 +143,20 @@ export function useVoiceInputController(input: {
   }
 
   const controller = controllerRef.current;
+  // Submit after React has rendered the committed text and released the voice
+  // submission lock. Consume once; blocked sends remain drafts, never delayed sends.
+  useEffect(() => {
+    const pending = pendingSubmissionRef.current;
+    if (!pending || state.phase !== "idle") return;
+    pendingSubmissionRef.current = null;
+    if (
+      pending.ownerKey === input.ownerKey &&
+      pending.text === input.draftMessage &&
+      !input.disabled
+    ) {
+      input.onSubmit();
+    }
+  }, [input, state.phase]);
   const previousOwnerRef = useRef(input.ownerKey);
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey) return;
@@ -141,9 +167,10 @@ export function useVoiceInputController(input: {
   useFocusEffect(
     useCallback(
       () => () => {
+        pendingSubmissionRef.current = null;
         controller.dispose();
       },
-      [controller],
+      [controller, pendingSubmissionRef],
     ),
   );
 
@@ -213,8 +240,11 @@ export function useVoiceInputController(input: {
   }, [audioLevels, controller, recorder, state.phase]);
 
   const start = useCallback(() => {
-    if (!latestInputRef.current.disabled) void controller.start();
-  }, [controller]);
+    if (!latestInputRef.current.disabled && !voiceInputBlocksSubmission(controller.currentState)) {
+      sendImmediatelyRef.current = sendImmediately;
+      void controller.start();
+    }
+  }, [controller, sendImmediately, latestInputRef, sendImmediatelyRef]);
   const stop = useCallback(() => controller.stop(), [controller]);
   const cancel = useCallback(() => controller.cancel(), [controller]);
 

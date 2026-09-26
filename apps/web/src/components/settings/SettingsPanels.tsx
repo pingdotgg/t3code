@@ -2684,6 +2684,20 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("voice-input-send-immediately")}
+          description="Send the full composer message when voice recognition finishes. Off by default so you can review the text. Voice input requires a supported web browser and HTTPS or localhost. Your browser may send audio to its speech service."
+          control={
+            <Switch
+              checked={settings.voiceInputSendImmediately}
+              onCheckedChange={(checked) =>
+                updateSettings({ voiceInputSendImmediately: Boolean(checked) })
+              }
+              aria-label="Send voice input immediately"
+            />
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("send-shortcut")}
           description="Choose when Enter sends a prompt or inserts a new line"
           resetAction={

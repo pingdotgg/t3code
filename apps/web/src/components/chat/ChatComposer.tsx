@@ -1,3 +1,5 @@
+import { useBrowserVoiceInput } from "~/voice-input/useBrowserVoiceInput";
+import { ComposerVoiceInput } from "~/voice-input/ComposerVoiceInput";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -1612,6 +1614,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   attachmentTargetKeyRef.current = attachmentTargetKey;
   const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
+  const voiceInputDisabled =
+    isSendBusy ||
+    isConnecting ||
+    projectSelectionRequired ||
+    activePendingApproval !== null ||
+    pendingUserInputs.length > 0;
+  const voiceInput = useBrowserVoiceInput({
+    ownerKey: composerTargetKey(composerDraftTarget),
+    text: prompt,
+    disabled: voiceInputDisabled,
+    sendImmediately: settings.voiceInputSendImmediately,
+    readSelection: () =>
+      composerEditorRef.current?.readSelectionRange() ?? {
+        start: prompt.length,
+        end: prompt.length,
+      },
+    commit: (text, cursor) =>
+      onPromptChange(
+        text,
+        collapseExpandedComposerCursor(text, cursor),
+        cursor,
+        false,
+        collectInlineContextIds(text),
+      ),
+    submit: () => {
+      if (
+        !isSendBusy &&
+        !isConnecting &&
+        !isSendDisabled &&
+        !noProviderAvailable &&
+        !projectSelectionRequired &&
+        environmentUnavailable === null
+      )
+        submitComposer();
+    },
+  });
   const composerImages = attachmentDraft.images;
   const composerFiles = attachmentDraft.files;
   // A question answer has no chips: its files live in the question draft and show in the
@@ -1936,6 +1974,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
   );
   const sendDisabledReason =
+    (voiceInput.busy ? "Finish or cancel voice input before sending." : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -2139,7 +2178,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     active: false,
   });
   const isComposerCollapsedMobile =
-    isMobileViewport && !forceExpandedOnMobile && !isComposerFocused && !hasMultilinePrompt;
+    isMobileViewport &&
+    !forceExpandedOnMobile &&
+    !isComposerFocused &&
+    !hasMultilinePrompt &&
+    !voiceInput.busy;
 
   // ------------------------------------------------------------------
   // Refs
@@ -4733,7 +4776,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isExistingThread: routeKind === "server" && activeThreadId !== null,
     isMobileViewport,
     isScrollCollapsed: isComposerScrollCollapsed,
-    hasExpandedChrome: composerHasExpandedChrome,
+    hasExpandedChrome:
+      composerHasExpandedChrome || voiceInput.busy || voiceInput.state.error !== null,
     hasMultilinePrompt,
     timelineOverflows,
   });
@@ -6400,6 +6444,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
+                {pendingUserInputs.length === 0 && !isComposerApprovalState ? (
+                  <ComposerVoiceInput voice={voiceInput} disabled={voiceInputDisabled} />
+                ) : null}
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"
@@ -6896,6 +6943,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
                     disabled={
+                      voiceInput.busy ||
                       isConnecting ||
                       isComposerApprovalState ||
                       projectSelectionRequired ||
@@ -6937,7 +6985,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             </div>
 
             <ComposerPromptLengthValidation
-              message={providerInputSubmissionError ?? composerSubmissionError}
+              message={
+                voiceInput.state.error ?? providerInputSubmissionError ?? composerSubmissionError
+              }
             />
 
             {/* Bottom toolbar */}
@@ -7011,6 +7061,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {pendingUserInputs.length === 0 ? (
+                    <ComposerVoiceInput voice={voiceInput} disabled={voiceInputDisabled} />
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

@@ -366,6 +366,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rest resting scroll wheel conversation timeline shrink minimize"],
   },
   {
+    id: "voice-input-send-immediately",
+    title: "Send voice input immediately",
+    to: "/settings/general",
+    searchTerms: ["microphone dictation speech recognition transcript composer voice send"],
+  },
+  {
     id: "send-shortcut",
     title: "Send shortcut",
     to: "/settings/general",

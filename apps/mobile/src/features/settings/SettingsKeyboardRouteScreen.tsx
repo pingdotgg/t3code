@@ -13,6 +13,7 @@ import {
   type ComposerEnterBehavior,
 } from "../../lib/composerEnterBehavior";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsSection } from "./components/SettingsSection";
 
 const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{
@@ -47,7 +48,7 @@ export function SettingsKeyboardRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Keyboard" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader title="Keyboard & voice" onBack={() => navigation.goBack()} />
         </>
       ) : null}
       <ScrollView
@@ -57,6 +58,19 @@ export function SettingsKeyboardRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        <SettingsSection title="Voice input">
+          <SettingsSwitchRow
+            icon="mic"
+            label="Send immediately"
+            subtitle="Send the full composer message when transcription finishes. Off by default, so you can review the text first."
+            value={
+              AsyncResult.isSuccess(preferencesResult) &&
+              preferencesResult.value.voiceInputSendImmediately === true
+            }
+            disabled={!preferencesReady}
+            onValueChange={(value) => savePreferences({ voiceInputSendImmediately: value })}
+          />
+        </SettingsSection>
         <SettingsSection title="Return key">
           {ENTER_BEHAVIOR_OPTIONS.map((option, index) => (
             <Pressable

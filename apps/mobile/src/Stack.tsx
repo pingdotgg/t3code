@@ -278,7 +278,7 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: SettingsKeyboardRouteScreen,
       linking: "keyboard",
       options: {
-        title: "Keyboard",
+        title: "Keyboard & voice",
       },
     }),
     SettingsClientStorage: createNativeStackScreen({
