@@ -409,7 +409,9 @@ export const ChatHeader = memo(function ChatHeader({
   const headerActions = headerActionItems.map((item, index) => (
     <Fragment key={item.key}>
       {actionsCollapsed && index > 0 ? <MenuSeparator /> : null}
-      {item}
+      <span data-customize-element={`chatHeader:${item.key}`} className="contents">
+        {item}
+      </span>
     </Fragment>
   ));
   return (

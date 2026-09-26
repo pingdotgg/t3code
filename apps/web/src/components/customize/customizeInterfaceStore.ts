@@ -8,6 +8,7 @@ import {
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   THEME_HALVES_STORAGE_KEY,
 } from "../../themePalette";
+import type { PresetId } from "./customizePresets";
 
 /**
  * Every client setting a Customize interface palette can change. Revert
@@ -90,44 +91,89 @@ export function changedCustomizeSettingKeys(
  */
 export type ComposerPreview = "live" | "expanded" | "collapsed";
 
-export type CustomizeSurface = "threadList" | "composer" | "chatHeader" | "appearance";
+/** A surface edited in place; the composer covers its toolbar and context bar. */
+export type EditSurface = "threadRow" | "chatHeader" | "composer";
+
+function captureCustomizeSnapshot(): CustomizeSnapshot {
+  return {
+    settings: pickCustomizeSettings(getClientSettings()),
+    theme: readThemeStorageSnapshot(),
+  };
+}
+
+/** Repeated edits of one control within this window undo as a single step. */
+const COALESCE_MS = 1000;
 
 type CustomizeInterfaceStore = {
   active: boolean;
   /** What the app looked like when the mode opened; Revert returns here. */
   snapshot: CustomizeSnapshot | null;
+  /** The state before each change, newest last; Undo steps back through it. */
+  history: CustomizeSnapshot[];
+  lastRecord: { key: string; at: number } | null;
   composerPreview: ComposerPreview;
-  /** The surface whose palette the pointer or focus is in, for its outline. */
-  focusedSurface: CustomizeSurface | null;
+  /** The surface being edited in place, or null while the presets popover shows. */
+  editing: EditSurface | null;
+  /** A preset under the pointer, whose changes are marked on the live UI. */
+  previewPresetId: PresetId | null;
   open: () => void;
   close: () => void;
   toggle: () => void;
+  /** Call before a change so Undo can return to the state it replaces. */
+  record: (key?: string) => void;
+  popHistory: () => CustomizeSnapshot | null;
+  clearHistory: () => void;
   setComposerPreview: (preview: ComposerPreview) => void;
-  setFocusedSurface: (surface: CustomizeSurface | null) => void;
+  setEditing: (surface: EditSurface | null) => void;
+  setPreviewPresetId: (id: PresetId | null) => void;
 };
 
-export const useCustomizeInterfaceStore = create<CustomizeInterfaceStore>((set, get) => ({
+const CLOSED_STATE = {
   active: false,
   snapshot: null,
+  history: [],
+  lastRecord: null,
   composerPreview: "live",
-  focusedSurface: null,
+  editing: null,
+  previewPresetId: null,
+} as const;
+
+export const useCustomizeInterfaceStore = create<CustomizeInterfaceStore>((set, get) => ({
+  ...CLOSED_STATE,
+  history: [],
   open: () => {
     if (get().active) return;
+    set({ ...CLOSED_STATE, history: [], active: true, snapshot: captureCustomizeSnapshot() });
+  },
+  close: () => set({ ...CLOSED_STATE, history: [] }),
+  toggle: () => (get().active ? get().close() : get().open()),
+  record: (key) => {
+    const now = Date.now();
+    const last = get().lastRecord;
+    if (key && last?.key === key && now - last.at < COALESCE_MS) {
+      set({ lastRecord: { key, at: now } });
+      return;
+    }
     set({
-      active: true,
-      snapshot: {
-        settings: pickCustomizeSettings(getClientSettings()),
-        theme: readThemeStorageSnapshot(),
-      },
-      composerPreview: "live",
-      focusedSurface: null,
+      history: [...get().history, captureCustomizeSnapshot()],
+      lastRecord: key ? { key, at: now } : null,
     });
   },
-  close: () =>
-    set({ active: false, snapshot: null, composerPreview: "live", focusedSurface: null }),
-  toggle: () => (get().active ? get().close() : get().open()),
+  popHistory: () => {
+    const history = get().history;
+    const previous = history.at(-1) ?? null;
+    if (previous) set({ history: history.slice(0, -1), lastRecord: null });
+    return previous;
+  },
+  clearHistory: () => set({ history: [], lastRecord: null }),
   setComposerPreview: (composerPreview) => set({ composerPreview }),
-  setFocusedSurface: (focusedSurface) => set({ focusedSurface }),
+  setEditing: (editing) =>
+    set({
+      editing,
+      previewPresetId: null,
+      ...(editing === "composer" ? {} : { composerPreview: "live" }),
+    }),
+  setPreviewPresetId: (previewPresetId) => set({ previewPresetId }),
 }));
 
 /** The composer preview while the mode is open; `live` otherwise. */

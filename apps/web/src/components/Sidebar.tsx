@@ -1532,6 +1532,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         role="img"
         aria-label={terminalProcessLabel(terminalProcessCount)}
         data-testid={`sidebar-terminal-status-${thread.id}`}
+        data-customize-element="threadRow:terminal"
         className={cn(
           "inline-flex shrink-0 items-center justify-center",
           terminalStatus.colorClass,
@@ -1629,7 +1630,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )}
             >
               {props.project && showsDetail("project") ? (
-                <ProjectFavicon project={props.project} className="size-4" />
+                <span data-customize-element="threadRow:project" className="contents">
+                  <ProjectFavicon project={props.project} className="size-4" />
+                </span>
               ) : null}
             </span>
             {draftIndicator}
@@ -1646,11 +1649,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {rowLayout.order.indexOf("terminal") < rowLayout.order.indexOf("pullRequest") ? (
               <>
                 {terminalStatusIcon}
-                {prBadge}
+                <span data-customize-element="threadRow:pullRequest" className="contents">
+                  {prBadge}
+                </span>
               </>
             ) : (
               <>
-                {prBadge}
+                <span data-customize-element="threadRow:pullRequest" className="contents">
+                  {prBadge}
+                </span>
                 {terminalStatusIcon}
               </>
             )}
@@ -1690,7 +1697,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                     </Tooltip>
                   ) : showsDetail("status") ? (
-                    <span className="text-xs">
+                    <span data-customize-element="threadRow:status" className="text-xs">
                       {variantAction === "unsettle"
                         ? settledTimeLabel(thread)
                         : threadTimeLabel(thread)}
@@ -1804,6 +1811,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 title
               ) : props.projectDisplayName ? (
                 <span
+                  data-customize-element="threadRow:project"
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
@@ -1827,6 +1835,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     itself an action, so it stays pointer-enabled and visible
                     while the other controls appear beside it. */}
                   <span
+                    data-customize-element="threadRow:status"
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
@@ -1976,6 +1985,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           isRemote && showsDetail("environment") ? (
                             <span
                               key={icon}
+                              data-customize-element="threadRow:environment"
                               className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
                             >
                               <EnvironmentMachineIcon
@@ -1986,7 +1996,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             </span>
                           ) : null
                         ) : driverKind && showsDetail("provider") ? (
-                          <span key={icon} className="inline-flex shrink-0 items-center">
+                          <span
+                            key={icon}
+                            data-customize-element="threadRow:provider"
+                            className="inline-flex shrink-0 items-center"
+                          >
                             <ProviderInstanceIcon
                               driverKind={driverKind}
                               displayName={
@@ -2009,12 +2023,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 switch (id) {
                   case "branch":
                     return thread.branch && showsDetail("branch") ? (
-                      <Fragment key={id}>
+                      <span key={id} data-customize-element="threadRow:branch" className="contents">
                         <ThreadWorktreeIndicator thread={thread} />
                         <span className="flex min-w-0 flex-1 text-muted-foreground/40">
                           <MiddleTruncate value={thread.branch} showTitle={false} />
                         </span>
-                      </Fragment>
+                      </span>
                     ) : (
                       <span key={id} className="flex-1" />
                     );
@@ -2022,7 +2036,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     return <Fragment key={id}>{terminalStatusIcon}</Fragment>;
                   case "pullRequest":
                     return (
-                      <Fragment key={id}>
+                      <span
+                        key={id}
+                        data-customize-element="threadRow:pullRequest"
+                        className="contents"
+                      >
                         {prBadge}
                         {diff ? (
                           <span className="shrink-0 font-mono">
@@ -2032,7 +2050,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
                           </span>
                         ) : null}
-                      </Fragment>
+                      </span>
                     );
                   default:
                     return null;

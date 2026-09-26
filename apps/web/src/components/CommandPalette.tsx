@@ -667,6 +667,12 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        // Customize interface opened from here takes focus for its own keys.
+        const customize =
+          document.querySelector<HTMLElement>(
+            '[data-customize-popover] [data-preset][aria-pressed="true"]',
+          ) ?? document.querySelector<HTMLElement>("[data-customize-popover] [data-preset]");
+        if (customize) return customize;
         composerHandleRef?.current?.focusAtEnd();
         return false;
       }}

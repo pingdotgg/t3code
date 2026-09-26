@@ -188,6 +188,27 @@ export function moveSurfaceElement(
   return writeSurface(layout, surface, { order, hidden: current.hidden });
 }
 
+/**
+ * Moves a sortable element so it sits just before `beforeId`, or after every
+ * other sortable element when `beforeId` is null. Drops and arrow keys both
+ * describe a destination this way.
+ */
+export function moveSurfaceElementBefore(
+  layout: InterfaceLayout,
+  surface: InterfaceSurfaceId,
+  activeId: string,
+  beforeId: string | null,
+): InterfaceLayout {
+  const current = currentSurface(layout, surface);
+  if (!current.order.includes(activeId) || activeId === beforeId) return layout;
+  const order = current.order.filter((id) => id !== activeId);
+  const index = beforeId === null ? order.length : order.indexOf(beforeId);
+  if (index === -1) return layout;
+  order.splice(index, 0, activeId);
+  if (order.every((id, position) => id === current.order[position])) return layout;
+  return writeSurface(layout, surface, { order, hidden: current.hidden });
+}
+
 export function resetSurfaceLayout(
   layout: InterfaceLayout,
   surface: InterfaceSurfaceId,

@@ -667,7 +667,10 @@ export const BranchToolbar = memo(function BranchToolbar({
       )}
     >
       {showGitControls && showWorkspaceGroup ? (
-        <div className="contents @3xl/composer-surface:hidden">
+        <div
+          data-customize-element="composerContextBar:workspace"
+          className="contents @3xl/composer-surface:hidden"
+        >
           <MobileRunContextSelector
             order={slotOf("workspace")}
             forceNewWorktree={forceNewWorktree}
@@ -691,6 +694,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       ) : null}
       {showWorkspaceGroup && (showGitControls || showEnvironmentIndicator) ? (
         <div
+          data-customize-element="composerContextBar:workspace"
           className={cn(
             orderClassName("workspace"),
             "min-h-7 min-w-10 items-center gap-1 sm:min-h-6",
@@ -740,6 +744,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           ref={composerControlsHostRef}
           data-composer-context-control
           data-chat-resting-composer-controls-host="true"
+          data-customize-element="composerContextBar:controls"
           className={cn(
             orderClassName("controls"),
             emptyHostOrderClassName,
@@ -749,25 +754,27 @@ export const BranchToolbar = memo(function BranchToolbar({
       ) : null}
 
       {showBranchSelector ? (
-        <BranchToolbarBranchSelector
-          forceNewWorktree={forceNewWorktree}
-          ref={branchSelectorRef}
-          className={cn(
-            orderClassName("branch"),
-            "min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto",
-          )}
-          environmentId={environmentId}
-          threadId={threadId}
-          {...(draftId ? { draftId } : {})}
-          envLocked={envLocked}
-          effectiveEnvModeOverride={effectiveEnvMode}
-          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
-          startFromOrigin={startFromOrigin}
-          onStartFromOriginChange={onStartFromOriginChange}
-          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-        />
+        <span data-customize-element="composerContextBar:branch" className="contents">
+          <BranchToolbarBranchSelector
+            forceNewWorktree={forceNewWorktree}
+            ref={branchSelectorRef}
+            className={cn(
+              orderClassName("branch"),
+              "min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto",
+            )}
+            environmentId={environmentId}
+            threadId={threadId}
+            {...(draftId ? { draftId } : {})}
+            envLocked={envLocked}
+            effectiveEnvModeOverride={effectiveEnvMode}
+            {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+            {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+            startFromOrigin={startFromOrigin}
+            onStartFromOriginChange={onStartFromOriginChange}
+            {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+            {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+          />
+        </span>
       ) : null}
     </ComposerSurface.ContextStrip>
   );
