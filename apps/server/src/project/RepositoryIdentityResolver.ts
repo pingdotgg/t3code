@@ -194,16 +194,10 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
-  // The last answer for each cwd, least recently written first and capped like
+  // The last answer for each cwd, least recently used first and capped like
   // the caches. A plain lookup whose cache entry expired answers with it.
   const lastIdentities = new Map<string, RepositoryIdentity | null>();
-  const backgroundRefreshes = yield* Semaphore.make(BACKGROUND_REFRESH_CONCURRENCY);
-
-  const lookup = Effect.fnUntraced(function* (cwd: string, refresh: boolean) {
-    if (refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
-    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
-    if (refresh && cacheKey !== null) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-    const identity = cacheKey === null ? null : yield* Cache.get(repositoryIdentityCache, cacheKey);
+  const remember = (cwd: string, identity: RepositoryIdentity | null) => {
     lastIdentities.delete(cwd);
     lastIdentities.set(cwd, identity);
     if (lastIdentities.size > cacheCapacity) {
@@ -211,6 +205,17 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       if (oldest !== undefined) lastIdentities.delete(oldest);
     }
     return identity;
+  };
+  const backgroundRefreshes = yield* Semaphore.make(BACKGROUND_REFRESH_CONCURRENCY);
+
+  const lookup = Effect.fnUntraced(function* (cwd: string, refresh: boolean) {
+    if (refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
+    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+    if (refresh && cacheKey !== null) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+    return remember(
+      cwd,
+      cacheKey === null ? null : yield* Cache.get(repositoryIdentityCache, cacheKey),
+    );
   });
 
   // Reads both caches without a lookup. Expired and pending entries read as none.
@@ -227,7 +232,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     function* (cwd, options) {
       if (options?.refresh) return yield* lookup(cwd, true);
       const cached = yield* cachedIdentity(cwd);
-      if (Option.isSome(cached)) return cached.value;
+      if (Option.isSome(cached)) return remember(cwd, cached.value);
       const last = lastIdentities.get(cwd);
       if (last === undefined) return yield* lookup(cwd, false);
       // Callers that find the same expired entry share one lookup through the cache.

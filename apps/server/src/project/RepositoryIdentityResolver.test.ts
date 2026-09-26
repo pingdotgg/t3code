@@ -55,8 +55,11 @@ const gitOutput = (stdout: string) => ({
 });
 
 // A resolver over a fake git. `answer` gives the stdout of each git call.
-const makeFakeGitResolver = (answer: (args: ReadonlyArray<string>) => Effect.Effect<string>) =>
-  RepositoryIdentityResolver.make({ cacheCapacity: 16 }).pipe(
+const makeFakeGitResolver = (
+  answer: (args: ReadonlyArray<string>) => Effect.Effect<string>,
+  cacheCapacity = 16,
+) =>
+  RepositoryIdentityResolver.make({ cacheCapacity }).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => answer(input.args).pipe(Effect.map(gitOutput)),
     }),
@@ -288,6 +291,28 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         "rev-parse",
         "--show-toplevel",
       ]);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
+  );
+
+  it.effect("keeps the last identity of a folder that is still read", () =>
+    Effect.gen(function* () {
+      let remoteUrl = "git@github.com:T3Tools/old.git";
+      const resolver = yield* makeFakeGitResolver(
+        (args) =>
+          Effect.succeed(
+            args.includes("rev-parse") ? `${args[1]}\n` : `origin\t${remoteUrl} (fetch)\n`,
+          ),
+        2,
+      );
+      yield* resolver.resolve("/a");
+      yield* resolver.resolve("/b");
+      // A cache hit counts as use, so "/c" pushes out "/b" and not "/a".
+      yield* resolver.resolve("/a");
+      yield* resolver.resolve("/c");
+      yield* TestClock.adjust(Duration.minutes(15));
+      remoteUrl = "git@github.com:T3Tools/new.git";
+
+      expect((yield* resolver.resolve("/a"))?.canonicalKey).toBe("github.com/t3tools/old");
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
   );
 
