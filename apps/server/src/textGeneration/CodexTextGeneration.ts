@@ -39,6 +39,9 @@ import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/s
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
+// A `codex exec` call is a short-lived helper: it stays in the backend's process
+// group so quit reaches it, and is SIGKILLed if it ignores SIGTERM on timeout.
+const CODEX_FORCE_KILL_AFTER = "1 second";
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 /**
  * Build a Codex text-generation closure bound to a specific `CodexSettings`
@@ -226,6 +229,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
+        detached: false,
+        forceKillAfter: CODEX_FORCE_KILL_AFTER,
       });
 
       const child = yield* commandSpawner

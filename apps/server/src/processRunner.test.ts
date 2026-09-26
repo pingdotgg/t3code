@@ -1,8 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -13,12 +15,16 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProcessRunner from "./processRunner.ts";
+import { writeFakeCli } from "./testUtils/fakeCli.ts";
+import { killQuietly, waitForProcessExit } from "./testUtils/processProbe.ts";
 
 type ChildProcessCommand = {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly detached?: boolean;
+    readonly forceKillAfter?: Duration.Input;
   };
 };
 
@@ -367,6 +373,71 @@ describe("runProcess", () => {
       });
       expect(error.message).toBe("Process 'fake' in '/actual' timed out after 50ms");
     }),
+  );
+
+  it.effect("keeps helpers in the backend's process group with a force-kill grace", () =>
+    Effect.gen(function* () {
+      const spawner = makeSpawner((command) =>
+        Effect.sync(() => {
+          expect(command.options.detached).toBe(false);
+          expect(command.options.forceKillAfter).toBeDefined();
+          return makeHandle({ stdout: "ok" });
+        }),
+      );
+
+      const result = yield* runWith(spawner)({ command: "fake", args: [] });
+
+      expect(result.stdout).toBe("ok");
+    }),
+  );
+
+  it.effect("SIGKILLs a helper that ignores SIGTERM once its run times out", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const platform = yield* HostProcessPlatform;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-process-runner-" });
+      // The stub installs its SIGTERM handler before reporting its pid, so the
+      // timeout below can only reach a helper that will shrug off the first signal.
+      const helper = writeFakeCli({
+        directory,
+        name: "stubborn",
+        platform,
+        source: [
+          'process.on("SIGTERM", () => {});',
+          "setInterval(() => {}, 1_000);",
+          "process.stdout.write(`${process.pid}\\n`);",
+        ].join("\n"),
+      });
+      const started = yield* Deferred.make<number>();
+      const decoder = new TextDecoder();
+      let reported = "";
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const fiber = yield* runner
+        .run({
+          command: helper,
+          args: [],
+          timeout: "50 millis",
+          // A chunk is not guaranteed to carry the whole line, so wait for it.
+          onStdoutChunk: (chunk) => {
+            reported += decoder.decode(chunk, { stream: true });
+            const lineEnd = reported.indexOf("\n");
+            if (lineEnd !== -1) {
+              Deferred.doneUnsafe(started, Effect.succeed(Number(reported.slice(0, lineEnd))));
+            }
+          },
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      const pid = yield* Deferred.await(started);
+      yield* Effect.addFinalizer(() => Effect.sync(() => killQuietly(pid)));
+
+      yield* TestClock.adjust(Duration.millis(50));
+
+      // Without the force kill the release waits on the child forever, so the
+      // run would hang here instead of failing; check the process first.
+      expect(yield* waitForProcessExit(pid)).toBe(true);
+      const error = yield* Fiber.join(fiber);
+      expect(error._tag).toBe("ProcessTimeoutError");
+    }).pipe(Effect.provide(ProcessRunner.layer), Effect.provide(NodeServices.layer)),
   );
 
   it.effect("returns a synthetic timed out result when timeoutBehavior is timedOutResult", () =>
