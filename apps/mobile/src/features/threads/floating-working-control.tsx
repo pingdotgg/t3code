@@ -147,7 +147,9 @@ export function FloatingWorkingControl(props: {
             key={
               props.status.kind === "working" || props.status.kind === "compacting"
                 ? props.status.kind
-                : `${props.status.kind}:${props.status.label}`
+                : props.status.kind === "background"
+                  ? `background:${props.status.liveness}`
+                  : `${props.status.kind}:${props.status.label}`
             }
             status={props.status}
             onLayout={handleLabelLayout}
@@ -294,6 +296,25 @@ function FloatingStatusLabel(props: {
   }
   if (props.status.kind === "compacting") {
     return <CompactingLabel key="compacting" onLayout={props.onLayout} />;
+  }
+  if (props.status.kind === "background") {
+    const label = props.status.liveness === "monitoring" ? "Monitoring" : "Working";
+    return (
+      <StatusLabelRow
+        key="background"
+        accessibilityLabel={label}
+        className="gap-2"
+        onLayout={props.onLayout}
+      >
+        {/* Monitoring is a calm watch state, matching the web pill (no pulse). */}
+        {props.status.liveness === "working" ? (
+          <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+        ) : null}
+        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
+          {label}
+        </Text>
+      </StatusLabelRow>
+    );
   }
   if (props.status.kind === "connection") {
     return (

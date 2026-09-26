@@ -124,6 +124,51 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("reports background liveness after the parent turn settles", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn"),
+        state: "completed",
+        requestedAt: NOW,
+        startedAt: NOW,
+        completedAt: NOW,
+        assistantMessageId: null,
+      },
+    });
+    for (const backgroundLiveness of ["working", "monitoring", null] as const) {
+      expect
+        .soft(resolveThreadListV2Status({ ...thread, backgroundLiveness }))
+        .toBe(backgroundLiveness ?? "ready");
+    }
+  });
+
+  it.each(["working", "monitoring"] as const)(
+    "keeps approval, input, running, and error ahead of %s liveness",
+    (backgroundLiveness) => {
+      const thread = makeThread({ id: ThreadId.make("t"), title: "t", backgroundLiveness });
+      expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+      expect(resolveThreadListV2Status({ ...thread, hasPendingUserInput: true })).toBe("input");
+      for (const status of ["running", "starting", "error"] as const) {
+        const current = {
+          ...thread,
+          session: {
+            threadId: thread.id,
+            status,
+            providerName: "Codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "full-access" as const,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW,
+          },
+        };
+        expect(resolveThreadListV2Status(current)).toBe(status === "error" ? "failed" : "working");
+      }
+    },
+  );
+
   it("prioritizes approval over a running session", () => {
     const thread = makeThread({
       id: ThreadId.make("t"),
