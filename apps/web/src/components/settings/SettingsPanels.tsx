@@ -501,6 +501,9 @@ function AboutVersionSection() {
   );
 }
 
+/**
+ * Hook providing dirty-settings tracking and one-click restoration to defaults.
+ */
 export function useSettingsRestore(onRestored?: () => void) {
   const {
     theme,
@@ -2104,6 +2107,9 @@ function LegacyFeaturesSection() {
   );
 }
 
+/**
+ * Settings panel for general application behavior, confirmations, and shortcuts.
+ */
 export function GeneralSettingsPanel() {
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [

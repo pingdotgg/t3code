@@ -37,6 +37,7 @@ let queuedConfirmations: PendingConfirmation[] = [];
 let registeredHostCount = 0;
 const listeners = new Set<() => void>();
 
+/** Dispatches a new dialog state to all registered listeners. */
 function publish(next: ConfirmDialogState): void {
   state = next;
   for (const listener of listeners) {
@@ -44,6 +45,7 @@ function publish(next: ConfirmDialogState): void {
   }
 }
 
+/** Resolves all pending and queued confirmations with the given result. */
 function resolvePendingConfirmations(confirmed: boolean): void {
   activeConfirmation?.resolve(confirmed);
   for (const confirmation of queuedConfirmations) {

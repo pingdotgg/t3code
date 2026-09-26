@@ -330,8 +330,7 @@ function SurfaceMenuItem(props: {
  * outside a typing context, and arrows plus Enter work while the launcher is
  * focused. The highlight only appears on hover or arrow use. Unavailable
  * surfaces stay visible with a one-line reason.
- */
-/**
+ *
  * Empty launcher state rendered inside the right panel when no surface is active.
  */
 function RightPanelEmptyState(props: {
