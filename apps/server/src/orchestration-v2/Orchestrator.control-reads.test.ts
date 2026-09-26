@@ -4,6 +4,7 @@ import {
   MessageId,
   EventId,
   NodeId,
+  PlanId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -273,4 +274,58 @@ it.effect(
       });
       assert.isNotNull((yield* projections.getThread(threadId)).deletedAt);
     }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("implements a proposed plan that the command projection leaves out", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:implement-plan");
+    const planId = PlanId.make("plan:implement-plan");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-implement-plan"),
+      threadId,
+      projectId: ProjectId.make("project:implement-plan"),
+      title: "Plan",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("plan:implement-plan"),
+      type: "plan.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: planId,
+        threadId,
+        runId: null,
+        nodeId: NodeId.make("node:implement-plan"),
+        kind: "proposed_plan",
+        status: "active",
+        markdown: "# Plan\n\n1. Do the thing.",
+      },
+    });
+
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("implement-plan"),
+      threadId,
+      messageId: MessageId.make("implement-plan-input"),
+      text: "Implement the plan.",
+      attachments: [],
+      sourcePlanRef: { threadId, planId },
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    assert.equal((yield* projections.getPlan(threadId, planId))?.status, "completed");
+  }).pipe(Effect.provide(testLayer)),
 );
