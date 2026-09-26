@@ -3714,7 +3714,12 @@ it.effect("reads a full sweep from unsettled threads and only the projects they 
       full.projects.filter((project) => project.id === "p1" || project.id === "p2"),
     );
     assert.deepStrictEqual(resolved.toSorted(), ["/one", "/two"]);
+    // A settled thread's link that no longer decodes breaks the full read, but
+    // not the sweep, which never reads it.
+    yield* sql`UPDATE projection_thread_pull_requests SET snapshot_json = 'invalid-json' WHERE thread_id = 't-settled'`;
+    assert.strictEqual((yield* Effect.exit(query.getShellSnapshot()))._tag, "Failure");
     const unsettled = yield* query.getShellSnapshot({ unsettledOnly: true });
+    assert.deepStrictEqual(unsettled.threads, sweep.threads);
     assert.strictEqual(unsettled.updatedAt, "2026-09-02T00:00:00Z");
   }).pipe(Effect.provide(layer));
 });

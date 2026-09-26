@@ -3,11 +3,14 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
@@ -26,10 +29,9 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
 
-const makeRepositoryIdentityResolverTestLayer = (options: {
-  readonly positiveCacheTtl?: Duration.Input;
-  readonly negativeCacheTtl?: Duration.Input;
-}) =>
+const makeRepositoryIdentityResolverTestLayer = (
+  options: RepositoryIdentityResolver.RepositoryIdentityResolverOptions,
+) =>
   Layer.effect(
     RepositoryIdentityResolver.RepositoryIdentityResolver,
     RepositoryIdentityResolver.make({
@@ -37,6 +39,28 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
       ...options,
     }),
   ).pipe(Layer.provide(ProcessRunner.layer));
+
+// Fake git tests name folders that are not on disk.
+const everyFolderExists = FileSystem.layerNoop({ exists: () => Effect.succeed(true) });
+
+const gitOutput = (stdout: string) => ({
+  stdout,
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(0),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+// A resolver over a fake git. `answer` gives the stdout of each git call.
+const makeFakeGitResolver = (answer: (args: ReadonlyArray<string>) => Effect.Effect<string>) =>
+  RepositoryIdentityResolver.make({ cacheCapacity: 16 }).pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: (input) => answer(input.args).pipe(Effect.map(gitOutput)),
+    }),
+  );
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("refreshes the Git root only when requested", () => {
@@ -88,7 +112,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           );
         },
       }),
-    ).pipe(Layer.provide(processRunner));
+    ).pipe(Layer.provide(Layer.merge(processRunner, everyFolderExists)));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -130,12 +154,14 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
   it.effect("retries Git root discovery after the negative TTL", () => {
     const calls: Array<ReadonlyArray<string>> = [];
+    const remoteRead = Deferred.makeUnsafe<void>();
     let rootAttempts = 0;
     const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
       run: (input) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           calls.push(input.args);
           const rootLookup = input.args.includes("rev-parse");
+          if (!rootLookup) yield* Deferred.succeed(remoteRead, undefined);
           const failed = rootLookup && rootAttempts++ === 0;
           return {
             stdout: rootLookup
@@ -156,7 +182,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     const resolverLayer = Layer.effect(
       RepositoryIdentityResolver.RepositoryIdentityResolver,
       RepositoryIdentityResolver.make(),
-    ).pipe(Layer.provide(processRunner));
+    ).pipe(Layer.provide(Layer.merge(processRunner, everyFolderExists)));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -164,6 +190,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
 
       yield* TestClock.adjust(Duration.minutes(1));
+      // The expired null answers at once while git retries in the background.
+      expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
+      // The remote read is the retry's last git call. Yield once so the retry
+      // finishes storing its result.
+      yield* Deferred.await(remoteRead);
+      yield* Effect.yieldNow;
       const recovered = yield* resolver.resolve("/repo/packages/web");
       expect(recovered?.rootPath).toBe("/repo");
       expect(calls).toEqual([
@@ -173,6 +205,111 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       ]);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
+
+  it.effect("answers an expired entry with its last identity while git refreshes it", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      const heldCalls = yield* Queue.unbounded<ReadonlyArray<string>>();
+      const release = yield* Deferred.make<void>();
+      let holdGit = false;
+      let remoteUrl = "git@github.com:T3Tools/t3code.git";
+      const resolver = yield* makeFakeGitResolver((args) =>
+        Effect.gen(function* () {
+          calls.push(args);
+          if (holdGit) {
+            yield* Queue.offer(heldCalls, args);
+            yield* Deferred.await(release);
+          }
+          return args.includes("rev-parse") ? "/repo\n" : `origin\t${remoteUrl} (fetch)\n`;
+        }),
+      );
+
+      const first = yield* resolver.resolve("/repo");
+      yield* TestClock.adjust(Duration.minutes(15));
+      remoteUrl = "git@github.com:T3Tools/t3code-next.git";
+      holdGit = true;
+
+      const reads = yield* Effect.forkChild(
+        Effect.all([resolver.resolve("/repo"), resolver.resolve("/repo")]),
+      );
+      expect(yield* Queue.take(heldCalls)).toEqual(["-C", "/repo", "rev-parse", "--show-toplevel"]);
+      // git is still held, yet both reads have answered with the last identity.
+      expect(reads.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(reads)).toEqual([first, first]);
+
+      yield* Deferred.succeed(release, undefined);
+      // The remote read is the refresh's last git call. Yield once so the
+      // refresh finishes storing its result.
+      expect(yield* Queue.take(heldCalls)).toEqual(["-C", "/repo", "remote", "-v"]);
+      yield* Effect.yieldNow;
+      expect((yield* resolver.resolve("/repo"))?.canonicalKey).toBe(
+        "github.com/t3tools/t3code-next",
+      );
+      // Both reads shared one refresh.
+      expect(calls).toHaveLength(4);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
+  );
+
+  it.effect("refreshes at most 4 expired entries at a time", () =>
+    Effect.gen(function* () {
+      const heldCalls = yield* Queue.unbounded<ReadonlyArray<string>>();
+      const release = yield* Deferred.make<void>();
+      let holdGit = false;
+      const resolver = yield* makeFakeGitResolver((args) =>
+        Effect.gen(function* () {
+          if (holdGit) {
+            yield* Queue.offer(heldCalls, args);
+            yield* Deferred.await(release);
+          }
+          return args.includes("rev-parse")
+            ? `${args[1]}\n`
+            : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n";
+        }),
+      );
+      const folders = ["/a", "/b", "/c", "/d", "/e"];
+      yield* Effect.forEach(folders, (cwd) => resolver.resolve(cwd));
+      yield* TestClock.adjust(Duration.minutes(15));
+      holdGit = true;
+
+      // Forked and concurrent, so reads that waited on git would fail here, not hang.
+      yield* Effect.forkChild(
+        Effect.forEach(folders, (cwd) => resolver.resolve(cwd), { concurrency: "unbounded" }),
+      );
+      yield* Queue.takeN(heldCalls, 4);
+      yield* Effect.yieldNow;
+      // The fifth refresh waits for a free slot.
+      expect(yield* Queue.size(heldCalls)).toBe(0);
+
+      yield* Deferred.succeed(release, undefined);
+      // The four remote reads and the fifth refresh's two calls.
+      expect(yield* Queue.takeN(heldCalls, 6)).toContainEqual([
+        "-C",
+        "/e",
+        "rev-parse",
+        "--show-toplevel",
+      ]);
+    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), everyFolderExists))),
+  );
+
+  it.effect("skips git for a folder that does not exist", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-missing-",
+      });
+      const calls: Array<ReadonlyArray<string>> = [];
+      const resolver = yield* makeFakeGitResolver((args) =>
+        Effect.sync(() => {
+          calls.push(args);
+          return "";
+        }),
+      );
+
+      expect(yield* resolver.resolve(path.join(parent, "deleted"))).toBeNull();
+      expect(calls).toEqual([]);
+    }),
+  );
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
@@ -311,8 +448,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
   it.effect(
     "keeps null identities cached across repeated resolves until the negative TTL expires",
-    () =>
-      Effect.gen(function* () {
+    () => {
+      // Refinement runs only for a found remote, so it marks when the
+      // background lookup is about to finish.
+      const refreshed = Deferred.makeUnsafe<void>();
+      return Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-repository-identity-late-remote-test-",
@@ -333,6 +473,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
         yield* TestClock.adjust(Duration.millis(120));
 
+        // The expired null answers at once while git looks again in the background.
+        expect(yield* resolver.resolve(cwd)).toBeNull();
+        yield* Deferred.await(refreshed);
+        yield* Effect.yieldNow;
         const refreshedIdentity = yield* resolver.resolve(cwd);
         expect(refreshedIdentity).not.toBeNull();
         expect(refreshedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
@@ -344,50 +488,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
             makeRepositoryIdentityResolverTestLayer({
               negativeCacheTtl: Duration.millis(50),
               positiveCacheTtl: Duration.seconds(1),
+              refine: (identity) =>
+                Deferred.succeed(refreshed, undefined).pipe(Effect.as(identity)),
             }),
           ),
         ),
-      ),
-  );
-
-  it.effect("refreshes cached identities after the positive TTL when a remote changes", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-remote-change-test-",
-      });
-
-      yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
-
-      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const initialIdentity = yield* resolver.resolve(cwd);
-      expect(initialIdentity).not.toBeNull();
-      expect(initialIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
-
-      yield* git(cwd, ["remote", "set-url", "origin", "git@github.com:T3Tools/t3code-next.git"]);
-
-      const cachedIdentity = yield* resolver.resolve(cwd);
-      expect(cachedIdentity).not.toBeNull();
-      expect(cachedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
-
-      yield* TestClock.adjust(Duration.millis(180));
-
-      const refreshedIdentity = yield* resolver.resolve(cwd);
-      expect(refreshedIdentity).not.toBeNull();
-      expect(refreshedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code-next");
-      expect(refreshedIdentity?.displayName).toBe("t3tools/t3code-next");
-      expect(refreshedIdentity?.name).toBe("t3code-next");
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          TestClock.layer(),
-          makeRepositoryIdentityResolverTestLayer({
-            negativeCacheTtl: Duration.millis(50),
-            positiveCacheTtl: Duration.millis(100),
-          }),
-        ),
-      ),
-    ),
+      );
+    },
   );
 });
