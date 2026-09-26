@@ -156,6 +156,7 @@ export function CustomModelEditor({
   const renderChoice = (descriptor: EditorDescriptor, choice: EditorChoice) => (
     <div key={choice.key} className="flex items-center gap-2">
       <Input
+        disabled={disabled}
         size="compact"
         value={choice.id}
         onChange={(event) => updateChoice(descriptor.key, choice.key, { id: event.target.value })}
@@ -166,6 +167,7 @@ export function CustomModelEditor({
         aria-label="Choice value"
       />
       <Input
+        disabled={disabled}
         size="compact"
         value={choice.label}
         onChange={(event) =>
@@ -177,6 +179,7 @@ export function CustomModelEditor({
       />
       <label className="flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground">
         <Switch
+          disabled={disabled}
           size="sm"
           checked={choice.isDefault}
           onCheckedChange={(checked) =>
@@ -187,6 +190,7 @@ export function CustomModelEditor({
         Default
       </label>
       <Button
+        disabled={disabled}
         size="icon-micro"
         variant="ghost-muted"
         aria-label="Remove choice"
@@ -234,6 +238,7 @@ export function CustomModelEditor({
         ) : null}
         {idSelectValue(descriptor) === CUSTOM_ID_VALUE ? (
           <Input
+            disabled={disabled}
             size="compact"
             value={descriptor.id}
             onChange={(event) => updateDescriptor(descriptor.key, { id: event.target.value })}
@@ -245,6 +250,7 @@ export function CustomModelEditor({
           />
         ) : null}
         <Input
+          disabled={disabled}
           size="compact"
           value={descriptor.label}
           onChange={(event) => updateDescriptor(descriptor.key, { label: event.target.value })}
@@ -268,6 +274,7 @@ export function CustomModelEditor({
           </SelectPopup>
         </Select>
         <Button
+          disabled={disabled}
           size="icon-micro"
           variant="ghost-muted"
           aria-label={`Remove option ${index + 1}`}
@@ -280,6 +287,7 @@ export function CustomModelEditor({
         <div className="flex flex-col gap-1.5 pl-16">
           {descriptor.choices.map((choice) => renderChoice(descriptor, choice))}
           <Button
+            disabled={disabled}
             type="button"
             size="xs"
             variant="ghost-muted"
@@ -313,6 +321,7 @@ export function CustomModelEditor({
           Display name
         </label>
         <Input
+          disabled={disabled}
           id={domId("name")}
           size="sm"
           autoFocus
@@ -359,6 +368,7 @@ export function CustomModelEditor({
             )
             .map((preset) => (
               <Button
+                disabled={disabled}
                 key={preset.id}
                 type="button"
                 size="xs"
@@ -371,6 +381,7 @@ export function CustomModelEditor({
               </Button>
             ))}
           <Button
+            disabled={disabled}
             type="button"
             size="xs"
             variant="ghost-muted"
