@@ -42,9 +42,14 @@ import {
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import {
+  formatClaudeContextHeadline,
+  parseClaudeContextReport,
+} from "@t3tools/shared/claudeContextReport";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { ClaudeContextCardBody } from "./ClaudeContextCard";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
@@ -1690,12 +1695,25 @@ function renderFeedEntry(
     // intrinsic width before the container is clamped, overlapping the
     // timestamp/copy button row. Pinning the width removes that pass.
     const enterAnimated = isFreshTimestamp(message.createdAt);
+    const contextReport = message.streaming ? null : parseClaudeContextReport(message.text);
     return (
       <Animated.View
         className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {renderedText.trim().length > 0 ? (
+        {contextReport ? (
+          <ThreadReasoningRow
+            expanded={props.expandedReasoningMessageIds.has(entry.id)}
+            onToggle={() => props.onToggleReasoning(entry.id)}
+            accessibilityHint={`Double tap to ${props.expandedReasoningMessageIds.has(entry.id) ? "hide" : "show"} the context report.`}
+            streaming={false}
+            rowSizing={props.workRowSizing}
+            iconSubtleColor={iconSubtleColor}
+            label={`Context window · ${contextReport.model ?? "Claude"} · ${formatClaudeContextHeadline(contextReport)}`}
+          >
+            <ClaudeContextCardBody report={contextReport} />
+          </ThreadReasoningRow>
+        ) : renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}

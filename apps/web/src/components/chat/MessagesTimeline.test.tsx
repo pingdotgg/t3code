@@ -14,6 +14,8 @@ import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
+const virtualRows = vi.hoisted(() => ({ generation: 0 }));
+
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
 
@@ -102,7 +104,9 @@ vi.mock("@legendapp/list/react", async () => {
       >
         {props.ListHeaderComponent}
         {props.data.map((item) => (
-          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+          <div key={`${props.keyExtractor(item)}:${virtualRows.generation}`}>
+            {props.renderItem({ item })}
+          </div>
         ))}
         {props.ListFooterComponent}
       </div>
@@ -285,6 +289,47 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("keeps a context report expanded when its virtual row remounts", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const entry = buildAssistantTimelineEntry(`## Context Usage
+
+**Tokens:** 1k / 200k (0.5%)
+
+### Estimated usage by category
+
+| Category | Tokens | Percentage |
+|---|---|---|
+| Messages | 1k | 0.5% |
+`);
+    const render = () => <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />;
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(render());
+      });
+      expect(renderer!.root.findAllByProps({ "aria-label": "Context window usage" })).toHaveLength(
+        0,
+      );
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      expect(renderer!.root.findAllByProps({ "aria-label": "Context window usage" })).toHaveLength(
+        1,
+      );
+      virtualRows.generation += 1;
+      await act(() => renderer!.update(render()));
+      expect(renderer!.root.findAllByProps({ "aria-label": "Context window usage" })).toHaveLength(
+        1,
+      );
+      await act(() => renderer!.root.findByProps({ "aria-expanded": true }).props.onClick());
+      expect(renderer!.root.findAllByProps({ "aria-label": "Context window usage" })).toHaveLength(
+        0,
+      );
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("renders previous and next controls with the minimap", () => {
     const first = buildUserTimelineEntry("First turn");
     const secondBase = buildUserTimelineEntry("Second turn");

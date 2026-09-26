@@ -1158,6 +1158,7 @@ export function ThreadThinkingRow(props: {
  * recycling; `children` is the trace body and only mounts while open.
  */
 export function ThreadReasoningRow(props: {
+  readonly accessibilityHint?: string;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
   readonly expanded: boolean;
@@ -1172,7 +1173,10 @@ export function ThreadReasoningRow(props: {
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
         accessibilityLabel={props.label}
-        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the thinking trace.`}
+        accessibilityHint={
+          props.accessibilityHint ??
+          `Double tap to ${props.expanded ? "hide" : "show"} the thinking trace.`
+        }
         hitSlop={4}
         onPress={() => {
           void Haptics.selectionAsync();
