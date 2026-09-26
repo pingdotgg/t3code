@@ -22,7 +22,9 @@ const PREVIEW_PANEL_MIN_WIDTH = 360;
  * sibling column's space.
  */
 const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
-const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
+/** Floor for the untouched default; wide screens open at half the viewport. */
+const PREVIEW_PANEL_MIN_DEFAULT_WIDTH = 540;
+const PREVIEW_PANEL_DEFAULT_WIDTH_FRACTION = 0.5;
 /**
  * Width reserved for the sibling column (chat, pull-request list) sharing the
  * panel's flex row. The viewport fraction alone is not enough: the app
@@ -41,6 +43,14 @@ export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: 
   // must not see max < min (it would resolve the inversion to min and,
   // via drag-end persistence, overwrite the user's stored width).
   return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.min(fractionCap, containerCap));
+}
+
+/** Initial width before the user resizes; the max-width clamp still applies. */
+export function getPreviewPanelDefaultWidth(viewportWidth: number): number {
+  return Math.max(
+    PREVIEW_PANEL_MIN_DEFAULT_WIDTH,
+    Math.floor(viewportWidth * PREVIEW_PANEL_DEFAULT_WIDTH_FRACTION),
+  );
 }
 
 /**
@@ -73,7 +83,9 @@ export function PreviewPanelShell(props: {
   const maxWidth = useClampedMaxWidth(hostRef, isInline && !maximized);
   const { width, handlers } = useResizableWidth({
     storageKey: props.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
-    defaultWidth: props.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
+    defaultWidth:
+      props.defaultWidth ??
+      getPreviewPanelDefaultWidth(typeof window === "undefined" ? 0 : window.innerWidth),
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
     maxWidth,
     edge: "left",
