@@ -542,6 +542,7 @@ describe("PullRequestSyncReactor", () => {
               host: "github.com",
               repository: "owner/repository",
               number: 42,
+              allowStale: false,
             },
           ]);
           assert.deepStrictEqual(
@@ -962,7 +963,13 @@ for (const legacy of [false, true]) {
               ),
             ]),
             summary: (input) =>
-              Effect.succeed(makeSummary(input, { state: "merged", headSha: sha, mergedAt: NOW })),
+              Effect.succeed(
+                makeSummary(input, {
+                  state: "merged",
+                  headSha: input.allowStale === false ? sha : undefined,
+                  mergedAt: NOW,
+                }),
+              ),
           });
           yield* Effect.gen(function* () {
             yield* startAndSweep(fixture);
@@ -1002,4 +1009,45 @@ it.effect(
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
+);
+
+it.effect("stops automatic head-evidence retries after a fresh merged response omits the SHA", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          makeThread("azure-merged", {
+            pullRequests: [
+              makeLink(
+                1,
+                { state: "merged" },
+                {
+                  host: "dev.azure.com",
+                  repository: "org/project/repo",
+                  url: "https://dev.azure.com/org/project/_git/repo/pullrequest/1",
+                },
+              ),
+            ],
+          }),
+        ]),
+        summary: (input) =>
+          Effect.succeed(makeSummary(input, { state: "merged", headSha: undefined })),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        for (let minute = 0; minute < 31; minute++) yield* sweepAgain(fixture, reactor);
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        yield* reactor.requestSync({
+          host: "dev.azure.com",
+          repository: "org/project/repo",
+          number: 1,
+        });
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  ),
 );

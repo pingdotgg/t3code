@@ -136,6 +136,9 @@ export const make = Effect.gen(function* () {
   const requested = new Map<string, number>();
   let requestGeneration = 0;
   const retryStacks = new Set<string>();
+  // Some providers omit head SHAs even on fresh reads. Do not poll a terminal PR
+  // forever for evidence it cannot supply; explicit refreshes still retry it.
+  const mergedWithoutHeadEvidence = new Set<string>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
@@ -143,6 +146,7 @@ export const make = Effect.gen(function* () {
     if (entries.every((entry) => entry.link.snapshot?.state === "merged")) {
       const last = lastSyncedAt.get(key);
       return (
+        !mergedWithoutHeadEvidence.has(key) &&
         entries.some((entry) => !entry.link.snapshot?.headSha) &&
         (last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS)
       );
@@ -211,6 +215,8 @@ export const make = Effect.gen(function* () {
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const key of mergedWithoutHeadEvidence)
+      if (!groups.has(key)) mergedWithoutHeadEvidence.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     // Layers auto-linked this sweep, so two links of one thread that share a
@@ -285,7 +291,9 @@ export const make = Effect.gen(function* () {
       };
       const generation = requested.get(key);
       const needsHeadEvidence = entries.some(
-        (entry) => entry.link.snapshot?.state === "merged" && !entry.link.snapshot.headSha,
+        (entry) =>
+          entry.link.snapshot === null ||
+          (entry.link.snapshot.state === "merged" && !entry.link.snapshot.headSha),
       );
       if (generation !== undefined || needsHeadEvidence)
         yield* pullRequests.invalidate({ reference: ref });
@@ -293,6 +301,11 @@ export const make = Effect.gen(function* () {
         needsHeadEvidence ? { ...ref, allowStale: false } : ref,
         { recoverTransientFailure: false },
       );
+      if (needsHeadEvidence && summary.state === "merged" && !summary.headSha) {
+        mergedWithoutHeadEvidence.add(key);
+      } else {
+        mergedWithoutHeadEvidence.delete(key);
+      }
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         generation !== undefined ||
