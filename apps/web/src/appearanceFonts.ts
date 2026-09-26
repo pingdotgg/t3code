@@ -76,6 +76,8 @@ export interface AppearanceFontPreferences {
   readonly code: string;
   readonly composer: string;
   readonly sizeInterface: number;
+  /** Null keeps conversation text on the interface size. */
+  readonly sizeConversation: number | null;
   readonly sizePrompt: number;
   readonly sizeCode: number;
   /** Grayscale `antialiased` rendering; false keeps the heavier platform default. */
@@ -88,7 +90,8 @@ export interface AppearanceFontPreferences {
  *
  * Sizes are always written: the interface size drives the root font size (and
  * with it every rem-based dimension), while the prompt and code sizes stay in
- * absolute pixels so they do not scale twice.
+ * absolute pixels so they do not scale twice. The conversation size is only
+ * written when set, so conversation text follows the interface size otherwise.
  */
 export function applyAppearanceFontVariables(
   root: HTMLElement,
@@ -110,6 +113,14 @@ export function applyAppearanceFontVariables(
   }
 
   root.style.fontSize = `${clampInterfaceFontSize(preferences.sizeInterface)}px`;
+  if (preferences.sizeConversation === null) {
+    root.style.removeProperty("--font-size-conversation");
+  } else {
+    root.style.setProperty(
+      "--font-size-conversation",
+      `${clampInterfaceFontSize(preferences.sizeConversation)}px`,
+    );
+  }
   root.style.setProperty("--font-size-prompt", `${clampPromptFontSize(preferences.sizePrompt)}px`);
   const code = clampCodeFontSize(preferences.sizeCode);
   root.style.setProperty("--font-size-code", `${code}px`);

@@ -237,6 +237,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["typography family size system sans"],
   },
   {
+    id: "conversation-font-size",
+    title: "Conversation size",
+    to: "/settings/appearance",
+    searchTerms: ["typography font size chat messages thread text"],
+  },
+  {
     id: "prompt-font",
     title: "Prompt font",
     to: "/settings/appearance",

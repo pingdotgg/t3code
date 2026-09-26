@@ -1706,7 +1706,22 @@ code {
   background: var(--app-scrollbar-thumb-hover);
 }
 
-/* Chat markdown rendering */
+/* Conversation text, scoped to the thread timeline. Tailwind's text-*
+   utilities read these tokens, so overriding them resizes conversation text
+   while spacing stays on the interface rem. Without a conversation size the
+   tokens resolve to their defaults and text follows the interface size. */
+.conversation-text {
+  --conversation-text: var(--font-size-conversation, 1rem);
+  --text-xs: calc(var(--conversation-text) * 0.75);
+  --text-sm: calc(var(--conversation-text) * 0.875);
+  --text-base: var(--conversation-text);
+  --text-lg: calc(var(--conversation-text) * 1.125);
+  --text-xl: calc(var(--conversation-text) * 1.25);
+  font-size: var(--conversation-text);
+}
+
+/* Chat markdown rendering. Rem sizes go through --conversation-text so they
+   track the conversation size inside the timeline and 1rem elsewhere. */
 
 .chat-markdown > :first-child {
   margin-top: 0;
@@ -1738,21 +1753,21 @@ code {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: calc(var(--conversation-text, 1rem) * 1.25);
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: calc(var(--conversation-text, 1rem) * 1.125);
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: var(--conversation-text, 1rem);
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: calc(var(--conversation-text, 1rem) * 0.875);
 }
 
 .chat-markdown h6 {
@@ -1847,7 +1862,7 @@ code {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
-  font-size: 0.75rem;
+  font-size: calc(var(--conversation-text, 1rem) * 0.75);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -1866,7 +1881,7 @@ code {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
-  font-size: 0.6875rem;
+  font-size: calc(var(--conversation-text, 1rem) * 0.6875);
   font-weight: 600;
 }
 
@@ -1876,7 +1891,7 @@ code {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
-  font-size: 0.75rem;
+  font-size: calc(var(--conversation-text, 1rem) * 0.75);
 }
 
 .chat-markdown pre {
@@ -1952,7 +1967,7 @@ code {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: calc(var(--conversation-text, 1rem) * 0.75);
 }
 
 .chat-markdown th,

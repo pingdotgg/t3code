@@ -505,6 +505,22 @@ describe("ClientSettings recording input overlays", () => {
   });
 });
 
+describe("ClientSettings conversation font size", () => {
+  it("follows the interface size for existing installations", () => {
+    expect(decodeClientSettings({}).fontSizeConversation).toBeNull();
+  });
+
+  it("accepts a reset back to following the interface size", () => {
+    expect(decodeClientSettingsPatch({ fontSizeConversation: null })).toEqual({
+      fontSizeConversation: null,
+    });
+  });
+
+  it.each([11, 21, 15.5])("rejects an invalid conversation size: %s", (value) => {
+    expect(() => decodeClientSettingsPatch({ fontSizeConversation: value })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

@@ -673,6 +673,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontFamilySans,
       settings.fontFamilyTerminal,
       settings.fontSizeCode,
+      settings.fontSizeConversation,
       settings.fontSizeInterface,
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
@@ -803,6 +804,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
       fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+      fontSizeConversation: DEFAULT_UNIFIED_SETTINGS.fontSizeConversation,
       fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
       fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
       fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
@@ -1537,6 +1539,68 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   );
 }
 
+/** Conversation text size; "Auto" (null) keeps it on the interface size. */
+function ConversationFontSizeRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const value = settings.fontSizeConversation;
+  return (
+    <SettingsRow
+      {...searchableSetting("conversation-font-size")}
+      title="Conversation size"
+      description="Messages in a thread. Auto follows the interface size."
+      resetAction={
+        value !== DEFAULT_UNIFIED_SETTINGS.fontSizeConversation ? (
+          <SettingResetButton
+            label="conversation size"
+            onClick={() =>
+              updateSettings({
+                fontSizeConversation: DEFAULT_UNIFIED_SETTINGS.fontSizeConversation,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={value === null ? "auto" : String(value)}
+          onValueChange={(next) => {
+            if (next === "auto") {
+              updateSettings({ fontSizeConversation: null });
+              return;
+            }
+            const parsed = Number(next);
+            if (
+              Number.isInteger(parsed) &&
+              parsed >= MIN_INTERFACE_FONT_SIZE &&
+              parsed <= MAX_INTERFACE_FONT_SIZE
+            ) {
+              updateSettings({ fontSizeConversation: parsed });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-22 shrink-0" aria-label="Conversation font size">
+            <SelectValue>{value === null ? "Auto" : `${value} px`}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="auto">
+              Auto ({settings.fontSizeInterface} px)
+            </SelectItem>
+            {Array.from(
+              { length: MAX_INTERFACE_FONT_SIZE - MIN_INTERFACE_FONT_SIZE + 1 },
+              (_, index) => MIN_INTERFACE_FONT_SIZE + index,
+            ).map((px) => (
+              <SelectItem hideIndicator key={px} value={String(px)}>
+                {px} px
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 function PromptFontRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1709,6 +1773,7 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ConversationFontSizeRow />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -1727,6 +1792,7 @@ function SimpleFontRows() {
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
+      <ConversationFontSizeRow />
       <CodeFontRow
         title="Monospace font"
         description="Code blocks, diffs, file previews, and the terminal."

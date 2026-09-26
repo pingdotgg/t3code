@@ -383,6 +383,10 @@ export const ClientSettingsSchema = Schema.Struct({
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
   ),
+  // Messages in the thread timeline. Null follows the interface size.
+  fontSizeConversation: Schema.NullOr(InterfaceFontSize).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   fontSizePrompt: PromptFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROMPT_FONT_SIZE)),
   ),
@@ -1597,6 +1601,7 @@ export const ClientSettingsPatch = Schema.Struct({
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
+  fontSizeConversation: Schema.optionalKey(Schema.NullOr(InterfaceFontSize)),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
   fontSizeTerminal: Schema.optionalKey(TerminalFontSize),
