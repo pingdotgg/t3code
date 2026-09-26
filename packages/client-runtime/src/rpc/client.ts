@@ -224,7 +224,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
               >;
-              const subscribeToSession = (): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>> =>
+              // Retry a failed subscription on its existing session. A stream can
+              // lose its transport while the session itself stays healthy, so
+              // waiting only for sessionChanges leaves its projection frozen.
+              const subscribeToSession = (
+                transportFailures = 0,
+              ): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>> =>
                 Stream.suspend(() =>
                   Stream.unwrap(
                     Effect.gen(function* () {
@@ -261,22 +266,46 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       const hasOnlyExpectedFailures =
                         cause.reasons.length > 0 &&
                         cause.reasons.every((reason) => reason._tag === "Fail");
+                      const isProtocolDefect =
+                        hasOnlyExpectedFailures &&
+                        cause.reasons.some(
+                          (reason) =>
+                            reason._tag === "Fail" &&
+                            isRpcClientError(reason.error) &&
+                            reason.error.reason._tag === "RpcClientDefect",
+                        );
+                      if (isProtocolDefect) {
+                        return options?.onExpectedFailure === undefined
+                          ? Stream.failCause(cause)
+                          : Stream.fromEffect(options.onExpectedFailure(cause)).pipe(Stream.drain);
+                      }
                       const isTransportFailure =
                         hasOnlyExpectedFailures &&
                         cause.reasons.every(
                           (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
                         );
                       if (isTransportFailure) {
+                        const retryDelayMs = Math.min(
+                          250 * 2 ** Math.min(transportFailures, 6),
+                          16_000,
+                        );
                         return Stream.fromEffect(
                           Effect.logWarning(
-                            "Durable RPC subscription lost its transport; waiting for the next session.",
+                            "Durable RPC subscription lost its transport; retrying.",
                             {
                               cause: Cause.pretty(cause),
                               method: tag,
                               environmentId: supervisor.target.environmentId,
+                              retryDelayMs,
                             },
                           ),
-                        ).pipe(Stream.drain);
+                        ).pipe(
+                          Stream.drain,
+                          Stream.concat(
+                            Stream.fromEffect(Effect.sleep(retryDelayMs)).pipe(Stream.drain),
+                          ),
+                          Stream.concat(subscribeToSession(Math.min(transportFailures + 1, 6))),
+                        );
                       }
                       if (hasOnlyExpectedFailures && options?.onExpectedFailure !== undefined) {
                         const handled = Stream.fromEffect(options.onExpectedFailure(cause)).pipe(
