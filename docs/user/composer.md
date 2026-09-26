@@ -38,7 +38,9 @@ On web and desktop, a message sent during a running turn waits at the end of the
 dashed bubble. It goes out on its own when the agent finishes its next tool
 call, or when the turn ends, even while you have another thread open. Use the arrow under the bubble to send it right
 away, or the X to move it back into the composer. Stop returns every queued
-message to the composer.
+message to the composer. Press `ArrowUp` in an empty composer to edit the newest
+queued message. It moves back into the composer, and sending it while the agent
+works queues it again at the end. Prompt recall resumes once the queue is empty.
 
 In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
 behavior or **Steer** to send new messages immediately. This setting applies to

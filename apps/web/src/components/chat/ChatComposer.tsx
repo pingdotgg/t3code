@@ -1341,6 +1341,8 @@ export interface ChatComposerProps {
   activeThreadShell: ThreadShell | null;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
+  /** Moves the newest queued message back into the composer. False when none is queued. */
+  onEditLastQueuedMessage: () => boolean;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -1500,6 +1502,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
+    onEditLastQueuedMessage,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
@@ -3959,6 +3962,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!editor?.isCaretOnVisualEdge(direction === "backward" ? "start" : "end")) {
         return false;
       }
+      // Queued messages are newer than anything sent, so ArrowUp reaches them
+      // before history. The newest one goes back to the end of the queue when
+      // sent again, so editing it keeps the queue order.
+      if (direction === "backward" && promptRef.current.length === 0 && onEditLastQueuedMessage()) {
+        promptHistoryPositionRef.current = null;
+        setComposerCursor(
+          collapseExpandedComposerCursor(promptRef.current, promptRef.current.length),
+        );
+        setComposerTrigger(null);
+        setComposerHighlightedItemId(null);
+        return true;
+      }
       const step = stepComposerPromptHistory({
         direction,
         entries: buildComposerPromptHistoryEntries(promptHistoryMessagesRef.current),
@@ -3977,9 +3992,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerPreviewAnnotations.length,
       composerReviewComments.length,
       isComposerApprovalState,
+      onEditLastQueuedMessage,
       pendingUserInputs.length,
       promptRef,
       replacePromptFromHistory,
+      setComposerTrigger,
     ],
   );
 

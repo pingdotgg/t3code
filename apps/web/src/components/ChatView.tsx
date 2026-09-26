@@ -8620,6 +8620,7 @@ export default function ChatView(props: ChatViewProps) {
   const queuedMessageActionsRef = useRef({
     steer: (_id: string) => {},
     remove: (_id: string) => {},
+    editLast: (): boolean => false,
   });
   queuedMessageActionsRef.current = {
     steer: (id) => {
@@ -8631,6 +8632,15 @@ export default function ChatView(props: ChatViewProps) {
       const message = useQueuedMessageStore.getState().remove(activeThreadKey, id);
       if (message) restoreQueuedMessagesToComposer([message]);
     },
+    editLast: () => {
+      if (!activeThreadKey) return false;
+      const store = useQueuedMessageStore.getState();
+      const newest = store.queuesByThreadKey[activeThreadKey]?.at(-1);
+      const message = newest ? store.remove(activeThreadKey, newest.id) : null;
+      if (!message) return false;
+      restoreQueuedMessagesToComposer([message]);
+      return true;
+    },
   };
   const onSteerQueuedMessage = useCallback((id: string) => {
     queuedMessageActionsRef.current.steer(id);
@@ -8638,6 +8648,7 @@ export default function ChatView(props: ChatViewProps) {
   const onRemoveQueuedMessage = useCallback((id: string) => {
     queuedMessageActionsRef.current.remove(id);
   }, []);
+  const onEditLastQueuedMessage = useCallback(() => queuedMessageActionsRef.current.editLast(), []);
   // Stop also cancels the queue: the messages return to the composer instead
   // of starting a new turn the moment the interrupted one settles.
   restoreQueuedMessagesRef.current = restoreQueuedMessagesToComposer;
@@ -10029,6 +10040,7 @@ export default function ChatView(props: ChatViewProps) {
                             activeThread={activeThread}
                             activeThreadShell={routeServerThreadShell}
                             promptHistoryMessages={timelineMessages}
+                            onEditLastQueuedMessage={onEditLastQueuedMessage}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
