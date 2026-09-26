@@ -21,6 +21,12 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Reveal the sidebar on hover
+
+On web and desktop, turn on **Reveal sidebar on hover** in Settings → Appearance. While the sidebar
+is closed, rest the pointer on the left edge of the window to see your threads without reopening
+it. To keep the sidebar open, use its toggle.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
