@@ -804,4 +804,62 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.equal("cause" in error, false);
     }),
   );
+
+  it.effect("does not wait for process exit before terminating after input EOF", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const processExit = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Deferred.await(processExit),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Queue.end(input);
+
+      const failure = yield* Deferred.await(terminated);
+      assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
+
+      const pendingFailure = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+      );
+      assert.strictEqual(pendingFailure, failure);
+
+      const futureFailure = yield* transport.request("thread/read", {}).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected requests after EOF to fail"),
+        }),
+      );
+      assert.strictEqual(futureFailure, failure);
+    }),
+  );
+
+  it.effect("retains an already available process exit error at input EOF", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const processExitError = new CodexError.CodexAppServerProcessExitedError({
+        code: 1,
+        pid: 123,
+      });
+      const processExit = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* Deferred.succeed(processExit, processExitError);
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Deferred.await(processExit),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.end(input);
+
+      assert.strictEqual(yield* Deferred.await(terminated), processExitError);
+    }),
+  );
 });
