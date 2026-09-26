@@ -18,6 +18,7 @@ import * as Cache from "effect/Cache";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
@@ -179,6 +180,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         cwd,
         environment,
       } satisfies ClaudeProbeCache.ClaudeProbeInput;
+      // A new or rebuilt instance probes fresh, so a config edit never shows
+      // an older result. An in-flight probe is joined instead, so instances
+      // that start together at boot still run one probe.
+      if (Option.isSome(yield* Cache.getSuccess(probeCache, probeInput))) {
+        yield* Cache.invalidate(probeCache, probeInput);
+      }
 
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
