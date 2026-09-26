@@ -84,4 +84,14 @@ export function assertGrokAutoBlockedCommandOutput(
       frame.method === "session/request_permission",
   )?.frame.result;
   assert.deepEqual(answer, { outcome: { outcome: "selected", optionId: "allow-once" } });
+
+  // Grok's bash prompt offers `always-allow`, which it saves for the whole
+  // project, not the session. The card must not offer it as a session choice.
+  const approval = projection.turnItems.find(
+    (item) => item.type === "approval_request" && item.requestId === request.id,
+  );
+  assert.deepEqual(
+    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
+    ["cancel", "decline", "accept"],
+  );
 }

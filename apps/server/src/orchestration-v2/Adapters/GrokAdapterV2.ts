@@ -24,6 +24,7 @@ import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../../provider/acp/GrokAcpSupport.ts";
@@ -280,6 +281,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     // what its classifier blocked, so every prompt it sends goes to the user.
     permissionDisposition: (policy, request) =>
       grokLaunchRuntimeMode(policy) === "auto" ? "ask" : acpPermissionDisposition(policy, request),
+    approvalOptions: grokApprovalOptions,
     promptFailure: (cause) =>
       makeProviderFailure({
         cause,
