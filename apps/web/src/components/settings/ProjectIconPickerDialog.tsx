@@ -29,6 +29,7 @@ import {
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const DEFAULT_ICON: IconName = "folder-code";
 const isMonogramText = Schema.is(ProjectMonogramText);
@@ -155,20 +156,26 @@ export function ProjectIconPickerDialog({
               <ScrollArea scrollFade className="max-h-64">
                 <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
                   {icons.map((name) => (
-                    <button
-                      key={name}
-                      type="button"
-                      aria-label={iconLabel(name)}
-                      aria-pressed={iconName === name}
-                      className={cn(
-                        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
-                        iconName === name && "border-border bg-accent",
-                        selectedColorClassName,
-                      )}
-                      onClick={() => setIconName(name)}
-                    >
-                      <DynamicIcon name={name} className="size-5" />
-                    </button>
+                    <Tooltip key={name} disabled={!query.trim()}>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label={iconLabel(name)}
+                            aria-pressed={iconName === name}
+                            className={cn(
+                              "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                              iconName === name && "border-border bg-accent",
+                              selectedColorClassName,
+                            )}
+                            onClick={() => setIconName(name)}
+                          >
+                            <DynamicIcon name={name} className="size-5" />
+                          </button>
+                        }
+                      />
+                      <TooltipPopup>{iconLabel(name)}</TooltipPopup>
+                    </Tooltip>
                   ))}
                 </div>
               </ScrollArea>
