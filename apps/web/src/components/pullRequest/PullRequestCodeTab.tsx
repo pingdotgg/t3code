@@ -203,6 +203,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
+  backgroundRefreshToken = 0,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -219,6 +220,11 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  /**
+   * Bumped when the diff may have moved without anyone asking, such as a turn finishing
+   * somewhere in the environment: re-read the first page while the pages on screen stay put.
+   */
+  backgroundRefreshToken?: number;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -437,6 +443,17 @@ function PullRequestCodeTab({
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  // Emptying the slices here would swap the viewer for the loading state and throw the reader
+  // back to the top. Pointing at the first page again is enough: an unchanged answer keeps every
+  // page, and a changed one takes the pages after it along with it.
+  const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
+  useEffect(() => {
+    if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
+    appliedBackgroundRefreshToken.current = backgroundRefreshToken;
+    setSliceState((previous) => ({ ...previous, cursor: null }));
+    refreshFirstDiffPage();
+    refreshFilesViewed();
+  }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
