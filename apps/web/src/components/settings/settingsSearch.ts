@@ -372,6 +372,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
+    id: "context-window-indicator",
+    title: "Context window indicator",
+    to: "/settings/general",
+    searchTerms: ["composer meter usage tokens circle compact"],
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/general",
@@ -478,12 +484,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Plan mode (legacy)",
     to: "/settings/general",
     searchTerms: ["build plan composer old"],
-  },
-  {
-    id: "legacy-context-window-indicator",
-    title: "Context window indicator (legacy)",
-    to: "/settings/general",
-    searchTerms: ["composer meter usage tokens circle old"],
   },
   {
     id: "legacy-sidebar",
