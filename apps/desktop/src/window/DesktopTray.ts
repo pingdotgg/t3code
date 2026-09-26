@@ -47,6 +47,7 @@ export class DesktopTray extends Context.Service<
 
 const { logInfo: logTrayInfo, logWarning: logTrayWarning } = makeComponentLogger("desktop-tray");
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
