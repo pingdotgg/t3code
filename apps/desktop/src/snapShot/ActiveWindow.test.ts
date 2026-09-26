@@ -1,3 +1,5 @@
+import * as NodeVM from "node:vm";
+
 import { assert, beforeEach, it, vi } from "vite-plus/test";
 
 const { execFileMock, loadWindowsForegroundApiMock } = vi.hoisted(() => ({
@@ -26,6 +28,27 @@ function stubMacLookup(stdout: string) {
       callback: (error: Error | null, stdout: string) => void,
     ) => callback(null, stdout),
   );
+}
+
+async function hasMatchingMacAppOwner(
+  pid: number,
+  appName: string,
+  ownerPid: number,
+  ownerName: string,
+) {
+  stubMacLookup("");
+  await activeWindow("darwin");
+  const [lookupCall] = execFileMock.mock.calls;
+  assert.isDefined(lookupCall);
+  const [, commandArgs] = lookupCall;
+  const [, , , script] = commandArgs;
+  assert.isString(script);
+  // Load the production script without invoking its native window discovery.
+  const matches: unknown = NodeVM.runInNewContext(
+    `${script}\nmatchesAppOwner(pid, appName, ownerPid, ownerName);`,
+    { ObjC: { import: () => undefined }, pid, appName, ownerPid, ownerName },
+  );
+  return matches;
 }
 
 it("parses the frontmost macOS window from the osascript lookup", async () => {
@@ -61,6 +84,34 @@ it("parses the frontmost macOS window from the osascript lookup", async () => {
   assert.strictEqual(file, "/usr/bin/osascript");
   assert.deepEqual(args.slice(0, 3), ["-l", "JavaScript", "-e"]);
   assert.lengthOf(loadWindowsForegroundApiMock.mock.calls, 0);
+});
+
+it("falls back to the macOS owner name when the application PID is -1", async () => {
+  assert.isTrue(await hasMatchingMacAppOwner(-1, "Device Hub", 35409, "Device Hub"));
+});
+
+it("falls back to the macOS owner name when the application PID is 0", async () => {
+  assert.isTrue(await hasMatchingMacAppOwner(0, "Device Hub", 35409, "Device Hub"));
+});
+
+it("matches a valid macOS application PID even when owner names differ", async () => {
+  assert.isTrue(await hasMatchingMacAppOwner(123, "Editor", 123, "Editor Helper"));
+});
+
+it("rejects a same-name macOS owner from another process when the application PID is valid", async () => {
+  assert.isFalse(await hasMatchingMacAppOwner(123, "Device Hub", 999, "Device Hub"));
+});
+
+it("rejects an unrelated macOS owner name when the application PID is invalid", async () => {
+  assert.isFalse(await hasMatchingMacAppOwner(-1, "Device Hub", 999, "Other"));
+});
+
+it("rejects a partial macOS owner-name match when the application PID is invalid", async () => {
+  assert.isFalse(await hasMatchingMacAppOwner(-1, "Device Hub", 999, "Device Hub Helper"));
+});
+
+it("does not use the macOS name fallback without a frontmost application name", async () => {
+  assert.isFalse(await hasMatchingMacAppOwner(-1, "", 77, ""));
 });
 
 it("omits an empty macOS bundle identifier", async () => {
