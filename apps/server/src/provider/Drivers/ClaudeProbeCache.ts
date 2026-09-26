@@ -20,9 +20,9 @@ import { type ClaudeCapabilitiesProbe, probeClaudeCapabilities } from "../Layers
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 
 /**
- * Everything the probe reads, and also the cache key. The lookup gets only
- * this value, so the probe cannot depend on an input the key leaves out.
- * Keys compare structurally.
+ * Every instance input the probe reads, and also the cache key. The lookup
+ * gets only this value, so the probe cannot depend on an input the key leaves
+ * out. Keys compare structurally.
  */
 export type ClaudeProbeInput = Pick<ClaudeSettings, "binaryPath" | "homePath"> & {
   readonly cwd: string;
@@ -51,7 +51,8 @@ export class ClaudeProbeCache extends Context.Service<
   }
 >()("t3/provider/Drivers/ClaudeProbeCache") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
   const gate = yield* Semaphore.make(MAX_CONCURRENT_PROBES);
   // The probe keeps its own timeout inside the gate, so time spent waiting
   // for a permit cannot turn into a false failure.
