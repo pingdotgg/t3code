@@ -4,7 +4,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tip
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { type EditorState, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type {
   AssistantCitation,
@@ -47,6 +47,7 @@ import {
   buildDocJson,
   buildTiptapContent,
   collapsedToFlat,
+  caretTakesMarksBefore,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
@@ -54,6 +55,7 @@ import {
   flatToPm,
   pmToFlat,
   serializeEditorDoc,
+  stepCaretAcrossStyledEdge,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
@@ -514,9 +516,9 @@ const MarkerPluginKey = new PluginKey("composer-rich-markers");
 const ComposerMarkerPlugin = new Plugin({
   key: MarkerPluginKey,
   state: {
-    init: (_, state) => decorationsForSelection(state.doc, state.selection),
-    apply: (tr, old) =>
-      tr.docChanged || tr.selectionSet ? decorationsForSelection(tr.doc, tr.selection) : old,
+    init: (_, state) => decorationsForSelection(state),
+    apply: (tr, old, _, state) =>
+      tr.docChanged || tr.selectionSet || tr.storedMarksSet ? decorationsForSelection(state) : old,
   },
   props: {
     decorations(state) {
@@ -525,10 +527,11 @@ const ComposerMarkerPlugin = new Plugin({
   },
 });
 
-function decorationsForSelection(
-  doc: ProseMirrorNode,
-  selection: { from: number; to: number; empty: boolean },
-): DecorationSet {
+function decorationsForSelection(state: EditorState): DecorationSet {
+  const { doc, selection } = state;
+  // Markers at the caret render after it while it types with the marks before
+  // the edge. Shifting keeps closers ahead of openers at a shared position.
+  const caretSide = caretTakesMarksBefore(state) ? 3 : 0;
   const decorations: Decoration[] = [];
   if (!selection.empty) {
     doc.nodesBetween(selection.from, selection.to, (node, pos) => {
@@ -546,7 +549,8 @@ function decorationsForSelection(
       ? selection.from >= range.from && selection.from <= range.to
       : selection.from < range.to && selection.to > range.from;
     if (!active) continue;
-    for (const { at, side, text } of range.markers) {
+    for (const { at, side: baseSide, text } of range.markers) {
+      const side = selection.empty && at === selection.from ? baseSide + caretSide : baseSide;
       const marker = document.createElement("span");
       marker.className = "composer-rich-marker";
       marker.textContent = text;
@@ -871,6 +875,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           ) {
             const { $from } = view.state.selection;
             const direction = event.key === "ArrowLeft" ? -1 : 1;
+            // Take the other stop of a styled edge before skipping a chip, so
+            // the plain stop between styled text and a chip stays reachable.
+            const step = stepCaretAcrossStyledEdge(view.state, direction);
+            if (step) {
+              event.preventDefault();
+              event.stopPropagation();
+              view.dispatch(step);
+              return true;
+            }
             const adjacent = direction === -1 ? $from.nodeBefore : $from.nodeAfter;
             if (adjacent?.type.name.startsWith("composer-")) {
               event.preventDefault();
