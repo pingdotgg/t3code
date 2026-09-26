@@ -137,6 +137,8 @@ const seedParentWithTerminalTask = (input: {
   readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
+  readonly settledDeliveryCount?: number;
+  readonly deliveryGeneration?: number;
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -231,13 +233,13 @@ const seedParentWithTerminalTask = (input: {
             contextHandoffId: null,
             delegatedCompletion: {
               disposition: "open",
-              nextGeneration: 2,
-              settledDeliveryCount: 1,
+              nextGeneration: (input.deliveryGeneration ?? 1) + 1,
+              settledDeliveryCount: input.settledDeliveryCount ?? 1,
               delivery:
                 input.deliveryTaskIds === undefined
                   ? null
                   : {
-                      generation: 1,
+                      generation: input.deliveryGeneration ?? 1,
                       messageId: MessageId.make(`message:delegated-delivery:${input.threadId}`),
                       taskIds: input.deliveryTaskIds,
                     },
@@ -282,6 +284,87 @@ const seedParentWithTerminalTask = (input: {
         },
       ],
     });
+  });
+
+// Writes a cancelled delivery run for `generation` and, unless `settles` is
+// false, waits for the terminal-run reactor to settle the parent cohort.
+const cancelDeliveryRun = (input: {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly generation: number;
+  readonly messageId: MessageId;
+  readonly taskIds: ReadonlyArray<NodeId>;
+  readonly settles?: boolean;
+  readonly now: DateTime.Utc;
+}) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sink = yield* EventSinkV2;
+    const { threadId, runId, generation, now } = input;
+    const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+      (row) => row.id === runId,
+    )!;
+    const afterSequence = yield* sink.latestSequence({ threadId });
+    const deliveryRunId = RunId.make(`${runId}:delivery:${generation}`);
+    yield* sink.write({
+      commandId: CommandId.make(`command:cancel-delivery:${threadId}:${generation}`),
+      events: [
+        {
+          id: EventId.make(`event:delivery-message:${threadId}:${generation}`),
+          type: "message.updated",
+          threadId,
+          runId: deliveryRunId,
+          occurredAt: now,
+          payload: {
+            id: input.messageId,
+            threadId,
+            runId: deliveryRunId,
+            nodeId: null,
+            role: "user",
+            text: "Background task finished",
+            attachments: [],
+            streaming: false,
+            createdBy: "agent",
+            creationSource: "server",
+            createdAt: now,
+            updatedAt: now,
+            delegatedCompletion: { parentRunId: runId, generation, taskIds: input.taskIds },
+          },
+        },
+        {
+          id: EventId.make(`event:delivery-run:${threadId}:${generation}`),
+          type: "run.updated",
+          threadId,
+          runId: deliveryRunId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...parentRun,
+            id: deliveryRunId,
+            ordinal: generation + 1,
+            userMessageId: input.messageId,
+            rootNodeId: null,
+            status: "cancelled",
+            completedAt: now,
+            delegatedCompletion: undefined,
+          },
+        },
+      ],
+    });
+    if (input.settles === false) return undefined;
+    const settledDeliveryCount = parentRun.delegatedCompletion?.settledDeliveryCount ?? 0;
+    const settled = yield* sink.stream({ threadId, afterSequence, eventType: "run.updated" }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "run.updated" &&
+          stored.event.payload.id === runId &&
+          stored.event.payload.delegatedCompletion?.settledDeliveryCount ===
+            settledDeliveryCount + 1,
+      ),
+      Stream.runHead,
+    );
+    assert.isTrue(settled._tag === "Some");
+    return yield* orchestrator.getThreadProjection(threadId);
   });
 
 it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
@@ -379,6 +462,168 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       });
       const duplicate = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(duplicate.runs.find((row) => row.id === runId)?.delegatedCompletion, cohort);
+    }),
+  );
+
+  it.effect("keeps delivering late siblings after earlier deliveries settled", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("mailbox-late-batch");
+      const runId = RunId.make("mailbox-late-parent");
+      const taskId = NodeId.make("mailbox-late-first");
+      const lateTaskId = NodeId.make("mailbox-late-second");
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        runId,
+        projectId: ProjectId.make("mailbox-late-project"),
+        rootNodeId: NodeId.make("mailbox-late-root"),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        settledDeliveryCount: 2,
+        now,
+      });
+      const task = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("mailbox-late-message"),
+            type: "message.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: messageId,
+              threadId,
+              runId,
+              nodeId: task.parentNodeId,
+              role: "user",
+              text: "Background task finished",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+              delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+            },
+          },
+          {
+            id: EventId.make(`event:${lateTaskId}`),
+            type: "subagent.updated",
+            threadId,
+            runId,
+            nodeId: lateTaskId,
+            occurredAt: now,
+            payload: {
+              ...task,
+              id: lateTaskId,
+              status: "failed",
+              result: "Claude API rate limit reached. Try again later.",
+              completionDelivery: { state: "pending", observedByRunId: null },
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "notification.delivery.accept",
+        commandId: CommandId.make("accept-late-first"),
+        threadId,
+        messageId,
+      });
+      const accepted = yield* orchestrator.getThreadProjection(threadId);
+      const cohort = accepted.runs.find((row) => row.id === runId)?.delegatedCompletion;
+      assert.deepEqual(cohort?.delivery?.taskIds, [lateTaskId]);
+      assert.deepEqual(
+        accepted.subagents.find((row) => row.id === lateTaskId)?.completionDelivery,
+        {
+          state: "claimed",
+          observedByRunId: null,
+        },
+      );
+    }),
+  );
+
+  it.effect("retries a cancelled delivery once without re-arming the parent forever", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-delivery-cancel-loop");
+      const runId = RunId.make("run:delegated-delivery-cancel-loop");
+      const taskId = NodeId.make("node:delegated-delivery-cancel-loop-task");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        runId,
+        projectId: ProjectId.make("project:delegated-delivery-cancel-loop"),
+        rootNodeId: NodeId.make("node:delegated-delivery-cancel-loop-root"),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        settledDeliveryCount: 0,
+        now,
+      });
+      const cancel = (generation: number, messageId: MessageId) =>
+        cancelDeliveryRun({ threadId, runId, generation, messageId, taskIds: [taskId], now });
+
+      const retried = yield* cancel(1, MessageId.make(`message:delegated-delivery:${threadId}`));
+      const retry = retried!.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery;
+      assert.equal(retry?.generation, 2);
+      assert.deepEqual(retry?.taskIds, [taskId]);
+
+      const exhausted = yield* cancel(2, retry!.messageId);
+      assert.isNull(exhausted!.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery);
+      assert.deepEqual(exhausted!.subagents.find((row) => row.id === taskId)?.completionDelivery, {
+        state: "pending",
+        observedByRunId: null,
+      });
+    }),
+  );
+
+  it.effect("retries a fresh batch even after an unrelated delivery was cancelled", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:delegated-delivery-unrelated-cancel");
+      const runId = RunId.make("run:delegated-delivery-unrelated-cancel");
+      const taskId = NodeId.make("node:delegated-delivery-unrelated-cancel-task");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        runId,
+        projectId: ProjectId.make("project:delegated-delivery-unrelated-cancel"),
+        rootNodeId: NodeId.make("node:delegated-delivery-unrelated-cancel-root"),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        deliveryGeneration: 2,
+        settledDeliveryCount: 0,
+        now,
+      });
+      // An earlier delivery for a different task was cancelled after the
+      // parent acknowledged it, so it no longer owns the cohort.
+      yield* cancelDeliveryRun({
+        threadId,
+        runId,
+        generation: 1,
+        messageId: MessageId.make(`message:delegated-delivery-stale:${threadId}`),
+        taskIds: [NodeId.make("node:delegated-delivery-unrelated-cancel-stale")],
+        settles: false,
+        now,
+      });
+      const retried = yield* cancelDeliveryRun({
+        threadId,
+        runId,
+        generation: 2,
+        messageId: MessageId.make(`message:delegated-delivery:${threadId}`),
+        taskIds: [taskId],
+        now,
+      });
+      const retry = retried!.runs.find((row) => row.id === runId)?.delegatedCompletion?.delivery;
+      assert.equal(retry?.generation, 3);
+      assert.deepEqual(retry?.taskIds, [taskId]);
     }),
   );
 
