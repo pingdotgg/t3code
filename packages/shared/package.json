@@ -343,6 +343,10 @@
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
     },
+    "./releaseNotes": {
+      "types": "./src/releaseNotes.ts",
+      "import": "./src/releaseNotes.ts"
+    },
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
