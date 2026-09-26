@@ -214,6 +214,7 @@ function mcpToolApprovalResponse(decision: ProviderApprovalDecision): NativeElic
   switch (decision) {
     case "accept":
     case "acceptForSession":
+    case "acceptAlways":
       return { action: "accept", content: {} };
     case "decline":
       return { action: "decline" };
