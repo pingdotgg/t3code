@@ -160,6 +160,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
+import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -1653,11 +1654,26 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       too old to know this resource. Only safe when the client can reach it directly. */
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
+  /** Latest workspace mutation, so a host file overwritten under this preview repaints. */
+  readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
+  // Host files change on disk while their preview stays mounted, and the asset
+  // response may be cached for an hour. Re-signing after a workspace mutation
+  // gives a new URL, which repaints, and re-resolves a path whose file was
+  // replaced rather than rewritten. Attachment bytes never change.
+  useWorkspaceMutationRefresh({
+    enabled: resource._tag === "media-file" || resource._tag === "workspace-file",
+    mutationId: props.workspaceMutationId ?? null,
+    refresh: () => {
+      // A failed re-sign flows through assetUrl, which offers its own retry.
+      void refreshAssetUrl().catch(() => undefined);
+    },
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+  });
   const path =
     resource._tag === "media-file"
       ? resource.path
