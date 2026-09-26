@@ -1243,7 +1243,7 @@ export function AppearanceSettingsPanel() {
   return (
     <SettingsPageContainer>
       <CustomizeInPlaceCard />
-      <LooksSection expanded />
+      <LooksSection variant="settings" />
       <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary

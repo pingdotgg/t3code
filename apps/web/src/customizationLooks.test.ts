@@ -11,8 +11,12 @@ import {
   deleteLook,
   exportLook,
   importLook,
+  lookProjectKeys,
+  nextLookName,
   resolveLookSettings,
   resolveProjectLook,
+  restoreLook,
+  setLookProjects,
 } from "./customizationLooks";
 
 const decodeSettings = Schema.decodeSync(ClientSettingsSchema);
@@ -117,5 +121,37 @@ describe("look sharing", () => {
     const decoded = decodeSettings({});
     expect(decoded.savedLooks).toEqual([]);
     expect(decoded.projectLookAssignments).toEqual({});
+  });
+  it("makes a look's projects exactly the chosen set, leaving other looks alone", () => {
+    const other = { ...look, id: "forest", name: "Forest" };
+    const start = {
+      ...settings,
+      savedLooks: [look, other],
+      projectLookAssignments: { alpha: look.id, beta: look.id, gamma: other.id },
+    };
+    const next = setLookProjects(start, look.id, ["beta", "delta"]);
+    expect(next.projectLookAssignments).toEqual({
+      beta: look.id,
+      gamma: other.id,
+      delta: look.id,
+    });
+    expect(lookProjectKeys(next, look.id).toSorted()).toEqual(["beta", "delta"]);
+  });
+  it("undoes a delete in place with its projects, without stealing reassigned ones", () => {
+    const other = { ...look, id: "forest", name: "Forest" };
+    const start = {
+      ...settings,
+      savedLooks: [look, other],
+      projectLookAssignments: { alpha: look.id, beta: look.id },
+    };
+    const deleted = assignLook(deleteLook(start, look.id), ["beta"], other.id);
+    const restored = restoreLook(deleted, look, 0, ["alpha", "beta"]);
+    expect(restored.savedLooks.map((entry) => entry.id)).toEqual([look.id, other.id]);
+    expect(restored.projectLookAssignments).toEqual({ alpha: look.id, beta: other.id });
+    expect(restoreLook(restored, look, 0, ["alpha"])).toBe(restored);
+  });
+  it("names new looks without repeating an existing name", () => {
+    expect(nextLookName([])).toBe("Look 1");
+    expect(nextLookName([{ ...look, name: "Look 2" }])).toBe("Look 3");
   });
 });

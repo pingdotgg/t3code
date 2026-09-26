@@ -52,3 +52,45 @@ export function importLook(json: string, id: string): SavedLook {
   const decoded = decodeSharedLook(JSON.parse(json));
   return { id, name: decoded.name, settings: decoded.settings, theme: decoded.theme };
 }
+
+/** Makes exactly `projectKeys` use the look; projects dropped from it return to Default. */
+export function setLookProjects(
+  settings: ClientSettings,
+  lookId: string,
+  projectKeys: readonly string[],
+) {
+  const dropped = Object.entries(settings.projectLookAssignments)
+    .filter(([key, value]) => value === lookId && !projectKeys.includes(key))
+    .map(([key]) => key);
+  return assignLook(assignLook(settings, dropped, null), projectKeys, lookId);
+}
+
+export function lookProjectKeys(settings: ClientSettings, lookId: string) {
+  return Object.entries(settings.projectLookAssignments)
+    .filter(([, value]) => value === lookId)
+    .map(([key]) => key);
+}
+
+/** Puts a deleted look back where it was, with the projects it had. */
+export function restoreLook(
+  settings: ClientSettings,
+  look: SavedLook,
+  index: number,
+  projectKeys: readonly string[],
+) {
+  if (settings.savedLooks.some((entry) => entry.id === look.id)) return settings;
+  const savedLooks = [...settings.savedLooks];
+  savedLooks.splice(Math.min(index, savedLooks.length), 0, look);
+  const projectLookAssignments = { ...settings.projectLookAssignments };
+  for (const key of projectKeys) projectLookAssignments[key] ??= look.id;
+  return { ...settings, savedLooks, projectLookAssignments };
+}
+
+/** "Look 2", "Look 3"… skipping names already taken. */
+export function nextLookName(looks: readonly SavedLook[], base = "Look") {
+  const names = new Set(looks.map((look) => look.name));
+  for (let index = looks.length + 1; ; index += 1) {
+    const name = `${base} ${index}`;
+    if (!names.has(name)) return name;
+  }
+}

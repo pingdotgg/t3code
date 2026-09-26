@@ -41,21 +41,22 @@ on each device or browser. Mobile does not have this mode.
 
 ## Saved looks
 
-Use **Looks** in Customize or **Settings → Appearance** to save the current layout, theme,
-background, and text preferences under a name. Select a saved look and check one or more projects
-under **Apply to projects…**. Checkouts of the same repository share that assignment across
-environments. Looks and assignments stay on this device or browser.
+Use **Look** at the top of Customize to save the current layout, theme, background, and text
+preferences under a name: open the picker and choose **Save current as new look…**. Picking a look
+there uses it for the current project; picking **Default** removes the assignment. **Applies to**
+lists the projects using the look; check or uncheck projects and choose **Apply**. Checkouts of the
+same repository share an assignment across environments. Looks and assignments stay on this device
+or browser.
 
-Projects without an assignment use **Default**. While a project has a look, customization edits
-save to that look for every project using it. **Save as new look** makes a separate copy for the
-current project; **Use Default for this project** removes its assignment. Switching projects
-starts a fresh Undo/Revert history. Settings outside a thread edit Default.
+Projects without a look use **Default**. While a project has a look, customization edits update that
+look for every project using it; save a new look to change one project separately. Switching projects
+starts a fresh Undo/Revert history. In **Settings → Appearance**, the picker chooses which look to
+manage, and edits outside a thread change Default.
 
-Manage looks to rename, duplicate, update from the current customization, or delete them.
-Deleting a look returns its projects to Default. Export with **Download look** or **Copy look JSON**;
-import a JSON file or paste it under **Import a look**. Imports create a new look and do not assign
-it automatically. Share custom themes separately: unavailable theme references fall back to the
-built-in theme.
+The **⋯** menu next to the picker renames, duplicates, exports (**Copy look JSON** or **Download
+look**), imports, or deletes a look. Deleting returns its projects to Default and can be undone from
+the notification. Imports create a new look without assigning it. Share custom themes separately:
+unavailable theme references fall back to the built-in theme.
 
 ## Background scenes
 
