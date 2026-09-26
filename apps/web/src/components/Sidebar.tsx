@@ -725,8 +725,7 @@ function SidebarSectionPlaceholder(props: {
   );
 }
 
-// Zero-height markers reserve no label space at rest. During a drag the
-// sorting strategy opens 24px for a 16px label with 4px clearance on each side.
+// Boundary labels use a 24px row to separate pinned and active project groups.
 const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 
 function SidebarDragBoundary(props: {
@@ -739,7 +738,7 @@ function SidebarDragBoundary(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className="pointer-events-none relative mx-0.5 -mb-px h-0"
+      className={cn("pointer-events-none relative mx-0.5 -mb-px", props.visible ? "h-6" : "h-0")}
     >
       {props.visible ? (
         <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
@@ -5203,7 +5202,7 @@ export default function Sidebar() {
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                visible={from !== null}
+                                visible={from !== null || pinnedProjectGroups.length > 0}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
                             );
@@ -5214,7 +5213,10 @@ export default function Sidebar() {
                                 key="pinned-divider"
                                 marker="pinned-divider"
                                 label="Active"
-                                visible={from !== null}
+                                visible={
+                                  from !== null ||
+                                  (pinnedProjectGroups.length > 0 && activeProjectGroups.length > 0)
+                                }
                                 isDropTarget={dragTargetSection === "active"}
                               />,
                             );
