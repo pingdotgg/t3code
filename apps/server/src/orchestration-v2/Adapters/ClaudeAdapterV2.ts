@@ -1477,9 +1477,12 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
+  // acceptEdits approves edits before the callback runs; everything else it
+  // leaves to the callback, which must ask rather than allow.
   const installPermissionCallback =
     runtimePolicy.approvalPolicy === undefined
-      ? runtimePolicy.runtimeMode === "approval-required"
+      ? runtimePolicy.runtimeMode === "approval-required" ||
+        runtimePolicy.runtimeMode === "auto-accept-edits"
       : runtimePolicy.approvalPolicy !== "never";
 
   if (permissionMode === "plan") {

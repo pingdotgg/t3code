@@ -22,6 +22,8 @@ import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
+import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
+import { assertGrokBackgroundBashOutput } from "./grok_background_bash/output.ts";
 import { grokBackgroundSubagentInput } from "./grok_background_subagent/input.ts";
 import { assertGrokBackgroundSubagentOutput } from "./grok_background_subagent/output.ts";
 import { grokMonitorInput } from "./grok_monitor/input.ts";
@@ -89,6 +91,8 @@ import { threadRollbackInput } from "./thread_rollback/input.ts";
 import { assertPiThreadRollbackOutput } from "./thread_rollback/pi_output.ts";
 import { assertThreadRollbackAfterRestartOutput } from "./thread_rollback_after_restart/codex_output.ts";
 import { threadRollbackAfterRestartInput } from "./thread_rollback_after_restart/input.ts";
+import { threadRollbackAfterStopInput } from "./thread_rollback_after_stop/input.ts";
+import { assertPiThreadRollbackAfterStopOutput } from "./thread_rollback_after_stop/pi_output.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
 import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
 import { assertTodoListGrokOutput } from "./todo_list/grok_output.ts";
@@ -307,6 +311,19 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
         assertOutput: assertGrokAutoBlockedCommandOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_bash",
+    buildInput: grokBackgroundBashInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL("./grok_background_bash/grok_transcript.ndjson", import.meta.url),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundBashOutput,
       },
     ],
   },
@@ -1123,6 +1140,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertThreadRollbackAfterRestartOutput,
+      },
+    ],
+  },
+  {
+    name: "thread_rollback_after_stop",
+    buildInput: threadRollbackAfterStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL(
+          "./thread_rollback_after_stop/pi_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiThreadRollbackAfterStopOutput,
       },
     ],
   },
