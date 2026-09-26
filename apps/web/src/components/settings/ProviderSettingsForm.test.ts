@@ -35,6 +35,13 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("hides the legacy Cursor CLI settings", () => {
+    const cursor = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("cursor")];
+
+    expect(cursor).toBeDefined();
+    expect(deriveProviderSettingsFields(cursor!)).toEqual([]);
+  });
+
   it("derives a select control with its choices for the Antigravity sign-in method", () => {
     const antigravity = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("antigravity")];
     expect(antigravity).toBeDefined();

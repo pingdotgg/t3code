@@ -24,6 +24,9 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 **Auto** uses automatic review on Codex, Claude, and Cursor; providers without an equivalent,
 including OpenCode and Antigravity, fall back to asking.
 
+Cursor never asks for approval in T3 Code. **Supervised** and **Auto** use Cursor's automatic
+review, and every mode except **Full access** keeps Cursor's sandbox on.
+
 For Grok, **Always allow this session** remembers the matching command or tool input. Other
 actions still require approval.
 

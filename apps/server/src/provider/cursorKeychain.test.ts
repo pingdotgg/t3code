@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { makeCachedCursorAccessTokenReader } from "./cursorCredentialStore.ts";
+import { makeCachedCursorAccessTokenReader } from "./cursorKeychain.ts";
 
 describe("Cursor Keychain reader", () => {
   it("shares concurrent reads and rechecks after the cache expires", async () => {
