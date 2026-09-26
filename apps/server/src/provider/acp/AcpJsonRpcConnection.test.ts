@@ -146,34 +146,41 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("fails a native resume that outlives the session load timeout", () =>
-    Effect.gen(function* () {
-      const resumeStarted = yield* Deferred.make<void>();
-      const runtime = yield* AcpSessionRuntime.make({
-        ...mockRuntimeOptions,
-        spawn: {
-          ...mockRuntimeOptions.spawn,
-          env: { T3_ACP_WAIT_FOR_RESUME_RELEASE: "1", T3_ACP_SESSION_LIFECYCLE: "1" },
-        },
-        resumeSessionId: "mock-session-1",
-        resumeMethod: "resume",
-        sessionLoadTimeout: "5 seconds",
-      });
-      yield* runtime.handleSessionUpdate((notification) =>
-        notification.update.sessionUpdate === "user_message_chunk"
-          ? Deferred.succeed(resumeStarted, undefined).pipe(Effect.asVoid)
-          : Effect.void,
-      );
-      const startup = yield* runtime.start().pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(resumeStarted);
-      yield* TestClock.adjust("5 seconds");
+  for (const resumePath of ["startup", "resumeSession"] as const) {
+    it.effect(`fails a native ${resumePath} resume that outlives the session load timeout`, () =>
+      Effect.gen(function* () {
+        const resumeStarted = yield* Deferred.make<void>();
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: { T3_ACP_WAIT_FOR_RESUME_RELEASE: "1", T3_ACP_SESSION_LIFECYCLE: "1" },
+          },
+          ...(resumePath === "startup"
+            ? { resumeSessionId: "mock-session-1", resumeMethod: "resume" as const }
+            : {}),
+          sessionLoadTimeout: "5 seconds",
+        });
+        yield* runtime.handleSessionUpdate((notification) =>
+          notification.update.sessionUpdate === "user_message_chunk"
+            ? Deferred.succeed(resumeStarted, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        const resume = yield* (
+          resumePath === "startup"
+            ? runtime.start()
+            : runtime.start().pipe(Effect.andThen(runtime.resumeSession("mock-session-1")))
+        ).pipe(Effect.flip, Effect.forkChild);
+        yield* Deferred.await(resumeStarted);
+        yield* TestClock.adjust("5 seconds");
 
-      expect(yield* Fiber.join(startup)).toMatchObject({
-        _tag: "AcpTransportError",
-        detail: "session/resume timed out waiting for the agent response.",
-      });
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+        expect(yield* Fiber.join(resume)).toMatchObject({
+          _tag: "AcpTransportError",
+          detail: "session/resume timed out waiting for the agent response.",
+        });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 
   it.effect("waits for native cancellation and drains final updates before another prompt", () =>
     Effect.gen(function* () {

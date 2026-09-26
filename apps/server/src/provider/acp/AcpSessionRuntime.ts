@@ -2182,6 +2182,29 @@ export const make = (
         }),
       );
 
+    // An agent that never answers session/resume must not hang the caller.
+    const runResumeSessionWithTimeout = (
+      resumePayload: EffectAcpSchema.ResumeSessionRequest,
+    ): Effect.Effect<EffectAcpSchema.ResumeSessionResponse, EffectAcpErrors.AcpError> =>
+      runLoggedRequest(
+        "session/resume",
+        resumePayload,
+        acp.agent.resumeSession(resumePayload).pipe(
+          Effect.timeoutOption(options.sessionLoadTimeout ?? defaultSessionLoadTimeout),
+          Effect.flatMap(
+            Effect.fromOption(
+              () =>
+                new EffectAcpErrors.AcpTransportError({
+                  operation: "call-rpc",
+                  method: "session/resume",
+                  detail: "session/resume timed out waiting for the agent response.",
+                  cause: undefined,
+                }),
+            ),
+          ),
+        ),
+      );
+
     const setConfigOption = (
       configId: string,
       value: string | boolean,
@@ -2361,24 +2384,7 @@ export const make = (
               ...additionalDirectories,
               mcpServers: sessionMcpServers(initializeResult),
             } satisfies EffectAcpSchema.ResumeSessionRequest;
-            sessionSetupResult = yield* runLoggedRequest(
-              "session/resume",
-              resumePayload,
-              acp.agent.resumeSession(resumePayload).pipe(
-                Effect.timeoutOption(options.sessionLoadTimeout ?? defaultSessionLoadTimeout),
-                Effect.flatMap(
-                  Effect.fromOption(
-                    () =>
-                      new EffectAcpErrors.AcpTransportError({
-                        operation: "call-rpc",
-                        method: "session/resume",
-                        detail: "session/resume timed out waiting for the agent response.",
-                        cause: undefined,
-                      }),
-                  ),
-                ),
-              ),
-            );
+            sessionSetupResult = yield* runResumeSessionWithTimeout(resumePayload);
           } else {
             return yield* new EffectAcpErrors.AcpRequestError({
               code: -32601,
@@ -2614,11 +2620,7 @@ export const make = (
               cwd: options.cwd,
               mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
             } satisfies EffectAcpSchema.ResumeSessionRequest;
-            return runLoggedRequest(
-              "session/resume",
-              requestPayload,
-              acp.agent.resumeSession(requestPayload),
-            );
+            return runResumeSessionWithTimeout(requestPayload);
           }),
           Effect.flatMap((response) => adoptSession(sessionId, response)),
         ),
