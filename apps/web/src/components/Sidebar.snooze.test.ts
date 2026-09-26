@@ -7,6 +7,13 @@ function localDate(year: number, month: number, day: number, hour: number, minut
   return new Date(year, month - 1, day, hour, minute, 0, 0);
 }
 
+// Weekday names come out of Intl, so they follow the machine's locale: "Mon"
+// on en-US, "Mo" on de-DE, "lun." on fr-FR. Asking Intl for the same day is
+// what keeps the assertion about *which* weekday, not about English.
+function shortWeekday(date: Date): string {
+  return date.toLocaleDateString(undefined, { weekday: "short" });
+}
+
 describe("resolveSnoozePresets", () => {
   it("offers one hour, three hours, evening, tomorrow, and next week in the morning", () => {
     // Wednesday 2026-04-08 10:00 local.
@@ -42,7 +49,7 @@ describe("resolveSnoozePresets", () => {
     const tomorrow = presets.find((preset) => preset.id === "tomorrow");
     expect(tomorrow!.whenLabel).toMatch(/9/);
     const nextWeek = presets.find((preset) => preset.id === "next-week");
-    expect(nextWeek!.whenLabel).toMatch(/Mon/);
+    expect(nextWeek!.whenLabel).toContain(shortWeekday(localDate(2026, 4, 13, 9)));
   });
 
   it("drops the evening preset once evening is near or past", () => {
@@ -80,8 +87,8 @@ describe("snoozeWakeDescription", () => {
     expect(snoozeWakeDescription(localDate(2026, 4, 9, 9).toISOString(), now, "locale")).toContain(
       "tomorrow",
     );
-    expect(snoozeWakeDescription(localDate(2026, 4, 13, 9).toISOString(), now, "locale")).toMatch(
-      /Mon/,
+    expect(snoozeWakeDescription(localDate(2026, 4, 13, 9).toISOString(), now, "locale")).toContain(
+      shortWeekday(localDate(2026, 4, 13, 9)),
     );
   });
 
