@@ -1977,13 +1977,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
+    /** Enables native editing only for the browser that owns keyboard focus. */
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
       // Native editing roles must remain available after the page handles the key.
-      // Background automation must not edit whichever other renderer has focus.
+      // On macOS, sibling guests can all report isFocused(), so Electron's global
+      // focused-WebContents lookup can pick the wrong one. Require a focused frame
+      // too, keeping background automation out of the active renderer's edit menu.
       contents.setIgnoreMenuShortcuts(
         !isPreviewEditingShortcut(input, hostPlatform) ||
-          webContents.getFocusedWebContents() !== contents,
+          !contents.isFocused() ||
+          contents.focusedFrame === null,
       );
     };
     // A popup opens with Electron's default handler, so the page inside it could

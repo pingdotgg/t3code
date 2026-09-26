@@ -441,6 +441,8 @@ const makeFaviconWebContents = (options?: {
   const webContents = {
     id: options?.id ?? 42,
     isDestroyed: () => destroyed,
+    isFocused: vi.fn(() => false),
+    focusedFrame: null as Electron.WebFrameMain | null,
     getType: () => "webview",
     getURL: () => currentUrl,
     getTitle: () => "Preview",
@@ -631,6 +633,8 @@ describe("PreviewManager", () => {
         for (const browser of [preview, popup]) {
           const contents = browser.webContents as Electron.WebContents;
           getFocusedWebContents.mockReturnValue(browser.webContents as never);
+          vi.mocked(contents.isFocused).mockReturnValue(true);
+          Object.assign(contents, { focusedFrame: {} });
           const beforeInput = browser.listeners.get("before-input-event")!;
           const preventDefault = vi.fn();
           const input = {
@@ -655,10 +659,56 @@ describe("PreviewManager", () => {
 
           // An injected paste in an unfocused guest cannot edit the active renderer.
           getFocusedWebContents.mockReturnValue(null);
+          Object.assign(contents, { focusedFrame: null });
           beforeInput({ preventDefault } as never, input as never);
           expect(contents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(true);
           expect(preventDefault).not.toHaveBeenCalled();
         }
+      }),
+    ),
+  );
+
+  effectIt.effect("preserves editing when macOS reports multiple browser guests as focused", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const active = makeFaviconWebContents({ id: 42 });
+        const inactive = makeFaviconWebContents({ id: 43 });
+        for (const browser of [active, inactive]) {
+          const contents = browser.webContents as Electron.WebContents;
+          fromId.mockReturnValue(browser.webContents);
+          yield* manager.createTab(`tab_${contents.id}`);
+          yield* manager.registerWebview(`tab_${contents.id}`, contents.id);
+          // macOS guests can share a native view that reports focus for both.
+          vi.mocked(contents.isFocused).mockReturnValue(true);
+        }
+        getFocusedWebContents.mockReturnValue(inactive.webContents);
+        // A focused child iframe is valid too; it need not be the main frame.
+        Object.assign(active.webContents, { mainFrame: {}, focusedFrame: {} });
+        const paste = {
+          type: "keyDown",
+          key: "v",
+          meta: true,
+          control: false,
+          shift: false,
+          alt: false,
+        };
+        const preventDefault = vi.fn();
+        active.listeners.get("before-input-event")!({ preventDefault } as never, paste as never);
+        expect(
+          (active.webContents as Electron.WebContents).setIgnoreMenuShortcuts,
+        ).toHaveBeenLastCalledWith(false);
+        inactive.listeners.get("before-input-event")!({ preventDefault } as never, paste as never);
+        expect(
+          (inactive.webContents as Electron.WebContents).setIgnoreMenuShortcuts,
+        ).toHaveBeenLastCalledWith(true);
+
+        // A background window may retain its focused frame without native focus.
+        vi.mocked((active.webContents as Electron.WebContents).isFocused).mockReturnValue(false);
+        active.listeners.get("before-input-event")!({ preventDefault } as never, paste as never);
+        expect(
+          (active.webContents as Electron.WebContents).setIgnoreMenuShortcuts,
+        ).toHaveBeenLastCalledWith(true);
+        expect(preventDefault).not.toHaveBeenCalled();
       }),
     ),
   );
