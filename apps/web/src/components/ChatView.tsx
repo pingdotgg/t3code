@@ -511,6 +511,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ServerUpdateAction } from "./ServerUpdateAction";
 import { useAutoBalanceUpdateBanner } from "./chat/useAutoBalanceUpdateBanner";
 import {
+  ComposerServerUpdateAvailable,
   ComposerServerUpdateIcon,
   ComposerServerUpdateStatus,
 } from "./chat/ComposerServerUpdateStatus";
@@ -2785,22 +2786,11 @@ export default function ChatView(props: ChatViewProps) {
               serverLabel={versionMismatchServerLabel}
             />
           ) : versionMismatch ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    className="block max-w-full cursor-help truncate rounded-sm text-left"
-                  >
-                    Server update available
-                  </button>
-                }
-              />
-              <TooltipPopup side="top">
-                {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
-                <span aria-hidden="true">→</span> {versionMismatch.clientVersion}
-              </TooltipPopup>
-            </Tooltip>
+            <ComposerServerUpdateAvailable
+              serverLabel={versionMismatchServerLabel}
+              serverVersion={versionMismatch.serverVersion}
+              targetVersion={versionMismatch.clientVersion}
+            />
           ) : (
             "Server update available"
           ),

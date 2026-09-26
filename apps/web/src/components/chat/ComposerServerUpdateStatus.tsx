@@ -1,9 +1,14 @@
 import { Spinner } from "~/components/ui/spinner";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import type { DesktopUpdateReleaseNote } from "@t3tools/contracts";
 import { CircleAlertIcon, DownloadIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
+import { loadServerUpdateReleaseNotes } from "~/serverUpdateReleaseNotes";
+import { ReleaseNotesPanel } from "../ReleaseNotesPanel";
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
+import { InlineButton } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 
@@ -61,5 +66,58 @@ export function ComposerServerUpdateStatus({
         </TooltipPopup>
       </Tooltip>
     </span>
+  );
+}
+
+interface ServerUpdateVersions {
+  readonly serverLabel: string;
+  readonly serverVersion: string;
+  readonly targetVersion: string;
+}
+
+function ServerUpdateReleaseNotes({
+  serverLabel,
+  serverVersion,
+  targetVersion,
+}: ServerUpdateVersions) {
+  const [releaseNotes, setReleaseNotes] = useState<ReadonlyArray<DesktopUpdateReleaseNote>>([]);
+  useEffect(() => {
+    let current = true;
+    void loadServerUpdateReleaseNotes(targetVersion).then((notes) => {
+      if (current) setReleaseNotes(notes);
+    });
+    return () => {
+      current = false;
+    };
+  }, [targetVersion]);
+
+  return (
+    <ReleaseNotesPanel
+      header={
+        <>
+          <div className="text-sm leading-5 font-medium">Server update available</div>
+          <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
+            {serverLabel} {serverVersion} <span aria-hidden="true">→</span> {targetVersion}
+          </div>
+        </>
+      }
+      omittedReleaseCount={0}
+      releaseNotes={releaseNotes}
+      shell={window.desktopBridge}
+    />
+  );
+}
+
+/** Banner title that opens what the server update brings. Notes load on first open. */
+export function ComposerServerUpdateAvailable(props: ServerUpdateVersions) {
+  return (
+    <Popover>
+      <PopoverTrigger render={<InlineButton />} className="max-w-full">
+        <span className="min-w-0 truncate">Server update available</span>
+      </PopoverTrigger>
+      <PopoverPopup side="top" align="start" tooltipStyle initialFocus={false}>
+        <ServerUpdateReleaseNotes {...props} />
+      </PopoverPopup>
+    </Popover>
   );
 }
