@@ -17,6 +17,10 @@ import {
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+import {
+  buildPlanImplementationPrompt,
+  type ActiveProposedPlan,
+} from "@t3tools/client-runtime/proposed-plan";
 import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {
   parseCodexFeedbackCommand,
@@ -486,6 +490,82 @@ export function useThreadComposerState() {
     uploadThreadFeedback,
   ]);
 
+  const implementingPlanIdRef = useRef<string | null>(null);
+
+  /**
+   * Sends the plan's implementation prompt as its own turn: `default`
+   * interaction mode (not the thread's plan mode) and the plan reference that
+   * lets the server stamp the plan implemented. The user's draft is left
+   * untouched; the prompt is not editable before it goes out.
+   */
+  const onImplementProposedPlan = useCallback(
+    async (plan: ActiveProposedPlan) => {
+      if (implementingPlanIdRef.current !== null) return false;
+      if (!selectedThreadShell || selectedThreadCreation !== null) return false;
+      if (plan.threadId !== selectedThreadShell.id) return false;
+
+      const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+      const draft = getComposerDraftSnapshot(threadKey);
+      const contextBlockReason = composerContextSendBlockReason(draft.context);
+      if (contextBlockReason) {
+        Alert.alert("Too much context", contextBlockReason);
+        return false;
+      }
+      const text = buildPlanImplementationPrompt(plan.planMarkdown);
+      if (text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        Alert.alert(
+          "Plan is too long",
+          "This plan exceeds the message length limit. Trim it on web or desktop before implementing.",
+        );
+        return false;
+      }
+      const thread = selectedThreadDetail ?? selectedThreadShell;
+      const modelSelection = draft.modelSelection ?? thread.modelSelection;
+      const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+      if (
+        selectedEnvironmentRuntime?.connectionState === "connected" &&
+        isModelSelectionUnavailable(serverConfig, modelSelection)
+      ) {
+        Alert.alert(
+          "Antigravity model unavailable",
+          "Set up Antigravity on web or desktop, or choose another model.",
+        );
+        return false;
+      }
+
+      implementingPlanIdRef.current = plan.id;
+      const metadata = makeQueuedMessageMetadata();
+      const enqueuePromise = enqueueThreadOutboxMessage({
+        environmentId: selectedThreadShell.environmentId,
+        threadId: selectedThreadShell.id,
+        messageId: MessageId.make(metadata.messageId),
+        commandId: CommandId.make(metadata.commandId),
+        text,
+        attachments: [],
+        modelSelection,
+        runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        sourceProposedPlan: { threadId: selectedThreadShell.id, planId: plan.id },
+        createdAt: metadata.createdAt,
+      });
+      enqueuePromise.catch((error: unknown) => {
+        setPendingConnectionError(
+          error instanceof Error ? error.message : "Failed to save the queued message.",
+        );
+      });
+      await enqueuePromise.catch(() => undefined);
+      implementingPlanIdRef.current = null;
+      return true;
+    },
+    [
+      selectedEnvironmentRuntime?.connectionState,
+      selectedEnvironmentRuntime?.serverConfig,
+      selectedThreadCreation,
+      selectedThreadDetail,
+      selectedThreadShell,
+    ],
+  );
+
   const onChangeDraftMessage = useCallback(
     (value: string) => {
       if (!selectedThreadShell) {
@@ -817,6 +897,7 @@ export function useThreadComposerState() {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
+    onImplementProposedPlan,
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,
