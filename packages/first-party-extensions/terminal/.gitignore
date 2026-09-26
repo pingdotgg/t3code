@@ -1,0 +1,5 @@
+node_modules/
+.t3-extension/
+*.tgz
+# Staged from @t3tools/ghostty-terminal by stageGhosttyAssets.mjs
+assets/
