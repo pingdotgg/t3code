@@ -83,9 +83,8 @@ export interface LoggingConfiguration extends Resource<
  * An Amazon IVS Chat logging configuration — records the chat messages of
  * the rooms it is attached to into S3, CloudWatch Logs, or a Kinesis
  * Data Firehose delivery stream.
- * @resource
- * @section Creating Logging Configurations
- * @example CloudWatch Logs Destination
+ * ### Creating Logging Configurations
+ * **Example:** CloudWatch Logs Destination
  * ```typescript
  * import * as IVSChat from "alchemy/AWS/IVSChat";
  * import * as Logs from "alchemy/AWS/Logs";
@@ -98,7 +97,7 @@ export interface LoggingConfiguration extends Resource<
  * });
  * ```
  *
- * @example S3 Destination
+ * **Example:** S3 Destination
  * ```typescript
  * const logging = yield* IVSChat.LoggingConfiguration("ChatLogs", {
  *   destinationConfiguration: {
@@ -107,13 +106,15 @@ export interface LoggingConfiguration extends Resource<
  * });
  * ```
  *
- * @section Attaching to Rooms
- * @example Log a Room's Messages
+ * ### Attaching to Rooms
+ * **Example:** Log a Room's Messages
  * ```typescript
  * const room = yield* IVSChat.Room("LiveChat", {
  *   loggingConfigurationIdentifiers: [logging.loggingConfigurationArn],
  * });
  * ```
+ *
+ * @resource
  */
 export const LoggingConfiguration = Resource<LoggingConfiguration>(
   "AWS.IVSChat.LoggingConfiguration",

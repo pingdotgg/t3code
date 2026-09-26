@@ -34,7 +34,7 @@ export class DeadlineTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DeadlineTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

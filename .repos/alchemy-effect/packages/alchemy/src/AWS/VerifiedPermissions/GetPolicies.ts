@@ -32,9 +32,8 @@ export interface GetPoliciesClient {
  * Runtime binding for bulk policy retrieval — bind it to a `PolicyStore`
  * inside a function runtime to fetch policy definitions (e.g. for admin /
  * audit surfaces) without granting mutation rights.
- * @binding
- * @section Reading Policies at Runtime
- * @example Fetch Policies by ID
+ * ### Reading Policies at Runtime
+ * **Example:** Fetch Policies by ID
  * ```typescript
  * // init
  * const policies = yield* AWS.VerifiedPermissions.GetPolicies(store);
@@ -44,6 +43,8 @@ export interface GetPoliciesClient {
  *   policyIds: ["9wYixMplbbZQb5fcZHyJhY"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetPolicies extends Binding.Service<
   GetPolicies,

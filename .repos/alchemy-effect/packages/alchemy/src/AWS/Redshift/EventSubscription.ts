@@ -144,9 +144,8 @@ export interface EventSubscription extends Resource<
  * integration detail-types, so cluster events reach compute through an
  * `EventSubscription` → `SNS.Topic` → `SNS.consumeTopicNotifications` chain.
  * Subscriptions are free and provision instantly.
- * @resource
- * @section Subscribing to Cluster Events
- * @example Route Cluster Events to an SNS Topic
+ * ### Subscribing to Cluster Events
+ * **Example:** Route Cluster Events to an SNS Topic
  * ```typescript
  * const alerts = yield* SNS.Topic("WarehouseAlerts", {});
  * const subscription = yield* Redshift.EventSubscription("WarehouseEvents", {
@@ -155,7 +154,7 @@ export interface EventSubscription extends Resource<
  *   sourceIds: [cluster.clusterIdentifier],
  * });
  * ```
- * @example Only Error-Severity Monitoring Events
+ * **Example:** Only Error-Severity Monitoring Events
  * ```typescript
  * const subscription = yield* Redshift.EventSubscription("WarehouseErrors", {
  *   snsTopicArn: alerts.topicArn,
@@ -163,7 +162,7 @@ export interface EventSubscription extends Resource<
  *   severity: "ERROR",
  * });
  * ```
- * @example Consume the Events in a Function
+ * **Example:** Consume the Events in a Function
  * ```typescript
  * // inside a Lambda Function definition:
  * yield* SNS.consumeTopicNotifications(alerts, (messages) =>
@@ -172,6 +171,8 @@ export interface EventSubscription extends Resource<
  *   ),
  * );
  * ```
+ *
+ * @resource
  */
 export const EventSubscription = Resource<EventSubscription>(
   "AWS.Redshift.EventSubscription",

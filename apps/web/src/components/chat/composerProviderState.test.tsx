@@ -5,11 +5,14 @@ import {
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { getProviderOptionDescriptors } from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../../providerModels";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
+  withImplicitFastModeDefault,
 } from "./composerProviderState";
 
 // Everything in composerProviderState is now data-driven by the model's
@@ -37,8 +40,16 @@ function selectDescriptor(
   };
 }
 
-function booleanDescriptor(id: string): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
-  return { id, label: id, type: "boolean" };
+function booleanDescriptor(
+  id: string,
+  currentValue?: boolean,
+): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
+  return {
+    id,
+    label: id,
+    type: "boolean",
+    ...(typeof currentValue === "boolean" ? { currentValue } : {}),
+  };
 }
 
 function modelWith(
@@ -69,7 +80,7 @@ describe("getComposerProviderState", () => {
     );
   });
 
-  it("returns descriptor defaults when no selections are provided", () => {
+  it("uses descriptor defaults for display without dispatching them as overrides", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,
       model: MODEL,
@@ -86,7 +97,7 @@ describe("getComposerProviderState", () => {
     expect(state).toEqual({
       provider: PROVIDER,
       promptEffort: "high",
-      modelOptionsForDispatch: selections(["effort", "high"]),
+      modelOptionsForDispatch: undefined,
     });
   });
 
@@ -165,9 +176,7 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.promptEffort).toBe("high");
-    expect(state.modelOptionsForDispatch).toEqual(
-      selections(["effort", "high"], ["contextWindow", "200k"], ["agent", "plan"]),
-    );
+    expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "plan"]));
   });
 
   it("drops the plan agent from dispatch when legacy plan mode is disabled", () => {
@@ -219,7 +228,7 @@ describe("getComposerProviderState", () => {
       planModeEnabled: false,
     });
 
-    expect(state.modelOptionsForDispatch).toEqual(selections(["agent", "research"]));
+    expect(state.modelOptionsForDispatch).toBeUndefined();
   });
 
   it("returns undefined dispatch options when the model declares no descriptors", () => {
@@ -291,11 +300,12 @@ describe("getComposerProviderState", () => {
   it("validates options for a known model selected through a legacy alias", () => {
     const state = getComposerProviderState({
       provider: ProviderDriverKind.make("claudeAgent"),
-      model: "opus",
+      model: "legacy-test-model",
       models: [
         {
-          slug: "claude-opus-5",
-          name: "Claude Opus 5",
+          slug: "test-model",
+          name: "Test Model",
+          aliases: ["legacy-test-model"],
           isCustom: false,
           capabilities: {
             optionDescriptors: [
@@ -373,6 +383,91 @@ describe("getComposerProviderState", () => {
     expect(state).not.toHaveProperty("composerFrameClassName");
     expect(state).not.toHaveProperty("composerSurfaceClassName");
     expect(state).not.toHaveProperty("modelPickerIconClassName");
+  });
+
+  it("defaults fastMode to false when the provider reports true but the user has not selected it", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("cursor"),
+      model: MODEL,
+      models: modelWith([booleanDescriptor("fastMode", true)]),
+      modelOptions: undefined,
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
+  });
+
+  it("keeps explicit fastMode true when the user selected Fast", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("cursor"),
+      model: MODEL,
+      models: modelWith([booleanDescriptor("fastMode", true)]),
+      modelOptions: selections(["fastMode", true]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", true]));
+  });
+
+  it("keeps explicit fastMode false when the user selected Normal", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("cursor"),
+      model: MODEL,
+      models: modelWith([booleanDescriptor("fastMode", true)]),
+      modelOptions: selections(["fastMode", false]),
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
+  });
+});
+
+describe("withImplicitFastModeDefault", () => {
+  it("injects fastMode false only when the model exposes fastMode and no selection exists", () => {
+    expect(
+      withImplicitFastModeDefault(
+        {
+          optionDescriptors: [booleanDescriptor("fastMode", true)],
+        },
+        undefined,
+      ),
+    ).toEqual(selections(["fastMode", false]));
+
+    expect(
+      withImplicitFastModeDefault(
+        {
+          optionDescriptors: [booleanDescriptor("fastMode", true)],
+        },
+        selections(["fastMode", true]),
+      ),
+    ).toEqual(selections(["fastMode", true]));
+  });
+
+  it("does not add fastMode when the model does not expose it", () => {
+    expect(
+      withImplicitFastModeDefault(
+        {
+          optionDescriptors: [booleanDescriptor("thinking", true)],
+        },
+        undefined,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("trait controls fastMode display", () => {
+  it("resolves traits fastMode to Normal when the provider defaults to true without a user selection", () => {
+    const models = modelWith([booleanDescriptor("fastMode", true)]);
+    const provider = ProviderDriverKind.make("cursor");
+    const caps = getProviderModelCapabilities(models, MODEL, provider);
+    const resolved = withImplicitFastModeDefault(caps, undefined);
+    const descriptors = getProviderOptionDescriptors({ caps, selections: resolved });
+    const fastMode = descriptors.find((descriptor) => descriptor.id === "fastMode");
+
+    expect(fastMode?.type).toBe("boolean");
+    if (fastMode?.type === "boolean") {
+      expect(fastMode.currentValue).toBe(false);
+    }
   });
 });
 

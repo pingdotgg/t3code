@@ -124,9 +124,8 @@ export interface Workflow extends Resource<
  * `definitionUri`, `main`, `parameterTemplate`, `accelerators`) is immutable —
  * changing any of it replaces the workflow. `name`, `description`,
  * `storageCapacity`, and `storageType` are updated in place.
- * @resource
- * @section Creating a Workflow
- * @example Workflow from an inline definition zip
+ * ### Creating a Workflow
+ * **Example:** Workflow from an inline definition zip
  * ```typescript
  * import * as Omics from "alchemy/AWS/Omics";
  *
@@ -137,13 +136,15 @@ export interface Workflow extends Resource<
  * });
  * ```
  *
- * @example Workflow from an S3-hosted definition
+ * **Example:** Workflow from an S3-hosted definition
  * ```typescript
  * const workflow = yield* Omics.Workflow("Hello", {
  *   engine: "NEXTFLOW",
  *   definitionUri: "s3://my-bucket/workflows/hello.zip",
  * });
  * ```
+ *
+ * @resource
  */
 export const Workflow = Resource<Workflow>("AWS.Omics.Workflow");
 

@@ -37,6 +37,11 @@ export * as LanguageModel from "./LanguageModel.ts"
 /**
  * @since 4.0.0
  */
+export * as McpProtocol from "./McpProtocol.ts"
+
+/**
+ * @since 4.0.0
+ */
 export * as McpSchema from "./McpSchema.ts"
 
 /**

@@ -15,7 +15,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
-export class DesktopTrayActionError extends Schema.TaggedErrorClass<DesktopTrayActionError>()(
+export class DesktopTrayActionError extends Schema.TaggedError<DesktopTrayActionError>()(
   "DesktopTrayActionError",
   {
     action: Schema.String,
@@ -27,7 +27,7 @@ export class DesktopTrayActionError extends Schema.TaggedErrorClass<DesktopTrayA
   }
 }
 
-export class DesktopTrayConfigurationError extends Schema.TaggedErrorClass<DesktopTrayConfigurationError>()(
+export class DesktopTrayConfigurationError extends Schema.TaggedError<DesktopTrayConfigurationError>()(
   "DesktopTrayConfigurationError",
   {
     cause: Schema.Defect(),

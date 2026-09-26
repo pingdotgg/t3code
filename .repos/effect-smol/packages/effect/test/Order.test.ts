@@ -131,6 +131,12 @@ describe("Order", () => {
     deepStrictEqual(max(first, second), first)
   })
 
+  it("combineAll reuses finite criteria across comparisons", () => {
+    const O = Order.combineAll([Order.Number].values())
+    strictEqual(O(1, 2), -1)
+    strictEqual(O(1, 2), -1)
+  })
+
   it("combine", () => {
     type T = [number, string]
     const tuples: Array<T> = [

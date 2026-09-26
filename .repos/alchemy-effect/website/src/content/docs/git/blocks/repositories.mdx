@@ -1,0 +1,198 @@
+---
+title: Repository
+description: One Durable Object per repository, behind the Git.RepoStore service. Provide it, call it from your own routes, compose operations through Git.Engine, or implement its shape over another store.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+`Git.ReposDurableObject` hosts one Durable Object per repository and
+provides `Git.RepoStore`, the service every route reaches it through:
+
+```typescript
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  // ReposDurableObject requires:
+  Layer.provide(Git.HasherInline),            // push verification
+  Layer.provide(Git.BlobStoreR2(GitObjects)), // packs, bundles, spilled pushes
+  Layer.provide(Git.RegistryDurableObject),   // owner/name → repoId
+);
+```
+
+The object is keyed by the repository's id, a ULID the
+[Registry](/git/blocks/registry) hands out, so a rename never moves
+data. Its SQLite holds everything that has to be consistent: refs, the
+object index, hot object bytes, the commit graph, and pull requests. A
+push is a compare-and-swap on a ref inside one transaction.
+
+## The service
+
+```typescript
+const repos = yield* Git.RepoStore;
+const repo = repos.getByName(repoId); // a typed RPC stub over the Durable Object
+```
+
+The stub is `Git.GitRepoShape`. It asks no questions about who is
+calling; that was decided in front of the route:
+
+```typescript
+interface GitRepoShape {
+  // lifecycle
+  initRepo(input): Effect<InitRepoResult, StoreError>;
+  startImport(input): Effect<InitRepoResult, StoreError>;
+  startFork(input): Effect<InitRepoResult, StoreError>;
+  startCompact(): Effect<void, RepoNotFound | StoreError>;
+  startPurge(): Effect<void, RepoNotFound | StoreError>;
+
+  // metadata
+  getRepoMeta(): Effect<RepoMetaData, RepoNotFound | StoreError>;
+  readMeta(): Effect<RepoMetaData, RepoNotFound | StoreError>;
+  updateRepoMeta(input): Effect<RepoMetaData, RepoNotFound | RefNotFound | StoreError>;
+
+  // refs
+  listRefs(input): Effect<RefsPage, RepoNotFound | StoreError>;
+  getRef(name): Effect<RefData, RepoNotFound | RefNotFound | StoreError>;
+  updateRef(input): Effect<RefData, RefConflict | ObjectNotFound | ReadOnlyRepo | …>;
+  removeRef(input): Effect<void, RefNotFound | RefConflict | ReadOnlyRepo | …>;
+
+  // objects
+  readObject(input): Effect<ObjectData, ObjectNotFound | WrongObjectType | …>;
+  readCommitLog(input): Effect<CommitLogPage, RefNotFound | …>;
+  readCommitDiff(input): Effect<CommitDiffData, ObjectNotFound | …>;
+```
+
+Every error is a tagged class the stub reconstructs across the RPC
+boundary, so `Effect.catchTag("RefConflict", …)` works in the Worker.
+
+## Call it from a route of your own
+
+Resolve the id through the registry, then talk to the object. A route
+that answers the default branch's tip:
+
+```typescript
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+
+export const Tip = HttpApiEndpoint.get("tip", "/api/v1/repos/:owner/:repo/tip", {
+  params: Git.RepoPath,
+  success: Git.Ref,
+  error: [Git.RepoNotFound, Git.RefNotFound],
+});
+
+export class AppRoutes extends HttpApiGroup.make("app").add(Tip) {}
+export class AppApi extends HttpApi.make("app").add(AppRoutes) {}
+
+export const AppRoutesLive = HttpApiBuilder.group(AppApi, "app", (h) =>
+  Effect.gen(function* () {
+    const registry = yield* Git.RegistryStore;
+    const repos = yield* Git.RepoStore;
+    return h.handle("tip", Effect.fn(function* ({ params }) {
+      const entry = yield* registry
+        .resolve(params.owner, params.repo)
+        .pipe(Effect.catchTag("StoreError", (error) => Effect.die(error)));
+      if (entry === undefined) return yield* new Git.RepoNotFound(params);
+      const repo = repos.getByName(entry.repoId);
+      const meta = yield* repo
+        .getRepoMeta()
+        .pipe(Effect.catchTag("StoreError", (error) => Effect.die(error)));
+      const ref = yield* repo
+        .getRef(`refs/heads/${meta.defaultBranch}`)
+        .pipe(Effect.catchTag("StoreError", (error) => Effect.die(error)));
+      return new Git.Ref({ name: ref.name, oid: ref.oid as Git.Oid });
+    }));
+  }),
+);
+```
+
+Provide `AppRoutesLive` to `HttpApiBuilder.layer(AppApi)`, then merge that route layer beside `Git.ApiLive`.
+`Git.ApiLive` registers the Git groups.
+[HTTP routes](/git/blocks/server#add-git-to-your-application) shows the full assembly. The registry
+and repository clients are resolved when the group builds; the handler
+runs once per request behind the route middleware.
+
+## Compose application operations
+
+Use `Git.Engine` to work with repository data from your own handler:
+
+```typescript
+const git = yield* Git.Engine;
+const repo = yield* git.repositories.get({ owner: "alice", repo: "demo" });
+const prepared = yield* git.prepareRefRemoval(repo, { ref: "refs/heads/feature" });
+yield* checkRefChanges(repo, prepared.updates);
+yield* prepared.commit;
+yield* Effect.log("branch removed");
+```
+
+Run this inside `Effect.scoped`. `checkRefChanges` is your application function;
+it can use your request user and database. The prepared operation pins the ref
+value and can commit only once before the scope closes. Use the same policy from
+push and merge handlers. [Engine operations](/git/blocks/engine) describes the APIs.
+
+`RepoStore` remains the lower storage contract for implementing another backend.
+Its raw RPC methods are infrastructure primitives, not an authorization boundary.
+
+## Implement your own
+
+The contract is `Git.GitRepoShape` behind `Git.RepoStore`. A different
+store provides the same service, and nothing else in the graph changes:
+
+```typescript
+export const ReposMine = Layer.effect(
+  Git.RepoStore,
+  Effect.gen(function* () {
+    // return { getByName: (repoId) => GitRepoShape }
+  }),
+);
+```
+
+The registry and the blob store are the seams it can reuse. The wire protocol (`fetch`) and the push pipeline are the parts
+that assume the object's transactional storage, so a store without a
+per-repository serialization point starts there.
+
+## Where the bytes are
+
+| Objects | Live in | Because |
+| --- | --- | --- |
+| commits, trees, tags | SQLite rows, deflated | the tree walk behind every fetch runs on SQLite |
+| fresh blobs | SQLite rows, deflated | a push commits as one transaction |
+| oversize blobs | the blob store, one index row here | never buffered in the object |
+| compacted blobs | immutable packs in the blob store | a busy repository's object stays small |
+| clone bundles | the blob store, keyed by a refs hash | the Worker streams them, no pack byte transits the object |
+
+A full clone whose refs have not moved is one object in the blob
+store; the Worker pipes it. Otherwise the clone is assembled from rows
+and packs, and a fresh bundle is scheduled. Objects are stored
+deflated, so a pack is concatenation plus a checksum.
+
+## Jobs
+
+Maintenance runs on the object's alarms, armed by the work itself.
+Every job is idempotent and resumable:
+
+| Job | Armed by | Does |
+| --- | --- | --- |
+| compaction | a push crossing a size threshold, or `startCompact` | rewrites loose blobs into a pack |
+| bundling | refs moving | cuts a fresh clone bundle |
+| purge | `startPurge` | drains rows and blobs, then frees the name |
+| fork, import | `startFork`, `startImport` | copies from a sibling object or fetches from a remote |
+
+```sh
+curl -u "x:$GIT_SECRET" -X POST "$HOST/api/v1/repos/acme/web/compact"
+```
+
+## What it reports
+
+```typescript
+const repo = yield* client.repos.get({ params: { owner: "acme", repo: "web" } });
+
+repo.objects;  // { loose, resident, packed, r2, bytes }
+repo.lastPush; // { ingestMs, stageMs, connectivityMs, finalizeMs, totalMs }
+```
+
+Listings report zeros for both, so listing a thousand repositories does
+not wake a thousand objects. [Scaling](/git/recipes/scaling) has the
+throughput numbers behind the layout above.

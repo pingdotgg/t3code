@@ -13,9 +13,8 @@ export interface GetTagsRequest extends ce.GetTagsRequest {}
  * Retrieve the cost allocation tag keys (or the values of one key)
  * present in your cost data over a time period. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetTagsHttp)`.
- * @binding
- * @section Exploring Dimensions and Tags
- * @example List Cost Allocation Tag Values
+ * ### Exploring Dimensions and Tags
+ * **Example:** List Cost Allocation Tag Values
  * ```typescript
  * // init — account-level binding takes no resource
  * const getTags = yield* AWS.CostExplorer.GetTags();
@@ -26,6 +25,8 @@ export interface GetTagsRequest extends ce.GetTagsRequest {}
  * });
  * const keys = result.Tags;
  * ```
+ *
+ * @binding
  */
 export interface GetTags extends Binding.Service<
   GetTags,

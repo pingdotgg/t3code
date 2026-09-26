@@ -17,6 +17,7 @@ function environment(
     environmentLabel,
     displayUrl,
     isRelayManaged: false,
+    isEnabled: true,
     connectionState: "connected",
     connectionError: null,
     connectionErrorTraceId: null,

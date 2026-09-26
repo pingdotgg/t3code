@@ -17,7 +17,7 @@ export class EventSourceMappingFunction extends Lambda.Function<EventSourceMappi
 export default EventSourceMappingFunction.make(
   {
     main: import.meta.url,
-    url: false,
+    functionUrl: false,
   },
   Effect.gen(function* () {
     const queue = yield* SQS.Queue("EventSourceMappingQueue");

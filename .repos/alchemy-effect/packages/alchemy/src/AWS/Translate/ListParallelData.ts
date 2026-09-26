@@ -6,9 +6,8 @@ import * as Binding from "../../Binding.ts";
  * Runtime binding for `translate:ListParallelData` — list the parallel data
  * resources in the account and region.
  *
- * @binding
- * @section Reading Parallel Data
- * @example List parallel data resources
+ * ### Reading Parallel Data
+ * **Example:** List parallel data resources
  * ```typescript
  * // init
  * const listParallelData = yield* AWS.Translate.ListParallelData();
@@ -17,6 +16,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* listParallelData({ MaxResults: 50 });
  * // result.ParallelDataPropertiesList -> [{ Name, Arn, Status, … }, …]
  * ```
+ *
+ * @binding
  */
 export interface ListParallelData extends Binding.Service<
   ListParallelData,

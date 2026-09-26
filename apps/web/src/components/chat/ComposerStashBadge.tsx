@@ -25,7 +25,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       key={props.pulseKey}
       className={cn(
         props.pulsing
-          ? "animate-[prompt-stash-count-enter_180ms_ease-out_both] text-primary motion-reduce:animate-none"
+          ? "text-primary transition-[opacity,translate] duration-180 ease-out starting:translate-y-0.5 starting:opacity-0 motion-reduce:transition-none"
           : "text-muted-foreground",
       )}
     >
@@ -34,7 +34,12 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   );
 
   return (
-    <ComposerBanner.Root width="content" data-composer-shoulder-tab className="ml-auto">
+    <ComposerBanner.Root
+      density="comfortable"
+      width="content"
+      data-composer-shoulder-tab
+      className="ml-auto"
+    >
       <ComposerBanner.Row
         render={<button type="button" />}
         data-prompt-stash-badge="true"

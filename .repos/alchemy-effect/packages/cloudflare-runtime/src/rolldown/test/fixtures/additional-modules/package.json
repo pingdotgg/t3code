@@ -1,0 +1,9 @@
+{
+  "name": "@fixtures/additional-modules",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#html": "./modules/html-example.html",
+    "#modules/html-example.html": "./modules/html-example.html"
+  }
+}

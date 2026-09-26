@@ -1,4 +1,42 @@
-import type { ProjectScript } from "@t3tools/contracts";
+import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
+
+type ProjectScriptSettings = Pick<
+  ServerSettings,
+  | "defaultProjectScripts"
+  | "projectScriptOverrides"
+  | "projectSettingsOverrides"
+  | "projectSettingsFolded"
+>;
+
+/**
+ * The project's override wins, then environment defaults. Until the legacy
+ * fields have been folded into `projectSettingsOverrides`, the old map (null
+ * there meant "reset to machine defaults") and the aggregate's own scripts
+ * still count, so a server that has not run the fold yet behaves as before.
+ */
+export function resolveProjectScripts(
+  settings: ProjectScriptSettings,
+  project: { id: ProjectId; scripts: readonly ProjectScript[] },
+): readonly ProjectScript[] {
+  const override = settings.projectSettingsOverrides[project.id]?.defaultProjectScripts;
+  if (override !== undefined) return override;
+  if (settings.projectSettingsFolded) return settings.defaultProjectScripts;
+  const legacy = settings.projectScriptOverrides[project.id];
+  if (legacy === null) return settings.defaultProjectScripts;
+  return legacy ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts);
+}
+
+export function projectScriptsInheritDefaults(
+  settings: ProjectScriptSettings,
+  project: { id: ProjectId; scripts: readonly ProjectScript[] },
+): boolean {
+  if (settings.projectSettingsOverrides[project.id]?.defaultProjectScripts !== undefined) {
+    return false;
+  }
+  if (settings.projectSettingsFolded) return true;
+  const legacy = settings.projectScriptOverrides[project.id];
+  return legacy === null || (legacy === undefined && project.scripts.length === 0);
+}
 
 interface ProjectScriptRuntimeEnvInput {
   project: {

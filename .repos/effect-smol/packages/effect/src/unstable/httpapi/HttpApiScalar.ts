@@ -9,6 +9,7 @@
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"
+import * as Function from "../../Function.ts"
 import type * as Layer from "../../Layer.ts"
 import * as HttpRouter from "../http/HttpRouter.ts"
 import * as HttpServerResponse from "../http/HttpServerResponse.ts"
@@ -87,12 +88,6 @@ export type ScalarConfig = {
   /**
    * Path to a favicon image.
    *
-   * **Example** (Setting a relative favicon)
-   *
-   * ```ts
-   * const favicon = "/favicon.svg"
-   * ```
-   *
    * @default undefined
    */
   favicon?: string
@@ -106,12 +101,6 @@ export type ScalarConfig = {
    *
    * Browsers can derive the origin from `window.location.origin`; server
    * rendering needs this value supplied explicitly.
-   *
-   * **Example** (Setting a local server URL)
-   *
-   * ```ts
-   * const baseServerURL = "http://localhost:3000"
-   * ```
    *
    * @default undefined
    */
@@ -156,36 +145,37 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
   readonly source: ScalarSource
   readonly scalar: ScalarConfig | undefined
 }) => {
-  const spec = OpenApi.fromApi(options.api)
-  const { customFetch, ...scalar } = options.scalar ?? {}
-  const scalarConfig = {
-    _integration: "html",
-    ...scalar
-  }
-  const scalarScript = options.source._tag === "Cdn"
-    ? `<script src="${
-      Html.escapeAttribute(
-        `https://cdn.jsdelivr.net/npm/@scalar/api-reference@${
-          encodeURIComponent(options.source.version ?? "latest")
-        }/dist/browser/standalone.min.js`
-      )
-    }" crossorigin></script>`
-    : `<script>${options.source.source}</script>`
-  const response = HttpServerResponse.html(`<!doctype html>
+  const makeResponse = Function.memoize((api: HttpApi.HttpApi<Id, Groups>) => {
+    const spec = OpenApi.fromApi(api)
+    const { customFetch, ...scalar } = options.scalar ?? {}
+    const scalarConfig = {
+      _integration: "html",
+      ...scalar
+    }
+    const scalarScript = options.source._tag === "Cdn"
+      ? `<script src="${
+        Html.escapeAttribute(
+          `https://cdn.jsdelivr.net/npm/@scalar/api-reference@${
+            encodeURIComponent(options.source.version ?? "latest")
+          }/dist/browser/standalone.min.js`
+        )
+      }" crossorigin></script>`
+      : `<script>${options.source.source}</script>`
+    return HttpServerResponse.html(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <title>${Html.escape(spec.info.title)}</title>
     ${
-    !spec.info.description
-      ? ""
-      : `<meta name="description" content="${Html.escapeAttribute(spec.info.description)}"/>`
-  }
+      !spec.info.description
+        ? ""
+        : `<meta name="description" content="${Html.escapeAttribute(spec.info.description)}"/>`
+    }
     ${
-    !spec.info.description
-      ? ""
-      : `<meta name="og:description" content="${Html.escapeAttribute(spec.info.description)}"/>`
-  }
+      !spec.info.description
+        ? ""
+        : `<meta name="og:description" content="${Html.escapeAttribute(spec.info.description)}"/>`
+    }
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1" />
@@ -197,14 +187,15 @@ const makeHandler = <Id extends string, Groups extends HttpApiGroup.Constraint>(
       window.Scalar.createApiReference(document.getElementById('api-reference-container'), {
         ...${Html.escapeJson(scalarConfig)},
         content: ${Html.escapeJson(spec)}${
-    customFetch === undefined ? "" : `,
+      customFetch === undefined ? "" : `,
         customFetch: ${customFetch}`
-  }
+    }
       })
     </script>
   </body>
 </html>`)
-  return Effect.succeed(response)
+  })
+  return Effect.sync(() => makeResponse(options.api))
 }
 
 /**

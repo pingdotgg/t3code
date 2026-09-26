@@ -1,109 +1,156 @@
 # Install T3 Code
 
-T3 Code is a web and desktop GUI for running coding agents on your machine.
+T3 Code runs coding agents on your computer and lets you control them from its
+desktop, web, or mobile app. Set up the machine where the agents will work first.
 
 ## Requirements
 
-Node.js `^22.16 || ^23.11 || >=24.10` on the machine that runs the T3 Code server.
+You need an installed, authenticated provider before starting a thread. You can
+launch T3 Code and configure providers afterwards.
 
-At least one provider CLI, installed and authenticated. See [Providers](#providers) below.
-
-## Run Without Installing
-
-```bash
-npx t3@latest
-```
-
-This starts the T3 Code server on your machine and opens the local web app. Use
-`npx t3@latest --help` for the full CLI reference.
-
-## Desktop App
-
-Download the latest release from
-[GitHub Releases](https://github.com/pingdotgg/t3code/releases), or install from a package
-registry.
-
-Windows:
+## Command line
 
 ```bash
-winget install T3Tools.T3Code
+curl -fsSL https://t3.codes/install.sh | sh
 ```
 
-macOS:
+On Windows, in PowerShell:
+
+```powershell
+irm https://t3.codes/install.ps1 | iex
+```
+
+This puts `t3` in `~/.local/bin`. If your shell reports `command not found`
+afterwards, that directory is not on your `PATH` yet; the installer prints the
+line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
+`T3CODE_VERSION` to pin an exact version.
+
+| Task                                             | Command                                                   |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| Start the server and open the web app            | `t3`                                                      |
+| Start the server without a browser               | `t3 serve`                                                |
+| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md)) |
+| Move to the newest release                       | `t3 update`                                               |
+| Remove it again                                  | `t3 uninstall`                                            |
+
+Run `t3 --help` for the full reference.
+
+To try T3 Code once without installing it, run `npx t3@latest` instead (needs
+Node.js for `npx`).
+
+### Intel Macs
+
+There is no `t3` executable for Intel Macs (the desktop app is available). To
+run a server there, build it from source with Node.js 24 and `vp`
+([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
 
 ```bash
-brew install --cask t3-code
+git clone https://github.com/pingdotgg/t3code
+cd t3code && vp i && vp run build:desktop
+node apps/server/dist/bin.mjs
 ```
 
-Arch Linux:
+`t3 update` and the background service do not apply to a server run this way;
+update it with `git pull` and a rebuild.
 
-Stable:
+## Desktop app
 
-```bash
-yay -S t3code-bin
-```
+Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),
+or use a package manager:
 
-Nightly:
+| Platform           | Install                            |
+| ------------------ | ---------------------------------- |
+| Windows            | `winget install T3Tools.T3Code`    |
+| macOS              | `brew install --cask t3-code`      |
+| Debian, Ubuntu     | `sudo apt install ./T3-Code-*.deb` |
+| Arch Linux         | `yay -S t3code-bin`                |
+| Arch Linux nightly | `yay -S t3code-nightly-bin`        |
 
-```bash
-yay -S t3code-nightly-bin
-```
+The `.deb` updates itself like the other desktop builds. It asks for your
+password to install each update. If your desktop has no password prompt, the
+update fails. Download the new `.deb` and install it the same way.
 
 ### Windows Subsystem for Linux
 
-When the desktop app runs a WSL backend, it installs the matching server runtime into
-`~/.t3/wsl-runtime` inside the selected distro. The first launch after installing or updating T3
-Code may take a little longer while that release's runtime is extracted. Later launches reuse the
-Linux-local copy so startup does not depend on reading application files through `/mnt/c`. After a
-successful launch, T3 Code keeps the current runtime and one previous runtime for rollback and
-removes older caches automatically. If a cached runtime stops working, T3 Code launches from the
-application files under `/mnt/c` instead and reinstalls the runtime on the next launch.
+Choose a WSL distro in **Settings → Connections** to run agents and projects
+there. Install the provider CLIs inside that distro. T3 Code installs its own
+server runtime there automatically; the first launch after an app update can
+take longer.
+
+### Open a project from a terminal
+
+With the desktop app already running on the same machine:
+
+```bash
+t3 app
+```
+
+This opens a new thread for the current directory, adding the project if needed.
+Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
+the desktop app, so a standalone server or an SSH session is not enough. If the
+command cannot reach the app, start or update the desktop app and try again.
+
+## Mobile app
+
+Install T3 Code from the
+[App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
+[Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
+The phone connects to a server on another machine. Follow
+[remote access](./remote-access.md) to link it through T3 Connect or a pairing URL.
+
+If the app crashes during launch, open Settings → Diagnostics on the next launch
+that succeeds. It lists startup crashes from the last 7 days with the error and
+component stack that store crash reports leave out. Copy the report and paste it
+into a GitHub issue. Error messages can quote values from the app, so read it over
+before sharing.
 
 ## Providers
 
-T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
-to use, then authenticate it.
+Open **Settings → Providers** in the web or desktop app, select the environment,
+and enable the provider you want. Installation, login, and configuration belong
+to that environment's machine, even when you connect from a phone or another
+computer.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider    | Install and authenticate                                                                     |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| Codex       | Install [Codex CLI](https://developers.openai.com/codex/cli), then run `codex login`.        |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`. |
+| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                        |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
+| Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
 
-Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
-them on in **Settings** → the provider's card when you want to use them.
+Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
+**Binary path** in provider settings, especially when using a version manager.
+Cursor's executable is `cursor-agent`, although its login command is
+`agent login`. Antigravity can use its managed runtime without a `PATH` entry.
 
-Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
-T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
+T3 Code warns when a provider version has known compatibility problems with your
+release. Check **Settings → Providers** on that environment for the recommended
+version or range. When its package manager supports installing a specific version,
+you can install the recommendation there. Otherwise use the provider's installer
+on the environment's machine. An unlisted version is unverified.
 
-Grok models that support adjustable reasoning show a **Reasoning** control beside the model picker.
-The available levels and default come from the installed Grok Build CLI, so they can vary by model
-and CLI version.
+When a provider CLI is behind its latest release, its provider card shows the
+available version. **Update now** appears only when T3 Code can tell which
+installer owns the CLI (its own update command, Homebrew, or a global npm, pnpm,
+bun, or Vite+ install) and runs that installer. Otherwise update the CLI the same
+way you installed it. Homebrew installs compare against the version Homebrew
+offers, which can trail the npm release by a few hours.
 
-Run the login command on the machine running the T3 Code server, not on the device you browse
-from.
+Add another provider instance for a separate account or configuration. Each
+instance can have its own environment variables, such as API keys or a custom
+base URL. Mark secret values as sensitive; after saving, T3 Code does not display
+their original values.
 
-### Binary Discovery
+For provider-specific setup and accounts, see [Codex](./providers-codex.md),
+[Claude](./providers-claude.md), [OpenCode](./providers-opencode.md), and
+[Antigravity](./providers-antigravity.md).
 
-Each provider CLI must be on the server's `PATH`, or have an explicit binary path set in
-**Settings** → the provider instance → **Binary path**. Use the explicit path when a version
-manager or a non-standard install location keeps the CLI off the `PATH` of the shell that
-started T3 Code.
+## Next steps
 
-### When Auth Is Needed
-
-Provider auth is required before you start a session with that provider, not before you start
-T3 Code. You can install T3 Code, open it, and add providers afterwards. A provider that is not
-authenticated shows its status in **Settings** and fails at session start with the login command
-to run.
-
-For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
-
-## Next Steps
-
-- [Permission modes](./permission-modes.md): how much T3 Code asks before acting
-- [Remote access](./remote-access.md): connect from a phone, tablet, or another desktop
-- [Keeping T3 Code in sync](./updating.md): client and server version skew
-- [Running in the background](./background-service.md): Linux background service
+- [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
+- [Permission modes](./permission-modes.md): choose when agents ask before acting.
+- [Remote access](./remote-access.md): connect from another device.
+- [Running in the background](./background-service.md): keep a Linux or macOS host available.
+- [Updating T3 Code](./updating.md): update the app and connected servers.

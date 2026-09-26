@@ -5,9 +5,8 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:ModifyInstanceGroups` — resizes or reconfigures the bound cluster's instance groups (target counts, EC2 configurations, shrink policies).
- * @binding
- * @section Scaling the Cluster
- * @example Resize the Core Group
+ * ### Scaling the Cluster
+ * **Example:** Resize the Core Group
  * ```typescript
  * const modifyGroups = yield* AWS.EMR.ModifyInstanceGroups(cluster);
  *
@@ -15,6 +14,8 @@ import type { Cluster } from "./Cluster.ts";
  *   InstanceGroups: [{ InstanceGroupId: coreGroupId, InstanceCount: 3 }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface ModifyInstanceGroups extends Binding.Service<
   ModifyInstanceGroups,

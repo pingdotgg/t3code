@@ -1,4 +1,9 @@
-import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ProjectListEntriesResult,
+  ProjectReadFileError,
+  type ProjectReadFileResult,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -71,7 +76,7 @@ vi.mock("~/state/queries", () => ({
 }));
 
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
-import { useProjectFileQuery } from "./projectFilesQueryState";
+import { useProjectEntriesQuery, useProjectFileQuery } from "./projectFilesQueryState";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -92,13 +97,20 @@ function file(contents: string): ProjectReadFileResult {
   };
 }
 
+function projectEntries(paths: readonly string[]): ProjectListEntriesResult {
+  return {
+    entries: paths.map((path) => ({ path, kind: "file" })),
+    truncated: false,
+  };
+}
+
 async function flushEffects(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 }
 
-describe("project file query refresh", () => {
+describe("project query refresh", () => {
   beforeEach(() => {
     projectMocks.listEntries.mockReset();
     projectMocks.optimisticFile.mockReset();
@@ -158,6 +170,55 @@ describe("project file query refresh", () => {
     }
   });
 
+  it("revalidates cached entries when a workspace mutation is observed after mounting", async () => {
+    const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
+    const entriesAtom = Atom.make(
+      Effect.promise(() => {
+        const request = deferred<ProjectListEntriesResult>();
+        requests.push(request);
+        return request.promise;
+      }),
+    ).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(entriesAtom);
+    projectMocks.listEntries.mockReturnValue(entriesAtom);
+    atomHooks.registry = registry;
+    let renderedPaths: readonly string[] = [];
+
+    const render = (mutationId: string | null) => {
+      reactHooks.beginRender();
+      const query = useProjectEntriesQuery(environmentId, "/repo");
+      renderedPaths = query.data?.entries.map((entry) => entry.path) ?? [];
+      useWorkspaceMutationRefresh({
+        mutationId,
+        refresh: query.refresh,
+        resourceKey: "files:environment-1:/repo",
+      });
+    };
+
+    try {
+      await flushEffects();
+      expect(requests).toHaveLength(1);
+      requests[0]!.resolve(projectEntries(["src/old.ts"]));
+      await flushEffects();
+
+      render("mutation-1");
+      expect(renderedPaths).toEqual(["src/old.ts"]);
+      await flushEffects();
+      expect(requests).toHaveLength(2);
+
+      requests[1]!.resolve(projectEntries(["src/new.ts"]));
+      await flushEffects();
+      render("mutation-1");
+      expect(renderedPaths).toEqual(["src/new.ts"]);
+      expect(requests).toHaveLength(2);
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
   it("does not issue a file read for a disabled image preview", async () => {
     const requests: Array<ReturnType<typeof deferred<ProjectReadFileResult>>> = [];
     const readAtom = Atom.make(
@@ -186,6 +247,64 @@ describe("project file query refresh", () => {
       expect(projectMocks.readFile).not.toHaveBeenCalled();
       expect(requests).toHaveLength(0);
     } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
+  it("reports a directory named like an image as not a file", async () => {
+    const readAtom = Atom.make(
+      Effect.fail(
+        new ProjectReadFileError({
+          cwd: "/repo",
+          relativePath: "assets.png",
+          failure: "path_not_file",
+        }),
+      ),
+    );
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    atomHooks.registry = registry;
+
+    try {
+      await flushEffects();
+      reactHooks.beginRender();
+      const query = useProjectFileQuery(environmentId, "/repo", "assets.png");
+      expect(query.isNotFile).toBe(true);
+      expect(query.data).toBeNull();
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
+  it("reports a directory read as not a file", async () => {
+    const readAtom = Atom.make(
+      Effect.fail(
+        new ProjectReadFileError({
+          cwd: "/repo",
+          relativePath: ".agents/skills",
+          failure: "path_not_file",
+        }),
+      ),
+    );
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    atomHooks.registry = registry;
+
+    try {
+      await flushEffects();
+      reactHooks.beginRender();
+      const query = useProjectFileQuery(environmentId, "/repo", ".agents/skills");
+      expect(query.isNotFile).toBe(true);
+      expect(query.data).toBeNull();
+    } finally {
+      unmount();
       registry.dispose();
       atomHooks.registry = null;
     }

@@ -290,3 +290,21 @@ test("preserves a successful result when a same-SHA rerun has no artifact", asyn
   assert.equal(published, true);
   assert.equal(updatedComment, false);
 });
+
+test("accepts V2 without comparing it to the V1 scenario", () => {
+  const current = result();
+  current.scenario.id = "thread-transfer-v2";
+  current.providers.codex.ceiling = { ...current.providers.codex.ceiling, totalWireBytes: 3000000 };
+  assert.equal(validateResult(current), current);
+  const comment = renderComment({
+    current,
+    baseline: result(),
+    currentRun: { sha: "bbbbbbbb", conclusion: "success", url: "https://example.com/current" },
+    baselineRun: { sha: "aaaaaaaa", matchesBase: true, url: "https://example.com/baseline" },
+  });
+  assert.match(comment, /fixture changed/);
+  assert.doesNotMatch(comment, /This PR changes transfer ceilings/);
+  assert.doesNotMatch(comment, /[+-]\d+\.\d+%/);
+  current.scenario.id = "unrecognized";
+  assert.throws(() => validateResult(current), /not supported/);
+});

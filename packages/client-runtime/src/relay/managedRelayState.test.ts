@@ -25,7 +25,6 @@ import {
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
   setManagedRelaySession,
-  waitForManagedRelayClerkToken,
 } from "./managedRelayState.ts";
 
 let registry = AtomRegistry.make();
@@ -117,17 +116,6 @@ function clerkToken(expiresAtSeconds: number): string {
 
 describe("createManagedRelayQueryManager", () => {
   afterEach(resetRegistry);
-
-  it.effect("waits for the current cloud session before reading its token", () =>
-    Effect.gen(function* () {
-      const tokenFiber = yield* waitForManagedRelayClerkToken(registry).pipe(Effect.forkChild);
-
-      setSession();
-
-      expect(yield* Fiber.join(tokenFiber)).toBe("clerk-token");
-      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
-    }),
-  );
 
   it.effect("deregisters an environment through the current Clerk session", () =>
     Effect.gen(function* () {
@@ -243,30 +231,38 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
-  it("emits credential changes only when the managed relay account changes", async () => {
-    setManagedRelaySession(registry, {
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("first-token"),
-    });
-    const changes = Effect.runPromise(
-      managedRelayAccountChanges(registry).pipe(Stream.take(2), Stream.runCollect),
-    );
-    await vi.waitFor(() => {
-      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(0);
-    });
+  it.effect("emits credential changes only when the managed relay account changes", () =>
+    Effect.gen(function* () {
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("first-token"),
+      });
+      const changes = yield* managedRelayAccountChanges(registry).pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(
+            0,
+          );
+        }),
+      );
 
-    setManagedRelaySession(registry, {
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("refreshed-token"),
-    });
-    setManagedRelaySession(registry, {
-      accountId: "account-2",
-      readClerkToken: () => Promise.resolve("second-token"),
-    });
-    setManagedRelaySession(registry, null);
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("refreshed-token"),
+      });
+      setManagedRelaySession(registry, {
+        accountId: "account-2",
+        readClerkToken: () => Promise.resolve("second-token"),
+      });
+      setManagedRelaySession(registry, null);
 
-    expect(Array.from(await changes)).toEqual(["account-2", null]);
-  });
+      expect(Array.from(yield* Fiber.join(changes))).toEqual(["account-2", null]);
+    }),
+  );
 
   it("shares one Clerk token read across concurrent relay list and status queries", async () => {
     const secondEnvironment = {

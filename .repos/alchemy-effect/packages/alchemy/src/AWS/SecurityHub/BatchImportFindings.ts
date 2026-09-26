@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.BatchImportFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Import a Custom Finding
+ * ### Working with Findings
+ * **Example:** Import a Custom Finding
  * ```typescript
  * // init — account-level binding, no resource argument
  * const batchImportFindings = yield* AWS.SecurityHub.BatchImportFindings();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   Findings: [myAsffFinding],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchImportFindings extends Binding.Service<
   BatchImportFindings,

@@ -1,4 +1,3 @@
-import { NonNegativeInt } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -13,10 +12,6 @@ import {
   GetProjectionStateInput,
   ProjectionState,
 } from "../Services/ProjectionState.ts";
-
-const MinLastAppliedSequenceRowSchema = Schema.Struct({
-  minLastAppliedSequence: Schema.NullOr(NonNegativeInt),
-});
 
 const makeProjectionStateRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -40,6 +35,26 @@ const makeProjectionStateRepository = Effect.gen(function* () {
           last_applied_sequence = excluded.last_applied_sequence,
           updated_at = excluded.updated_at
       `,
+  });
+
+  const upsertProjectionStateRows = SqlSchema.void({
+    Request: Schema.Array(ProjectionState),
+    execute: (rows) =>
+      rows.length === 0
+        ? Effect.void
+        : sql`
+            INSERT INTO projection_state ${sql.insert(
+              rows.map((row) => ({
+                projector: row.projector,
+                last_applied_sequence: row.lastAppliedSequence,
+                updated_at: row.updatedAt,
+              })),
+            )}
+            ON CONFLICT (projector)
+            DO UPDATE SET
+              last_applied_sequence = excluded.last_applied_sequence,
+              updated_at = excluded.updated_at
+          `,
   });
 
   const getProjectionStateRow = SqlSchema.findOneOption({
@@ -70,20 +85,14 @@ const makeProjectionStateRepository = Effect.gen(function* () {
       `,
   });
 
-  const readMinLastAppliedSequence = SqlSchema.findOne({
-    Request: Schema.Void,
-    Result: MinLastAppliedSequenceRowSchema,
-    execute: () =>
-      sql`
-        SELECT
-          MIN(last_applied_sequence) AS "minLastAppliedSequence"
-        FROM projection_state
-      `,
-  });
-
   const upsert: ProjectionStateRepositoryShape["upsert"] = (row) =>
     upsertProjectionStateRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.upsert:query")),
+    );
+
+  const upsertMany: ProjectionStateRepositoryShape["upsertMany"] = (rows) =>
+    upsertProjectionStateRows(rows).pipe(
+      Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.upsertMany:query")),
     );
 
   const getByProjector: ProjectionStateRepositoryShape["getByProjector"] = (input) =>
@@ -96,19 +105,11 @@ const makeProjectionStateRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.listAll:query")),
     );
 
-  const minLastAppliedSequence: ProjectionStateRepositoryShape["minLastAppliedSequence"] = () =>
-    readMinLastAppliedSequence(undefined).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionStateRepository.minLastAppliedSequence:query"),
-      ),
-      Effect.map((row) => row.minLastAppliedSequence),
-    );
-
   return {
     upsert,
+    upsertMany,
     getByProjector,
     listAll,
-    minLastAppliedSequence,
   } satisfies ProjectionStateRepositoryShape;
 });
 

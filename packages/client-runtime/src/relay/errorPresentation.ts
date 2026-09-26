@@ -11,7 +11,7 @@ export const DPOP_UNKNOWN_HINT =
 
 export const DPOP_RETRY_HINT = "Hint: Try again. If the problem continues, copy the trace ID.";
 
-export function dpopFailureHint(reason: DpopFailureReason | undefined): string {
+function dpopFailureHint(reason: DpopFailureReason | undefined): string {
   if (reason === "time_window") return DPOP_CLOCK_HINT;
   if (reason === undefined) return DPOP_UNKNOWN_HINT;
   return DPOP_RETRY_HINT;

@@ -36,9 +36,8 @@ export type MetricSinkError =
  * `CloudWatch.PutMetricDataHttp`) on the hosting Lambda Function:
  * `Effect.provide(Layer.provideMerge(AWS.CloudWatch.MetricSinkHttp, AWS.CloudWatch.PutMetricDataHttp))`.
  *
- * @binding
- * @section Streaming Metrics
- * @example Stream Datums into CloudWatch
+ * ### Streaming Metrics
+ * **Example:** Stream Datums into CloudWatch
  * ```typescript
  * // init — grants cloudwatch:PutMetricData; all datums publish under Namespace
  * const sink = yield* AWS.CloudWatch.MetricSink({
@@ -55,6 +54,8 @@ export type MetricSinkError =
  *   }) satisfies AWS.CloudWatch.MetricSinkDatum),
  * ).pipe(Stream.run(sink));
  * ```
+ *
+ * @binding
  */
 export interface MetricSink extends Binding.Service<
   MetricSink,

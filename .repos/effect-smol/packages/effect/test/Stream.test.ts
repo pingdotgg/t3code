@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest"
 import { assertExitFailure, assertSuccess, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import {
   Array,
+  ByteSize,
   Cause,
   Channel,
   Clock,
@@ -23,6 +24,7 @@ import {
   References,
   Result,
   Schedule,
+  Schema,
   Scope,
   Sink,
   Stream,
@@ -31,7 +33,7 @@ import {
 import { isReadonlyArrayNonEmpty, type NonEmptyArray } from "effect/Array"
 import { constTrue, constVoid, pipe } from "effect/Function"
 import { TestClock } from "effect/testing"
-import * as fc from "effect/testing/FastCheck"
+import * as fc from "fast-check"
 import { assertCauseFail, assertFailure } from "./utils/assert.ts"
 import { chunkCoordination } from "./utils/chunkCoordination.ts"
 
@@ -148,6 +150,16 @@ describe("Stream", () => {
           )
         )
       )
+
+    it.effect("mkArrayBuffer - concatenates Uint8Array chunks", () =>
+      Effect.gen(function*() {
+        const buffer = yield* Stream.make(
+          new Uint8Array([1, 2]),
+          new Uint8Array([3, 4])
+        ).pipe(Stream.mkArrayBuffer)
+
+        assert.deepStrictEqual([...new Uint8Array(buffer)], [1, 2, 3, 4])
+      }))
 
     it.effect("runForEachWhile continues across chunk boundaries", () =>
       Effect.gen(function*() {
@@ -394,6 +406,30 @@ describe("Stream", () => {
         assert.deepStrictEqual(result, [1, 2, 3])
       }))
 
+    it.effect("range - zero chunk size does not change the emitted range", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.range(1, 3, 0).pipe(
+          Stream.take(4),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, [1, 2, 3])
+      }))
+
+    it.effect("range - normalizes the chunk size without changing emitted values", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, 0, 2.9], (chunkSize) =>
+          Stream.range(1, 5, chunkSize).pipe(
+            Stream.chunks,
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [
+          [[1], [2], [3], [4], [5]],
+          [[1], [2], [3], [4], [5]],
+          [[1, 2], [3, 4], [5]]
+        ])
+      }))
+
     it.effect("service", () =>
       Effect.gen(function*() {
         const result = yield* Stream.service(Greeter).pipe(
@@ -436,6 +472,20 @@ describe("Stream", () => {
         assert.deepStrictEqual(result, [3])
       }))
 
+    it.effect("fromIteratorSucceed - normalizes the chunk size", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, -1, 1.9], (maxChunkSize) =>
+          Stream.fromIteratorSucceed([1, 2, 3][Symbol.iterator](), maxChunkSize).pipe(
+            Stream.chunks,
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1], [2], [3]]
+        ])
+      }))
+
     it.effect("fromIterable - emits array as one chunk by default", () =>
       Effect.gen(function*() {
         const result = yield* Stream.fromIterable([1, 2, 3, 4]).pipe(
@@ -452,6 +502,20 @@ describe("Stream", () => {
           Stream.runCollect
         )
         assert.deepStrictEqual(result, [[1, 2], [3, 4], [5]])
+      }))
+
+    it.effect("fromIterable - normalizes the chunk size", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, 0, 2.9], (chunkSize) =>
+          Stream.fromIterable([1, 2, 3], { chunkSize }).pipe(
+            Stream.chunks,
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1, 2], [3]]
+        ])
       }))
 
     it.effect("scoped - provides scope to fromEffect pull effects", () =>
@@ -562,6 +626,18 @@ describe("Stream", () => {
           assert.deepStrictEqual(result, ["a", "b", "c"])
         }))
 
+      it.effect("emits a carriage-return-terminated line before pulling upstream again", () =>
+        Effect.gen(function*() {
+          const result = yield* Stream.succeed("a\r").pipe(
+            Stream.concat(Stream.fail("boom")),
+            Stream.splitLines,
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.result
+          )
+          assert.deepStrictEqual(result, Result.succeed(["a"]))
+        }))
+
       it.effect("emits the final line when the stream does not end with a newline", () =>
         Effect.gen(function*() {
           const result = yield* splitLines(["a\nb\nc\n", "d\ne"])
@@ -612,10 +688,9 @@ describe("Stream", () => {
       it.effect.prop(
         "matches String.linesIterator regardless of chunk boundaries",
         {
-          chunks: fc.array(
-            fc.array(fc.constantFrom("a", "b", "\n", "\r"), { maxLength: 8 }).map((chars) => chars.join("")),
-            { maxLength: 8 }
-          )
+          chunks: Schema.Array(
+            Schema.String.check(Schema.isPattern(/^[ab\n\r]*$/), Schema.isMaxLength(8))
+          ).check(Schema.isMaxLength(8))
         },
         Effect.fnUntraced(function*({ chunks }) {
           const result = yield* splitLines(chunks)
@@ -647,6 +722,52 @@ describe("Stream", () => {
   })
 
   describe("taking", () => {
+    it.effect("limitBytes - does not evaluate the fallback below the limit", () =>
+      Effect.gen(function*() {
+        let evaluated = false
+        const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])]
+        const result = yield* Stream.fromIterable(chunks).pipe(
+          Stream.limitBytes("5 B", () => {
+            evaluated = true
+            return Stream.empty
+          }),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, chunks)
+        assert.isFalse(evaluated)
+      }))
+
+    it.effect("limitBytes - does not evaluate the fallback at the limit", () =>
+      Effect.gen(function*() {
+        let evaluated = false
+        const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])]
+        const result = yield* Stream.fromIterable(chunks).pipe(
+          Stream.limitBytes(ByteSize.bytes(4), () => {
+            evaluated = true
+            return Stream.empty
+          }),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, chunks)
+        assert.isFalse(evaluated)
+      }))
+
+    it.effect("limitBytes - drops the crossing chunk and switches to the fallback", () =>
+      Effect.gen(function*() {
+        const first = new Uint8Array([1, 2])
+        const crossing = new Uint8Array([3, 4, 5, 6])
+        const after = new Uint8Array([7])
+        const fallback = new Uint8Array([8, 9])
+        const result = yield* Stream.make(first, crossing, after).pipe(
+          Stream.limitBytes(ByteSize.bytes(5), () => Stream.succeed(fallback)),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, [first, fallback])
+      }))
+
     it.effect("take - pulls the first `n` values from a stream", () =>
       Effect.gen(function*() {
         const result = yield* Stream.range(1, 5).pipe(
@@ -654,6 +775,16 @@ describe("Stream", () => {
           Stream.runCollect
         )
         assert.deepStrictEqual(result, [1, 2, 3])
+      }))
+
+    it.effect("take - rounds positive fractional counts down", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([0.5, 1.9, 2.9], (n) =>
+          Stream.make(1, 2, 3).pipe(
+            Stream.take(n),
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [[], [1], [1, 2]])
       }))
 
     it.effect("take - short-circuits stream evaluation", () =>
@@ -670,6 +801,24 @@ describe("Stream", () => {
       Effect.gen(function*() {
         const result = yield* Stream.never.pipe(
           Stream.take(0),
+          Stream.runCollect
+        )
+        assert.deepStrictEqual(result, [])
+      }))
+
+    it.effect("take - treating NaN as a non-positive count", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.make(1, 2, 3).pipe(
+          Stream.take(Number.NaN),
+          Stream.runCollect
+        )
+        assert.deepStrictEqual(result, [])
+      }))
+
+    it.effect("take - NaN short-circuits stream evaluation", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.never.pipe(
+          Stream.take(Number.NaN),
           Stream.runCollect
         )
         assert.deepStrictEqual(result, [])
@@ -729,6 +878,25 @@ describe("Stream", () => {
           result2: pipe(Stream.runCollect(stream), Effect.map(Array.takeRight(take)))
         }))
         deepStrictEqual(result1, result2)
+      }))
+
+    it.effect("takeRight - normalizes the element count", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, -1, 0.5, 1.9, 2.9], (n) =>
+          Stream.make(1, 2, 3).pipe(
+            Stream.takeRight(n),
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [[], [], [], [3], [2, 3]])
+      }))
+
+    it.effect("takeRight - zero normalized counts do not evaluate the upstream", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.fromEffect(Effect.die("upstream evaluated")).pipe(
+          Stream.takeRight(Number.NaN),
+          Stream.runCollect
+        )
+        assert.deepStrictEqual(result, [])
       }))
   })
 
@@ -790,6 +958,22 @@ describe("Stream", () => {
           Effect.exit
         )
         assertExitFailure(exit, Cause.die(defect))
+      }))
+
+    it.effect("catchDefect", () =>
+      Effect.gen(function*() {
+        const defect = new Error("boom")
+        const recovered = yield* Stream.die(defect).pipe(
+          Stream.catchDefect((caught) => Stream.succeed(caught)),
+          Stream.runCollect
+        )
+        const failed = yield* Stream.fail("failure").pipe(
+          Stream.catchDefect(() => Stream.succeed("recovered")),
+          Stream.runCollect,
+          Effect.exit
+        )
+        assert.deepStrictEqual(recovered, [defect])
+        assertExitFailure(failed, Cause.fail("failure"))
       }))
 
     it.effect("catchIf with refinement", () =>
@@ -1199,6 +1383,17 @@ describe("Stream", () => {
 
         assert.deepStrictEqual(result, Array.scan([1, 2, 3, 4, 5], 0, (acc, curr) => acc + curr))
       }))
+
+    it.effect("mapAccumArrayEffect data-first", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.mapAccumArrayEffect(
+          Stream.make(1, 2, 3),
+          () => 0,
+          (sum, values) => Effect.succeed([sum + values.length, values] as const)
+        ).pipe(Stream.runCollect)
+
+        assert.deepStrictEqual(result, [1, 2, 3])
+      }))
   })
 
   describe("grouping", () => {
@@ -1387,8 +1582,8 @@ describe("Stream", () => {
   it.effect.prop(
     "rechunk",
     {
-      chunks: fc.array(fc.array(fc.integer()), { minLength: 1 }),
-      size: fc.integer({ min: 1, max: 100 })
+      chunks: Schema.Array(Schema.Array(Schema.Int)).check(Schema.isMinLength(1)),
+      size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))
     },
     Effect.fnUntraced(function*({ chunks, size }) {
       const actual = yield* Stream.fromArray(chunks).pipe(
@@ -1402,6 +1597,58 @@ describe("Stream", () => {
       assert.deepStrictEqual(actual, grouped(expected, size))
     })
   )
+
+  it.effect.each([
+    { size: 200001, lengths: [200000] },
+    { size: 200000, lengths: [200000] },
+    { size: 199999, lengths: [199999, 1] }
+  ])("rechunk preserves a large source chunk with target $size", ({ lengths, size }) =>
+    Effect.gen(function*() {
+      const values = Array.makeBy(200000, (i) => i)
+      const actual = yield* Stream.fromArray(values).pipe(
+        Stream.rechunk(size),
+        Stream.chunks,
+        Stream.runCollect
+      )
+      assert.deepStrictEqual(actual.map((chunk) => chunk.length), lengths)
+      assert.deepStrictEqual(actual.flat(), values)
+    }))
+
+  it.effect("rechunk preserves large input split across source chunks", () =>
+    Effect.gen(function*() {
+      const values = Array.makeBy(200001, (i) => i)
+      const actual = yield* Stream.fromArrays(values.slice(0, 1), values.slice(1)).pipe(
+        Stream.rechunk(200002),
+        Stream.chunks,
+        Stream.runCollect
+      )
+      assert.deepStrictEqual(actual.map((chunk) => chunk.length), [200001])
+      assert.deepStrictEqual(actual.flat(), values)
+    }))
+
+  it.effect("rechunk and grouped normalize their chunk size", () =>
+    Effect.gen(function*() {
+      const counts = [Number.NaN, 0.5, 1.9, 2.9]
+      const rechunked = yield* Effect.forEach(counts, (n) =>
+        Stream.make(1, 2, 3).pipe(
+          Stream.rechunk(n),
+          Stream.chunks,
+          Stream.runCollect
+        ))
+      const groupedResults = yield* Effect.forEach(counts, (n) =>
+        Stream.make(1, 2, 3).pipe(
+          Stream.grouped(n),
+          Stream.runCollect
+        ))
+      const expected: typeof rechunked = [
+        [[1], [2], [3]],
+        [[1], [2], [3]],
+        [[1], [2], [3]],
+        [[1, 2], [3]]
+      ]
+      assert.deepStrictEqual(rechunked, expected)
+      assert.deepStrictEqual(groupedResults, expected)
+    }))
 
   describe("transduce", () => {
     it.effect("no remainder", () =>
@@ -2184,6 +2431,31 @@ describe("Stream", () => {
   })
 
   describe("aggregateWithin", () => {
+    it.effect("does not grow the fiber continuation stack while upstream is idle", () =>
+      Effect.gen(function*() {
+        const continuationCounts: Array<number> = []
+        const schedule = Schedule.spaced("10 millis").pipe(
+          Schedule.tap(() =>
+            Effect.withFiber((fiber) =>
+              Effect.sync(() => {
+                continuationCounts.push(
+                  (fiber as unknown as { readonly _stack: ReadonlyArray<unknown> })._stack.length
+                )
+              })
+            )
+          )
+        )
+        const fiber = yield* Stream.never.pipe(
+          Stream.aggregateWithin(Sink.take(25), schedule),
+          Stream.runDrain,
+          Effect.forkChild({ startImmediately: true })
+        )
+        yield* TestClock.adjust("1 second")
+        assert.isAbove(continuationCounts.length, 1)
+        assert.strictEqual(continuationCounts.at(-1), continuationCounts[0])
+        yield* Fiber.interrupt(fiber)
+      }))
+
     it.effect("groupedWithin does not emit empty arrays when upstream is idle", () =>
       Effect.gen(function*() {
         const fiber = yield* Stream.never.pipe(
@@ -2194,6 +2466,21 @@ describe("Stream", () => {
         )
         yield* TestClock.adjust("1 second")
         assert.isUndefined(fiber.pollUnsafe())
+      }))
+
+    it.effect("groupedWithin normalizes the chunk size", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, 0.5, 1.9, 2.9], (n) =>
+          Stream.make(1, 2, 3).pipe(
+            Stream.groupedWithin(n, "1 hour"),
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1, 2], [3]]
+        ])
       }))
 
     it.effect("groupedWithin flushes final partial batch on upstream end without waiting for the schedule", () =>
@@ -2787,8 +3074,8 @@ describe("Stream", () => {
     it.effect.prop(
       "zipWith - equivalence with array operations",
       {
-        left: fc.array(fc.integer()),
-        right: fc.array(fc.integer())
+        left: Schema.Array(Schema.Int),
+        right: Schema.Array(Schema.Int)
       },
       Effect.fnUntraced(function*({ left, right }) {
         const stream = Stream.zipWith(
@@ -3688,6 +3975,24 @@ describe("Stream", () => {
         deepStrictEqual(result1, result2)
       }))
 
+    it.effect("drop - normalizes the count independently of upstream chunking", () =>
+      Effect.gen(function*() {
+        const counts = [Number.NaN, 0.5, 1.9, 2.9]
+        const results = yield* Effect.forEach([
+          Stream.make(1, 2, 3),
+          Stream.fromArrays([1], [2], [3])
+        ], (stream) =>
+          Effect.forEach(counts, (n) =>
+            stream.pipe(
+              Stream.drop(n),
+              Stream.runCollect
+            )))
+        assert.deepStrictEqual(results, [
+          [[1, 2, 3], [1, 2, 3], [2, 3], [3]],
+          [[1, 2, 3], [1, 2, 3], [2, 3], [3]]
+        ])
+      }))
+
     it.effect("drop - does not swallow errors", () =>
       Effect.gen(function*() {
         const result = yield* pipe(
@@ -3709,6 +4014,16 @@ describe("Stream", () => {
           result2: pipe(stream, Stream.runCollect, Effect.map(Array.dropRight(n)))
         }))
         deepStrictEqual(result1, result2)
+      }))
+
+    it.effect("dropRight - normalizes the element count", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, 0.5, 1.9, 2.9], (n) =>
+          Stream.make(1, 2, 3).pipe(
+            Stream.dropRight(n),
+            Stream.runCollect
+          ))
+        assert.deepStrictEqual(results, [[1, 2, 3], [1, 2, 3], [1, 2], [1]])
       }))
 
     it.effect("dropRight - does not swallow errors", () =>
@@ -4584,6 +4899,34 @@ describe("Stream", () => {
   })
 
   describe("sliding", () => {
+    it.effect("sliding and slidingSize normalize window and step sizes", () =>
+      Effect.gen(function*() {
+        const counts = [Number.NaN, 0.5, 1.9, 2.9]
+        const windows = yield* Effect.forEach(counts, (n) =>
+          Stream.make(1, 2, 3).pipe(
+            Stream.sliding(n),
+            Stream.runCollect
+          ))
+        const steps = yield* Effect.forEach(counts, (n) =>
+          Stream.make(1, 2, 3).pipe(
+            Stream.slidingSize(2, n),
+            Stream.runCollect
+          ))
+
+        assert.deepStrictEqual(windows, [
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1], [2], [3]],
+          [[1, 2], [2, 3]]
+        ])
+        assert.deepStrictEqual(steps, [
+          [[1, 2], [2, 3]],
+          [[1, 2], [2, 3]],
+          [[1, 2], [2, 3]],
+          [[1, 2], [3]]
+        ])
+      }))
+
     it.effect("sliding - returns a sliding window", () =>
       Effect.gen(function*() {
         const stream0 = Stream.fromArrays(
@@ -4662,6 +5005,23 @@ describe("Stream", () => {
           result2: pipe(stream, Stream.grouped(3), Stream.runCollect)
         }))
         deepStrictEqual(result1, result2)
+      }))
+
+    it.effect("slidingSize is independent of upstream chunk boundaries", () =>
+      Effect.gen(function*() {
+        const result = yield* Effect.all([
+          Stream.make(1, 2, 3, 4, 5),
+          Stream.fromArrays([1, 2], [3, 4, 5]),
+          Stream.fromArrays([1], [2], [3], [4], [5]),
+          Stream.fromArrays([1], [2], [3], [4])
+        ].map((stream) => stream.pipe(Stream.slidingSize(2, 3), Stream.runCollect)))
+
+        deepStrictEqual(result, [
+          [[1, 2], [4, 5]],
+          [[1, 2], [4, 5]],
+          [[1, 2], [4, 5]],
+          [[1, 2], [4]]
+        ])
       }))
 
     it.effect("sliding - fails if upstream produces an error", () =>
@@ -5046,8 +5406,18 @@ describe("Stream", () => {
   })
 
   describe("broadcastN", () => {
+    it.effect("normalizes the number of downstream streams", () =>
+      Effect.gen(function*() {
+        const results = yield* Effect.forEach([Number.NaN, -1, 0.5, 1.9, 2.9], (n) =>
+          Stream.empty.pipe(
+            Stream.broadcastN({ n, capacity: 1 }),
+            Effect.map((streams) => streams.length)
+          ))
+        assert.deepStrictEqual(results, [0, 0, 0, 1, 2])
+      }))
+
     it.effect("fans out to a fixed number of streams", () =>
-      Effect.scoped(Effect.gen(function*() {
+      Effect.gen(function*() {
         const [left, right] = yield* Stream.make(1, 2, 3).pipe(
           Stream.broadcastN({ n: 2, capacity: 4 })
         )
@@ -5058,10 +5428,10 @@ describe("Stream", () => {
         ], { concurrency: "unbounded" })
 
         assert.deepStrictEqual(result, [[1, 2, 3], [1, 2, 3]])
-      })))
+      }))
 
     it.effect("propagates failures to all downstream streams", () =>
-      Effect.scoped(Effect.gen(function*() {
+      Effect.gen(function*() {
         const [left, right] = yield* Stream.fail("boom").pipe(
           Stream.broadcastN({ n: 2, capacity: 4 })
         )
@@ -5072,7 +5442,59 @@ describe("Stream", () => {
         ], { concurrency: "unbounded" })
 
         assert.deepStrictEqual(result, [Exit.fail("boom"), Exit.fail("boom")])
-      })))
+      }))
+  })
+
+  describe("fromEventListener", () => {
+    it.effect("subscribes and emits events", () =>
+      Effect.gen(function*() {
+        const target = new EventTarget()
+
+        const dispatchEvents = Effect.gen(function*() {
+          yield* Effect.yieldNow
+          target.dispatchEvent(new CustomEvent("test", { detail: 1 }))
+          target.dispatchEvent(new CustomEvent("test", { detail: 2 }))
+          target.dispatchEvent(new CustomEvent("test", { detail: 3 }))
+          target.dispatchEvent(new CustomEvent("test", { detail: 4 }))
+        })
+
+        const stream = Stream.fromEventListener<CustomEvent>(target, "test")
+
+        const [result] = yield* Effect.all([
+          stream.pipe(
+            Stream.map((event) => event.detail),
+            // take is required because the stream will never terminate on its own
+            Stream.take(4),
+            Stream.runCollect
+          ),
+          dispatchEvents
+        ], { concurrency: "unbounded" })
+
+        assert.deepStrictEqual(result, [1, 2, 3, 4])
+      }))
+
+    it.effect("ends after the first event with once: true", () =>
+      Effect.gen(function*() {
+        const target = new EventTarget()
+
+        const dispatchEvents = Effect.gen(function*() {
+          yield* Effect.yieldNow
+          target.dispatchEvent(new CustomEvent("test", { detail: 1 }))
+          target.dispatchEvent(new CustomEvent("test", { detail: 2 }))
+        })
+
+        const stream = Stream.fromEventListener<CustomEvent>(target, "test", { once: true })
+
+        const [result] = yield* Effect.all([
+          stream.pipe(
+            Stream.map((event) => event.detail),
+            Stream.runCollect
+          ),
+          dispatchEvents
+        ], { concurrency: "unbounded" })
+
+        assert.deepStrictEqual(result, [1])
+      }))
   })
 })
 

@@ -19,9 +19,8 @@ export interface GetInstancesHealthStatusRequest extends Omit<
  * registering an instance and its health status becoming available.
  * Provide the implementation with
  * `Effect.provide(AWS.CloudMap.GetInstancesHealthStatusHttp)`.
- * @binding
- * @section Instance Health
- * @example Read Health of All Instances
+ * ### Instance Health
+ * **Example:** Read Health of All Instances
  * ```typescript
  * const getInstancesHealthStatus =
  *   yield* AWS.CloudMap.GetInstancesHealthStatus(service);
@@ -30,12 +29,14 @@ export interface GetInstancesHealthStatusRequest extends Omit<
  * console.log(Status?.["worker-1"]); // "HEALTHY" | "UNHEALTHY" | "UNKNOWN"
  * ```
  *
- * @example Read Health of Specific Instances
+ * **Example:** Read Health of Specific Instances
  * ```typescript
  * const { Status } = yield* getInstancesHealthStatus({
  *   Instances: ["worker-1", "worker-2"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetInstancesHealthStatus extends Binding.Service<
   GetInstancesHealthStatus,

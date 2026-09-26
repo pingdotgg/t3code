@@ -1,0 +1,153 @@
+---
+title: "Part 3: Publish a repository"
+description: Allow anonymous clones of public repositories while preserving authenticated writes.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The credential from [Part 2](/git/tutorial/part-2) protects every request.
+Now make `acme/web` readable by anyone while keeping writes protected.
+
+## Mark the repository public
+
+```sh
+curl --fail-with-body -u "x:$GIT_SECRET" \
+  -X PATCH "$HOST/api/v1/repos/acme/web" \
+  -H "Content-Type: application/json" \
+  -d '{"public":true}'
+```
+
+`public` is stored repository metadata. It does not bypass your middleware.
+An anonymous request still receives `401` until you teach the policy to use it.
+
+## Look up the repository's visibility
+
+Create `src/public-read.ts`:
+
+```typescript
+// src/public-read.ts
+import * as Git from "alchemy/Git";
+import * as Effect from "effect/Effect";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+
+export const PublicRead = Effect.gen(function* () {
+  const registry = yield* Git.RegistryStore;
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest;
+    if (!Git.isRead(request)) return false;
+    const { owner, repo } = yield* HttpRouter.params;
+    if (owner === undefined || repo === undefined) return false;
+    const entry = yield* registry
+      .resolve(owner.toLowerCase(), repo.toLowerCase().replace(/\.git$/, ""))
+      .pipe(Effect.catchTag("StoreError", () => Effect.succeed(undefined)));
+    return entry?.public === true;
+  });
+});
+```
+
+The outer effect acquires the registry when the routes are built. The inner
+effect checks the current request. It permits only reads of a named, public
+repository. Listing every repository is not a read of one public repository.
+
+`Git.isRead` understands Git's protocol: a clone includes a POST to
+`git-upload-pack`, while discovery for a push must remain protected.
+
+## Permit public reads in the middleware
+
+Import the check:
+
+```diff lang="typescript"
+// src/middleware.ts
+import { GitSecret } from "./secret.ts";
++import { PublicRead } from "./public-read.ts";
+```
+
+Acquire it alongside the credential:
+
+```diff lang="typescript"
+// src/middleware.ts
+    const secret = yield* (yield* GitSecret).text;
++    const publicRead = yield* PublicRead;
+```
+
+Before returning `401`, allow requests that pass the public-read check:
+
+```diff lang="typescript"
+// src/middleware.ts
+        if (Redacted.value(password) === Redacted.value(yield* secret)) {
+          return yield* httpEffect;
+        }
++        if (yield* publicRead) return yield* httpEffect;
+        return HttpServerResponse.empty({
+```
+
+The existing `Git.RegistryDurableObject` layer supplies this new dependency.
+The shared credential still allows all operations; anonymous callers only get
+the public reads you just defined.
+
+## Deploy the policy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy deploy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+This updates the Worker. The public flag you set earlier remains stored in the
+registry.
+
+## Clone without credentials
+
+```sh
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+  clone "$HOST/acme/web.git" public-copy
+git -C public-copy fsck --strict
+```
+
+The clone should succeed without a password. Disabling the credential helper
+ensures this check does not accidentally use a saved credential.
+
+## Verify that anonymous writes still fail
+
+```sh
+GIT_TERMINAL_PROMPT=0 git -c credential.helper= -C work \
+  push origin HEAD:anonymous-write
+```
+
+Expect authentication to fail and no `anonymous-write` branch to be created.
+An authenticated push from Part 2 still works.
+
+## Verify that private reads still fail
+
+Temporarily make the repository private:
+
+```sh
+curl --fail-with-body -u "x:$GIT_SECRET" \
+  -X PATCH "$HOST/api/v1/repos/acme/web" \
+  -H "Content-Type: application/json" \
+  -d '{"public":false}'
+curl -i "$HOST/api/v1/repos/acme/web"
+```
+
+The anonymous read must return `401`. Restore the public setting before
+continuing:
+
+```sh
+curl --fail-with-body -u "x:$GIT_SECRET" \
+  -X PATCH "$HOST/api/v1/repos/acme/web" \
+  -H "Content-Type: application/json" \
+  -d '{"public":true}'
+```
+
+[Part 4: Give users their own credentials](/git/tutorial/part-4) replaces the
+shared credential with accounts and individual API keys.

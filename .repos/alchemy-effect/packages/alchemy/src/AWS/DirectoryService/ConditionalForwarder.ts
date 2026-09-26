@@ -48,9 +48,8 @@ export interface ConditionalForwarder extends Resource<
  * directory — forwards DNS queries for a remote domain to that domain's DNS
  * servers. Conditional forwarders are the prerequisite for trust
  * relationships with other domains.
- * @resource
- * @section Creating a Conditional Forwarder
- * @example Forward a Partner Domain
+ * ### Creating a Conditional Forwarder
+ * **Example:** Forward a Partner Domain
  * ```typescript
  * const directory = yield* Directory("Corp", {
  *   type: "MicrosoftAD",
@@ -65,6 +64,8 @@ export interface ConditionalForwarder extends Resource<
  *   dnsIpAddrs: ["10.10.0.2", "10.10.1.2"],
  * });
  * ```
+ *
+ * @resource
  */
 export const ConditionalForwarder = Resource<ConditionalForwarder>(
   "AWS.DirectoryService.ConditionalForwarder",

@@ -77,6 +77,7 @@ function withRateLimit(document: string): string {
   return `${document.slice(0, end)}\n  ${RATE_LIMIT_SELECTION}\n${document.slice(end)}`;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const snapshots = yield* Ref.make<ReadonlyMap<string, GraphQlBudgetSnapshot>>(new Map());
 
@@ -84,8 +85,8 @@ export const make = Effect.gen(function* () {
     function* (host, document, options) {
       if (!isReadOperation(document)) return document;
       const now = yield* Clock.currentTimeMillis;
+      const key = `${hostKey(host)}\0${yield* SourceControlRateLimit.CredentialScope}`;
       const retryAt = yield* Ref.modify(snapshots, (current) => {
-        const key = hostKey(host);
         const snapshot = current.get(key);
         if (snapshot === undefined) return [null, current] as const;
         if (snapshot.resetAtMs <= now) {
@@ -93,8 +94,11 @@ export const make = Effect.gen(function* () {
           next.delete(key);
           return [null, next] as const;
         }
-        const remaining = Math.max(0, snapshot.remaining - Math.max(1, snapshot.cost));
-        if (options?.allowReserve !== true && remaining < snapshot.limit * GRAPHQL_RESERVE_RATIO) {
+        const remaining = snapshot.remaining - Math.max(1, snapshot.cost);
+        if (
+          remaining < 0 ||
+          (options?.allowReserve !== true && remaining < snapshot.limit * GRAPHQL_RESERVE_RATIO)
+        ) {
           return [snapshot.resetAtMs, current] as const;
         }
         const next = new Map(current);
@@ -117,20 +121,25 @@ export const make = Effect.gen(function* () {
   )(function* (host, raw) {
     const snapshot = snapshotFrom(raw);
     if (snapshot === null) return;
+    const key = `${hostKey(host)}\0${yield* SourceControlRateLimit.CredentialScope}`;
     yield* Ref.update(snapshots, (current) => {
-      const key = hostKey(host);
       const previous = current.get(key);
       // Concurrent reads can finish out of order. Quota only falls within one reset window, and
       // an answer from an older window must not replace the current one.
-      if (
-        previous !== undefined &&
-        (snapshot.resetAtMs < previous.resetAtMs ||
-          (snapshot.resetAtMs === previous.resetAtMs && snapshot.remaining >= previous.remaining))
-      ) {
+      if (previous !== undefined && snapshot.resetAtMs < previous.resetAtMs) {
         return current;
       }
       const next = new Map(current);
-      next.set(key, snapshot);
+      // Keep the conservative balance, but learn the observed cost even when our reservation
+      // was larger. Otherwise one expensive read makes every later cheap read spend its cost.
+      next.set(
+        key,
+        previous !== undefined &&
+          snapshot.resetAtMs === previous.resetAtMs &&
+          snapshot.remaining >= previous.remaining
+          ? { ...previous, cost: snapshot.cost }
+          : snapshot,
+      );
       return next;
     });
   });

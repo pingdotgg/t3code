@@ -31,6 +31,37 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "collects %s skill names that begin with a digit",
+    (prefix) => {
+      expect(collectComposerInlineTokens(`Use ${prefix}2spec next`)).toEqual([
+        {
+          type: "skill",
+          value: "2spec",
+          source: `${prefix}2spec`,
+          start: 4,
+          end: 9 + prefix.length,
+        },
+      ]);
+    },
+  );
+
+  it.each(["€", "£", "¥", "₹", "₩", "₿", "𑿝"])("leaves %s currency amounts as text", (prefix) => {
+    expect(
+      collectComposerInlineTokens(
+        `${prefix}20 ${prefix}1_000 ${prefix}20k ${prefix}100M ${prefix}1e6 `,
+      ),
+    ).toEqual([]);
+  });
+
+  it("leaves digits-only dollar amounts and compact monetary expressions as text", () => {
+    expect(collectComposerInlineTokens("I'll pay $20 tomorrow")).toEqual([]);
+    expect(collectComposerInlineTokens("Budget is $1_000 total")).toEqual([]);
+    expect(collectComposerInlineTokens("Budget is $20k tomorrow")).toEqual([]);
+    expect(collectComposerInlineTokens("Cost is $100M total")).toEqual([]);
+    expect(collectComposerInlineTokens("Limit is $1e6 here")).toEqual([]);
+  });
+
   it("does not convert incomplete trailing tokens", () => {
     expect(collectComposerInlineTokens("Use $ui")).toEqual([]);
     expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
@@ -141,6 +172,15 @@ describe("collectComposerInlineTokens", () => {
   it("leaves a file link past the label cap as plain text", () => {
     const label = `${"a".repeat(509)}.tsx`;
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
+  });
+
+  it("leaves a context reference link alone", () => {
+    expect(
+      collectComposerInlineTokens("see [checkout.png](t3-context://v1/image/ctx_abc) ok"),
+    ).toEqual([]);
+    expect(collectComposerInlineTokens("see ![ctx_abc](t3-context://v1/image/ctx_abc) ok")).toEqual(
+      [],
+    );
   });
 
   it("stays fast on unterminated bracket runs", () => {

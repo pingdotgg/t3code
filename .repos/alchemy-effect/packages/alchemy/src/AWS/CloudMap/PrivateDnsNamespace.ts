@@ -85,9 +85,8 @@ export interface PrivateDnsNamespace extends Resource<
  * Namespace creation and deletion are asynchronous — the provider polls the
  * Cloud Map operations API (bounded) until they complete, which typically
  * takes 30-60 seconds.
- * @resource
- * @section Creating Namespaces
- * @example Private DNS Namespace in a VPC
+ * ### Creating Namespaces
+ * **Example:** Private DNS Namespace in a VPC
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -98,7 +97,7 @@ export interface PrivateDnsNamespace extends Resource<
  * });
  * ```
  *
- * @example Namespace with SOA TTL and Description
+ * **Example:** Namespace with SOA TTL and Description
  * ```typescript
  * const namespace = yield* AWS.CloudMap.PrivateDnsNamespace("AppNamespace", {
  *   name: "internal.example.com",
@@ -108,8 +107,8 @@ export interface PrivateDnsNamespace extends Resource<
  * });
  * ```
  *
- * @section Registering Services
- * @example Service with A Records
+ * ### Registering Services
+ * **Example:** Service with A Records
  * ```typescript
  * const service = yield* AWS.CloudMap.Service("Backend", {
  *   namespaceId: namespace.namespaceId,
@@ -117,6 +116,8 @@ export interface PrivateDnsNamespace extends Resource<
  *   routingPolicy: "MULTIVALUE",
  * });
  * ```
+ *
+ * @resource
  */
 export const PrivateDnsNamespace = Resource<PrivateDnsNamespace>(
   "AWS.CloudMap.PrivateDnsNamespace",
@@ -241,7 +242,7 @@ export const PrivateDnsNamespaceProvider = () =>
           if (namespace?.Id === undefined) {
             return yield* Effect.fail(
               new sd.NamespaceNotFound({
-                Message: `namespace ${name} not visible after create`,
+                message: `namespace ${name} not visible after create`,
               }),
             );
           }

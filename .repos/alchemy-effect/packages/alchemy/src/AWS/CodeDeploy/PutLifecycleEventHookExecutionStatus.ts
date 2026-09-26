@@ -9,9 +9,8 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
  * (`BeforeAllowTraffic`/`AfterAllowTraffic` for Lambda deployments, plus
  * `BeforeInstall`/`AfterInstall`/`AfterAllowTestTraffic` for ECS) reports
  * `Succeeded` or `Failed` back to the paused deployment.
- * @binding
- * @section Lifecycle Hooks
- * @example Report a Validation Result
+ * ### Lifecycle Hooks
+ * **Example:** Report a Validation Result
  * ```typescript
  * const putHookStatus =
  *   yield* AWS.CodeDeploy.PutLifecycleEventHookExecutionStatus(group);
@@ -22,6 +21,8 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
  *   status: "Succeeded",
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutLifecycleEventHookExecutionStatus extends Binding.Service<
   PutLifecycleEventHookExecutionStatus,

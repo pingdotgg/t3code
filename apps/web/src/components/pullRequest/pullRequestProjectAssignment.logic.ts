@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, EnvironmentMachineKind, ProjectId } from "@t3tools/contracts";
 
 /** The little of a project this needs: who holds it, and which repository it is a copy of. */
 export interface AssignableProject {
@@ -69,6 +69,7 @@ export interface PickableEnvironment {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly label: string;
+  readonly machine?: EnvironmentMachineKind;
 }
 
 /**
@@ -85,17 +86,21 @@ export interface PickableEnvironment {
 export function resolvePickableEnvironments(
   current: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
   projects: ReadonlyArray<AssignableProject & { readonly workspaceRoot: string }>,
-  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly machine?: EnvironmentMachineKind;
+  }>,
 ): ReadonlyArray<PickableEnvironment> {
   const own = projects.find(
     (project) =>
       project.environmentId === current.environmentId && project.id === current.projectId,
   );
   const key = own === undefined ? undefined : repositoryKey(own);
-  const ownLabel = environments.find(
+  const ownEnvironment = environments.find(
     (environment) => environment.environmentId === current.environmentId,
-  )?.label;
-  if (own === undefined || !key || ownLabel === undefined) return [];
+  );
+  if (own === undefined || !key || ownEnvironment === undefined) return [];
   const others = environments.flatMap((environment) => {
     if (environment.environmentId === current.environmentId) return [];
     // One entry per server, whichever copy comes first: a server holding two worktrees of the
@@ -112,6 +117,7 @@ export function resolvePickableEnvironments(
             projectId: copy.id,
             workspaceRoot: copy.workspaceRoot,
             label: environment.label,
+            ...(environment.machine === undefined ? {} : { machine: environment.machine }),
           },
         ];
   });
@@ -123,7 +129,8 @@ export function resolvePickableEnvironments(
       environmentId: current.environmentId,
       projectId: own.id,
       workspaceRoot: own.workspaceRoot,
-      label: ownLabel,
+      label: ownEnvironment.label,
+      ...(ownEnvironment.machine === undefined ? {} : { machine: ownEnvironment.machine }),
     },
     ...others,
   ];

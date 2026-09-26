@@ -1,0 +1,176 @@
+---
+title: Networking
+description: Private networks, default-deny firewalls, managed load balancers with TLS, and stable Floating & Primary IPs for Hetzner Cloud.
+---
+
+The networking toolkit around your
+[Servers](/hetzner/compute/servers): private **Networks** for
+east-west traffic, **Firewalls** to close the public interface,
+**Load Balancers** as the health-checked (and TLS-terminated) front
+door, and **Floating/Primary IPs** for addresses that outlive any
+one machine.
+
+## Private networks
+
+A [`Network`](/providers/hetzner/network) is an RFC1918 range with
+subnets per network zone (`eu-central`, `us-east`, `us-west`,
+`ap-southeast`). Attach Servers via their `networks` prop:
+
+```typescript
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Net = Hetzner.Network("net", {
+  ipRange: "10.0.0.0/16",
+  subnets: [
+    { type: "cloud", networkZone: "eu-central", ipRange: "10.0.1.0/24" },
+  ],
+});
+
+export const Box = Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  location: "nbg1",
+  networks: [Net],
+});
+```
+
+Traffic inside the network never touches the public interface —
+which is what lets a [Firewall](#firewalls) close the public app
+port entirely while a [Load Balancer](#load-balancer) still reaches
+the Server over its private IP. The `ipRange` can be extended in
+place; shrinking it replaces the network.
+
+## Firewalls
+
+A [`Firewall`](/providers/hetzner/firewall) is a named rule set
+applied to servers' public interfaces. Once applied it is
+**default-deny inbound** (outbound stays open) — only what a rule
+allows gets through:
+
+```typescript
+export const Wall = Hetzner.Firewall("wall", {
+  applyTo: [Box],
+  rules: [
+    {
+      direction: "in",
+      protocol: "tcp",
+      port: "22",
+      sourceIps: ["0.0.0.0/0", "::/0"],
+      description: "ssh",
+    },
+    {
+      direction: "in",
+      protocol: "tcp",
+      port: "3000",
+      sourceIps: ["10.0.0.0/16"],
+      description: "app, private net only",
+    },
+  ],
+});
+```
+
+`port` takes a single port (`"443"`) or a range (`"1024-5000"`).
+Everything about a firewall — name, rules, targets — updates in
+place; nothing replaces.
+
+## Load Balancer
+
+A [`LoadBalancer`](/providers/hetzner/loadbalancer) fronts one or
+more servers with health-checked forwarding. Target servers over
+their private IP so the public port can stay closed:
+
+```typescript
+export const Edge = Hetzner.LoadBalancer("edge", {
+  location: "nbg1",
+  loadBalancerType: "lb11",
+  networks: [Net],
+  algorithm: "round_robin",
+  targets: [{ type: "server", server: Box, usePrivateIp: true }],
+  services: [
+    {
+      protocol: "http",
+      listenPort: 80,
+      destinationPort: 3000,
+      healthCheck: {
+        protocol: "http",
+        port: 3000,
+        interval: 3,
+        timeout: 2,
+        retries: 2,
+        http: { path: "/health" },
+      },
+    },
+  ],
+});
+```
+
+Each entry in `services` is one listener, keyed by `listenPort`.
+The resolved LB exposes `ipv4`/`ipv6`. The `loadBalancerType`
+(`lb11`, `lb21`, …) upgrades in place but can't downgrade; changing
+`location` replaces.
+
+### TLS termination
+
+Terminate HTTPS at the LB with a
+[`Certificate`](/providers/hetzner/certificate). A **managed**
+certificate is issued by Let's Encrypt — its domains must be zones
+in [Hetzner DNS](/hetzner/networking/dns):
+
+```typescript
+const cert = yield* Hetzner.Certificate("cert", {
+  type: "managed",
+  domainNames: ["example.com", "www.example.com"],
+});
+
+const lb = yield* Hetzner.LoadBalancer("edge", {
+  // ...
+  services: [
+    {
+      protocol: "https",
+      listenPort: 443,
+      destinationPort: 3000,
+      certificates: [cert],
+      http: { redirectHttp: true },
+    },
+  ],
+});
+```
+
+`redirectHttp: true` makes the LB answer port 80 with a redirect to
+HTTPS. Bring-your-own PEM works too: `type: "uploaded"` with
+`certificate` and `privateKey`.
+
+## Floating & Primary IPs
+
+Servers get ephemeral public IPs by default — replace the server,
+lose the address. Two resources decouple addresses from machines:
+
+- A [`PrimaryIp`](/providers/hetzner/primaryip) is the address a
+  server boots with. Declaring it as its own resource keeps it
+  alive independent of any server.
+- A [`FloatingIp`](/providers/hetzner/floatingip) can be re-pointed
+  at any server in its home location at any time — the classic
+  failover/blue-green address.
+
+```typescript
+const float = yield* Hetzner.FloatingIp("float", {
+  type: "ipv4",
+  homeLocation: "nbg1",
+});
+
+yield* Hetzner.FloatingIpAssignment("float-on-box", {
+  floatingIp: float,
+  server: Box,
+});
+```
+
+Re-deploying the assignment with a different `server` moves the
+address in place — no replacement, no DNS change.
+
+## Where next
+
+- [Tutorial part 4](/hetzner/tutorial/part-4) — wire a Network,
+  Firewall, and Load Balancer around a live Service.
+- [DNS](/hetzner/networking/dns) — point your domain at the LB.
+- [Providers reference](/providers) — every prop and attribute of
+  the resources above.

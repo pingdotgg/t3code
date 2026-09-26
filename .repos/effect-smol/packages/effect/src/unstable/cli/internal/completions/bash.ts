@@ -27,45 +27,97 @@ const flagNamesForWordlist = (flag: Completions.FlagDescriptor): Array<string> =
   return names
 }
 
-/**
- * Build an associative array mapping each flag form to a group index.
- * At completion time, if any form in a group appears in COMP_WORDS,
- * all forms in that group are removed from the candidate list.
- */
+/** Emit a Bash 3.2-compatible used-flag filter. */
 const buildFlagGroupDeclarations = (
   flags: ReadonlyArray<Completions.FlagDescriptor>,
   lines: Array<string>
 ): void => {
   if (flags.length === 0) return
-  lines.push(`  # Build used-flag filter`)
-  lines.push(`  local -A _flag_groups`)
-  let groupIdx = 0
-  for (const flag of flags) {
-    const forms = flagNamesForWordlist(flag)
-    for (const form of forms) {
-      lines.push(`  _flag_groups[${form}]=${groupIdx}`)
-    }
-    groupIdx++
-  }
-  lines.push(`  local -A _used_groups`)
+  const groups = flags.map(flagNamesForWordlist)
+  lines.push(`  local ${groups.map((_, index) => `_used_${index}=""`).join(" ")}`)
   lines.push(`  for ((i = 1; i < cword; i++)); do`)
-  lines.push(`    local _g="\${_flag_groups[\${words[i]}]:-}"`)
-  lines.push(`    [[ -n "$_g" ]] && _used_groups[$_g]=1`)
+  lines.push(`    case "\${words[i]%%=*}" in`)
+  groups.forEach((forms, index) => {
+    lines.push(`      ${forms.join("|")}) _used_${index}=1 ;;`)
+  })
+  lines.push(`    esac`)
   lines.push(`  done`)
   lines.push(`  local _filtered_flags=""`)
-  lines.push(`  for _f in ${flags.flatMap(flagNamesForWordlist).join(" ")}; do`)
-  lines.push(`    local _g="\${_flag_groups[$_f]:-}"`)
-  lines.push(`    [[ -z "$_g" || -z "\${_used_groups[$_g]:-}" ]] && _filtered_flags+=" $_f"`)
-  lines.push(`  done`)
+  groups.forEach((forms, index) => {
+    lines.push(`  [[ -n "$_used_${index}" ]] || _filtered_flags+=" ${forms.join(" ")}"`)
+  })
   lines.push(``)
 }
 
-const flagValueCompletion = (type: Completions.FlagType): string | undefined => {
+/**
+ * Complete choices without `compgen -W`, which reparses quoted values. Escape
+ * only the portion readline replaces for the active quote context.
+ *
+ * `!` cannot be escaped inside a user-opened double quote without changing the
+ * resulting argument.
+ */
+const choicesHelper = (helperName: string, lines: Array<string>): void => {
+  lines.push(`${helperName}()`)
+  lines.push(`{`)
+  lines.push(`  local _cur="$1" _word="$2"; shift 2`)
+  lines.push(``)
+  lines.push(`  local _head="\${_cur%"$_word"}"`)
+  lines.push(`  local _open=""`)
+  lines.push(`  case "$_head" in`)
+  lines.push(`    *\\') _open="'" ;;`)
+  lines.push(`    *\\") _open='"' ;;`)
+  lines.push(`  esac`)
+  lines.push(``)
+  lines.push(`  local _prefix="$_cur" _committed="$_head"`)
+  // Quoting these substitutions breaks quote matching on Bash 3.2.
+  lines.push(`  _prefix=\${_prefix//\\\\/}; _prefix=\${_prefix//\\"/}; _prefix=\${_prefix//\\'/}`)
+  lines.push(`  _committed=\${_committed//\\\\/}; _committed=\${_committed//\\"/}; _committed=\${_committed//\\'/}`)
+  lines.push(``)
+  lines.push(`  COMPREPLY=()`)
+  lines.push(`  local _choice _rest _match`)
+  lines.push(`  for _choice in "$@"; do`)
+  lines.push(`    [[ "$_choice" == "$_prefix"* ]] || continue`)
+  lines.push(`    _rest="\${_choice#"$_committed"}"`)
+  lines.push(`    case "$_open" in`)
+  lines.push(`      "'")`)
+  lines.push(`        if [[ "$_head" == "'" ]]; then`)
+  // Use a shell splice for a quote opened at the start of the word.
+  lines.push(`          _match=\${_rest//\\'/\\'\\\\\\'\\'}`)
+  lines.push(`        else`)
+  // A mid-word single-quote context cannot contain another single quote.
+  lines.push(`          [[ "$_rest" == *\\'* ]] && continue`)
+  lines.push(`          _match="$_rest"`)
+  lines.push(`        fi`)
+  lines.push(`        ;;`)
+  lines.push(`      '"')`)
+  lines.push(`        _match="\${_rest//\\\\/\\\\\\\\}"`)
+  lines.push(`        _match="\${_match//\\$/\\\\$}"`)
+  lines.push("        _match=\"${_match//\\`/\\\\\\`}\"")
+  lines.push(`        _match="\${_match//\\"/\\\\\\"}"`)
+  lines.push(`        ;;`)
+  lines.push(`      *)`)
+  lines.push(`        printf -v _match '%q' "$_rest"`)
+  // Bash 3.2 leaves a leading tilde unescaped.
+  lines.push(`        [[ -z "$_head" && "$_match" == '~'* ]] && _match="\\\\$_match"`)
+  lines.push(`        ;;`)
+  lines.push(`    esac`)
+  // Readline omits a closing quote already present in the match.
+  lines.push(`    [[ -n "$_open" && "$_match" == *"$_open" ]] && _match+="$_open"`)
+  lines.push(`    COMPREPLY+=("$_match")`)
+  lines.push(`  done`)
+  lines.push(`}`)
+  lines.push(``)
+}
+
+const choiceCompletion = (helperName: string, values: ReadonlyArray<string>): string =>
+  `${helperName} "$cur" "$_comp_word" ${values.map((value) => `'${escapeForBash(value)}'`).join(" ")}`
+
+const flagValueCompletion = (type: Completions.FlagType, helperName: string): string | undefined => {
   switch (type._tag) {
     case "Boolean":
       return undefined
     case "Choice":
-      return `COMPREPLY=( $(compgen -W '${type.values.join(" ")}' -- "$cur") )`
+      return choiceCompletion(helperName, type.values)
     case "Path":
       if (type.pathType === "directory") return `COMPREPLY=( $(compgen -d -- "$cur") )`
       return `COMPREPLY=( $(compgen -f -- "$cur") )`
@@ -74,10 +126,10 @@ const flagValueCompletion = (type: Completions.FlagType): string | undefined => 
   }
 }
 
-const argCompletion = (type: Completions.ArgumentType): string | undefined => {
+const argCompletion = (type: Completions.ArgumentType, helperName: string): string | undefined => {
   switch (type._tag) {
     case "Choice":
-      return `COMPREPLY=( $(compgen -W '${type.values.join(" ")}' -- "$cur") )`
+      return choiceCompletion(helperName, type.values)
     case "Path":
       if (type.pathType === "directory") return `COMPREPLY=( $(compgen -d -- "$cur") )`
       return `COMPREPLY=( $(compgen -f -- "$cur") )`
@@ -93,15 +145,22 @@ const argCompletion = (type: Completions.ArgumentType): string | undefined => {
 const generateFunction = (
   descriptor: Completions.CommandDescriptor,
   parentPath: ReadonlyArray<string>,
-  lines: Array<string>
+  lines: Array<string>,
+  helperName: string
 ): void => {
   const currentPath = [...parentPath, descriptor.name]
   const funcName = `_${currentPath.map(sanitizeFunctionName).join("_")}`
 
   lines.push(`${funcName}()`)
   lines.push(`{`)
-  lines.push(`  local cur prev words cword`)
-  lines.push(`  _init_completion || return`)
+  lines.push(`  local cur prev words cword i`)
+  lines.push(parentPath.length === 0 ? `  local _command_index=0` : `  local _command_index="$1"`)
+  // Keep values containing COMP_WORDBREAKS characters in one word.
+  lines.push(`  _init_completion -n "$COMP_WORDBREAKS" || return`)
+  if (parentPath.length === 0) {
+    // Subcommand functions inherit this through Bash's dynamic scope.
+    lines.push(`  local _comp_word="$2"`)
+  }
   lines.push(``)
 
   // Build flag-value dispatch
@@ -114,7 +173,7 @@ const generateFunction = (
       for (const alias of flag.aliases) {
         longNames.push(alias.length === 1 ? `-${alias}` : `--${alias}`)
       }
-      const completion = flagValueCompletion(flag.type)
+      const completion = flagValueCompletion(flag.type, helperName)
       if (completion) {
         lines.push(`    ${longNames.join("|")})`)
         lines.push(`      ${completion}`)
@@ -129,13 +188,23 @@ const generateFunction = (
   // Subcommand dispatch
   if (descriptor.subcommands.length > 0) {
     lines.push(`  # Subcommand dispatch`)
-    lines.push(`  local i cmd`)
-    lines.push(`  for ((i = 1; i < cword; i++)); do`)
+    lines.push(`  local cmd _skip_next=0`)
+    lines.push(`  for ((i = _command_index + 1; i < cword; i++)); do`)
+    lines.push(`    if (( _skip_next )); then`)
+    lines.push(`      _skip_next=0`)
+    lines.push(`      continue`)
+    lines.push(`    fi`)
     lines.push(`    case "\${words[i]}" in`)
+    for (const flag of descriptor.flags) {
+      if (flag.type._tag === "Boolean") continue
+      const forms = flagNamesForWordlist(flag)
+      lines.push(`      ${forms.join("|")}) _skip_next=1 ;;`)
+      lines.push(`      ${forms.map((form) => `${form}=*`).join("|")}) ;;`)
+    }
     for (const sub of descriptor.subcommands) {
       const subFuncName = `_${[...currentPath, sub.name].map(sanitizeFunctionName).join("_")}`
       lines.push(`      ${sub.name})`)
-      lines.push(`        ${subFuncName}`)
+      lines.push(`        ${subFuncName} "$i"`)
       lines.push(`        return`)
       lines.push(`        ;;`)
     }
@@ -159,13 +228,52 @@ const generateFunction = (
   }
 
   // Positional argument completion
-  const argsWithCompletions = descriptor.arguments.filter((a) => argCompletion(a.type) !== undefined)
+  const argsWithCompletions = descriptor.arguments.flatMap((argument, index) => {
+    const completion = argCompletion(argument.type, helperName)
+    return completion === undefined ? [] : [{ argument, completion, index }]
+  })
   if (argsWithCompletions.length > 0) {
     lines.push(`  # Positional argument completions`)
-    for (const arg of argsWithCompletions) {
-      const comp = argCompletion(arg.type)!
-      lines.push(`  ${comp}`)
-      lines.push(`  return`)
+    lines.push(`  local _position=0 _skip_next=0 _end_of_options=0`)
+    lines.push(`  for ((i = _command_index + 1; i < cword; i++)); do`)
+    lines.push(`    if (( _skip_next )); then`)
+    lines.push(`      _skip_next=0`)
+    lines.push(`      continue`)
+    lines.push(`    fi`)
+    lines.push(`    if (( _end_of_options )); then`)
+    lines.push(`      ((_position += 1))`)
+    lines.push(`      continue`)
+    lines.push(`    fi`)
+    lines.push(`    case "\${words[i]}" in`)
+    lines.push(`      --) _end_of_options=1 ;;`)
+    for (const flag of descriptor.flags) {
+      const forms = flagNamesForWordlist(flag)
+      if (flag.type._tag === "Boolean") {
+        lines.push(`      ${forms.join("|")}) ;;`)
+      } else {
+        lines.push(`      ${forms.join("|")}) _skip_next=1 ;;`)
+        lines.push(`      ${forms.map((form) => `${form}=*`).join("|")}) ;;`)
+      }
+    }
+    lines.push(`      -*) ;;`)
+    lines.push(`      *) ((_position += 1)) ;;`)
+    lines.push(`    esac`)
+    lines.push(`  done`)
+    lines.push(`  case "$_position" in`)
+    for (const { argument, completion, index } of argsWithCompletions) {
+      if (argument.variadic) continue
+      lines.push(`    ${index})`)
+      lines.push(`      ${completion}`)
+      lines.push(`      return`)
+      lines.push(`      ;;`)
+    }
+    lines.push(`  esac`)
+    const variadic = argsWithCompletions.find(({ argument }) => argument.variadic)
+    if (variadic !== undefined) {
+      lines.push(`  if (( _position >= ${variadic.index} )); then`)
+      lines.push(`    ${variadic.completion}`)
+      lines.push(`    return`)
+      lines.push(`  fi`)
     }
   } else if (descriptor.subcommands.length > 0) {
     const subNames = descriptor.subcommands.map((s) => s.name)
@@ -177,7 +285,7 @@ const generateFunction = (
 
   // Recurse into subcommands
   for (const sub of descriptor.subcommands) {
-    generateFunction(sub, currentPath, lines)
+    generateFunction(sub, currentPath, lines, helperName)
   }
 }
 
@@ -188,6 +296,8 @@ export const generate = (
 ): string => {
   const lines: Array<string> = []
   const safeName = sanitizeFunctionName(executableName)
+  // Sanitized command names cannot contain `-`.
+  const helperName = `_${safeName}--choices`
 
   lines.push(`###-begin-${escapeForBash(executableName)}-completions-###`)
   lines.push(`#`)
@@ -198,22 +308,37 @@ export const generate = (
   lines.push(`#`)
   lines.push(``)
 
-  // Inline minimal _init_completion fallback for environments without
-  // bash-completion installed. The real _init_completion handles edge cases
-  // (= in options, redirections, etc.) but this covers the common path.
+  // Fallback for environments without bash-completion. Preserve word-break
+  // characters inside values.
   lines.push(`if ! type _init_completion &>/dev/null; then`)
   lines.push(`  _init_completion()`)
   lines.push(`  {`)
   lines.push(`    COMPREPLY=()`)
-  lines.push(`    cur="\${COMP_WORDS[COMP_CWORD]}"`)
-  lines.push(`    prev="\${COMP_WORDS[COMP_CWORD-1]}"`)
-  lines.push(`    words=("\${COMP_WORDS[@]}")`)
-  lines.push(`    cword=$COMP_CWORD`)
+  lines.push(`    local _i _j=0 _piece _line="$COMP_LINE"`)
+  lines.push(`    words=("\${COMP_WORDS[0]}")`)
+  lines.push(`    cword=0`)
+  lines.push(`    _line="\${_line#*"\${COMP_WORDS[0]}"}"`)
+  lines.push(`    for ((_i = 1; _i < \${#COMP_WORDS[@]}; _i++)); do`)
+  lines.push(`      _piece="\${COMP_WORDS[_i]}"`)
+  lines.push(`      if [[ "$_line" == [[:blank:]]* ]]; then`)
+  lines.push(`        ((_j++))`)
+  lines.push(`        words[_j]="$_piece"`)
+  lines.push(`      else`)
+  lines.push(`        words[_j]="\${words[_j]}$_piece"`)
+  lines.push(`      fi`)
+  lines.push(`      ((_i == COMP_CWORD)) && cword=$_j`)
+  lines.push(`      _line="\${_line#*"$_piece"}"`)
+  lines.push(`    done`)
+  lines.push(`    cur="\${words[cword]}"`)
+  lines.push(`    prev=""`)
+  lines.push(`    ((cword > 0)) && prev="\${words[cword-1]}"`)
+  lines.push(`    return 0`)
   lines.push(`  }`)
   lines.push(`fi`)
   lines.push(``)
 
-  generateFunction(descriptor, [], lines)
+  choicesHelper(helperName, lines)
+  generateFunction(descriptor, [], lines, helperName)
 
   lines.push(`complete -F _${safeName} ${escapeForBash(executableName)}`)
   lines.push(`###-end-${escapeForBash(executableName)}-completions-###`)

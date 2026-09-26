@@ -76,7 +76,9 @@ function makeLayer(input: {
     isBackgroundModeEnabled: () => input.backgroundModeChanges.at(-1) ?? false,
     prepareForQuit: () => undefined,
     resetQuitPreparation: () => undefined,
+    prepareCaptureReveal: Effect.void,
     dispatchMenuAction: () => Effect.void,
+    dispatchSnapShotEvent: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"];

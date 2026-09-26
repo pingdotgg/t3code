@@ -6,6 +6,7 @@ import {
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
   GitStackedAction,
+  type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -76,10 +77,12 @@ export interface RunVcsStackedActionInput {
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
+  /** The thread the action runs beside; the server links a pull request it creates to it. */
+  readonly threadId?: ThreadId;
   readonly onProgress?: (event: GitActionProgressEvent) => void;
 }
 
-export class VcsActionUnavailableError extends Schema.TaggedErrorClass<VcsActionUnavailableError>()(
+export class VcsActionUnavailableError extends Schema.TaggedError<VcsActionUnavailableError>()(
   "VcsActionUnavailableError",
   {
     operation: VcsActionOperation,
@@ -92,7 +95,7 @@ export class VcsActionUnavailableError extends Schema.TaggedErrorClass<VcsAction
   }
 }
 
-export class VcsActionRemoteFailureError extends Schema.TaggedErrorClass<VcsActionRemoteFailureError>()(
+export class VcsActionRemoteFailureError extends Schema.TaggedError<VcsActionRemoteFailureError>()(
   "VcsActionRemoteFailureError",
   {
     actionId: Schema.String,
@@ -110,7 +113,7 @@ export class VcsActionRemoteFailureError extends Schema.TaggedErrorClass<VcsActi
   }
 }
 
-export class VcsActionMissingTerminalEventError extends Schema.TaggedErrorClass<VcsActionMissingTerminalEventError>()(
+export class VcsActionMissingTerminalEventError extends Schema.TaggedError<VcsActionMissingTerminalEventError>()(
   "VcsActionMissingTerminalEventError",
   {
     actionId: Schema.String,
@@ -125,7 +128,7 @@ export class VcsActionMissingTerminalEventError extends Schema.TaggedErrorClass<
   }
 }
 
-export class VcsActionTargetKeyParseError extends Schema.TaggedErrorClass<VcsActionTargetKeyParseError>()(
+export class VcsActionTargetKeyParseError extends Schema.TaggedError<VcsActionTargetKeyParseError>()(
   "VcsActionTargetKeyParseError",
   {
     keyLength: Schema.Number,
@@ -163,14 +166,14 @@ const decodeVcsActionTargetKey = Schema.decodeUnknownSync(
   Schema.Tuple([EnvironmentId, Schema.String]),
 );
 
-export const vcsActionStateAtom = Atom.family((key: string) => {
+const vcsActionStateAtom = Atom.family((key: string) => {
   return Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
     Atom.keepAlive,
     Atom.withLabel(`vcs-action:${key}`),
   );
 });
 
-export const EMPTY_VCS_ACTION_ATOM = Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
+const EMPTY_VCS_ACTION_ATOM = Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
   Atom.keepAlive,
   Atom.withLabel("vcs-action:null"),
 );
@@ -191,7 +194,7 @@ export function parseVcsActionTargetKey(key: string): ResolvedVcsActionTarget {
   }
 }
 
-export function getVcsActionStateAtom(target: VcsActionTarget) {
+function getVcsActionStateAtom(target: VcsActionTarget) {
   const key = getVcsActionTargetKey(target);
   return key === null ? EMPTY_VCS_ACTION_ATOM : vcsActionStateAtom(key);
 }
@@ -217,7 +220,7 @@ export function beginVcsActionState(
   };
 }
 
-export function failVcsActionState(
+function failVcsActionState(
   operation: VcsActionOperation,
   actionId: string,
   error: unknown,
@@ -463,6 +466,7 @@ export function createVcsActionManager<R, E>(
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+          ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         };
         return consumeVcsActionProgress(
           runStreamInEnvironment(

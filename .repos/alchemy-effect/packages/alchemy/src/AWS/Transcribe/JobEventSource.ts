@@ -123,8 +123,8 @@ export interface TranscriptionJobEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Job Events
- * @example React To Finished Transcriptions
+ * ### Consuming Job Events
+ * **Example:** React To Finished Transcriptions
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -182,8 +182,8 @@ export interface CallAnalyticsJobEventSourceProps extends EventRouteProps {
  * events (source `aws.transcribe`) — fires when a Call Analytics job
  * reaches `COMPLETED` or `FAILED`.
  *
- * @section Consuming Job Events
- * @example React To Finished Call Analytics Jobs
+ * ### Consuming Job Events
+ * **Example:** React To Finished Call Analytics Jobs
  * ```typescript
  * yield* AWS.Transcribe.consumeCallAnalyticsJobEvents(
  *   { statuses: ["COMPLETED"] },
@@ -229,8 +229,8 @@ export interface MedicalScribeJobEventSourceProps extends EventRouteProps {
  * events (source `aws.transcribe`) — fires when a Medical Scribe job
  * reaches `COMPLETED` or `FAILED`.
  *
- * @section Consuming Job Events
- * @example React To Finished Medical Scribe Jobs
+ * ### Consuming Job Events
+ * **Example:** React To Finished Medical Scribe Jobs
  * ```typescript
  * yield* AWS.Transcribe.consumeMedicalScribeJobEvents(
  *   { statuses: ["COMPLETED"] },
@@ -281,8 +281,8 @@ export interface VocabularyEventSourceProps extends EventRouteProps {
  * per-tenant via {@link CreateVocabulary}) can be used the moment they are
  * ready.
  *
- * @section Consuming Job Events
- * @example React To Ready Vocabularies
+ * ### Consuming Job Events
+ * **Example:** React To Ready Vocabularies
  * ```typescript
  * yield* AWS.Transcribe.consumeVocabularyEvents(
  *   { states: ["READY"] },
@@ -331,8 +331,8 @@ export interface LanguageModelEventSourceProps extends EventRouteProps {
  * (started with {@link CreateLanguageModel}) reaches `COMPLETED` or
  * `FAILED`.
  *
- * @section Consuming Job Events
- * @example React To Trained Language Models
+ * ### Consuming Job Events
+ * **Example:** React To Trained Language Models
  * ```typescript
  * yield* AWS.Transcribe.consumeLanguageModelEvents(
  *   { statuses: ["COMPLETED"] },

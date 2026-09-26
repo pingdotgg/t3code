@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Array, Effect, Exit, Fiber, Latch, Number, Pull, Random, Stream, SubscriptionRef } from "effect"
+import { Array, Effect, Exit, Fiber, Latch, Number, Option, Pull, Random, Stream, SubscriptionRef } from "effect"
 
 describe("SubscriptionRef", () => {
   it.effect("isSubscriptionRef", () =>
@@ -7,6 +7,22 @@ describe("SubscriptionRef", () => {
       const ref = yield* SubscriptionRef.make(0)
       assert.isTrue(SubscriptionRef.isSubscriptionRef(ref))
       assert.isFalse(SubscriptionRef.isSubscriptionRef([0]))
+    }))
+
+  it.effect("getAndUpdateEffect", () =>
+    Effect.gen(function*() {
+      const ref = yield* SubscriptionRef.make(1)
+      const previous = yield* SubscriptionRef.getAndUpdateEffect(ref, (value) => Effect.succeed(value + 1))
+      assert.strictEqual(previous, 1)
+      assert.strictEqual(yield* SubscriptionRef.get(ref), 2)
+    }))
+
+  it.effect("getAndUpdateSome returns the current value when no update is selected", () =>
+    Effect.gen(function*() {
+      const ref = yield* SubscriptionRef.make(1)
+      const previous = yield* SubscriptionRef.getAndUpdateSome(ref, () => Option.none())
+
+      assert.strictEqual(previous, 1)
     }))
 
   it.effect("multiple subscribers can receive changes", () =>

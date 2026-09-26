@@ -1,3 +1,4 @@
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 
@@ -27,7 +28,7 @@ export const PersistenceErrorCorrelation = Schema.Union([
 ]);
 export type PersistenceErrorCorrelation = typeof PersistenceErrorCorrelation.Type;
 
-export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
+export class PersistenceSqlError extends Schema.TaggedError<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
     operation: Schema.String,
@@ -43,7 +44,7 @@ export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlE
   }
 }
 
-export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceDecodeError>()(
+export class PersistenceDecodeError extends Schema.TaggedError<PersistenceDecodeError>()(
   "PersistenceDecodeError",
   {
     operation: Schema.String,
@@ -72,14 +73,46 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
 const isPersistenceSqlError = Schema.is(PersistenceSqlError);
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
+/**
+ * Read a SQLite condition through SQL error wrappers.
+ * Use node:sqlite's fixed description, never the driver message.
+ */
+function sqliteCondition(cause: unknown): string | undefined {
+  let value = cause;
+  for (let depth = 0; depth < 4 && Predicate.isObject(value); depth += 1) {
+    if (
+      "errcode" in value &&
+      typeof value.errcode === "number" &&
+      "errstr" in value &&
+      typeof value.errstr === "string"
+    ) {
+      return `SQLITE(${value.errcode}) ${value.errstr}`;
+    }
+    value = "cause" in value ? value.cause : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * A rejected payload must never reach diagnostics, so a schema failure
+ * contributes only its issue tags, and a driver failure only its normalized
+ * condition. Anything the mapper cannot categorize leaves the detail unset.
+ */
+function describeSqlCause(cause: unknown): string | undefined {
+  if (Schema.isSchemaError(cause)) return summarizeSchemaIssue(cause.issue);
+  return sqliteCondition(cause);
+}
+
 // Kept for orchestration/projection call sites, which are being revamped separately.
 export function toPersistenceSqlError(operation: string) {
-  return (cause: unknown): PersistenceSqlError =>
-    new PersistenceSqlError({
+  return (cause: unknown): PersistenceSqlError => {
+    const detail = describeSqlCause(cause);
+    return new PersistenceSqlError({
       operation,
-      detail: `Failed to execute ${operation}`,
+      ...(detail === undefined ? {} : { detail }),
       cause,
     });
+  };
 }
 
 // Kept for orchestration/projection call sites, which are being revamped separately.
@@ -91,41 +124,7 @@ export function toPersistenceDecodeError(operation: string) {
 export const isPersistenceError = (u: unknown) =>
   isPersistenceSqlError(u) || isPersistenceDecodeError(u);
 
-// ===============================
-// Provider Session Repository Errors
-// ===============================
-
-export class ProviderSessionRepositoryValidationError extends Schema.TaggedErrorClass<ProviderSessionRepositoryValidationError>()(
-  "ProviderSessionRepositoryValidationError",
-  {
-    operation: Schema.String,
-    issue: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Provider session repository validation failed in ${this.operation}: ${this.issue}`;
-  }
-}
-
-export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionRepositoryPersistenceError>()(
-  "ProviderSessionRepositoryPersistenceError",
-  {
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return `Provider session repository persistence error in ${this.operation}: ${this.detail}`;
-  }
-}
-
 export type OrchestrationEventStoreError = PersistenceSqlError | PersistenceDecodeError;
-
-export type ProviderSessionRepositoryError =
-  | ProviderSessionRepositoryValidationError
-  | ProviderSessionRepositoryPersistenceError;
 
 export type OrchestrationCommandReceiptRepositoryError =
   | PersistenceSqlError
@@ -134,5 +133,6 @@ export type OrchestrationCommandReceiptRepositoryError =
 export type ProviderSessionRuntimeRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type AuthPairingLinkRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type PullRequestFilesViewedRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
 export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;

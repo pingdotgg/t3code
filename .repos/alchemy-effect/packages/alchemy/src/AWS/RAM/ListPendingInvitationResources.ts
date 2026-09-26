@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * are chosen per request at runtime, so the binding takes no resource
  * argument. Provide the implementation with
  * `Effect.provide(AWS.RAM.ListPendingInvitationResourcesHttp)`.
- * @binding
- * @section Invitations
- * @example Inspect an Invitation Before Accepting
+ * ### Invitations
+ * **Example:** Inspect an Invitation Before Accepting
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listPendingInvitationResources = yield* AWS.RAM.ListPendingInvitationResources();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   resourceShareInvitationArn: invitationArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListPendingInvitationResources extends Binding.Service<
   ListPendingInvitationResources,

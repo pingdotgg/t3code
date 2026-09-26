@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  createComposerImageThumbnail,
   compressImageForStash,
   compressImageToByteLimit,
+  dataUrlToFile,
   isHeicImageFile,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
 } from "./imageCompression";
+
+import type { SnapShotSource } from "@t3tools/contracts";
+import { hydrateImagesFromPersisted } from "../composerDraftStore";
+import { resizeSnapShotSource } from "./snapShotSource";
 
 const mocks = vi.hoisted(() => ({
   heicTo: vi.fn(),
@@ -116,6 +122,75 @@ afterEach(() => {
   vi.unstubAllGlobals();
   globalThis.createImageBitmap = originalCreateImageBitmap;
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
+});
+
+describe("composer image thumbnails", () => {
+  it("decodes a tall original once and caches a bounded center crop", async () => {
+    const close = vi.fn();
+    const bitmap = { width: 2304, height: 32766, close };
+    const decode = vi.fn(async () => bitmap);
+    const drawImage = vi.fn();
+    const dimensions: number[][] = [];
+    vi.stubGlobal("createImageBitmap", decode);
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        constructor(width: number, height: number) {
+          dimensions.push([width, height]);
+        }
+        getContext() {
+          return { drawImage };
+        }
+        async convertToBlob() {
+          return new Blob(["thumbnail"], { type: "image/png" });
+        }
+      },
+    );
+    const original = new File(["original bytes"], "tall.png", { type: "image/png" });
+    const [first, second] = await Promise.all([
+      createComposerImageThumbnail(original),
+      createComposerImageThumbnail(original),
+    ]);
+    expect(first).toBe("data:image/png;base64,dGh1bWJuYWls");
+    expect(second).toBe(first);
+    expect(await createComposerImageThumbnail(original)).toBe(first);
+    expect(decode).toHaveBeenCalledExactlyOnceWith(original);
+    expect(dimensions).toEqual([[256, 256]]);
+    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 15231, 2304, 2304, 0, 0, 256, 256);
+    expect(close).toHaveBeenCalledOnce();
+    expect(await original.text()).toBe("original bytes");
+  });
+
+  it("releases the decoded image when thumbnail encoding fails", async () => {
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({ width: 500, height: 500, close })),
+    );
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        getContext() {
+          return { drawImage: vi.fn() };
+        }
+        async convertToBlob() {
+          throw new Error("encoder unavailable");
+        }
+      },
+    );
+    expect(await createComposerImageThumbnail(makeFile(5))).toBeNull();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("dataUrlToFile", () => {
+  it("decodes a captured image without a fetch request", async () => {
+    const file = dataUrlToFile("data:image/png;base64,AAEC/w==", "window.png", "image/png");
+
+    expect(file.name).toBe("window.png");
+    expect(file.type).toBe("image/png");
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 1, 2, 255]);
+  });
 });
 
 describe("compressImageForStash", () => {
@@ -444,5 +519,84 @@ describe("HEIC attachment preparation", () => {
     expect(result.ok && result.file).toBe(original);
     expect(result.ok && result.recompressed).toBe(false);
     expect(mocks.heicTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("snapshot coordinates after compression", () => {
+  const source: SnapShotSource = {
+    kind: "snap-shot",
+    capturedAt: "2026-09-01T00:00:00.000Z",
+    appName: "Editor",
+    windowTitle: "main.ts",
+    accessibility: {
+      format: "element-tree",
+      coordinateSpace: "captured-image",
+      imageSize: { width: 2560, height: 1600 },
+      truncated: false,
+      root: {
+        role: "window",
+        bounds: { x: 0, y: 0, width: 2560, height: 1600 },
+        children: [
+          {
+            role: "button",
+            name: "Save",
+            bounds: { x: 2400, y: 1400, width: 100, height: 100 },
+            children: [],
+          },
+          { role: "static_text", name: "Untitled", bounds: null, children: [] },
+        ],
+      },
+    },
+  };
+
+  it.each(["stash", "delivery"])(
+    "rescales the source and restores it with the compressed %s image",
+    async (path) => {
+      stubCanvasPipeline(() => 100);
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(async () => ({ width: 2560, height: 1600, close: vi.fn() })),
+      );
+      const original = makeFile(2000);
+      const compressed =
+        path === "stash"
+          ? await compressImageForStash(original, 1000)
+          : await compressImageToByteLimit(original, 1000);
+      expect(compressed.ok).toBe(true);
+      if (!compressed.ok) throw new Error("Compression failed");
+      const image =
+        "image" in compressed
+          ? compressed.image
+          : {
+              ...compressed,
+              mimeType: compressed.file.type,
+              sizeBytes: compressed.file.size,
+              dataUrl: `data:${compressed.file.type};base64,${Buffer.from(await compressed.file.arrayBuffer()).toString("base64")}`,
+            };
+      expect(image.imageSize).toEqual({ width: 2048, height: 1280 });
+      const resized = resizeSnapShotSource(source, image.imageSize);
+      const [restored] = hydrateImagesFromPersisted([
+        {
+          id: "capture",
+          name: "window.webp",
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: image.dataUrl,
+          source: resized,
+        },
+      ]);
+      expect(restored?.source?.accessibility).toMatchObject({
+        imageSize: { width: 2048, height: 1280 },
+        root: {
+          bounds: { x: 0, y: 0, width: 2048, height: 1280 },
+          children: [{ bounds: { x: 1920, y: 1120, width: 80, height: 80 } }, { bounds: null }],
+        },
+      });
+      expect(source.accessibility).toMatchObject({ imageSize: { width: 2560, height: 1600 } });
+    },
+  );
+
+  it("keeps uncompressed sources unchanged", () => {
+    expect(resizeSnapShotSource(source)).toBe(source);
   });
 });

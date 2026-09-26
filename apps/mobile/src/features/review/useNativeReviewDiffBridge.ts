@@ -8,7 +8,7 @@ import { useNativeReviewDiffHighlighting } from "./useNativeReviewDiffHighlighti
 import { buildNativeReviewTokensResetKey } from "./reviewDiffBridgeKeys";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 
-export { buildNativeReviewTokensResetKey, hashReviewDiffKey } from "./reviewDiffBridgeKeys";
+export { buildNativeReviewTokensResetKey } from "./reviewDiffBridgeKeys";
 
 export function useNativeReviewDiffBridge(input: {
   readonly threadKey: string | null;

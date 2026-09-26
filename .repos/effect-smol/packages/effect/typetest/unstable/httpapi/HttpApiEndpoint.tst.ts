@@ -468,6 +468,75 @@ describe("HttpApiEndpoint", () => {
       expect(endpoint["~Success"]).type.toBe<typeof stream>()
     })
 
+    it("applies the JSON and string-tree codecs to WithHeaders parts", () => {
+      const Body = Schema.Struct({ a: Schema.String })
+      const Headers = Schema.Struct({ "x-count": Schema.Int })
+      const endpoint = HttpApiEndpoint.get("a", "/a", {
+        success: HttpApiSchema.WithHeaders(Body, Headers)
+      })
+
+      expect(endpoint["~Success"]).type.toBe<
+        HttpApiSchema.WithHeaders<Schema.toCodecJson<typeof Body>, Schema.toCodecStringTree<typeof Headers>>
+      >()
+    })
+
+    it("maps WithHeaders to branded value success and handler types", () => {
+      const endpoint = HttpApiEndpoint.get("a", "/a", {
+        success: HttpApiSchema.WithHeaders(Schema.Struct({ a: Schema.String }), {
+          "x-count": Schema.Int
+        })
+      })
+
+      type Success = HttpApiSchema.withHeaders<
+        { readonly a: string },
+        { readonly "x-count": number }
+      >
+
+      expect<HttpApiEndpoint.SuccessWithIdentifier<typeof endpoint, "a">>().type.toBe<Success>()
+      expect<ReturnType<HttpApiEndpoint.Handler<typeof endpoint, never, never>>>().type.toBe<
+        Effect.Effect<Success | HttpServerResponse, never>
+      >()
+    })
+
+    it("keeps the stream handler type for a wrapped stream schema", () => {
+      const endpoint = HttpApiEndpoint.get("a", "/a", {
+        success: HttpApiSchema.WithHeaders(
+          HttpApiSchema.StreamSse({
+            data: Schema.Struct({ id: Schema.String }),
+            error: Schema.Struct({ reason: Schema.String })
+          }),
+          { "x-count": Schema.Int }
+        )
+      })
+
+      type Success = HttpApiSchema.withHeaders<
+        Stream.Stream<{ readonly id: string }, { readonly reason: string }>,
+        { readonly "x-count": number }
+      >
+
+      expect<HttpApiEndpoint.SuccessWithIdentifier<typeof endpoint, "a">>().type.toBe<Success>()
+      expect<ReturnType<HttpApiEndpoint.Handler<typeof endpoint, never, never>>>().type.toBe<
+        Effect.Effect<Success | HttpServerResponse, never>
+      >()
+    })
+
+    it("preserves mixed WithHeaders and plain schemas", () => {
+      const endpoint = HttpApiEndpoint.get("a", "/a", {
+        success: [
+          HttpApiSchema.WithHeaders(Schema.Struct({ a: Schema.String }), {
+            "x-count": Schema.Int
+          }),
+          Schema.String.pipe(HttpApiSchema.status(201), HttpApiSchema.asText())
+        ]
+      })
+
+      type Success =
+        | HttpApiSchema.withHeaders<{ readonly a: string }, { readonly "x-count": number }>
+        | string
+
+      expect<HttpApiEndpoint.SuccessWithIdentifier<typeof endpoint, "a">>().type.toBe<Success>()
+    })
+
     it("maps StreamUint8Array to stream success and handler types", () => {
       const endpoint = HttpApiEndpoint.get("a", "/a", {
         success: HttpApiSchema.StreamUint8Array()

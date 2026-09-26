@@ -7,8 +7,12 @@ import * as Effect from "effect/Effect";
 // assembly plus scheduler microtasks. Outside workerd (deploy/plan in Node,
 // vitest) the import rejects and the fallback stub is used; the `.catch` is
 // attached immediately so the rejection is always handled.
+// Type the import before chaining to avoid expanding the full module namespace
+// while TypeScript infers the catch result.
+const moduleImport: Promise<typeof import("cloudflare:workers")> =
+  import("cloudflare:workers");
 const modulePromise: Promise<typeof import("cloudflare:workers")> =
-  import("cloudflare:workers").catch(
+  moduleImport.catch(
     () =>
       ({
         env: {},

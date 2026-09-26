@@ -14,7 +14,7 @@ export type BrowserHistoryEntry = { url: string; lastVisitedAt: number; title?: 
 
 export const BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT = 50;
 export const BROWSER_HISTORY_MAX_PROJECTS = 20;
-export const BROWSER_HISTORY_MAX_URL_LENGTH = 2048;
+const BROWSER_HISTORY_MAX_URL_LENGTH = 2048;
 export const BROWSER_HISTORY_MAX_TITLE_LENGTH = 512;
 const MAX_VALID_DATE_MS = 8_640_000_000_000_000;
 
@@ -35,7 +35,7 @@ export function normalizeHistoryUrl(raw: string): string | null {
   return parsed.href.length > BROWSER_HISTORY_MAX_URL_LENGTH ? null : parsed.href;
 }
 
-export function titleLookupKey(normalized: string, environmentHostname?: string | null): string {
+function titleLookupKey(normalized: string, environmentHostname?: string | null): string {
   const parsed = new URL(visitLookupKey(normalized, environmentHostname));
   if (parsed.pathname !== "/" && parsed.pathname.endsWith("/"))
     parsed.pathname = parsed.pathname.slice(0, -1);

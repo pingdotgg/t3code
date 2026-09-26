@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DeleteCollectionHttp)`.
  *
- * @binding
- * @section Face Collections
- * @example Delete a Tenant Collection
+ * ### Face Collections
+ * **Example:** Delete a Tenant Collection
  * ```typescript
  * // init
  * const deleteCollection = yield* AWS.Rekognition.DeleteCollection();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   Effect.catchTag("ResourceNotFoundException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DeleteCollection extends Binding.Service<
   DeleteCollection,

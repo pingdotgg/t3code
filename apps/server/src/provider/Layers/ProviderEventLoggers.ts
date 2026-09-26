@@ -61,6 +61,8 @@ export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
 /**
  * Builds both stream views over one shared store. Setup failures are logged
  * and downgraded to the no-op service so diagnostics never block startup.
+ *
+ * @public Service construction is part of the canonical Effect module API.
  */
 export const make = Effect.gen(function* () {
   const { providerEventLogPath } = yield* ServerConfig;

@@ -1,0 +1,16 @@
+{
+  "name": "alchemy-nextjs-isr-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "typescript": "catalog:nextjs"
+  }
+}

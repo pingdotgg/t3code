@@ -96,9 +96,13 @@ export default Alchemy.Stack(
     });
 
     return {
-      url: Output.interpolate`http://${alb.dnsName}`,
-      apiUrl: Output.interpolate`http://${alb.dnsName}/api/orders`,
-      seedUrl: Output.interpolate`http://${alb.dnsName}/api/seed`,
+      // Service-derived URLs, not `http://${alb.dnsName}`: in `alchemy dev`
+      // the emulated ALB is host-routed on the emulator gateway port, and
+      // the service attribute is the only place that port is known.
+      url: web.url,
+      apiUrl: Output.interpolate`${api.url}/api/orders`,
+      seedUrl: Output.interpolate`${api.url}/api/seed`,
+      albDnsName: alb.dnsName,
       tableName: table.tableName,
       apiServiceName: api.serviceName,
       webServiceName: web.serviceName,

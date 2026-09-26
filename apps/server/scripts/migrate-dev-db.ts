@@ -24,7 +24,6 @@
  * cursors never rewind.
  */
 
-// @effect-diagnostics nodeBuiltinImport:off - node:os resolves the shared T3 home guard.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -39,9 +38,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
-import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<MigrateDevDbNotInWorktreeError>()(
+export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
   "MigrateDevDbNotInWorktreeError",
   {},
 ) {
@@ -50,7 +49,7 @@ export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbSharedHomeError extends Schema.TaggedErrorClass<MigrateDevDbSharedHomeError>()(
+export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDbSharedHomeError>()(
   "MigrateDevDbSharedHomeError",
   {},
 ) {
@@ -59,7 +58,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedErrorClass<Migrate
   }
 }
 
-export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<MigrateDevDbSourceMissingError>()(
+export class MigrateDevDbSourceMissingError extends Schema.TaggedError<MigrateDevDbSourceMissingError>()(
   "MigrateDevDbSourceMissingError",
   {
     sourcePath: Schema.String,
@@ -70,7 +69,7 @@ export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClass<MigrateDevDbSourceIsDestinationError>()(
+export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedError<MigrateDevDbSourceIsDestinationError>()(
   "MigrateDevDbSourceIsDestinationError",
   {
     sourcePath: Schema.String,
@@ -81,7 +80,7 @@ export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClas
   }
 }
 
-export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<MigrateDevDbServerRunningError>()(
+export class MigrateDevDbServerRunningError extends Schema.TaggedError<MigrateDevDbServerRunningError>()(
   "MigrateDevDbServerRunningError",
   {
     databasePath: Schema.String,
@@ -93,7 +92,7 @@ export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<MigrateDevDbDestinationBusyError>()(
+export class MigrateDevDbDestinationBusyError extends Schema.TaggedError<MigrateDevDbDestinationBusyError>()(
   "MigrateDevDbDestinationBusyError",
   {
     databasePath: Schema.String,
@@ -115,7 +114,7 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<Mi
  * recorded under a different name, so this checkout's migration was
  * silently skipped and its schema changes never applied.
  */
-export class MigrateDevDbSlotCollisionError extends Schema.TaggedErrorClass<MigrateDevDbSlotCollisionError>()(
+export class MigrateDevDbSlotCollisionError extends Schema.TaggedError<MigrateDevDbSlotCollisionError>()(
   "MigrateDevDbSlotCollisionError",
   {
     slot: Schema.Number,
@@ -128,7 +127,7 @@ export class MigrateDevDbSlotCollisionError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbPhaseError extends Schema.TaggedErrorClass<MigrateDevDbPhaseError>()(
+export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhaseError>()(
   "MigrateDevDbPhaseError",
   {
     phase: Schema.Literals(["snapshot", "prune", "compact", "migrate", "verify"]),
@@ -507,19 +506,19 @@ const formatSize = (bytes: number): string =>
 export const migrateDevDbCommand = Command.make(
   "migrate-dev-db",
   {
-    projects: Flag.integer("projects").pipe(
+    projects: Flag.Int("projects").pipe(
       Flag.withDefault(5),
       Flag.withDescription("How many recently updated projects to keep."),
     ),
-    threadsPerProject: Flag.integer("threads-per-project").pipe(
+    threadsPerProject: Flag.Int("threads-per-project").pipe(
       Flag.withDefault(10),
       Flag.withDescription("How many recent stopped threads to keep per project."),
     ),
-    baseDir: Flag.string("base-dir").pipe(
+    baseDir: Flag.String("base-dir").pipe(
       Flag.optional,
       Flag.withDescription("Isolated .t3 directory. Defaults to the current worktree's .t3."),
     ),
-    source: Flag.string("source").pipe(
+    source: Flag.String("source").pipe(
       Flag.optional,
       Flag.withDescription("Source database. Defaults to ~/.t3/userdata/state.sqlite."),
     ),

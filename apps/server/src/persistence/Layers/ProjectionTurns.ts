@@ -317,9 +317,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       ),
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
-          onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) =>
-            Effect.succeed(Option.some(row as Schema.Schema.Type<typeof ProjectionTurnById>)),
+          onNone: () => Effect.succeedNone,
+          onSome: (row) => Effect.succeedSome(row as Schema.Schema.Type<typeof ProjectionTurnById>),
         }),
       ),
     );

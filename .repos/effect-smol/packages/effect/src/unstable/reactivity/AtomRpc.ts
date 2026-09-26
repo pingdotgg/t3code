@@ -37,7 +37,7 @@ import * as Reactivity from "./Reactivity.ts"
  * It exposes the RPC client, an atom runtime, mutation helpers that return `AtomResultFn`s, and query helpers that
  * return atoms or pull atoms for RPC results.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface AtomRpcClient<Self, Id extends string, Rpcs extends Rpc.Any> extends
@@ -73,7 +73,7 @@ export interface AtomRpcClient<Self, Id extends string, Rpcs extends Rpc.Any> ex
         readonly headers?: Headers.Input | undefined
       },
       _Success["Type"],
-      _Error["Type"] | RpcClientError | _Middleware["error"]["Type"]
+      _Error["Type"] | RpcClientError | _Middleware["error"]["Type"] | _Middleware["~ClientError"]
     >
     : never
 
@@ -94,18 +94,19 @@ export interface AtomRpcClient<Self, Id extends string, Rpcs extends Rpc.Any> ex
     infer _Payload,
     infer _Success,
     infer _Error,
-    infer _Middleware
+    infer _Middleware,
+    infer _Requires
   > ? [_Success] extends [RpcSchema.Stream<infer _A, infer _E>] ? Atom.Writable<
         Atom.PullResult<
           _A["Type"],
-          _E["Type"] | _Error["Type"] | RpcClientError | _Middleware["error"]["Type"]
+          _E["Type"] | _Error["Type"] | RpcClientError | _Middleware["error"]["Type"] | _Middleware["~ClientError"]
         >,
         void
       >
     : Atom.Atom<
       AsyncResult.AsyncResult<
         _Success["Type"],
-        _Error["Type"] | RpcClientError | _Middleware["error"]["Type"]
+        _Error["Type"] | RpcClientError | _Middleware["error"]["Type"] | _Middleware["~ClientError"]
       >
     >
     : never
@@ -234,6 +235,9 @@ export const Service = <Self>() =>
         : self.runtime.atom(
           self.use((client) => client(tag, payload, { headers } as any)) as any
         )
+      if (reactivityKeys) {
+        atom = self.runtime.factory.withReactivity(reactivityKeys)(atom)
+      }
       if (!isStream && key.serializationKey) {
         atom = Atom.serializable(atom, {
           key: `AtomRpc:${key.tag}:${key.serializationKey}`,
@@ -248,9 +252,7 @@ export const Service = <Self>() =>
           ? Atom.setIdleTTL(atom, timeToLive)
           : Atom.keepAlive(atom)
       }
-      return reactivityKeys
-        ? self.runtime.factory.withReactivity(reactivityKeys)(atom)
-        : atom
+      return atom
     }
   )
 
@@ -274,7 +276,7 @@ export const Service = <Self>() =>
         ? Headers.fromInput(options.headers)
         : undefined,
       reactivityKeys: options?.reactivityKeys,
-      timeToLive: options?.timeToLive
+      timeToLive: options?.timeToLive !== undefined
         ? Duration.fromInputUnsafe(options.timeToLive)
         : undefined,
       serializationKey: options?.serializationKey

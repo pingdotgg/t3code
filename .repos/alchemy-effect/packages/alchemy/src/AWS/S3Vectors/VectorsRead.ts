@@ -49,9 +49,8 @@ export interface ReadVectorsClient {
  * endpoint that never writes embeddings). Provide the implementation with
  * `Effect.provide(AWS.S3Vectors.VectorsReadHttp)`.
  *
- * @binding
- * @section Reading Vectors
- * @example Query Nearest Neighbors (read-only)
+ * ### Reading Vectors
+ * **Example:** Query Nearest Neighbors (read-only)
  * ```typescript
  * // init
  * const vectors = yield* AWS.S3Vectors.VectorsRead(index);
@@ -63,6 +62,8 @@ export interface ReadVectorsClient {
  *   returnDistance: true,
  * });
  * ```
+ *
+ * @binding
  */
 export interface VectorsRead extends Binding.Service<
   VectorsRead,

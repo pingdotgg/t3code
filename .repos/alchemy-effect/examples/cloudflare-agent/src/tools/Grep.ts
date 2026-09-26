@@ -9,8 +9,8 @@ export const regex = AI.Parameter("regex")(
   S.String,
 )`The regex pattern to search for.`;
 
-export class Grep extends AI.Tool<Grep>()("grep")`
-Search files for a ${regex} pattern and return the matching lines with their file paths and line numbers.` {}
+export class Grep extends (AI.Tool<Grep>()("grep")`
+Search files for a ${regex} pattern and return the matching lines with their file paths and line numbers.`) {}
 
 export const GrepLive = Layer.effect(
   Grep,

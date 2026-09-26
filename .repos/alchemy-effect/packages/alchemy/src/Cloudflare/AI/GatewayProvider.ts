@@ -131,11 +131,8 @@ export type GatewayProvider = Resource<
  * Cloudflare imposes a strict naming contract: the gateway must reference a
  * Secrets Store via its `storeId`, and the secret must be scoped to
  * `ai_gateway` and named exactly `{gatewayId}_{providerSlug}_{alias}`.
- * @resource
- * @product AI Gateway
- * @category AI
- * @section Creating a Provider Config
- * @example Bring your own OpenAI key
+ * ### Creating a Provider Config
+ * **Example:** Bring your own OpenAI key
  * ```typescript
  * const store = yield* Cloudflare.SecretsStore.Store("Store");
  *
@@ -149,7 +146,7 @@ export type GatewayProvider = Resource<
  * const secret = yield* Cloudflare.SecretsStore.Secret("OpenAiKey", {
  *   store,
  *   name: "my-gateway_openai_default",
- *   value: yield* Config.redacted("OPENAI_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_API_KEY"),
  *   scopes: ["ai_gateway"],
  * });
  *
@@ -162,7 +159,7 @@ export type GatewayProvider = Resource<
  * });
  * ```
  *
- * @example Rate-limit a key
+ * **Example:** Rate-limit a key
  * ```typescript
  * const byok = yield* Cloudflare.AI.GatewayProvider("OpenAi", {
  *   gatewayId: gateway.gatewayId,
@@ -175,6 +172,10 @@ export type GatewayProvider = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/
+ *
+ * @resource
+ * @product AI Gateway
+ * @category AI
  */
 export const GatewayProvider = Resource<GatewayProvider>(TypeId, {
   aliases: ["Cloudflare.AiGateway.ProviderConfig"],

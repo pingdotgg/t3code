@@ -12,9 +12,8 @@ import type { Contact } from "./Contact.ts";
  * contact's ARN is injected as `ContactId`.
  * Provide the implementation with
  * `Effect.provide(AWS.SSMContacts.StartEngagementHttp)`.
- * @binding
- * @section Starting Engagements
- * @example Page the On-Call Contact
+ * ### Starting Engagements
+ * **Example:** Page the On-Call Contact
  * ```typescript
  * // init — bind the operation to the contact
  * const startEngagement = yield* AWS.SSMContacts.StartEngagement(oncall);
@@ -26,6 +25,8 @@ import type { Contact } from "./Contact.ts";
  *   Content: "Primary DB is saturated - please investigate.",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartEngagement extends Binding.Service<
   StartEngagement,

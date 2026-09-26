@@ -5,9 +5,8 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:GetPersistentAppUIPresignedURL` — mints a presigned URL for a persistent application UI of the bound cluster (works after the cluster terminates).
- * @binding
- * @section Application UIs
- * @example Link to the Spark History Server
+ * ### Application UIs
+ * **Example:** Link to the Spark History Server
  * ```typescript
  * const getAppUIUrl = yield* AWS.EMR.GetPersistentAppUIPresignedURL(cluster);
  *
@@ -16,6 +15,8 @@ import type { Cluster } from "./Cluster.ts";
  *   PersistentAppUIType: "SHS",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetPersistentAppUIPresignedURL extends Binding.Service<
   GetPersistentAppUIPresignedURL,

@@ -17,9 +17,8 @@ export interface ListPackageVersionAssetsRequest extends Omit<
  *
  * Lists the assets (files) attached to a package version in the bound repository. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.ListPackageVersionAssetsHttp)`.
- * @binding
- * @section Reading Assets
- * @example List a Version's Assets
+ * ### Reading Assets
+ * **Example:** List a Version's Assets
  * ```typescript
  * const listAssets = yield* AWS.CodeArtifact.ListPackageVersionAssets(repo);
  *
@@ -31,6 +30,8 @@ export interface ListPackageVersionAssetsRequest extends Omit<
  * });
  * console.log(res.assets?.map((a) => a.name));
  * ```
+ *
+ * @binding
  */
 export interface ListPackageVersionAssets extends Binding.Service<
   ListPackageVersionAssets,

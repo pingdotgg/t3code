@@ -70,9 +70,8 @@ export interface Region extends Resource<
  * disable the Region — it only stops managing it (set `enabled: false`
  * explicitly to opt out).
  *
- * @resource
- * @section Managing Region Opt-In
- * @example Enable an Opt-In Region
+ * ### Managing Region Opt-In
+ * **Example:** Enable an Opt-In Region
  * ```typescript
  * const region = yield* Account.Region("HongKong", {
  *   regionName: "ap-east-1",
@@ -80,7 +79,7 @@ export interface Region extends Resource<
  * });
  * ```
  *
- * @example Track a Default Region
+ * **Example:** Track a Default Region
  * ```typescript
  * const region = yield* Account.Region("UsEast1", {
  *   regionName: "us-east-1",
@@ -88,13 +87,15 @@ export interface Region extends Resource<
  * });
  * ```
  *
- * @example Opt Out of a Region
+ * **Example:** Opt Out of a Region
  * ```typescript
  * const region = yield* Account.Region("HongKong", {
  *   regionName: "ap-east-1",
  *   enabled: false,
  * });
  * ```
+ *
+ * @resource
  */
 export const Region = Resource<Region>("AWS.Account.Region");
 

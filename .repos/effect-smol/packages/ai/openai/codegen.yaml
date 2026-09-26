@@ -13,7 +13,6 @@ patches:
   - '[{"op":"add","path":"/components/schemas/ModelResponseProperties/properties/prompt_cache_key/nullable","value":true}]'
   - '[{"op":"add","path":"/components/schemas/Response/allOf/2/properties/usage/nullable","value":true}]'
   - '[{"op":"remove","path":"/components/schemas/ResponseFunctionCallArgumentsDoneEvent/required/2"}]'
-  - '[{"op":"remove","path":"/components/schemas/WebSearchActionSearch/required/1"}]'
   - '[{"op":"add","path":"/components/schemas/ModelResponseProperties/properties/prompt_cache_retention/anyOf/0/enum/1","value":"in_memory"}]'
   - '[{"op":"add","path":"/components/schemas/PromptCacheRetentionEnum/enum/1","value":"in-memory"}]'
   - '[{"op":"replace","path":"/components/schemas/OpenAIFile/properties/expires_at","value":{"anyOf":[{"type":"integer","format":"unixtime","description":"The Unix timestamp (in seconds) for when the file will expire."},{"type":"null"}]}}]'

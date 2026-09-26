@@ -2,21 +2,22 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Scope from "effect/Scope";
-import * as Tracer from "effect/Tracer";
 import { HttpClient } from "effect/unstable/http";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
+import * as ClientTracer from "./clientTracer";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 const CLIENT_TRACING_RESOURCE = {
-  serviceName: "t3-web",
+  serviceName: "t3code-web",
   attributes: {
+    "service.namespace": "t3code",
     "service.runtime": "t3-web",
     "service.mode": isElectron ? "electron" : "browser",
     "service.version": APP_VERSION,
@@ -30,7 +31,6 @@ const delegateRuntimeLayer = Layer.mergeAll(
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
 );
 
-let activeDelegate: Tracer.Tracer | null = null;
 let activeRuntime: ManagedRuntime.ManagedRuntime<never, never> | null = null;
 let activeScope: Scope.Closeable | null = null;
 let activeConfigKey: string | null = null;
@@ -40,15 +40,6 @@ let pendingConfiguration = Promise.resolve();
 export interface ClientTracingConfig {
   readonly exportIntervalMs?: number;
 }
-
-export const ClientTracingLive = Layer.succeed(
-  Tracer.Tracer,
-  Tracer.make({
-    span(options) {
-      return activeDelegate?.span(options) ?? new Tracer.NativeSpan(options);
-    },
-  }),
-);
 
 export function configureClientTracing(config: ClientTracingConfig = {}): Promise<void> {
   if (config.exportIntervalMs === undefined && activeConfigKey !== null) {
@@ -63,7 +54,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
   const exportIntervalMs = Math.max(10, config.exportIntervalMs ?? DEFAULT_EXPORT_INTERVAL_MS);
   const nextConfigKey = `${otlpTracesUrl}|${exportIntervalMs}`;
 
-  if (activeConfigKey === nextConfigKey && activeDelegate !== null) {
+  if (activeConfigKey === nextConfigKey && ClientTracer.hasDelegate()) {
     return;
   }
 
@@ -73,7 +64,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
   const previousRuntime = activeRuntime;
   const previousScope = activeScope;
 
-  activeDelegate = null;
+  ClientTracer.setDelegate(null);
   activeRuntime = null;
   activeScope = null;
 
@@ -115,7 +106,7 @@ async function applyClientTracingConfig(config: ClientTracingConfig): Promise<vo
     return;
   }
 
-  activeDelegate = delegateResult.value;
+  ClientTracer.setDelegate(delegateResult.value);
   activeRuntime = runtime;
   activeScope = scope;
 }
@@ -130,18 +121,4 @@ async function disposeTracerRuntime(
 
   await settleAsyncResult(() => runtime.runPromiseExit(Scope.close(scope, Exit.void)));
   runtime.dispose();
-}
-
-export async function __resetClientTracingForTests() {
-  configurationGeneration++;
-  activeConfigKey = null;
-  activeDelegate = null;
-  pendingConfiguration = Promise.resolve();
-
-  const runtime = activeRuntime;
-  const scope = activeScope;
-  activeRuntime = null;
-  activeScope = null;
-
-  await disposeTracerRuntime(runtime, scope);
 }

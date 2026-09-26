@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * can offer them as starting points. Account-level: no resource argument.
  * Provide the implementation with
  * `Effect.provide(AWS.OSIS.ListPipelineBlueprintsHttp)`.
- * @binding
- * @section Authoring Pipeline Configurations
- * @example List Available Blueprints
+ * ### Authoring Pipeline Configurations
+ * **Example:** List Available Blueprints
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listPipelineBlueprints = yield* AWS.OSIS.ListPipelineBlueprints();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const { Blueprints } = yield* listPipelineBlueprints();
  * // [{ BlueprintName: "AWS-CloudTrailLogsToOpenSearch", ... }, ...]
  * ```
+ *
+ * @binding
  */
 export interface ListPipelineBlueprints extends Binding.Service<
   ListPipelineBlueprints,

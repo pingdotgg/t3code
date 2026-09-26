@@ -1021,6 +1021,8 @@ async function auditService(serviceName: string): Promise<AuditReport> {
         alchemy: "SecretsManager",
       },
       apigateway: { distilled: "api-gateway", alchemy: "ApiGateway" },
+      ses: { distilled: "ses", alchemy: "SES" },
+      sesv2: { distilled: "sesv2", alchemy: "SES" },
     };
 
   const config = serviceConfig[serviceNameLower] || {
@@ -1029,20 +1031,12 @@ async function auditService(serviceName: string): Promise<AuditReport> {
   };
 
   const preferredDistilledPath = path.resolve(
-    `.vendor/distilled/@distilled.cloud/aws/src/services/${config.distilled}.ts`,
-  );
-  const fallbackDistilledPath = path.resolve(
-    `vendor/distilled/packages/aws/src/services/${config.distilled}.ts`,
+    `submodules/distilled/packages/aws/src/services/${config.distilled}.ts`,
   );
   const resolvedDistilledPath = await fs
     .access(preferredDistilledPath)
     .then(() => preferredDistilledPath)
-    .catch(() =>
-      fs
-        .access(fallbackDistilledPath)
-        .then(() => fallbackDistilledPath)
-        .catch(() => undefined),
-    );
+    .catch(() => undefined);
   const distilledPath =
     resolvedDistilledPath ?? `@distilled.cloud/aws/${config.distilled}`;
   const alchemyPath = path.resolve(

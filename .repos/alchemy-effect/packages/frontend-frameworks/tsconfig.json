@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "compilerOptions": {
+    "composite": true
+  },
+  "references": [
+    { "path": "./tsconfig.runtime.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}

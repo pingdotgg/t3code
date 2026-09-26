@@ -1,7 +1,7 @@
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 import type { Rpc } from "../../Rpc.ts";
-import { isRpcErrorEnvelope, isRpcStreamEnvelope } from "../Bridge.ts";
+import { isRpcErrorEnvelope, isRpcStreamEnvelope } from "./Rpc.ts";
 
 export type RpcAsync<Shape> = {
   [K in keyof Shape as K extends "fetch" ? never : K]: Shape[K] extends (

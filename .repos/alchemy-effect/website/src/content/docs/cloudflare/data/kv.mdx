@@ -57,7 +57,7 @@ export const Cache = Cloudflare.KV.Namespace("Cache", {
 
 ## Bind it to a Worker
 
-Bind the namespace in the Worker's init phase and use the typed
+Bind the namespace in the Worker's Construction phase and use the typed
 client in the runtime handlers. This Worker stores a value on
 `PUT /?key=` and serves it back on `GET /?key=`:
 

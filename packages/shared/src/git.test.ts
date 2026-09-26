@@ -7,6 +7,7 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  parseOriginUrlFromGitConfig,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -49,6 +50,104 @@ describe("normalizeGitRemoteUrl", () => {
       "bitbucket.org/workspace/repo",
     );
   });
+
+  it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code")).toBe(
+      "dev.azure.com/t3tools/platform/_git/t3code",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/T3Tools/Platform/T3Code")).toBe(
+      "dev.azure.com/t3tools/platform/_git/t3code",
+    );
+    expect(
+      normalizeGitRemoteUrl("https://T3Tools@dev.azure.com/T3Tools/Platform/_git/T3Code"),
+    ).toBe("dev.azure.com/t3tools/platform/_git/t3code");
+  });
+
+  it("puts the organization back in the host on the name dev.azure.com replaced", () => {
+    expect(
+      normalizeGitRemoteUrl("T3Tools@vs-ssh.visualstudio.com:v3/T3Tools/Platform/T3Code"),
+    ).toBe("t3tools.visualstudio.com/platform/_git/t3code");
+    expect(normalizeGitRemoteUrl("https://T3Tools.visualstudio.com/Platform/_git/T3Code")).toBe(
+      "t3tools.visualstudio.com/platform/_git/t3code",
+    );
+  });
+
+  it("leaves an Azure SSH host it cannot read as the path it was given", () => {
+    // Not `v3`, and not four segments: rewriting either would invent a repository that the web
+    // spelling has no name for, so the remote stands as it arrived.
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v4/T3Tools/Platform/T3Code")).toBe(
+      "ssh.dev.azure.com/v4/t3tools/platform/t3code",
+    );
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/T3Code")).toBe(
+      "ssh.dev.azure.com/v3/t3tools/t3code",
+    );
+  });
+});
+
+describe("parseOriginUrlFromGitConfig", () => {
+  it("reads the origin url and ignores other remotes", () => {
+    const config = [
+      "[core]",
+      "\trepositoryformatversion = 0",
+      '[remote "upstream"]',
+      "\turl = https://github.com/other/repo.git",
+      '[remote "origin"]',
+      "\turl = git@github.com:pingdotgg/t3code.git",
+      "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+      '[branch "main"]',
+      "\tremote = origin",
+    ].join("\n");
+    expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:pingdotgg/t3code.git");
+  });
+
+  it("strips inline comments and quotes from the url value", () => {
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "origin"]\n\turl = https://github.com/acme/repo.git # mirror\n',
+      ),
+    ).toBe("https://github.com/acme/repo.git");
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = "git@github.com:acme/repo.git"\n'),
+    ).toBe("git@github.com:acme/repo.git");
+  });
+
+  it("accepts legacy dotted headers, header comments, and line continuations", () => {
+    expect(parseOriginUrlFromGitConfig("[remote.origin]\n\turl = git@github.com:a/b.git\n")).toBe(
+      "git@github.com:a/b.git",
+    );
+    // Git folds the dotted form to lowercase but keeps quoted names as written.
+    expect(parseOriginUrlFromGitConfig("[remote.Origin]\n\turl = git@github.com:a/b.git\n")).toBe(
+      "git@github.com:a/b.git",
+    );
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "Origin"]\n\turl = git@github.com:x/y.git\n[remote "origin"]\n\turl = git@github.com:a/b.git\n',
+      ),
+    ).toBe("git@github.com:a/b.git");
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"] # primary\n\turl = git@github.com:a/b.git\n'),
+    ).toBe("git@github.com:a/b.git");
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
+      ),
+    ).toBe("https://github.com/acme/repo.git");
+  });
+
+  it("falls back to the first remote when there is no origin", () => {
+    const config = [
+      '[remote "upstream"]',
+      "\turl = https://github.com/acme/repo.git",
+      '[remote "fork"]',
+      "\turl = https://github.com/me/repo.git",
+    ].join("\n");
+    expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+  });
+
+  it("returns null when there is no remote section", () => {
+    expect(parseOriginUrlFromGitConfig("[core]\n\tbare = false\n")).toBeNull();
+    expect(parseOriginUrlFromGitConfig("")).toBeNull();
+  });
 });
 
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
@@ -58,6 +157,9 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
     ).toBe("T3Tools/T3Code");
     expect(
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
+    ).toBe("T3Tools/T3Code");
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://github.com/T3Tools/T3Code.git"),
     ).toBe("T3Tools/T3Code");
   });
 });

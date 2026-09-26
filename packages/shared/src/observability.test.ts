@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -16,11 +16,13 @@ import * as Tracer from "effect/Tracer";
 import {
   causeErrorTag,
   compactTraceAttributes,
+  decodeOtlpTraceRecords,
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
   type TraceRecord,
   type TraceSinkFlushStats,
+  OtlpHeadersFromString,
   truncateTraceAttributes,
 } from "./observability.ts";
 
@@ -134,6 +136,53 @@ describe("truncateTraceAttributes", () => {
   it("returns the same reference when nothing exceeds the limits", () => {
     const attributes = { short: "ok", nested: { fine: "also ok" } };
     assert.equal(truncateTraceAttributes(attributes), attributes);
+  });
+});
+
+describe("decodeOtlpTraceRecords", () => {
+  it("clamps oversized renderer span and event attributes", () => {
+    const long = "x".repeat(2_000);
+    const clamped = `${"x".repeat(500)}…[truncated]`;
+    const [record] = decodeOtlpTraceRecords({
+      resourceSpans: [
+        {
+          resource: { attributes: [], droppedAttributesCount: 0 },
+          scopeSpans: [
+            {
+              scope: { name: "effect" },
+              spans: [
+                {
+                  traceId: "11111111111111111111111111111111",
+                  spanId: "2222222222222222",
+                  parentSpanId: undefined,
+                  name: "client.span",
+                  kind: 1,
+                  startTimeUnixNano: "1000000",
+                  endTimeUnixNano: "2000000",
+                  attributes: [{ key: "payload", value: { stringValue: long } }],
+                  droppedAttributesCount: 0,
+                  events: [
+                    {
+                      name: "log",
+                      timeUnixNano: "1500000",
+                      attributes: [{ key: "effect.cause", value: { stringValue: long } }],
+                      droppedAttributesCount: 0,
+                    },
+                  ],
+                  droppedEventsCount: 0,
+                  status: { code: 1 },
+                  links: [],
+                  droppedLinksCount: 0,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.equal(record?.attributes["payload"], clamped);
+    assert.equal(record?.events[0]?.attributes["effect.cause"], clamped);
   });
 });
 
@@ -457,5 +506,42 @@ describe("observability", () => {
         }),
       ),
     );
+  });
+});
+
+describe("OtlpHeadersFromString", () => {
+  const decode = Schema.decodeUnknownSync(OtlpHeadersFromString);
+
+  it.each([
+    {
+      name: "decodes percent-encoded values",
+      input: "authorization=Basic%20abc%3D%3D,x-tenant=t3",
+      expected: { authorization: "Basic abc==", "x-tenant": "t3" },
+    },
+    {
+      name: "ignores whitespace around separators",
+      input: "authorization=Basic%20abc%3D%3D, x-tenant = t3 ,",
+      expected: { authorization: "Basic abc==", "x-tenant": "t3" },
+    },
+    {
+      name: "keeps literal equals signs inside a value",
+      input: "authorization=Bearer abc==",
+      expected: { authorization: "Bearer abc==" },
+    },
+    {
+      name: "keeps an empty value",
+      input: "x-empty=",
+      expected: { "x-empty": "" },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(decode(input)).toEqual(expected);
+  });
+
+  it.each([
+    { name: "rejects a pair without a separator", input: "authorization" },
+    { name: "rejects a pair without a key", input: "=value" },
+    { name: "rejects a malformed percent-encoding", input: "authorization=%E0" },
+  ])("$name", ({ input }) => {
+    expect(() => decode(input)).toThrow();
   });
 });

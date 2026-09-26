@@ -10,16 +10,21 @@
  * @since 4.0.0
  */
 import * as assert from "node:assert"
+import { isDeepStrictEqual } from "node:util"
 import type * as Context from "../Context.ts"
 import * as Effect from "../Effect.ts"
 import { pipe } from "../Function.ts"
-import * as Record from "../Record.ts"
 import * as Result from "../Result.ts"
 import * as Schema from "../Schema.ts"
 import * as SchemaAST from "../SchemaAST.ts"
-import type * as SchemaIssue from "../SchemaIssue.ts"
+import * as SchemaIssue from "../SchemaIssue.ts"
 import * as SchemaParser from "../SchemaParser.ts"
-import * as FastCheck from "../testing/FastCheck.ts"
+import * as Arbitrary from "../unstable/arbitrary/Arbitrary.ts"
+
+function assertPropertyPassed<A, E>(result: Arbitrary.CheckResult<A, E>): void {
+  const failure = Arbitrary.formatCheckFailure(result)
+  if (failure !== undefined) assert.fail(failure)
+}
 
 /**
  * Provides schema test assertions for decoding, encoding, make, arbitrary generation, and round-trip verification.
@@ -30,7 +35,7 @@ import * as FastCheck from "../testing/FastCheck.ts"
  *
  * **Example** (Decoding and encoding a struct)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { TestSchema } from "effect/testing"
  *
@@ -38,10 +43,10 @@ import * as FastCheck from "../testing/FastCheck.ts"
  * const asserts = new TestSchema.Asserts(schema)
  *
  * // decoding
- * await asserts.decoding().succeed({ name: "Alice" })
+ * await asserts.decoding().succeed({ name: "Alice" }) // => undefined
  *
  * // encoding
- * await asserts.encoding().succeed({ name: "Alice" })
+ * await asserts.encoding().succeed({ name: "Alice" }) // => undefined
  * ```
  *
  * @see {@link Decoding}
@@ -64,19 +69,22 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Example** (Comparing struct fields)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const fieldsA = { name: Schema.String }
    * const fieldsB = { name: Schema.String }
-   * TestSchema.Asserts.ast.fields.equals(fieldsA, fieldsB) // no error
+   * TestSchema.Asserts.ast.fields.equals(fieldsA, fieldsB) // => undefined
    * ```
    */
   static ast = {
     fields: {
       equals: (a: Schema.Struct.Fields, b: Schema.Struct.Fields) => {
-        assert.deepStrictEqual(Record.map(a, SchemaAST.getAST), Record.map(b, SchemaAST.getAST))
+        assert.deepStrictEqual(
+          Object.fromEntries(Reflect.ownKeys(a).map((key) => [key, SchemaAST.getAST(a[key])])),
+          Object.fromEntries(Reflect.ownKeys(b).map((key) => [key, SchemaAST.getAST(b[key])]))
+        )
       }
     },
     elements: {
@@ -104,13 +112,13 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Example** (Testing make)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const schema = Schema.String
    * const asserts = new TestSchema.Asserts(schema)
-   * await asserts.make().succeed("hello")
+   * await asserts.make().succeed("hello") // => undefined
    * ```
    *
    * @see {@link decoding} for assertions against decoded input
@@ -123,7 +131,7 @@ export class Asserts<S extends Schema.Constraint> {
     async function succeed(input: S["~type.make.in"], expected?: S["Type"]) {
       const r = await Effect.runPromise(
         makeEffect(input, options).pipe(
-          Effect.mapErrorEager((issue) => issue.toString()),
+          Effect.mapErrorEager(SchemaIssue.defaultFormatter),
           Effect.result
         )
       )
@@ -135,7 +143,7 @@ export class Asserts<S extends Schema.Constraint> {
       async fail(input: unknown, message: string) {
         const r = await Effect.runPromise(
           makeEffect(input, options).pipe(
-            Effect.mapErrorEager((issue) => issue.toString()),
+            Effect.mapErrorEager(SchemaIssue.defaultFormatter),
             Effect.result
           )
         )
@@ -153,39 +161,39 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Details**
    *
-   * FastCheck generates arbitrary values matching the schema's `Type`. The assertion fails if any generated value does not round-trip. Pass `options.params` to control FastCheck parameters such as `numRuns`.
+   * The native Schema arbitrary generates values matching the schema's `Type`. The assertion fails with the minimized
+   * shrunk input and replay token if any generated value does not round-trip.
    *
    * **Example** (Verifying round trips)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
-   * const asserts = new TestSchema.Asserts(Schema.NumberFromString)
-   * await asserts.verifyLosslessTransformation()
+   * const asserts = new TestSchema.Asserts(Schema.String)
+   * await asserts.verifyLosslessTransformation({ seed: 1, runs: 20 }) // => undefined
    * ```
    *
    * @see {@link arbitrary} for checking that generated values satisfy the schema
    */
-  verifyLosslessTransformation<S extends Schema.ConstraintCodec<unknown, unknown>>(this: Asserts<S>, options?: {
-    readonly params?: FastCheck.Parameters<[S["Type"]]>
-  }) {
+  verifyLosslessTransformation<S extends Schema.ConstraintCodec<unknown, unknown>>(
+    this: Asserts<S>,
+    options?: Arbitrary.CheckOptions
+  ): Promise<void> {
     const decodeUnknownEffect = SchemaParser.decodeUnknownEffect(this.schema)
     const encodeEffect = SchemaParser.encodeEffect(this.schema)
-    const arbitrary = Schema.toArbitrary(this.schema)
-    return FastCheck.assert(
-      FastCheck.asyncProperty(arbitrary, async (t) => {
-        const r = await Effect.runPromise(
-          encodeEffect(t).pipe(
-            Effect.flatMapEager((e) => decodeUnknownEffect(e)),
-            Effect.mapErrorEager((issue) => issue.toString()),
-            Effect.result
-          )
-        )
-        assert.deepStrictEqual(r, Result.succeed(t))
-      }),
-      options?.params
-    )
+    const arbitrary = Arbitrary.schema(this.schema)
+    return Effect.runPromise(Arbitrary.checkEffect(
+      arbitrary,
+      (value) =>
+        encodeEffect(value).pipe(
+          Effect.flatMapEager((encoded) => decodeUnknownEffect(encoded)),
+          Effect.mapErrorEager(SchemaIssue.defaultFormatter),
+          Effect.result,
+          Effect.mapEager((result) => isDeepStrictEqual(result, Result.succeed(value)))
+        ),
+      options
+    )).then(assertPropertyPassed)
   }
   /**
    * Returns a {@link Decoding} instance for this schema with helpers for decoding assertions.
@@ -200,14 +208,14 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Example** (Decoding assertions)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const asserts = new TestSchema.Asserts(Schema.NumberFromString)
    * const decoding = asserts.decoding()
-   * await decoding.succeed("42", 42)
-   * await decoding.fail(null, "Expected string, got null")
+   * await decoding.succeed("42", 42) // => undefined
+   * await decoding.fail(null, "Expected string") // => undefined
    * ```
    *
    * @see {@link Decoding}
@@ -231,13 +239,13 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Example** (Encoding assertions)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const asserts = new TestSchema.Asserts(Schema.NumberFromString)
    * const encoding = asserts.encoding()
-   * await encoding.succeed(42, "42")
+   * await encoding.succeed(42, "42") // => undefined
    * ```
    *
    * @see {@link Encoding}
@@ -258,16 +266,17 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Details**
    *
-   * `verifyGeneration()` generates arbitrary values and asserts each value satisfies the schema's `is` predicate. It defaults to 20 runs. Pass `options.params` to override FastCheck parameters.
+   * `verifyGeneration()` generates arbitrary values and asserts each value satisfies the schema's `is` predicate. It
+   * defaults to 20 runs. Native checking options can control generation, shrinking, bounded discards, and replay.
    *
    * **Example** (Verifying arbitrary generation)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const asserts = new TestSchema.Asserts(Schema.String)
-   * asserts.arbitrary().verifyGeneration()
+   * asserts.arbitrary().verifyGeneration({ seed: 1, runs: 20 }) // => undefined
    * ```
    *
    * @see {@link verifyLosslessTransformation} for property-based round-trip checks
@@ -275,13 +284,10 @@ export class Asserts<S extends Schema.Constraint> {
   arbitrary<S extends Schema.ConstraintCodec<unknown, unknown>>(this: Asserts<S>) {
     const schema = this.schema
     return {
-      verifyGeneration(options?: {
-        readonly params?: FastCheck.Parameters<[S["Type"]]> | undefined
-      }) {
-        const params = options?.params
+      verifyGeneration(options?: Arbitrary.CheckOptions): void {
         const is = Schema.is(schema)
-        const arb = Schema.toArbitrary(schema)
-        FastCheck.assert(FastCheck.property(arb, (a) => is(a)), { numRuns: 20, ...params })
+        const arbitrary = Arbitrary.schema(schema)
+        assertPropertyPassed(Effect.runSync(Arbitrary.checkEffect(arbitrary, is, { runs: 20, ...options })))
       }
     }
   }
@@ -300,13 +306,13 @@ export class Asserts<S extends Schema.Constraint> {
  *
  * **Example** (Decoding with service provision)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { TestSchema } from "effect/testing"
  *
  * const asserts = new TestSchema.Asserts(Schema.String)
  * const decoding = asserts.decoding()
- * await decoding.succeed("hello")
+ * await decoding.succeed("hello") // => undefined
  * ```
  *
  * @see {@link Asserts}
@@ -341,12 +347,12 @@ export class Decoding<S extends Schema.Constraint> {
    *
    * **Example** (Testing identity and transformed decoding)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const decoding = new TestSchema.Asserts(Schema.NumberFromString).decoding()
-   * await decoding.succeed("1", 1) // transformed
+   * await decoding.succeed("1", 1) // => undefined
    * ```
    *
    * @see {@link fail} for asserting decoding failures
@@ -367,7 +373,7 @@ export class Decoding<S extends Schema.Constraint> {
   ) {
     const r = await Effect.runPromise(
       this.decodeUnknownEffect(input, this.options?.parseOptions).pipe(
-        Effect.mapErrorEager((issue) => issue.toString()),
+        Effect.mapErrorEager(SchemaIssue.defaultFormatter),
         Effect.result
       )
     )
@@ -384,12 +390,12 @@ export class Decoding<S extends Schema.Constraint> {
    *
    * **Example** (Asserting a decoding failure)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const decoding = new TestSchema.Asserts(Schema.String).decoding()
-   * await decoding.fail(42, "Expected string, got 42")
+   * await decoding.fail(42, "Expected string") // => undefined
    * ```
    *
    * @see {@link succeed} for asserting successful decoding
@@ -401,7 +407,7 @@ export class Decoding<S extends Schema.Constraint> {
   ) {
     const r = await Effect.runPromise(
       this.decodeUnknownEffect(input, this.options?.parseOptions).pipe(
-        Effect.mapErrorEager((issue) => issue.toString()),
+        Effect.mapErrorEager(SchemaIssue.defaultFormatter),
         Effect.result
       )
     )
@@ -440,12 +446,12 @@ export class Decoding<S extends Schema.Constraint> {
  *
  * **Example** (Encoding assertions)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { TestSchema } from "effect/testing"
  *
  * const encoding = new TestSchema.Asserts(Schema.NumberFromString).encoding()
- * await encoding.succeed(42, "42")
+ * await encoding.succeed(42, "42") // => undefined
  * ```
  *
  * @see {@link Asserts}
@@ -459,7 +465,7 @@ export class Encoding<S extends Schema.Constraint> {
   readonly encodeUnknownEffect: (
     input: unknown,
     options?: SchemaAST.ParseOptions
-  ) => Effect.Effect<S["Type"], SchemaIssue.Issue, S["EncodingServices"]>
+  ) => Effect.Effect<S["Encoded"], SchemaIssue.Issue, S["EncodingServices"]>
   readonly options?: {
     readonly parseOptions?: SchemaAST.ParseOptions | undefined
   } | undefined
@@ -481,12 +487,12 @@ export class Encoding<S extends Schema.Constraint> {
    *
    * **Example** (Testing identity and transformed encoding)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const encoding = new TestSchema.Asserts(Schema.NumberFromString).encoding()
-   * await encoding.succeed(1, "1") // transformed
+   * await encoding.succeed(1, "1") // => undefined
    * ```
    *
    * @see {@link fail} for asserting encoding failures
@@ -507,7 +513,7 @@ export class Encoding<S extends Schema.Constraint> {
   ) {
     const r = await Effect.runPromise(
       this.encodeUnknownEffect(input, this.options?.parseOptions).pipe(
-        Effect.mapErrorEager((issue) => issue.toString()),
+        Effect.mapErrorEager(SchemaIssue.defaultFormatter),
         Effect.result
       )
     )
@@ -524,12 +530,12 @@ export class Encoding<S extends Schema.Constraint> {
    *
    * **Example** (Asserting an encoding failure)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Schema } from "effect"
    * import { TestSchema } from "effect/testing"
    *
    * const encoding = new TestSchema.Asserts(Schema.NumberFromString).encoding()
-   * await encoding.fail("not-a-number", "Expected number, got \"not-a-number\"")
+   * await encoding.fail("not-a-number", "Expected number") // => undefined
    * ```
    *
    * @see {@link succeed} for asserting successful encoding
@@ -541,7 +547,7 @@ export class Encoding<S extends Schema.Constraint> {
   ) {
     const r = await Effect.runPromise(
       this.encodeUnknownEffect(input, this.options?.parseOptions).pipe(
-        Effect.mapErrorEager((issue) => issue.toString()),
+        Effect.mapErrorEager(SchemaIssue.defaultFormatter),
         Effect.result
       )
     )

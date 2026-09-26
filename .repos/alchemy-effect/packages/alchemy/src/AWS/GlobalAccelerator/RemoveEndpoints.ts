@@ -12,9 +12,8 @@ import type { EndpointGroup } from "./EndpointGroup.ts";
  * endpoints and health-check configuration untouched. The endpoint group
  * ARN is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.GlobalAccelerator.RemoveEndpointsHttp)`.
- * @binding
- * @section Managing Endpoints
- * @example Deregister an Endpoint
+ * ### Managing Endpoints
+ * **Example:** Deregister an Endpoint
  * ```typescript
  * // init — bind the operation to the endpoint group
  * const removeEndpoints = yield* AWS.GlobalAccelerator.RemoveEndpoints(group);
@@ -24,6 +23,8 @@ import type { EndpointGroup } from "./EndpointGroup.ts";
  *   EndpointIdentifiers: [{ EndpointId: allocationId }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface RemoveEndpoints extends Binding.Service<
   RemoveEndpoints,

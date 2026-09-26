@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   isCommandMissingCause,
+  parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
 } from "./providerSnapshot.ts";
@@ -52,6 +53,27 @@ describe("providerModelsFromSettings", () => {
     ]);
   });
 
+  it("keeps an entry's own name and capabilities over the driver default", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
+    });
+    const models = providerModelsFromSettings(
+      [],
+      ["bare", { slug: "named", name: "Named", capabilities }],
+      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+    );
+
+    expect(models).toEqual([
+      {
+        slug: "bare",
+        name: "bare",
+        isCustom: true,
+        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      },
+      { slug: "named", name: "Named", isCustom: true, capabilities },
+    ]);
+  });
+
   it("preserves a custom slug that collides with a provider alias", () => {
     const capabilities = createModelCapabilities({ optionDescriptors: [] });
     const models = providerModelsFromSettings(
@@ -69,6 +91,29 @@ describe("providerModelsFromSettings", () => {
 
     expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
     expect(models[1]?.isCustom).toBe(true);
+  });
+});
+
+describe("parseGenericCliVersion", () => {
+  it("parses a bare version", () => {
+    expect(parseGenericCliVersion("1.14.19")).toBe("1.14.19");
+  });
+
+  it("parses a v-prefixed version", () => {
+    expect(parseGenericCliVersion("opencode v2.0.3")).toBe("2.0.3");
+    expect(parseGenericCliVersion("v22.19.0")).toBe("22.19.0");
+  });
+
+  it("parses a version embedded in other output", () => {
+    expect(parseGenericCliVersion("codex-cli 0.53.0 (build abc)")).toBe("0.53.0");
+  });
+
+  it("returns null when no version is present", () => {
+    expect(parseGenericCliVersion("no version here")).toBeNull();
+  });
+
+  it("ignores versions glued to other word characters", () => {
+    expect(parseGenericCliVersion("build2.0.3artifact")).toBeNull();
   });
 });
 

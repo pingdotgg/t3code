@@ -23,9 +23,8 @@ export interface InitiateJobRequest extends Omit<
  * tier, minutes for expedited).
  * Provide the implementation with
  * `Effect.provide(AWS.Glacier.InitiateJobHttp)`.
- * @binding
- * @section Retrieving Archives
- * @example Start an inventory-retrieval job
+ * ### Retrieving Archives
+ * **Example:** Start an inventory-retrieval job
  * ```typescript
  * const initiateJob = yield* AWS.Glacier.InitiateJob(vault);
  *
@@ -33,6 +32,8 @@ export interface InitiateJobRequest extends Omit<
  *   jobParameters: { Type: "inventory-retrieval" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface InitiateJob extends Binding.Service<
   InitiateJob,

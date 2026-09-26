@@ -1,9 +1,10 @@
 /**
  * Internal composite: a Kubernetes service account (bound onto the cluster)
  * wired to EKS Pod Identity through an IAM role + `PodIdentityAssociation`.
- * Un-exported — the platforms (`AWS.EKS.Deployment`, `AWS.EKS.Job`) provision
- * the same triple inside their reconcilers; this helper remains for
- * composition-style stacks that assemble the pieces from resources.
+ * Un-exported — the workload platforms (`Kubernetes.Deployment`,
+ * `Kubernetes.Job`) provision the same triple through the aws-eks
+ * adapter; this helper remains for composition-style stacks that assemble
+ * the pieces from resources.
  */
 import * as Effect from "effect/Effect";
 import type { Input } from "../../../Input.ts";

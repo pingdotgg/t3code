@@ -1,6 +1,7 @@
 {
   "name": "cloudflare-solid-ssr",
   "version": "0.0.0",
+  "private": true,
   "description": "",
   "type": "module",
   "scripts": {
@@ -12,18 +13,18 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.13",
-    "postcss": "^8.4.49",
-    "solid-devtools": "^0.34.3",
-    "tailwindcss": "^4.1.13",
-    "vite": "^7.1.4",
+    "@tailwindcss/postcss": "catalog:",
+    "postcss": "catalog:",
+    "solid-devtools": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:solid-v1",
     "alchemy": "workspace:*",
     "effect": "catalog:",
-    "vite-plugin-solid": "^2.11.8"
+    "vite-plugin-solid": "catalog:"
   },
   "dependencies": {
-    "@solidjs/router": "^0.15.1",
-    "solid-js": "^1.9.5"
+    "@solidjs/router": "catalog:solid-v1",
+    "solid-js": "catalog:"
   },
   "repository": {
     "type": "git",

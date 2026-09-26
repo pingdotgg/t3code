@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the CloudWatch log groups that contain log anomalies for an insight (requires the service integration's log anomaly detection).
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.ListAnomalousLogGroupsHttp)`.
- * @binding
- * @section Inspecting Anomalies
- * @example List an Insight's Anomalous Log Groups
+ * ### Inspecting Anomalies
+ * **Example:** List an Insight's Anomalous Log Groups
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listAnomalousLogGroups = yield* AWS.DevOpsGuru.ListAnomalousLogGroups();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.log(`${group.LogGroupName}: ${group.NumberOfLogLinesScanned} lines`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListAnomalousLogGroups extends Binding.Service<
   ListAnomalousLogGroups,

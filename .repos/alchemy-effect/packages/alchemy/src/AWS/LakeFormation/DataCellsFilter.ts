@@ -87,9 +87,8 @@ export interface DataCellsFilter extends Resource<
  * data lake administrator) — see
  * {@link DataLakeSettings | AWS.LakeFormation.DataLakeSettings}.
  *
- * @resource
- * @section Creating Data Cells Filters
- * @example Column Filter Hiding PII
+ * ### Creating Data Cells Filters
+ * **Example:** Column Filter Hiding PII
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -100,7 +99,7 @@ export interface DataCellsFilter extends Resource<
  * });
  * ```
  *
- * @example Row Filter by Country
+ * **Example:** Row Filter by Country
  * ```typescript
  * const filter = yield* AWS.LakeFormation.DataCellsFilter("UsOnly", {
  *   databaseName: database.databaseName,
@@ -108,6 +107,8 @@ export interface DataCellsFilter extends Resource<
  *   rowFilter: { filterExpression: "country = 'US'" },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataCellsFilter = Resource<DataCellsFilter>(
   "AWS.LakeFormation.DataCellsFilter",

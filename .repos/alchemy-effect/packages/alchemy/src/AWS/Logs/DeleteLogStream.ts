@@ -15,9 +15,8 @@ export interface DeleteLogStreamRequest extends Omit<
  * dynamically-created log streams (e.g. cleaning up per-tenant streams
  * created with `CreateLogStream`), automatically injecting the log group
  * name.
- * @binding
- * @section Writing Logs
- * @example Delete a Per-Tenant Stream
+ * ### Writing Logs
+ * **Example:** Delete a Per-Tenant Stream
  * ```typescript
  * const deleteLogStream = yield* AWS.Logs.DeleteLogStream(logGroup);
  *
@@ -25,6 +24,8 @@ export interface DeleteLogStreamRequest extends Omit<
  *   Effect.catchTag("ResourceNotFoundException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DeleteLogStream extends Binding.Service<
   DeleteLogStream,

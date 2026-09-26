@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.UpdateAutomatedDiscoveryConfigurationHttp)`.
- * @binding
- * @section Automated Discovery
- * @example Enable Automated Discovery
+ * ### Automated Discovery
+ * **Example:** Enable Automated Discovery
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateAutomatedDiscoveryConfiguration = yield* AWS.Macie2.UpdateAutomatedDiscoveryConfiguration();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* updateAutomatedDiscoveryConfiguration({ status: "ENABLED" });
  * ```
+ *
+ * @binding
  */
 export interface UpdateAutomatedDiscoveryConfiguration extends Binding.Service<
   UpdateAutomatedDiscoveryConfiguration,

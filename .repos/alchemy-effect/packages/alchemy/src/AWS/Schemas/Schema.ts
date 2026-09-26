@@ -72,9 +72,8 @@ export interface Schema extends Resource<
  * Updating the content publishes a new schema version; previous versions are
  * retained by the registry.
  *
- * @resource
- * @section Creating a Schema
- * @example OpenAPI 3 Schema
+ * ### Creating a Schema
+ * **Example:** OpenAPI 3 Schema
  * ```typescript
  * const registry = yield* AWS.Schemas.Registry("app-events", {});
  *
@@ -97,7 +96,7 @@ export interface Schema extends Resource<
  * });
  * ```
  *
- * @example JSONSchema Draft 4 Schema
+ * **Example:** JSONSchema Draft 4 Schema
  * ```typescript
  * const schema = yield* AWS.Schemas.Schema("UserSignedUp", {
  *   registryName: registry.registryName,
@@ -110,6 +109,8 @@ export interface Schema extends Resource<
  *   description: "Emitted when a user completes sign-up",
  * });
  * ```
+ *
+ * @resource
  */
 export const Schema = Resource<Schema>("AWS.Schemas.Schema");
 

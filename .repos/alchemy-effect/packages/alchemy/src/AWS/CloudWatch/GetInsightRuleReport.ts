@@ -15,9 +15,8 @@ export interface GetInsightRuleReportRequest extends Omit<
  *
  * Provide `CloudWatch.GetInsightRuleReportHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Insight Rules
- * @example Fetch the Top Contributors for a Rule
+ * ### Reading Insight Rules
+ * **Example:** Fetch the Top Contributors for a Rule
  * ```typescript
  * // init — grants cloudwatch:GetInsightRuleReport on the rule
  * const getInsightRuleReport = yield* AWS.CloudWatch.GetInsightRuleReport(rule);
@@ -31,6 +30,8 @@ export interface GetInsightRuleReportRequest extends Omit<
  * });
  * const contributors = result.Contributors ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetInsightRuleReport extends Binding.Service<
   GetInsightRuleReport,

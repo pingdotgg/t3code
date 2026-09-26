@@ -10,10 +10,23 @@ import type {
   SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
 
+export interface SourceControlLinkSubject {
+  readonly title: string;
+  readonly body: string | null;
+}
+
+/** Return undefined synchronously for unsupported URLs, without starting a lookup. */
+export type ResolveSourceControlLink = (input: {
+  readonly cwd: string;
+  readonly url: URL;
+}) => Effect.Effect<SourceControlLinkSubject, SourceControlProviderError> | undefined;
+
 export interface SourceControlProviderContext {
   readonly provider: SourceControlProviderInfo;
   readonly remoteName: string;
   readonly remoteUrl: string;
+  /** An explicit web authority can disambiguate Forgejo logins sharing an SSH alias. */
+  readonly requestedHost?: string;
 }
 
 export interface SourceControlRefSelector {
@@ -61,7 +74,7 @@ export function parseSourceControlOwnerRef(
   return owner && refName ? { owner, refName } : undefined;
 }
 
-export function normalizeSourceBranch(headSelector: string): string {
+function normalizeSourceBranch(headSelector: string): string {
   return parseSourceControlOwnerRef(headSelector)?.refName ?? headSelector.trim();
 }
 
@@ -83,6 +96,8 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
+    /** Optional capability for issue and change-request subjects. */
+    readonly resolveLink?: ResolveSourceControlLink;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

@@ -13,14 +13,15 @@ export interface AcknowledgeJobRequest extends SVC.AcknowledgeJobInput {}
  * CodePipeline job operations do not support resource-level permissions, so
  * the grant is on `*`. The binding takes no resource — job ids come from
  * polling.
- * @binding
- * @section Job Workers
- * @example Claim a Polled Job
+ * ### Job Workers
+ * **Example:** Claim a Polled Job
  * ```typescript
  * const acknowledgeJob = yield* AWS.CodePipeline.AcknowledgeJob();
  *
  * const { status } = yield* acknowledgeJob({ jobId, nonce });
  * ```
+ *
+ * @binding
  */
 export interface AcknowledgeJob extends Binding.Service<
   AcknowledgeJob,

@@ -1,12 +1,36 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
-import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  ProviderDriverKind,
+  USAGE_CONTRACT_VERSION,
+  type EnvironmentId,
+  type UsageProviderKind,
+} from "@t3tools/contracts";
+import {
+  CircleAlertIcon,
+  ChevronDownIcon,
+  CircleDashedIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 
-import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+import {
+  isCompatibleUsageContractVersion,
+  isModelCostUnknown,
+  type DailyTotals,
+  type HourlyTotals,
+} from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { environmentPresentations } from "../../state/presentation";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { isModelPickerOpen } from "../../modelPickerVisibility";
+import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -19,11 +43,22 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -31,31 +66,89 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
-import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageLimitsSection } from "./UsageLimits";
+import { UsagePriceOverrides } from "./UsagePriceOverrides";
+import { UsageProviderChart } from "./UsageProviderChart";
+import { sortModelsByTokens } from "./usageBreakdown";
+import {
+  METRIC_OPTIONS,
+  WINDOW_OPTIONS,
+  resolveUsageShortcut,
+  type UsageMetric,
+} from "./usageShortcuts";
+import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  readUsagePagePreferences,
+  saveUsagePagePreferences,
+  type UsagePagePreferences,
+} from "./usagePagePreferences";
 
-const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
-] as const;
+function isUsageMetric(value: string | null | undefined): value is UsageMetric {
+  return METRIC_OPTIONS.some((option) => option.value === value);
+}
+
+function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
+  return WINDOW_OPTIONS.some((option) => option.days === value);
+}
 
 export function UsagePage() {
+  const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  useEscapeToGoBack();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcutTitle = (
+    option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
+  ) => {
+    const shortcut = shortcutLabelForCommand(keybindings, option.command, {
+      context: { usagePageOpen: true },
+    });
+    return shortcut ? `${option.label} (${shortcut})` : option.label;
+  };
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
+    days: preferences.windowDays,
+    window: makeWindow(
+      preferences.windowDays,
+      undefined,
+      preferences.windowDays === 1 ? "hour" : "day",
+    ),
   }));
-  const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const metric = preferences.metric;
+  const showingLimits = metric === "limits";
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [limitsNow, setLimitsNow] = useState(() => Date.now());
+  const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
+  const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
+    useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
-
-  // Hold the content until every environment is terminal. Rendering merged
-  // totals while devices are still answering makes every number on the page
-  // jump as each one lands.
-  const settling = isPending || isPartial;
+  const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
+    window,
+    selectedEnvironmentIds,
+  );
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const cursorAccessEnvironments = selectedEnvironments.filter(
+    (environment) => environment.needsCursorKeychainAccess,
+  );
+  const sourceMessages = [
+    ...new Set(
+      selectedEnvironments.flatMap(
+        (environment) =>
+          environment.summary?.sources.flatMap((source) =>
+            source.message &&
+            !source.action &&
+            (source.status === "partial" ||
+              source.status === "failed" ||
+              source.fingerprint.provider === "cursor")
+              ? [source.message]
+              : [],
+          ) ?? [],
+      ),
+    ),
+  ];
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -77,89 +170,209 @@ export function UsagePage() {
   const breakdownModels = useMemo(
     () =>
       breakdown === "model" && metric === "tokens"
-        ? merged.models.toSorted(
-            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
-          )
+        ? sortModelsByTokens(merged.models)
         : merged.models,
     [breakdown, merged.models, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const summaryRows: Array<
+    | { readonly kind: "usage"; readonly provider: UsageProviderKind }
+    | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
+  > = activeProviders.map((provider) => ({ kind: "usage", provider }));
+  const cursorInsertAt =
+    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+  summaryRows.splice(
+    cursorInsertAt,
+    0,
+    ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
+  );
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
+    if (!isUsageWindowDays(days)) return;
+    const nextPreferences = { metric, windowDays: days };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
-  const refreshWindow = () => {
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
-    if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
-    ) {
-      refresh();
-    } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+  const selectMetric = (nextMetric: UsageMetric) => {
+    if (nextMetric === "limits") setLimitsNow(Date.now());
+    const nextPreferences = { metric: nextMetric, windowDays };
+    setPreferences(nextPreferences);
+    saveUsagePagePreferences(nextPreferences);
+  };
+  const refreshLimits = async (automatic = false, afterPending = false) => {
+    try {
+      await Promise.all(
+        Array.from(presentations, ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
+          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+            return refreshUsageLimits(
+              environmentId,
+              () => refreshProviders({ environmentId, input: {} }),
+              automatic,
+              afterPending,
+            );
+          }
+        }),
+      );
+    } finally {
+      setLimitsNow(Date.now());
     }
   };
+  const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.repeat ||
+      event.isComposing ||
+      isCommandPaletteOpen() ||
+      isModelPickerOpen()
+    )
+      return;
+
+    const command = resolveUsageShortcut(event, keybindings);
+    const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
+    const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
+    if (!metricOption && !periodOption) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (metricOption) selectMetric(metricOption.value);
+    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+  });
+
+  useEffect(() => {
+    globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
+    return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
+  }, []);
+
+  const refreshWindow = () => {
+    if (refreshingRef.current) return;
+
+    if (showingLimits) {
+      refreshingRef.current = true;
+      setIsRefreshing(true);
+      void refreshLimits().finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshing(false);
+      });
+      return;
+    }
+    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    if (
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
+    ) {
+      setWindowSelection({ days: windowDays, window: nextWindow });
+    }
+    refreshingRef.current = true;
+    setIsRefreshing(true);
+    void refresh(nextWindow).finally(() => {
+      refreshingRef.current = false;
+      setIsRefreshing(false);
+    });
+  };
+  const connectedLimitsEnvironments = [...presentations]
+    .filter(
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" &&
+        presentation.serverConfig !== null &&
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
+    )
+    .map(([environmentId]) => environmentId)
+    .sort()
+    .join(",");
+  const autoRefreshLimits = useEffectEvent(() => {
+    void refreshLimits(true);
+  });
+  useEffect(() => {
+    if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
+  }, [showingLimits, connectedLimitsEnvironments]);
+
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
       : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
   const topbarContent = (
-    <div className="flex w-full min-w-0 items-center gap-3">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
-        <WorkspaceBreadcrumbItem current>
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-2 xl:flex">
+      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="col-span-2 min-w-0">
+        <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
-        <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
-        <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
-          <span className="truncate">{windowLabel}</span>
+        <WorkspaceBreadcrumbSeparator />
+        <WorkspaceBreadcrumbItem current className="min-w-10">
+          <UsageEnvironmentFilter
+            environments={environments}
+            selectedEnvironments={selectedEnvironments}
+            selectedEnvironmentIds={selectedEnvironmentIds}
+            onSelectionChange={setSelectedEnvironmentIds}
+            showUsageStatus={!showingLimits}
+            isPartial={isPartial}
+            duplicateSources={merged.duplicateSources}
+            staleEnvironments={merged.staleEnvironments}
+          />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
+      {!showingLimits ? (
+        <span className="hidden min-w-0 truncate text-xs text-muted-foreground 2xl:block">
+          {windowLabel}
+        </span>
+      ) : null}
+      <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 xl:flex">
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
           value={[metric]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value === "cost" || value === "tokens") setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
-          {(["cost", "tokens"] as const).map((option) => (
-            <Toggle key={option} value={option}>
-              {option === "cost" ? "Cost" : "Tokens"}
+          {METRIC_OPTIONS.map((option) => (
+            <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
+              {option.label}
             </Toggle>
           ))}
         </ToggleGroup>
+        {/* The period does not apply to Limits, so it stays in place but
+            disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
           value={[String(windowDays)]}
+          disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
           }}
         >
           {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)}>
+            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
               {option.label}
             </Toggle>
           ))}
         </ToggleGroup>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
-      <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
+      <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
         <Select
           value={metric}
           onValueChange={(value) => {
-            if (value === "cost" || value === "tokens") setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           <SelectTrigger
@@ -168,14 +381,23 @@ export function UsagePage() {
             variant="ghost"
             className="w-auto min-w-0"
           >
-            <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
+            <SelectValue>
+              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="cost">Cost</SelectItem>
-            <SelectItem value="tokens">Tokens</SelectItem>
+            {METRIC_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectPopup>
         </Select>
-        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+        <Select
+          value={String(windowDays)}
+          disabled={showingLimits}
+          onValueChange={(value) => selectWindow(Number(value))}
+        >
           <SelectTrigger
             aria-label="Usage period"
             size="compact"
@@ -188,39 +410,70 @@ export function UsagePage() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {WINDOW_OPTIONS.map((option) => (
-              <SelectItem key={option.days} value={String(option.days)}>
+              <SelectItem
+                key={option.days}
+                value={String(option.days)}
+                title={shortcutTitle(option)}
+              >
                 {option.label}
               </SelectItem>
             ))}
           </SelectPopup>
         </Select>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
+          size="icon-sm"
+          variant="ghost"
+        >
+          <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
     </div>
   );
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader electron={isElectron}>{topbarContent}</WorkspacePageHeader>
+        <WorkspacePageHeader electron={isElectron} className="h-auto">
+          {topbarContent}
+        </WorkspacePageHeader>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
-            {settling ? (
-              <>
-                {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}
-                <UsageSkeleton />
-              </>
+            {selectedEnvironments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {environments.length === 0
+                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
+                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
+              </p>
+            ) : showingLimits ? (
+              <UsageLimitsSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                now={limitsNow}
+                cursorPrompt={
+                  cursorAccessEnvironments.length > 0 ? (
+                    <CursorEnableLimits
+                      environments={cursorAccessEnvironments}
+                      onEnabled={() => {
+                        void refresh();
+                        void refreshLimits(false, true);
+                      }}
+                    />
+                  ) : null
+                }
+              />
+            ) : isPending ? (
+              <UsageSkeleton />
             ) : (
               <>
-                <UsageCoverageNotice
-                  environments={environments}
-                  duplicateSources={merged.duplicateSources}
-                  staleEnvironments={merged.staleEnvironments}
-                />
-
+                {sourceMessages.map((message) => (
+                  <p key={message} className="mb-4 text-sm text-muted-foreground">
+                    {message}
+                  </p>
+                ))}
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
                     <div className="flex flex-col gap-1">
@@ -230,13 +483,32 @@ export function UsagePage() {
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {metric === "cost"
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : `${formatCount(merged.sessions)} sessions`}
+                        {metric !== "cost"
+                          ? `${formatCount(merged.sessions)} sessions`
+                          : merged.costQuality.unpricedShare > 0
+                            ? `${formatCount(merged.sessions)} sessions · API estimate excludes ${formatPercent(
+                                merged.costQuality.unpricedShare,
+                              )} unpriced records`
+                            : `${formatCount(merged.sessions)} sessions · API estimate`}
                       </span>
                     </div>
 
-                    {activeProviders.map((provider) => {
+                    {summaryRows.map((row) => {
+                      if (row.kind === "enable") {
+                        return (
+                          <CursorEnableRow
+                            key={`enable:${row.environment.environmentId}`}
+                            environmentId={row.environment.environmentId}
+                            label={row.environment.label}
+                            showEnvironment={selectedEnvironments.length > 1}
+                            onEnabled={() => {
+                              void refresh();
+                              void refreshLimits(false, true);
+                            }}
+                          />
+                        );
+                      }
+                      const provider = row.provider;
                       const totals = merged.providers.find((entry) => entry.provider === provider);
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
@@ -260,7 +532,7 @@ export function UsagePage() {
                                 <span className="truncate">
                                   {PROVIDER_PRESENTATION[provider].label}
                                 </span>
-                                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                <span className="shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums">
                                   {sessionLabel}
                                 </span>
                               </span>
@@ -378,10 +650,14 @@ export function UsagePage() {
                                 </span>
                               </td>
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(model.costUsd)}
+                                {isModelCostUnknown(model) ? (
+                                  <span className="text-muted-foreground">Unpriced</span>
+                                ) : (
+                                  formatUsd(model.costUsd)
+                                )}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(model.costShare)}
+                                {isModelCostUnknown(model) ? "—" : formatPercent(model.costShare)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(model.totalTokens)}
@@ -464,6 +740,137 @@ export function UsagePage() {
   );
 }
 
+const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+
+function CursorEnableButton({
+  environmentId,
+  label,
+  onEnabled,
+  tooltip,
+  buttonText = "Enable",
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly onEnabled: () => void;
+  readonly tooltip: boolean;
+  readonly buttonText?: string;
+}) {
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "enable Cursor account usage",
+  });
+  const [pending, setPending] = useState(false);
+  const enable = async () => {
+    setPending(true);
+    try {
+      const result = await updateSettings({
+        environmentId,
+        input: { patch: { cursorKeychainUsageEnabled: true } },
+      });
+      if (result._tag === "Success") onEnabled();
+    } finally {
+      setPending(false);
+    }
+  };
+  const button = tooltip ? (
+    <InlineButton
+      disabled={pending}
+      aria-busy={pending}
+      aria-label={`Enable Cursor usage from ${label}`}
+      onClick={() => void enable()}
+    >
+      {buttonText}
+    </InlineButton>
+  ) : (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={pending}
+      aria-busy={pending}
+      aria-label={`Enable Cursor usage from ${label}`}
+      onClick={() => void enable()}
+    >
+      {buttonText}
+    </Button>
+  );
+  if (!tooltip) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipPopup>{CURSOR_KEYCHAIN_COPY}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function CursorEnableRow({
+  environmentId,
+  label,
+  showEnvironment,
+  onEnabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly showEnvironment: boolean;
+  readonly onEnabled: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
+      <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
+        />
+        <ProviderMark provider="cursor" className="size-4" />
+        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
+      </span>
+      <CursorEnableButton
+        environmentId={environmentId}
+        label={label}
+        onEnabled={onEnabled}
+        tooltip
+      />
+    </div>
+  );
+}
+
+function CursorEnableLimits({
+  environments,
+  onEnabled,
+}: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly onEnabled: () => void;
+}) {
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <ProviderInstanceIcon
+          driverKind={ProviderDriverKind.make("cursor")}
+          displayName="Cursor"
+          indicatorBackground="var(--background)"
+          className="size-5"
+          iconClassName="size-4 text-foreground/80"
+        />
+        Cursor
+      </h2>
+      <div className="flex flex-col items-start gap-3 rounded-lg border border-border/60 p-4">
+        <p className="text-xs text-muted-foreground">{CURSOR_KEYCHAIN_COPY}</p>
+        <div className="flex flex-wrap gap-2">
+          {environments.map((environment) => (
+            <CursorEnableButton
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
+              onEnabled={onEnabled}
+              tooltip={false}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** Brand mark for the harness a row belongs to. */
 function ProviderMark({
   provider,
@@ -486,10 +893,8 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Explains failed or incompatible environments and deduplicated transcripts.
+ * Shown inside the environment filter so arriving results do not move the page.
  */
 function UsageCoverageNotice({
   environments,
@@ -509,7 +914,7 @@ function UsageCoverageNotice({
   }
 
   return (
-    <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
+    <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
         <span key={environment.label}>{environment.label} could not report usage.</span>
       ))}
@@ -528,65 +933,164 @@ function UsageCoverageNotice({
   );
 }
 
-/**
- * Per-device progress while the page waits for every environment to answer.
- * Only rendered with two or more devices; a lone device has nothing to
- * enumerate.
- */
-function UsageDeviceStrip({
+/** Environment selection and scan progress share a permanent header control. */
+function UsageEnvironmentFilter({
   environments,
+  selectedEnvironments,
+  selectedEnvironmentIds,
+  onSelectionChange,
+  showUsageStatus,
+  isPartial,
+  duplicateSources,
+  staleEnvironments,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
+  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId> | null) => void;
+  readonly showUsageStatus: boolean;
+  readonly isPartial: boolean;
+  readonly duplicateSources: readonly string[];
+  readonly staleEnvironments: readonly string[];
 }) {
-  const scanning = environments.filter(
-    (environment) => environment.summary === null && environment.error === null,
-  );
+  const [modelPricesOpen, setModelPricesOpen] = useState(false);
+  const allSelected = selectedEnvironmentIds === null;
+  const label = allSelected
+    ? "All environments"
+    : selectedEnvironments.length === 1
+      ? selectedEnvironments[0]!.label
+      : `${selectedEnvironments.length} environments`;
+  const pendingCount = selectedEnvironments.filter(
+    (environment) =>
+      environment.error === null && (environment.isPending || environment.summary === null),
+  ).length;
+  const hasIssue =
+    selectedEnvironments.some((environment) => environment.error !== null) ||
+    staleEnvironments.length > 0;
+
   return (
-    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border border-border px-3 py-2 text-xs">
-      {environments.map((environment) => {
-        if (environment.summary !== null) {
-          return (
-            <span
-              key={environment.environmentId}
-              className="flex items-center gap-1 text-foreground"
-            >
-              <CheckIcon className="size-3 text-emerald-600 dark:text-emerald-300/90" aria-hidden />
-              {environment.label}
-            </span>
-          );
-        }
-        if (environment.error !== null) {
-          return (
-            <span
-              key={environment.environmentId}
-              className="flex items-center gap-1 text-destructive"
-            >
-              <XIcon className="size-3" aria-hidden />
-              {environment.label}
-            </span>
-          );
-        }
-        return (
-          <span
-            key={environment.environmentId}
-            className="animate-status-pulse text-muted-foreground"
-          >
-            {environment.label}…
+    <>
+      <Menu>
+        <MenuTrigger
+          render={<InlineButton />}
+          className="group/usage-environment min-w-0 max-w-full"
+        >
+          <span className="min-w-0 truncate">{label}</span>
+          <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+            {showUsageStatus && pendingCount > 0 ? (
+              <>
+                <CircleDashedIcon className="size-3.5" aria-hidden />
+                <span className="sr-only">
+                  {pendingCount} {pendingCount === 1 ? "environment" : "environments"} still
+                  scanning
+                  {isPartial ? "; totals are partial" : ""}
+                </span>
+              </>
+            ) : showUsageStatus && hasIssue ? (
+              <CircleAlertIcon
+                className="size-3.5 text-warning-foreground"
+                aria-label="Some environments could not report usage"
+              />
+            ) : (
+              <ChevronDownIcon
+                className="size-3.5 opacity-0 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
+                aria-hidden
+              />
+            )}
           </span>
-        );
-      })}
-      <span className="ms-auto text-muted-foreground">
-        {scanning.length === 1
-          ? "1 device still scanning"
-          : `${scanning.length} devices still scanning`}
-      </span>
-    </div>
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <MenuCheckboxItem
+            checked={allSelected}
+            closeOnClick={false}
+            onCheckedChange={(checked) => onSelectionChange(checked ? null : new Set())}
+          >
+            All environments
+          </MenuCheckboxItem>
+          <MenuSeparator />
+          {environments.map((environment) => {
+            const checked =
+              selectedEnvironmentIds === null ||
+              selectedEnvironmentIds.has(environment.environmentId);
+            const status =
+              environment.error !== null
+                ? "Unavailable"
+                : environment.summary !== null &&
+                    !isCompatibleUsageContractVersion(
+                      environment.summary.contractVersion,
+                      USAGE_CONTRACT_VERSION,
+                    )
+                  ? "Update required"
+                  : environment.summary === null
+                    ? "Scanning…"
+                    : environment.isPending
+                      ? "Refreshing…"
+                      : "Ready";
+            return (
+              <MenuCheckboxItem
+                key={environment.environmentId}
+                checked={checked}
+                closeOnClick={false}
+                onCheckedChange={(nextChecked) => {
+                  const next = new Set(selectedEnvironments.map((entry) => entry.environmentId));
+                  if (nextChecked) next.add(environment.environmentId);
+                  else next.delete(environment.environmentId);
+                  onSelectionChange(next.size === environments.length ? null : next);
+                }}
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="min-w-0 flex-1 truncate">{environment.label}</span>
+                  {showUsageStatus ? (
+                    <span
+                      className={cn(
+                        "shrink-0 text-xs text-muted-foreground",
+                        environment.error !== null && "text-destructive",
+                      )}
+                    >
+                      {status}
+                    </span>
+                  ) : null}
+                </span>
+              </MenuCheckboxItem>
+            );
+          })}
+          {environments.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-muted-foreground">No environments connected.</p>
+          ) : null}
+          {showUsageStatus && isPartial ? (
+            <p className="px-2 py-2 text-xs text-muted-foreground">
+              Totals are partial while selected environments scan.
+            </p>
+          ) : null}
+          {showUsageStatus ? (
+            <UsageCoverageNotice
+              environments={selectedEnvironments}
+              duplicateSources={duplicateSources}
+              staleEnvironments={staleEnvironments}
+            />
+          ) : null}
+          <MenuSeparator />
+          <MenuItem onClick={() => setModelPricesOpen(true)}>
+            <SlidersHorizontalIcon aria-hidden />
+            Model prices
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+      {modelPricesOpen ? (
+        <UsagePriceOverrides
+          usage={environments}
+          initialSelectedEnvironmentIds={selectedEnvironmentIds}
+          onOpenChange={setModelPricesOpen}
+        />
+      ) : null}
+    </>
   );
 }
 
 /**
- * Static stand-in with the loaded page's shape. No shimmer; blocks fill in
- * exactly once when the last device answers.
+ * Stand-in with the loaded page's shape, using the shared `Skeleton` bars so it
+ * breathes with the same `animate-skeleton` pulse as every other loading state.
+ * Replaced by results as soon as the first environment answers.
  */
 function UsageSkeleton() {
   return (
@@ -594,29 +1098,29 @@ function UsageSkeleton() {
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <div className="h-10 w-36 rounded-sm bg-muted" />
-            <div className="h-4 w-32 rounded-sm bg-muted" />
+            <Skeleton className="h-10 w-36" />
+            <Skeleton className="h-4 w-32" />
           </div>
           {PROVIDER_ORDER.map((provider) => (
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
-                  <span className="size-2 shrink-0 rounded-full bg-muted" />
-                  <span className="size-4 shrink-0 rounded-full bg-muted" />
-                  <div className="h-3.5 w-20 rounded-sm bg-muted" />
+                  <Skeleton shape="pill" className="size-2 shrink-0" />
+                  <Skeleton shape="pill" className="size-4 shrink-0" />
+                  <Skeleton className="h-3.5 w-20" />
                 </span>
-                <div className="h-3.5 w-14 rounded-sm bg-muted" />
+                <Skeleton className="h-3.5 w-14" />
               </div>
-              <div className="h-4 w-36 rounded-sm bg-muted" />
+              <Skeleton className="h-4 w-36" />
             </div>
           ))}
         </div>
 
         <div className="flex flex-col gap-3">
-          <div className="h-5 w-24 rounded-sm bg-muted" />
+          <Skeleton className="h-5 w-24" />
           <div className="flex flex-col gap-1">
-            <div className="ml-16 h-56 rounded-sm bg-muted/35" />
-            <div className="ml-16 h-4 rounded-sm bg-muted/35" />
+            <Skeleton className="ml-16 h-56" />
+            <Skeleton className="ml-16 h-4" />
           </div>
         </div>
       </section>
@@ -628,7 +1132,7 @@ function UsageSkeleton() {
             (label) => (
               <div key={label} className="flex flex-col gap-0.5">
                 <span className="text-xs text-muted-foreground">{label}</span>
-                <div className="h-6 w-16 rounded-sm bg-muted" />
+                <Skeleton className="h-6 w-16" />
               </div>
             ),
           )}
@@ -638,9 +1142,9 @@ function UsageSkeleton() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <div className="h-7 w-28 rounded-lg bg-input/40" />
+          <Skeleton shape="card" className="h-7 w-28" />
         </div>
-        <div className="h-44 rounded-sm bg-muted/35" />
+        <Skeleton className="h-44" />
       </section>
     </>
   );

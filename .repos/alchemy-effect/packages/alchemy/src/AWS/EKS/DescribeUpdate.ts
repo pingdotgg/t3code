@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `name` is injected from the bound {@link Cluster} and `eks:DescribeUpdate` is granted on the cluster's ARN and sub-resource ARNs.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeUpdateHttp)`.
- * @binding
- * @section Tracking Updates
- * @example Poll an Update's Status
+ * ### Tracking Updates
+ * **Example:** Poll an Update's Status
  * ```typescript
  * // init
  * const describeUpdate = yield* AWS.EKS.DescribeUpdate(cluster);
@@ -21,6 +20,8 @@ import type { Cluster } from "./Cluster.ts";
  * const { update } = yield* describeUpdate({ updateId });
  * const done = update?.status === "Successful";
  * ```
+ *
+ * @binding
  */
 export interface DescribeUpdate extends Binding.Service<
   DescribeUpdate,

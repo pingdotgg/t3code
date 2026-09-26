@@ -48,7 +48,7 @@ test.provider(
 );
 
 // `FunctionConfig.Comment` is patched optional in
-// distilled/packages/aws/patches/cloudfront.json — CloudFront omits `Comment`
+// submodules/distilled/packages/aws/patches/cloudfront.json — CloudFront omits `Comment`
 // in `listFunctions` responses for functions created without one, and a
 // comment-less function anywhere in the account used to fail the decode with
 // `SchemaError: Missing key ... FunctionConfig.Comment`.

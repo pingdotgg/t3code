@@ -71,8 +71,8 @@ export interface FindingEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Findings
- * @example Alert on High-Severity Findings
+ * ### Consuming Findings
+ * **Example:** Alert on High-Severity Findings
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

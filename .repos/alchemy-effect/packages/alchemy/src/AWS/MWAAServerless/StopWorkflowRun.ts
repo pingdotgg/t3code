@@ -17,9 +17,8 @@ export type StopWorkflowRunInput = Omit<
  *
  * Stops an in-flight run of the bound {@link Workflow}. Provide the
  * implementation with `Effect.provide(AWS.MWAAServerless.StopWorkflowRunHttp)`.
- * @binding
- * @section Running Workflows
- * @example Stop A Run
+ * ### Running Workflows
+ * **Example:** Stop A Run
  * ```typescript
  * // init — bind the operation to the workflow
  * const stopWorkflowRun = yield* AWS.MWAAServerless.StopWorkflowRun(workflow);
@@ -28,6 +27,8 @@ export type StopWorkflowRunInput = Omit<
  * const stopped = yield* stopWorkflowRun({ RunId: runId });
  * yield* Effect.log(`run ${stopped.RunId} -> ${stopped.Status}`);
  * ```
+ *
+ * @binding
  */
 export interface StopWorkflowRun extends Binding.Service<
   StopWorkflowRun,

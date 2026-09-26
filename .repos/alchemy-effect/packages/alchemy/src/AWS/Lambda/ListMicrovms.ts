@@ -13,13 +13,14 @@ export interface ListMicrovmsRequest extends Omit<
  *
  * Bind it to a {@link MicrovmImage} to get a callable that lists the MicroVMs
  * launched from that image (the `imageIdentifier` filter is injected).
- * @binding
- * @section Inspecting MicroVMs
- * @example List MicroVMs
+ * ### Inspecting MicroVMs
+ * **Example:** List MicroVMs
  * ```typescript
  * const listMicrovms = yield* AWS.Lambda.ListMicrovms(Sandbox);
  * const { items } = yield* listMicrovms({});
  * ```
+ *
+ * @binding
  */
 export interface ListMicrovms extends Binding.Service<
   ListMicrovms,

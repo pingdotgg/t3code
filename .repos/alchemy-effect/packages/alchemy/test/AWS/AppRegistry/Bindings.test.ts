@@ -18,6 +18,14 @@ const sharedStack = Core.scratchStack(testOptions, "AppRegistryBindings");
 const serviceLease = makeAppRegistryTestLease();
 
 beforeAll(serviceLease.acquire, { timeout: 3_600_000 });
+// Release at the same (top) level as the acquire so the lease can never be
+// left held when the gated describe below is skipped.
+afterAll(serviceLease.release);
+
+// AppRegistry is in maintenance mode (see Application.test.ts) — the fixture
+// deploy creates real AppRegistry resources, so the whole suite is gated
+// behind AWS_TEST_APPREGISTRY=1 for accounts that retain access.
+const gated = !process.env.AWS_TEST_APPREGISTRY;
 
 // Lambda function URL cold-start (DNS, IAM propagation, init) can take well
 // over 60s on a fresh deploy.
@@ -59,7 +67,7 @@ const send = (request: HttpClientRequest.HttpClientRequest) =>
     }),
   );
 
-describe.sequential("AppRegistry Bindings", () => {
+describe.skipIf(gated).sequential("AppRegistry Bindings", () => {
   beforeAll(
     Effect.gen(function* () {
       yield* Effect.logInfo(
@@ -99,7 +107,6 @@ describe.sequential("AppRegistry Bindings", () => {
   );
 
   afterAll(sharedStack.destroy(), { timeout: 120_000 });
-  afterAll(serviceLease.release);
 
   describe("binding registration", () => {
     test.provider("all 9 capabilities initialize in the runtime", (_stack) =>

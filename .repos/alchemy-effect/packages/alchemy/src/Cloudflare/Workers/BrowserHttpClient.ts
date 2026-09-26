@@ -54,8 +54,8 @@ type BrowserByteStream = Stream.Stream<
  *   the distilled REST codec models as JSON status, not a byte stream.
  *
  * Because the REST data-plane only returns the action `result` (not the
- * runtime binding's `meta` envelope), `content`/`snapshot` populate `meta`
- * with a best-effort placeholder.
+ * runtime binding's `meta` envelope), JSON actions populate `meta` with a
+ * best-effort placeholder.
  */
 export const makeHttpBrowserClient = (auth: BrowserAuth): BrowserClient => {
   // Run a distilled Browser Rendering op with the injected auth and surface
@@ -82,68 +82,68 @@ export const makeHttpBrowserClient = (auth: BrowserAuth): BrowserClient => {
 
   const content = (options: unknown) =>
     run(browser.createContent(req(options))).pipe(
-      Effect.map(
-        (result): BrowserContentResult => ({
-          success: true,
-          result,
-          meta: { status: 200, title: "" },
-        }),
-      ),
+      Effect.map((result): BrowserContentResult => ({
+        success: true,
+        result,
+        meta: { status: 200, title: "" },
+      })),
     );
 
   const markdown = (options: unknown) =>
     run(browser.createMarkdown(req(options))).pipe(
-      Effect.map(
-        (result): BrowserMarkdownResult => ({ success: true, result }),
-      ),
+      Effect.map((result): BrowserMarkdownResult => ({
+        success: true,
+        result,
+        meta: { status: 200, title: "" },
+      })),
     );
 
   const links = (options: unknown) =>
     run(browser.createLink(req(options))).pipe(
-      Effect.map(
-        (result): BrowserLinksResult => ({
-          success: true,
-          result: [...result],
-        }),
-      ),
+      Effect.map((result): BrowserLinksResult => ({
+        success: true,
+        result: [...result],
+        meta: { status: 200, title: "" },
+      })),
     );
 
   const json = (options: unknown) =>
     run(browser.createJson(req(options))).pipe(
-      Effect.map((result): BrowserJsonResult => ({ success: true, result })),
+      Effect.map((result): BrowserJsonResult => ({
+        success: true,
+        result,
+        meta: { status: 200, title: "" },
+      })),
     );
 
   const scrape = (options: unknown) =>
     run(browser.createScrape(req(options))).pipe(
-      Effect.map(
-        (result): BrowserScrapeResult => ({
-          success: true,
-          result: result.map((item) => ({
-            selector: item.selector,
-            // distilled models per-selector `results` as a single object; the
-            // native shape is an array of matched elements.
-            results: (Array.isArray(item.results)
-              ? item.results
-              : [
-                  item.results,
-                ]) as BrowserScrapeResult["result"][number]["results"],
-          })),
-        }),
-      ),
+      Effect.map((result): BrowserScrapeResult => ({
+        success: true,
+        result: result.map((item) => ({
+          selector: item.selector,
+          // distilled models per-selector `results` as a single object; the
+          // native shape is an array of matched elements.
+          results: (Array.isArray(item.results)
+            ? item.results
+            : [
+                item.results,
+              ]) as BrowserScrapeResult["result"][number]["results"],
+        })),
+        meta: { status: 200, title: "" },
+      })),
     );
 
   const snapshot = (options: unknown) =>
     run(browser.createSnapshot(req(options))).pipe(
-      Effect.map(
-        (result): BrowserSnapshotResult => ({
-          success: true,
-          result: {
-            content: result.content ?? "",
-            screenshot: result.screenshot ?? "",
-          },
-          meta: { status: 200, title: "" },
-        }),
-      ),
+      Effect.map((result): BrowserSnapshotResult => ({
+        success: true,
+        result: {
+          content: result.content ?? "",
+          screenshot: result.screenshot ?? "",
+        },
+        meta: { status: 200, title: "" },
+      })),
     );
 
   // Binary actions have no REST byte-stream equivalent through the distilled

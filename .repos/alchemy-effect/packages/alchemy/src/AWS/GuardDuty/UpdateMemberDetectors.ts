@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.UpdateMemberDetectorsHttp)`.
- * @binding
- * @section Member Administration
- * @example Enable a Feature for Members
+ * ### Member Administration
+ * **Example:** Enable a Feature for Members
  * ```typescript
  * // init
  * const updateMemberDetectors = yield* AWS.GuardDuty.UpdateMemberDetectors(detector);
@@ -23,6 +22,8 @@ import type { Detector } from "./Detector.ts";
  *   Features: [{ Name: "S3_DATA_EVENTS", Status: "ENABLED" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateMemberDetectors extends Binding.Service<
   UpdateMemberDetectors,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * the IoT Greengrass discovery API serves). The caller supplies the core
  * device's thing name at runtime. Provide the implementation with
  * `Effect.provide(AWS.GreengrassV2.GetConnectivityInfoHttp)`.
- * @binding
- * @section Managing Client Devices
- * @example Read A Core's Broker Endpoints
+ * ### Managing Client Devices
+ * **Example:** Read A Core's Broker Endpoints
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getConnectivityInfo = yield* AWS.GreengrassV2.GetConnectivityInfo();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   thingName: "MyCore",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetConnectivityInfo extends Binding.Service<
   GetConnectivityInfo,

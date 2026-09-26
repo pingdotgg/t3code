@@ -125,15 +125,14 @@ export interface ComputeEnvironment extends Resource<
  * Spot) capacity. Fargate compute environments provision in seconds and
  * require no instance management.
  *
- * @resource
- * @section Creating Compute Environments
- * @example Default Fargate Compute Environment
+ * ### Creating Compute Environments
+ * **Example:** Default Fargate Compute Environment
  * ```typescript
  * // Uses the default VPC's subnets and default security group.
  * const ce = yield* Batch.ComputeEnvironment("JobsCE", {});
  * ```
  *
- * @example Unmanaged Compute Environment
+ * **Example:** Unmanaged Compute Environment
  * ```typescript
  * const ce = yield* Batch.ComputeEnvironment("ExternalCapacity", {
  *   managementType: "UNMANAGED",
@@ -141,7 +140,7 @@ export interface ComputeEnvironment extends Resource<
  * });
  * ```
  *
- * @example Fargate Spot with explicit networking
+ * **Example:** Fargate Spot with explicit networking
  * ```typescript
  * const ce = yield* Batch.ComputeEnvironment("SpotCE", {
  *   type: "FARGATE_SPOT",
@@ -151,14 +150,16 @@ export interface ComputeEnvironment extends Resource<
  * });
  * ```
  *
- * @section Composing the Batch chain
- * @example Compute Environment → Job Queue
+ * ### Composing the Batch chain
+ * **Example:** Compute Environment → Job Queue
  * ```typescript
  * const ce = yield* Batch.ComputeEnvironment("JobsCE", {});
  * const queue = yield* Batch.JobQueue("JobsQueue", {
  *   computeEnvironments: [ce.computeEnvironmentArn],
  * });
  * ```
+ *
+ * @resource
  */
 export const ComputeEnvironment = Resource<ComputeEnvironment>(
   "AWS.Batch.ComputeEnvironment",

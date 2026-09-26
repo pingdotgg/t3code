@@ -1,19 +1,47 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { Node, Project, type SourceFile } from "ts-morph";
+import * as ts from "typescript-api/unstable/ast";
+import type { Node, SourceFile } from "typescript-api/unstable/ast";
+import { createSyntaxProject } from "./typescript-source.ts";
 
 const websiteRoot = path.join(import.meta.dir, "../website");
 
+interface SourceRoot {
+  /** Directory scanned for documented source files. */
+  srcRoot: string;
+  /**
+   * Synthetic provider name for flat single-provider packages (their files
+   * sit directly at `srcRoot`); empty for the alchemy package, whose
+   * top-level directories ARE the providers.
+   */
+  providerPrefix: string;
+  /** Display prefix for the page's `Source:` line. */
+  sourceDisplayPrefix: string;
+}
+
 const config = {
-  srcRoot: path.join(import.meta.dir, "../packages/alchemy/src"),
   outRoot: path.join(websiteRoot, "src/content/docs/providers"),
-  tsConfig: path.join(import.meta.dir, "../packages/alchemy/tsconfig.json"),
+  roots: [
+    {
+      srcRoot: path.join(import.meta.dir, "../packages/alchemy/src"),
+      providerPrefix: "",
+      sourceDisplayPrefix: "src",
+    },
+    {
+      srcRoot: path.join(import.meta.dir, "../packages/better-auth/src"),
+      providerPrefix: "BetterAuth",
+      sourceDisplayPrefix: "packages/better-auth/src",
+    },
+  ] satisfies SourceRoot[],
 };
 
 interface FileEntry {
+  /** Output-relative path (provider-prefixed for flat packages). */
   relativePath: string;
   absolutePath: string;
+  /** Display path for the page's `Source:` blockquote. */
+  sourceDisplay: string;
 }
 
 interface ExampleBlock {
@@ -29,17 +57,47 @@ interface ExampleSection {
 
 interface PageDoc {
   title: string;
-  relativePath: string;
+  /** Display path for the `Source:` blockquote. */
+  sourceDisplay: string;
   summary: string;
   sections: ExampleSection[];
+  /** True for `@layer` pages — renders the Layer metadata line. */
+  isLayer: boolean;
+  /** Service tags the Layer provides (`@provides`). */
+  provides: string[];
+  /** Optional peer dependencies (`@peer`). */
+  peers: string[];
 }
 
 const normalizeSlashes = (value: string) => value.split(path.sep).join("/");
 
-async function discoverFiles(): Promise<FileEntry[]> {
+const isSourceFile = (baseName: string) =>
+  (baseName.endsWith(".ts") || baseName.endsWith(".tsx")) &&
+  !baseName.endsWith(".d.ts") &&
+  baseName !== "index.ts";
+
+async function discoverFiles(root: SourceRoot): Promise<FileEntry[]> {
   const entries: FileEntry[] = [];
 
-  const topLevelEntries = await fs.readdir(config.srcRoot, {
+  // Flat single-provider packages: every file under srcRoot belongs to the
+  // synthetic provider directory.
+  if (root.providerPrefix) {
+    const files = (await fs.readdir(root.srcRoot, {
+      recursive: true,
+    })) as string[];
+    for (const file of files) {
+      if (!isSourceFile(path.basename(file))) continue;
+      entries.push({
+        relativePath: path.join(root.providerPrefix, file),
+        absolutePath: path.join(root.srcRoot, file),
+        sourceDisplay: `${root.sourceDisplayPrefix}/${normalizeSlashes(file)}`,
+      });
+    }
+    entries.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    return entries;
+  }
+
+  const topLevelEntries = await fs.readdir(root.srcRoot, {
     withFileTypes: true,
   });
   const dirs = topLevelEntries
@@ -47,7 +105,7 @@ async function discoverFiles(): Promise<FileEntry[]> {
     .map((entry) => entry.name);
 
   for (const dir of dirs) {
-    const dirPath = path.join(config.srcRoot, dir);
+    const dirPath = path.join(root.srcRoot, dir);
     let files: string[];
     try {
       files = (await fs.readdir(dirPath, { recursive: true })) as string[];
@@ -56,15 +114,13 @@ async function discoverFiles(): Promise<FileEntry[]> {
     }
 
     for (const file of files) {
-      const baseName = path.basename(file);
-      if (!baseName.endsWith(".ts") && !baseName.endsWith(".tsx")) continue;
-      if (baseName.endsWith(".d.ts")) continue;
-      if (baseName === "index.ts") continue;
+      if (!isSourceFile(path.basename(file))) continue;
 
       const relativePath = path.join(dir, file);
       entries.push({
         relativePath,
-        absolutePath: path.join(config.srcRoot, relativePath),
+        absolutePath: path.join(root.srcRoot, relativePath),
+        sourceDisplay: `${root.sourceDisplayPrefix}/${normalizeSlashes(relativePath)}`,
       });
     }
   }
@@ -74,13 +130,7 @@ async function discoverFiles(): Promise<FileEntry[]> {
 }
 
 function getJsDocText(node: Node): string {
-  const getter = (node as Node & { getJsDocs?: () => { getText(): string }[] })
-    .getJsDocs;
-  if (!getter) return "";
-  return getter
-    .call(node)
-    .map((doc) => doc.getText())
-    .join("\n");
+  return node.jsDoc?.map((doc) => doc.getText()).join("\n") ?? "";
 }
 
 function cleanDocComment(raw: string): string {
@@ -97,6 +147,12 @@ interface ParsedJSDoc {
   sections: ExampleSection[];
   hasResourceTag: boolean;
   hasBindingTag: boolean;
+  /** `@layer` — a Layer factory providing a Context service. */
+  hasLayerTag: boolean;
+  /** `@provides <Service.Tag>` — service tags the Layer satisfies. */
+  provides: string[];
+  /** `@peer <package>` — optional peer dependencies the Layer needs. */
+  peers: string[];
   category: string;
   product: string;
 }
@@ -109,6 +165,9 @@ function parseJSDoc(node: Node): ParsedJSDoc {
       sections: [],
       hasResourceTag: false,
       hasBindingTag: false,
+      hasLayerTag: false,
+      provides: [],
+      peers: [],
       category: "",
       product: "",
     };
@@ -118,8 +177,11 @@ function parseJSDoc(node: Node): ParsedJSDoc {
 
   const summaryLines: string[] = [];
   const sections: ExampleSection[] = [];
+  const provides: string[] = [];
+  const peers: string[] = [];
   let hasResourceTag = false;
   let hasBindingTag = false;
+  let hasLayerTag = false;
   let category = "";
   let product = "";
   let sawTag = false;
@@ -156,6 +218,43 @@ function parseJSDoc(node: Node): ParsedJSDoc {
       insideFence = !insideFence;
     }
 
+    const proseHeading = insideFence
+      ? null
+      : line.trim().match(/^###\s+(.+?)\s+<!-- api-prose -->$/);
+    if (proseHeading) {
+      if (!sawTag) summaryLines.push(`### ${proseHeading[1]!.trim()}`);
+      continue;
+    }
+
+    const section = insideFence ? null : line.trim().match(/^###\s+(.+)$/);
+    if (section) {
+      sawTag = true;
+      flushExample();
+      flushSectionDesc();
+      currentSection = {
+        title: section[1]!.trim(),
+        description: "",
+        examples: [],
+      };
+      sections.push(currentSection);
+      collectingSectionDesc = true;
+      continue;
+    }
+
+    const example = insideFence
+      ? null
+      : line.trim().match(/^\*\*Example:\*\*\s*(.*)$/);
+    if (example) {
+      sawTag = true;
+      flushSectionDesc();
+      flushExample();
+      currentExample = {
+        title: example[1]!.trim() || "Example",
+        body: "",
+      };
+      continue;
+    }
+
     const tag = insideFence ? null : line.trim().match(/^@(\w+)\s*(.*)$/);
     if (tag) {
       sawTag = true;
@@ -167,6 +266,15 @@ function parseJSDoc(node: Node): ParsedJSDoc {
           break;
         case "binding":
           hasBindingTag = true;
+          break;
+        case "layer":
+          hasLayerTag = true;
+          break;
+        case "provides":
+          if (value) provides.push(value);
+          break;
+        case "peer":
+          if (value) peers.push(value);
           break;
         case "category":
         case "group":
@@ -216,21 +324,24 @@ function parseJSDoc(node: Node): ParsedJSDoc {
     sections,
     hasResourceTag,
     hasBindingTag,
+    hasLayerTag,
+    provides,
+    peers,
     category,
     product,
   };
 }
 
 function declName(node: Node): string {
-  if (Node.isVariableStatement(node)) {
-    return node.getDeclarations()[0]?.getName() ?? "";
+  if (ts.isVariableStatement(node)) {
+    return node.declarationList.declarations[0]?.name.getText() ?? "";
   }
   if (
-    Node.isClassDeclaration(node) ||
-    Node.isInterfaceDeclaration(node) ||
-    Node.isTypeAliasDeclaration(node)
+    ts.isClassDeclaration(node) ||
+    ts.isInterfaceDeclaration(node) ||
+    ts.isTypeAliasDeclaration(node)
   ) {
-    return node.getName() ?? "";
+    return node.name?.getText() ?? "";
   }
   return "";
 }
@@ -251,15 +362,72 @@ const hasContent = (doc: ParsedJSDoc) =>
  * lets us find the documented `VpcLinkResource` const from the tagged
  * `VpcLink` interface.
  */
+export function exportedNames(sourceFile: SourceFile): string[] {
+  const names = new Set<string>();
+  const addBinding = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) names.add(name.text);
+    else
+      for (const element of name.elements) {
+        if (ts.isBindingElement(element) && element.name)
+          addBinding(element.name);
+      }
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+        for (const spec of statement.exportClause.elements)
+          names.add(spec.name.text);
+      } else if (
+        statement.exportClause &&
+        ts.isNamespaceExport(statement.exportClause)
+      ) {
+        names.add(statement.exportClause.name.text);
+      }
+    } else if (ts.isExportAssignment(statement)) {
+      if (!statement.isExportEquals) names.add("default");
+    } else if (
+      (ts.isVariableStatement(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement) ||
+        ts.isImportEqualsDeclaration(statement)) &&
+      statement.modifierFlags & ts.ModifierFlags.Export
+    ) {
+      if (statement.modifierFlags & ts.ModifierFlags.Default)
+        names.add("default");
+      else if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations)
+          addBinding(declaration.name);
+      } else if (
+        ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement) ||
+        ts.isImportEqualsDeclaration(statement)
+      ) {
+        if (statement.name) names.add(statement.name.text);
+      }
+    }
+  }
+  return [...names];
+}
+
 function localNameForExport(
   sourceFile: SourceFile,
   publicName: string,
 ): string | undefined {
-  for (const ed of sourceFile.getExportDeclarations()) {
-    if (ed.getModuleSpecifier()) continue;
-    for (const spec of ed.getNamedExports()) {
-      if (spec.getAliasNode()?.getText() === publicName) {
-        return spec.getNameNode().getText();
+  for (const ed of sourceFile.statements.filter(ts.isExportDeclaration)) {
+    if (ed.moduleSpecifier) continue;
+    for (const spec of ed.exportClause && ts.isNamedExports(ed.exportClause)
+      ? ed.exportClause.elements
+      : []) {
+      if (spec.name.text === publicName) {
+        return (spec.propertyName ?? spec.name).text;
       }
     }
   }
@@ -275,16 +443,24 @@ function localNameForExport(
  * When the tagged declaration itself has no content, pull it from that related
  * declaration so the page isn't dropped as empty.
  */
-function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
+export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
   const candidates: Node[] = [
-    ...sourceFile.getVariableStatements().filter((s) => s.isExported()),
-    ...sourceFile.getClasses().filter((c) => c.isExported()),
-    ...sourceFile.getInterfaces().filter((i) => i.isExported()),
+    ...sourceFile.statements
+      .filter(ts.isVariableStatement)
+      .filter((s) => Boolean(s.modifierFlags & ts.ModifierFlags.Export)),
+    ...sourceFile.statements
+      .filter(ts.isClassDeclaration)
+      .filter((c) => Boolean(c.modifierFlags & ts.ModifierFlags.Export)),
+    ...sourceFile.statements
+      .filter(ts.isInterfaceDeclaration)
+      .filter((i) => Boolean(i.modifierFlags & ts.ModifierFlags.Export)),
   ];
 
   for (const node of candidates) {
     const doc = parseJSDoc(node);
-    if (!doc.hasResourceTag && !doc.hasBindingTag) continue;
+    if (!doc.hasResourceTag && !doc.hasBindingTag && !doc.hasLayerTag) {
+      continue;
+    }
     const name = declName(node);
     if (!name) continue;
     const category = doc.category;
@@ -295,10 +471,10 @@ function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
     // carries the docs (same name, or re-exported under this name).
     const localName = localNameForExport(sourceFile, name);
     const related: Node[] = [
-      ...sourceFile.getVariableStatements(),
-      ...sourceFile.getClasses(),
-      ...sourceFile.getInterfaces(),
-      ...sourceFile.getTypeAliases(),
+      ...sourceFile.statements.filter(ts.isVariableStatement),
+      ...sourceFile.statements.filter(ts.isClassDeclaration),
+      ...sourceFile.statements.filter(ts.isInterfaceDeclaration),
+      ...sourceFile.statements.filter(ts.isTypeAliasDeclaration),
     ].filter((d) => {
       if (d === node) return false;
       const dn = declName(d);
@@ -314,7 +490,16 @@ function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
       }
       if (!best && pd.summary) best = pd;
     }
-    return { name, doc: best ?? doc, category, product };
+    // Borrowed prose keeps the TAGGED declaration's kind + metadata.
+    const merged: ParsedJSDoc = {
+      ...(best ?? doc),
+      hasResourceTag: doc.hasResourceTag,
+      hasBindingTag: doc.hasBindingTag,
+      hasLayerTag: doc.hasLayerTag,
+      provides: doc.provides,
+      peers: doc.peers,
+    };
+    return { name, doc: merged, category, product };
   }
   return undefined;
 }
@@ -382,10 +567,7 @@ function makeLinkResolverFactory(
   return (fromDir: string) => {
     const fromProvider = fromDir.split("/")[0] ?? "";
 
-    const lookup = (
-      name: string,
-      provider?: string,
-    ): PageEntry | undefined => {
+    const lookup = (name: string, provider?: string): PageEntry | undefined => {
       const scope = (list: PageEntry[] | undefined) =>
         (list ?? []).filter((c) => !provider || c.provider === provider);
       const named = scope(byName.get(name));
@@ -543,7 +725,6 @@ function renderPageBody(doc: PageDoc): string {
 }
 
 function renderPage(doc: PageDoc, resolve: LinkResolver): string {
-  const sourcePath = `src/${normalizeSlashes(doc.relativePath)}`;
   const description =
     stripLinkTags(firstParagraph(doc.summary)) ||
     `API reference for ${doc.title}`;
@@ -551,10 +732,40 @@ function renderPage(doc: PageDoc, resolve: LinkResolver): string {
     "---",
     `title: ${yamlString(doc.title)}`,
     `description: ${yamlString(description)}`,
+    // Generated reference pages are ~4k near-identical one-paragraph +
+    // one-snippet stubs (92% of the site). Indexed as separate documents
+    // they read as programmatic thin content, dilute crawl budget, and are
+    // what surfaces as "random" search results instead of the hub and
+    // guide pages. Keep them navigable and crawlable (`follow`) but out of
+    // search indexes; the sitemap integration drops any page carrying this
+    // meta. Revisit once pages are consolidated per service / carry real
+    // prose — this is the only line to change.
+    "head:",
+    "  - tag: meta",
+    "    attrs:",
+    "      name: robots",
+    '      content: "noindex, follow"',
     "---",
   ].join("\n");
 
-  const sourceBlock = `> **Source:** \`${sourcePath}\``;
+  const headerLines = [`> **Source:** \`${doc.sourceDisplay}\``];
+  if (doc.isLayer) {
+    const meta = ["**Kind:** Layer"];
+    if (doc.provides.length > 0) {
+      meta.push(
+        `**Provides:** ${doc.provides.map((tag) => `\`${tag}\``).join(", ")}`,
+      );
+    }
+    if (doc.peers.length > 0) {
+      meta.push(
+        `**Peer dependencies:** ${doc.peers
+          .map((peer) => `\`${peer}\``)
+          .join(", ")}`,
+      );
+    }
+    headerLines.push(`> ${meta.join(" · ")}`);
+  }
+  const sourceBlock = headerLines.join("\n");
   const body = linkifyMarkdown(renderPageBody(doc).trim(), resolve);
 
   if (body) {
@@ -616,6 +827,12 @@ function orderedKeys(keys: string[], order: string[]): string[] {
  * Grouping is by resolved product LABEL (`@product`, falling back to the
  * service dir name), not by directory: two directories declaring the same
  * product merge into one group instead of rendering duplicate siblings.
+ *
+ * A group that would hold exactly one page named the same as the group
+ * (a flat provider dir where the label falls back to the resource name,
+ * e.g. "Certificate > Certificate") carries no information — collapse it
+ * to a plain leaf. Genuine single-page products keep their folder (the
+ * label differs, e.g. Cloudflare's "D1 > Database").
  */
 function buildServiceItems(pages: PageEntry[]): SidebarItem[] {
   const byLabelKey = new Map<string, PageEntry[]>();
@@ -626,6 +843,10 @@ function buildServiceItems(pages: PageEntry[]): SidebarItem[] {
   }
   const items: SidebarItem[] = [];
   for (const [label, productPages] of byLabelKey) {
+    if (productPages.length === 1 && productPages[0].resource === label) {
+      items.push({ label, link: productPages[0].link });
+      continue;
+    }
     items.push({
       label,
       collapsed: true,
@@ -731,14 +952,6 @@ function assertNoDuplicateSiblings(items: SidebarItem[], path: string[]) {
 }
 
 async function main() {
-  const entries = await discoverFiles();
-  console.log(`Discovered ${entries.length} source files.`);
-
-  const project = new Project({
-    tsConfigFilePath: config.tsConfig,
-    skipFileDependencyResolution: true,
-  });
-
   await fs.rm(config.outRoot, { recursive: true, force: true });
   await fs.mkdir(config.outRoot, { recursive: true });
 
@@ -748,68 +961,79 @@ async function main() {
   let written = 0;
   let skipped = 0;
 
-  for (const entry of entries) {
-    const sourceFile = project.getSourceFile(entry.absolutePath);
-    if (!sourceFile) {
-      console.warn(`  skipped (not in project): ${entry.relativePath}`);
-      skipped++;
-      continue;
-    }
+  for (const root of config.roots) {
+    const entries = await discoverFiles(root);
+    console.log(
+      `Discovered ${entries.length} source files in ${normalizeSlashes(
+        path.relative(path.join(import.meta.dir, ".."), root.srcRoot),
+      )}.`,
+    );
 
-    const primary = findTaggedPrimary(sourceFile);
-    if (!primary) {
-      skipped++;
-      continue;
-    }
+    await using syntax = await createSyntaxProject(
+      entries.map((entry) => entry.absolutePath),
+    );
 
-    // Only emit a page when there's actual documented content; a bare
-    // frontmatter + source link stub is noise.
-    if (!primary.doc.summary && primary.doc.sections.length === 0) {
-      skipped++;
-      continue;
-    }
-
-    // Mirror the source directory structure; name the page after the
-    // tagged declaration (e.g. Cloudflare.AI.Search/AiSearchInstance.md).
-    const relDir = path.dirname(entry.relativePath);
-    const outputRelative = path.join(relDir, `${primary.name}.md`);
-
-    const existing = seen.get(outputRelative);
-    if (existing) {
-      console.warn(
-        `  collision: ${outputRelative} from ${entry.relativePath} (already from ${existing})`,
+    for (const entry of entries) {
+      const sourceFile = await syntax.project.program.getSourceFile(
+        entry.absolutePath,
       );
+      if (!sourceFile) {
+        throw new Error(`Missing source file ${entry.absolutePath}`);
+      }
+
+      const primary = findTaggedPrimary(sourceFile);
+      if (!primary) {
+        skipped++;
+        continue;
+      }
+
+      // Only emit a page when there's actual documented content; a bare
+      // frontmatter + source link stub is noise.
+      if (!primary.doc.summary && primary.doc.sections.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      // Mirror the source directory structure; name the page after the
+      // tagged declaration (e.g. Cloudflare.AI.Search/AiSearchInstance.md).
+      const relDir = path.dirname(entry.relativePath);
+      const outputRelative = path.join(relDir, `${primary.name}.md`);
+
+      const existing = seen.get(outputRelative);
+      if (existing) {
+        console.warn(
+          `  collision: ${outputRelative} from ${entry.relativePath} (already from ${existing})`,
+        );
+      }
+      seen.set(outputRelative, entry.relativePath);
+
+      const doc: PageDoc = {
+        title: primary.name,
+        sourceDisplay: entry.sourceDisplay,
+        summary: primary.doc.summary,
+        sections: primary.doc.sections,
+        isLayer: primary.doc.hasLayerTag,
+        provides: primary.doc.provides,
+        peers: primary.doc.peers,
+      };
+      pending.push({ outputRelative, doc });
+
+      const exportNames = exportedNames(sourceFile);
+
+      const segments = normalizeSlashes(outputRelative).split("/");
+      pageEntries.push({
+        provider: segments[0] ?? "",
+        service: segments.length > 2 ? segments[1] : "",
+        resource: primary.name,
+        category: primary.category,
+        product: primary.product,
+        link: `/providers/${normalizeSlashes(outputRelative)
+          .replace(/\.md$/, "")
+          .toLowerCase()}`,
+        dir: normalizeSlashes(relDir),
+        exports: exportNames,
+      });
     }
-    seen.set(outputRelative, entry.relativePath);
-
-    const doc: PageDoc = {
-      title: primary.name,
-      relativePath: entry.relativePath,
-      summary: primary.doc.summary,
-      sections: primary.doc.sections,
-    };
-    pending.push({ outputRelative, doc });
-
-    let exportNames: string[] = [];
-    try {
-      exportNames = [...sourceFile.getExportedDeclarations().keys()];
-    } catch {
-      // Unresolvable re-exports — page-name resolution still applies.
-    }
-
-    const segments = normalizeSlashes(outputRelative).split("/");
-    pageEntries.push({
-      provider: segments[0] ?? "",
-      service: segments.length > 2 ? segments[1] : "",
-      resource: primary.name,
-      category: primary.category,
-      product: primary.product,
-      link: `/providers/${normalizeSlashes(outputRelative)
-        .replace(/\.md$/, "")
-        .toLowerCase()}`,
-      dir: normalizeSlashes(relDir),
-      exports: exportNames,
-    });
   }
 
   // Second pass: render with `{@link}` resolution — the full page set must be
@@ -886,4 +1110,4 @@ async function main() {
   );
 }
 
-await main();
+if (import.meta.main) await main();

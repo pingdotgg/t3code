@@ -38,8 +38,7 @@ export interface EcsRouteTargetProps extends Pick<
  * EventBridge call `ecs:RunTask` with the given task definition (Fargate
  * launch type). Usually reached through the `events(...)` builder rather than
  * called directly.
- * @binding
- * @example Run a Fargate Task for Matching Events
+ * **Example:** Run a Fargate Task for Matching Events
  * ```typescript
  * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toEcsTask(cluster, {
  *   task: {
@@ -51,6 +50,8 @@ export interface EcsRouteTargetProps extends Pick<
  *   assignPublicIp: true,
  * });
  * ```
+ *
+ * @binding
  */
 export const toEcsTask = (
   descriptor: EventDescriptor,

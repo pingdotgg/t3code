@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:ListTagsForResource` on `*`.
  *
- * @binding
- * @section Tagging
- * @example List Tags on a Transcribe Resource
+ * ### Tagging
+ * **Example:** List Tags on a Transcribe Resource
  * ```typescript
  * // init
  * const listTagsForResource = yield* AWS.Transcribe.ListTagsForResource();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   ResourceArn: "arn:aws:transcribe:us-east-1:123456789012:vocabulary/tenant-123",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListTagsForResource extends Binding.Service<
   ListTagsForResource,

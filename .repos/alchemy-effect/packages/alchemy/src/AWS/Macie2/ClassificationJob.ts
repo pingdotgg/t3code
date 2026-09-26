@@ -112,8 +112,8 @@ export interface ClassificationJob extends Resource<
  * `Macie2.Session`). Jobs are immutable once created; changing the job type,
  * name, or bucket set replaces the job. Destroy cancels the job.
  *
- * @section Creating a classification job
- * @example One-time job over a bucket
+ * ### Creating a classification job
+ * **Example:** One-time job over a bucket
  * ```typescript
  * const job = yield* Macie2.ClassificationJob("Scan", {
  *   jobType: "ONE_TIME",
@@ -121,7 +121,7 @@ export interface ClassificationJob extends Resource<
  * });
  * ```
  *
- * @example Sampled scan with a description
+ * **Example:** Sampled scan with a description
  * ```typescript
  * const job = yield* Macie2.ClassificationJob("Scan", {
  *   jobType: "ONE_TIME",

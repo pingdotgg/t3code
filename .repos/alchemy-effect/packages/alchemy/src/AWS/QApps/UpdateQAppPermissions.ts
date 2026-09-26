@@ -16,9 +16,8 @@ export interface UpdateQAppPermissionsRequest extends Omit<
  *
  * Grants or revokes read/edit permissions on the bound Q App for Identity Center principals. Provide the implementation with
  * `Effect.provide(AWS.QApps.UpdateQAppPermissionsHttp)`.
- * @binding
- * @section Permissions
- * @example Grant Read Access
+ * ### Permissions
+ * **Example:** Grant Read Access
  * ```typescript
  * // init — bind the operation to the Q App
  * const updateQAppPermissions = yield* AWS.QApps.UpdateQAppPermissions(app);
@@ -28,6 +27,8 @@ export interface UpdateQAppPermissionsRequest extends Omit<
  *   grantPermissions: [{ action: "read", principal: userId }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateQAppPermissions extends Binding.Service<
   UpdateQAppPermissions,

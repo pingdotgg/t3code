@@ -15,9 +15,8 @@ export interface ListEventsRequest extends Omit<
  * events recorded with `CreateEvent`. Provide `AgentCore.ListEventsHttp` on
  * the Function effect to implement the binding.
  *
- * @binding
- * @section Listing Events
- * @example List a Session's Events
+ * ### Listing Events
+ * **Example:** List a Session's Events
  * ```typescript
  * // init
  * const listEvents = yield* AgentCore.ListEvents(memory);
@@ -33,6 +32,8 @@ export interface ListEventsRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface ListEvents extends Binding.Service<
   ListEvents,

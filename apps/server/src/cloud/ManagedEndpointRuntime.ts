@@ -1,10 +1,12 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -13,22 +15,6 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
-
-function bytesToString(bytes: Uint8Array): string {
-  return new TextDecoder().decode(bytes);
-}
-
-const readRuntimeConfig = Effect.gen(function* () {
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const bytes = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-  if (Option.isNone(bytes)) {
-    return null;
-  }
-  return Option.getOrNull(decodeRuntimeConfig(bytesToString(bytes.value)));
-});
-
 export type CloudManagedEndpointRuntimeStatus =
   | {
       readonly status: "disabled";
@@ -36,6 +22,7 @@ export type CloudManagedEndpointRuntimeStatus =
   | {
       readonly status: "failed";
       readonly providerKind: RelayManagedEndpointRuntimeConfig["providerKind"];
+      readonly failure: "unsupported-platform" | "not-installed" | "spawn-failed";
       readonly reason: string;
       readonly tunnelId?: string;
       readonly tunnelName?: string;
@@ -58,6 +45,9 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     readonly applyConfig: (
       config: RelayManagedEndpointRuntimeConfig | null,
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
+    readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
+    readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
+    readonly withLinkStateLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
 >()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
 
@@ -66,7 +56,19 @@ interface ActiveConnector {
   readonly scope: Scope.Closeable;
   readonly configKey: string;
   readonly config: RelayManagedEndpointRuntimeConfig;
+  readonly startedAtMillis: number;
 }
+
+// A connector that exits before running this long is treated as part of a
+// crash loop; one that stays up at least this long earns an immediate restart
+// again. Without the backoff below, a relay client that fails instantly (a
+// stale version-manager shim, a bad binary) respawns ~100 times per second
+// until the accumulated tracing exhausts the V8 heap.
+const RELAY_RESTART_STABLE_UPTIME_MS = 30_000;
+const RELAY_RESTART_BACKOFF_BASE_MS = 1_000;
+const RELAY_RESTART_BACKOFF_MAX_MS = 60_000;
+// Newly created tunnels can fail authorization briefly while Cloudflare propagates their token.
+const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
 
 export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
@@ -76,6 +78,32 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
   // severe than ERR, so they must surface at least as loudly — without them a
   // fatal connector failure would be logged at debug and hidden.
   return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
+}
+
+/**
+ * Cloudflare's edge rejects a connector whose tunnel was deleted or whose
+ * token no longer matches. Current edge output is
+ * `error="Failed to get tunnel"` with no prefix; older edges prefixed the
+ * same messages with `Unauthorized:`. Match both so recovery fires on either.
+ */
+export function isRejectedRelayClientTunnelOutput(line: string): boolean {
+  return (
+    /\bRegister tunnel error from server side\b/iu.test(line) &&
+    /error="(?:Unauthorized:\s*)?(?:Failed to get tunnel|Record for tunnel not found|Invalid tunnel secret)"/iu.test(
+      line,
+    )
+  );
+}
+
+/** Connector startup failures can clear after installation or a later spawn attempt. */
+export function isRetryableManagedEndpointRuntimeStatus(status: unknown): boolean {
+  if (typeof status !== "object" || status === null || !("status" in status)) {
+    return false;
+  }
+  if (status.status !== "failed" || !("failure" in status)) {
+    return false;
+  }
+  return status.failure === "not-installed" || status.failure === "spawn-failed";
 }
 
 function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
@@ -99,12 +127,16 @@ const stopConnector = (connector: ActiveConnector | null) =>
       )
     : Effect.void;
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
+  const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
   const reconcileSemaphore = yield* Semaphore.make(1);
+  const restartDelayRef = yield* Ref.make(0);
+  const linkStateSemaphore = yield* Semaphore.make(1);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
 
   const stopActive = Effect.gen(function* () {
@@ -115,6 +147,39 @@ export const make = Effect.gen(function* () {
   const superviseConnector = (connector: ActiveConnector) =>
     Effect.gen(function* () {
       const result = yield* Effect.result(connector.child.exitCode);
+      const activeAtExit = yield* Ref.get(activeRef);
+      if (
+        activeAtExit?.child.pid !== connector.child.pid ||
+        activeAtExit.configKey !== connector.configKey
+      ) {
+        return;
+      }
+      const uptimeMillis = (yield* Clock.currentTimeMillis) - connector.startedAtMillis;
+      // The first crash restarts immediately; every further crash inside the
+      // stable-uptime window doubles the wait, up to the cap. The delay runs
+      // before the semaphore so a user config change is never blocked behind
+      // it, and reconcileConfig re-checks the desired config afterwards.
+      const restartDelayMillis = yield* Ref.modify(restartDelayRef, (current) => {
+        if (uptimeMillis >= RELAY_RESTART_STABLE_UPTIME_MS) {
+          return [0, 0];
+        }
+        return [
+          current,
+          current === 0
+            ? RELAY_RESTART_BACKOFF_BASE_MS
+            : Math.min(current * 2, RELAY_RESTART_BACKOFF_MAX_MS),
+        ];
+      });
+      if (restartDelayMillis > 0) {
+        yield* Effect.logWarning("Relay client is crash-looping; delaying restart", {
+          pid: Number(connector.child.pid),
+          uptimeMillis,
+          restartDelayMillis,
+          tunnelId: connector.config.tunnelId,
+          tunnelName: connector.config.tunnelName,
+        });
+        yield* Effect.sleep(Duration.millis(restartDelayMillis));
+      }
       yield* reconcileSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const active = yield* Ref.get(activeRef);
@@ -144,6 +209,7 @@ export const make = Effect.gen(function* () {
             tunnelId: connector.config.tunnelId,
             tunnelName: connector.config.tunnelName,
           });
+          yield* Queue.offer(recoveryRequests, connector.config);
           yield* reconcileConfig(desiredConfig);
         }),
       );
@@ -151,8 +217,10 @@ export const make = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
-  const observeConnectorOutput = (connector: ActiveConnector) =>
-    connector.child.all.pipe(
+  const observeConnectorOutput = (connector: ActiveConnector) => {
+    let rejectedRegistrations = 0;
+
+    return connector.child.all.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.map((line) => line.trim()),
@@ -167,8 +235,22 @@ export const make = Effect.gen(function* () {
         };
         switch (classifyRelayClientOutput(line)) {
           case "connected":
+            rejectedRegistrations = 0;
             return Effect.logInfo("Relay client tunnel connection registered", attributes);
           case "warning":
+            if (isRejectedRelayClientTunnelOutput(line)) {
+              rejectedRegistrations += 1;
+              if (rejectedRegistrations >= TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY) {
+                rejectedRegistrations = 0;
+                return Effect.logWarning(
+                  "Relay client tunnel was rejected; requesting recovery",
+                  attributes,
+                ).pipe(
+                  Effect.andThen(Queue.offer(recoveryRequests, connector.config)),
+                  Effect.asVoid,
+                );
+              }
+            }
             return Effect.logWarning("Relay client reported a transport warning", attributes);
           case "debug":
             return Effect.logDebug("Relay client output", attributes);
@@ -183,6 +265,7 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
+  };
 
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
     if (!config || config.providerKind !== "cloudflare_tunnel") {
@@ -214,6 +297,7 @@ export const make = Effect.gen(function* () {
       return {
         status: "failed",
         providerKind: "cloudflare_tunnel",
+        failure: executable.status === "unsupported" ? "unsupported-platform" : "not-installed",
         reason:
           executable.status === "unsupported"
             ? `Relay client is unsupported on ${executable.platform}-${executable.arch}.`
@@ -226,16 +310,20 @@ export const make = Effect.gen(function* () {
     const connectorScope = yield* Scope.make("sequential");
     const child = yield* spawner
       .spawn(
-        ChildProcess.make(executable.executablePath, ["tunnel", "run"], {
-          detached: false,
-          env: {
-            ...process.env,
-            TUNNEL_TOKEN: config.connectorToken,
+        ChildProcess.make(
+          executable.executablePath,
+          ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
+          {
+            detached: false,
+            env: {
+              ...process.env,
+              TUNNEL_TOKEN: config.connectorToken,
+            },
+            shell: false,
+            stderr: "pipe",
+            stdout: "pipe",
           },
-          shell: false,
-          stderr: "pipe",
-          stdout: "pipe",
-        }),
+        ),
       )
       .pipe(
         Effect.provideService(Scope.Scope, connectorScope),
@@ -256,6 +344,7 @@ export const make = Effect.gen(function* () {
             Effect.as({
               status: "failed",
               providerKind: "cloudflare_tunnel",
+              failure: "spawn-failed",
               reason: String(cause),
               ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
               ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
@@ -274,6 +363,7 @@ export const make = Effect.gen(function* () {
         scope: connectorScope,
         configKey: nextConfigKey,
         config,
+        startedAtMillis: yield* Clock.currentTimeMillis,
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
@@ -290,6 +380,7 @@ export const make = Effect.gen(function* () {
     return {
       status: "failed",
       providerKind: "cloudflare_tunnel",
+      failure: "spawn-failed",
       reason: "Relay client did not start.",
       ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
       ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
@@ -299,22 +390,31 @@ export const make = Effect.gen(function* () {
   const applyConfig = Effect.fn("CloudManagedEndpointRuntime.applyConfig")(
     (config: RelayManagedEndpointRuntimeConfig | null) =>
       reconcileSemaphore.withPermits(1)(
-        Ref.set(desiredConfigRef, config).pipe(Effect.andThen(reconcileConfig(config))),
+        Effect.gen(function* () {
+          // A real config change starts over with a fresh backoff. Recovery
+          // that hands back the same tunnel and token must keep the delay, or
+          // a crash-looping connector respawns on every recovery round trip.
+          const desired = yield* Ref.get(desiredConfigRef);
+          const unchanged =
+            desired !== null &&
+            config !== null &&
+            runtimeConfigKey(desired) === runtimeConfigKey(config);
+          if (!unchanged) {
+            yield* Ref.set(restartDelayRef, 0);
+          }
+          yield* Ref.set(desiredConfigRef, config);
+          return yield* reconcileConfig(config);
+        }),
       ),
   );
 
   const runtime = CloudManagedEndpointRuntime.of({
     applyConfig,
+    recoveryRequests: Stream.fromQueue(recoveryRequests),
+    requestRecovery: (config) => Queue.offer(recoveryRequests, config).pipe(Effect.asVoid),
+    withLinkStateLock: linkStateSemaphore.withPermits(1),
   });
 
-  const initialConfig = yield* readRuntimeConfig.pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
-        Effect.as(null),
-      ),
-    ),
-  );
-  yield* runtime.applyConfig(initialConfig);
   yield* Effect.addFinalizer(() => runtime.applyConfig(null));
   return runtime;
 });

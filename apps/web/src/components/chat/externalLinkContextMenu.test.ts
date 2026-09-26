@@ -181,6 +181,8 @@ describe("external chat link context menu", () => {
   it.each([
     ["https://example.com", "example.com"],
     ["http://localhost:3000/path", "localhost"],
+    ["//cdn.example.com/clip.mp4?signature=abc#t=2", "cdn.example.com"],
+    ["//", null],
     ["#details", null],
     ["mailto:hello@example.com", null],
     ["file:///tmp/example.txt", null],

@@ -15,9 +15,8 @@ export interface GetManagedNotificationEventRequest
  * operations, billing and issue notifications) by its ARN. Provide the
  * implementation with
  * `Effect.provide(AWS.Notifications.GetManagedNotificationEventHttp)`.
- * @binding
- * @section Reading AWS-Managed Notifications
- * @example Fetch a Managed Notification Event
+ * ### Reading AWS-Managed Notifications
+ * **Example:** Fetch a Managed Notification Event
  * ```typescript
  * // init — account-level binding takes no resource
  * const getManagedNotificationEvent =
@@ -27,6 +26,8 @@ export interface GetManagedNotificationEventRequest
  * const event = yield* getManagedNotificationEvent({ arn: eventArn });
  * const headline = event.content.messageComponents.headline;
  * ```
+ *
+ * @binding
  */
 export interface GetManagedNotificationEvent extends Binding.Service<
   GetManagedNotificationEvent,

@@ -43,7 +43,6 @@ function makeElectronAppLayer(
     setAboutPanelOptions: () => Effect.void,
     setAppUserModelId: () => Effect.void,
     getAppMetrics: Effect.succeed([]),
-    isDefaultProtocolClient: () => Effect.succeed(false),
     setAsDefaultProtocolClient: () => Effect.succeed(true),
     setDesktopName: () => Effect.void,
     setDockIcon: () => Effect.void,
@@ -69,6 +68,7 @@ function makeElectronWindowLayer(destroyAll: Effect.Effect<void> = Effect.void) 
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
+    prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
     sendAll: () => Effect.void,
     destroyAll,
@@ -98,7 +98,9 @@ function makeDesktopWindowLayer(
     isBackgroundModeEnabled: () => input.backgroundModeEnabled ?? false,
     prepareForQuit: input.prepareForQuit ?? (() => undefined),
     resetQuitPreparation: () => undefined,
+    prepareCaptureReveal: Effect.void,
     dispatchMenuAction: () => Effect.void,
+    dispatchSnapShotEvent: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
   });
@@ -114,6 +116,7 @@ describe("DesktopLifecycle", () => {
           quitPrepared = true;
         },
       });
+      let windowsDestroyed = false;
 
       const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform,
@@ -123,7 +126,13 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(makeElectronAppLayer(appListeners)),
         Layer.provideMerge(electronThemeLayer),
-        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(
+          makeElectronWindowLayer(
+            Effect.sync(() => {
+              windowsDestroyed = true;
+            }),
+          ),
+        ),
         Layer.provideMerge(desktopWindowLayer),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(
@@ -144,6 +153,7 @@ describe("DesktopLifecycle", () => {
           yield* lifecycle.register;
 
           appListeners.get("before-quit-for-update")?.();
+          yield* Effect.yieldNow;
 
           let prevented = false;
           const event = {
@@ -158,6 +168,7 @@ describe("DesktopLifecycle", () => {
             "cancelling this event prevents the updater from completing its relaunch",
           );
           assert.isTrue(quitPrepared);
+          assert.isTrue(windowsDestroyed);
 
           const state = yield* DesktopState.DesktopState;
           assert.isTrue(yield* Ref.get(state.quitting));

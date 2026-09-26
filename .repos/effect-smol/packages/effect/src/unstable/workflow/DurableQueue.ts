@@ -8,6 +8,14 @@
  * records the handler's `Exit` through that token so the original workflow can
  * continue with the typed success or error.
  *
+ * Delivery is at-least-once: a crash between handler success and the
+ * acknowledgement redelivers the item, so handlers must be idempotent. When an
+ * item exhausts its persisted queue attempts it is dead-lettered: the
+ * `DurableDeferred` never resolves and the workflow stays parked until the
+ * item is requeued out of band, while the id-based de-duplication prevents
+ * replays from resurrecting the failed item. Deployments should run
+ * `PersistedQueue.layerCleanup` in one instance to prune old completed items.
+ *
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"
@@ -61,8 +69,8 @@ export interface DurableQueue<
  *
  * **Example** (Defining a durable queue with workers)
  *
- * ```ts
- * import { Effect, Schema } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Layer, Schema } from "effect"
  * import { DurableQueue, Workflow } from "effect/unstable/workflow"
  *
  * // Define a DurableQueue that can be used to derive workers and offer items for
@@ -88,25 +96,27 @@ export interface DurableQueue<
  *
  * const MyWorkflowLayer = MyWorkflow.toLayer(
  *   Effect.fnUntraced(function*() {
- *     // Add an item to the DurableQueue defined above.
- *     //
- *     // When the worker has finished processing the item, the workflow will
- *     // resume.
- *     //
+ *     // The workflow suspends until a worker completes this queue item.
  *     yield* DurableQueue.process(ApiQueue, { id: "api-call-1" })
- *
- *     yield* Effect.log("Workflow succeeded!")
+ *     return "Workflow succeeded!"
  *   })
  * )
  *
- * // Define a worker layer that can process items from the DurableQueue.
- * const ApiWorker = DurableQueue.worker(
- *   ApiQueue,
- *   Effect.fnUntraced(function*({ id }) {
- *     yield* Effect.log(`Worker processing API call with id: ${id}`)
- *   }),
- *   { concurrency: 5 } // Process up to 5 items concurrently
- * )
+ * const processed: Array<string> = []
+ * const processApiCall = ({ id }: { readonly id: string }) => Effect.sync(() => processed.push(id))
+ *
+ * // Construct the worker layer without starting background workers in this example.
+ * const ApiWorker = DurableQueue.worker(ApiQueue, processApiCall, {
+ *   concurrency: 5
+ * })
+ *
+ * const program = Effect.gen(function*() {
+ *   // Exercise the finite handler directly instead of running a queue worker.
+ *   yield* processApiCall({ id: "api-call-1" })
+ *   return [Layer.isLayer(MyWorkflowLayer), Layer.isLayer(ApiWorker), processed] as const
+ * })
+ *
+ * await Effect.runPromise(program) // => [true, true, ["api-call-1"]]
  * ```
  *
  * @category constructors
@@ -170,7 +180,7 @@ const getQueueSchema = <Payload extends Schema.Top>(
 /**
  * Adds an item to the queue and wait for a worker to process it.
  *
- * @category Processing
+ * @category running
  * @since 4.0.0
  */
 export const process: <
@@ -247,7 +257,7 @@ const defaultRetrySchedule = Schedule.min([
 /**
  * Create a worker effect that processes items from the durable queue.
  *
- * @category Worker
+ * @category workers
  * @since 4.0.0
  */
 export const makeWorker: <
@@ -334,7 +344,7 @@ export const makeWorker: <
 /**
  * Create a layer that runs workers for the durable queue.
  *
- * @category Worker
+ * @category workers
  * @since 4.0.0
  */
 export const worker: <

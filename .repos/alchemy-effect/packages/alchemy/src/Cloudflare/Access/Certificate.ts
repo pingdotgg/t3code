@@ -68,18 +68,15 @@ export type Certificate = Resource<
  *
  * The certificate body is immutable — changing the PEM replaces the
  * resource. The name and associated hostnames converge in place.
- * @resource
- * @product Access
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Certificate
- * @example Upload a CA certificate
+ * ### Creating a Certificate
+ * **Example:** Upload a CA certificate
  * ```typescript
  * const ca = yield* Cloudflare.Access.Certificate("ClientCa", {
  *   certificate: CA_PEM, // -----BEGIN CERTIFICATE----- ...
  * });
  * ```
  *
- * @example Certificate with associated hostnames
+ * **Example:** Certificate with associated hostnames
  * ```typescript
  * const ca = yield* Cloudflare.Access.Certificate("ClientCa", {
  *   name: "corp-client-ca",
@@ -88,14 +85,18 @@ export type Certificate = Resource<
  * });
  * ```
  *
- * @section Updating Hostnames
- * @example Associate more hostnames in place
+ * ### Updating Hostnames
+ * **Example:** Associate more hostnames in place
  * ```typescript
  * const ca = yield* Cloudflare.Access.Certificate("ClientCa", {
  *   certificate: CA_PEM,
  *   associatedHostnames: ["app.example.com", "admin.example.com"],
  * });
  * ```
+ *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  */
 export const Certificate = Resource<Certificate>(
   "Cloudflare.Access.Certificate",

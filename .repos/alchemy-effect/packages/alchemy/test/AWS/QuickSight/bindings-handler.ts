@@ -17,7 +17,7 @@ export class QuickSightBindingsFunction extends Lambda.Function<Lambda.Function>
 export default QuickSightBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

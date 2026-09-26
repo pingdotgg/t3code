@@ -15,9 +15,8 @@ export interface StartPipelineExecutionRequest extends Omit<
  *
  * The response carries the `pipelineExecutionId`, which can be observed with
  * the {@link GetPipelineExecution} binding.
- * @binding
- * @section Running Pipelines
- * @example Start an Execution
+ * ### Running Pipelines
+ * **Example:** Start an Execution
  * ```typescript
  * const startExecution = yield* AWS.CodePipeline.StartPipelineExecution(pipeline);
  *
@@ -25,6 +24,8 @@ export interface StartPipelineExecutionRequest extends Omit<
  *   variables: [{ name: "ENV", value: "prod" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartPipelineExecution extends Binding.Service<
   StartPipelineExecution,

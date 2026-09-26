@@ -1,8 +1,21 @@
+import { assert } from "@effect/vitest"
 import * as Equal from "effect/Equal"
 import * as Hash from "effect/Hash"
 import * as HashMap from "effect/HashMap"
 import * as Option from "effect/Option"
 import { describe, expect, it } from "vitest"
+
+class Key implements Equal.Equal, Hash.Hash {
+  constructor(readonly group: string) {}
+
+  [Equal.symbol](that: unknown) {
+    return that instanceof Key && this.group === that.group
+  }
+
+  [Hash.symbol]() {
+    return 0
+  }
+}
 
 describe("Equal.equals", () => {
   describe("plain objects", () => {
@@ -288,6 +301,18 @@ describe("Equal.equals", () => {
       const date1 = new Date("2023-01-01T00:00:00.000Z")
       const date2 = new Date("2023-01-02T00:00:00.000Z")
       expect(Equal.equals(date1, date2)).toBe(false)
+    })
+
+    it("should compare invalid dates without throwing", () => {
+      expect(Equal.equals(new Date(NaN), new Date(NaN))).toBe(true)
+    })
+  })
+
+  describe("DataView objects", () => {
+    it("should compare viewed bytes", () => {
+      const self = new DataView(Uint8Array.of(1).buffer)
+      const that = new DataView(Uint8Array.of(2).buffer)
+      expect(Equal.equals(self, that)).toBe(false)
     })
   })
 
@@ -672,6 +697,19 @@ describe("Equal.equals", () => {
   })
 
   describe("Map and Set mixed", () => {
+    it("matches Map and Set entries one-to-one", () => {
+      const setResult = Equal.equals(
+        new Set([new Key("x"), new Key("x")]),
+        new Set([new Key("x"), new Key("y")])
+      )
+      const mapResult = Equal.equals(
+        new Map([[new Key("x"), 1], [new Key("x"), 1]]),
+        new Map([[new Key("x"), 1], [new Key("y"), 1]])
+      )
+
+      assert.deepStrictEqual([setResult, mapResult], [false, false])
+    })
+
     it("should handle objects containing maps and sets", () => {
       const obj1 = {
         map: new Map([["a", 1], ["b", 2]]),

@@ -32,14 +32,22 @@ let clusterId: string | undefined;
 class TransientUpstream extends Data.TaggedError("TransientUpstream")<{
   readonly status: number;
   readonly body: string;
-}> {}
+}> {
+  override get message() {
+    return `fixture answered ${this.status}: ${this.body.slice(0, 500)}`;
+  }
+}
 
 class FixtureReadinessFailed extends Data.TaggedError(
   "FixtureReadinessFailed",
 )<{
   readonly status: number;
   readonly body: string;
-}> {}
+}> {
+  override get message() {
+    return `fixture answered ${this.status}: ${this.body.slice(0, 500)}`;
+  }
+}
 
 class ClusterStillPresent extends Data.TaggedError("ClusterStillPresent")<{
   readonly clusterId: string;

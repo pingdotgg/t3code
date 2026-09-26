@@ -22,7 +22,7 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
  *   ("Secret probe returned 400/502: <!DOCTYPE html>..."), session
  *   creation flakes and transport errors ("fetch failed").
  *
- * `isTransientBootstrapWriteError` inspects the `cause` of the
+ * `isTransientBootstrapWriteError` inspects the safe HTTP metadata on the
  * `StateStoreError` the real HTTP client produces, so each case drives
  * an actual `makeHttpStateStore().set` against a stubbed fetch and
  * feeds the resulting failure into the predicate.
@@ -94,8 +94,8 @@ describe("isTransientBootstrapWriteError", () => {
     60_000,
   );
 
-  it("does not retry errors without a cause", () => {
-    expect(isTransientBootstrapWriteError({ cause: undefined })).toBe(false);
+  it("does not retry errors without HTTP failure metadata", () => {
+    expect(isTransientBootstrapWriteError({ http: undefined })).toBe(false);
   });
 });
 

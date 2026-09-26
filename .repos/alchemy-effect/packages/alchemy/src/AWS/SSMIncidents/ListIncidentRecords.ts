@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * the deploy-time grant is account-level (`Resource: "*"`).
  * Provide the implementation with
  * `Effect.provide(AWS.SSMIncidents.ListIncidentRecordsHttp)`.
- * @binding
- * @section Reading Incident Records
- * @example List Open Incidents
+ * ### Reading Incident Records
+ * **Example:** List Open Incidents
  * ```typescript
  * // init
  * const listIncidentRecords = yield* AWS.SSMIncidents.ListIncidentRecords();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   filters: [{ key: "status", condition: { equals: { stringValues: ["OPEN"] } } }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListIncidentRecords extends Binding.Service<
   ListIncidentRecords,

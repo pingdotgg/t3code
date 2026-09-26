@@ -10,9 +10,6 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const worker = yield* Cloudflare.Website.Vite("ReactRouterRscFixture", {
-      assets: {
-        runWorkerFirst: true,
-      },
       compatibility: {
         date: "2026-03-10",
         flags: ["nodejs_compat"],

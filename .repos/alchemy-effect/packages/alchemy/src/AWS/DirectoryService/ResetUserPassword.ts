@@ -13,9 +13,8 @@ import type { Directory } from "./Directory.ts";
  * leaks into logs. The directory id is injected from the binding. Provide
  * the implementation with
  * `Effect.provide(AWS.DirectoryService.ResetUserPasswordHttp)`.
- * @binding
- * @section Managing Users
- * @example Reset a User's Password
+ * ### Managing Users
+ * **Example:** Reset a User's Password
  * ```typescript
  * // init — bind the operation to the directory
  * const resetUserPassword = yield* AWS.DirectoryService.ResetUserPassword(directory);
@@ -26,6 +25,8 @@ import type { Directory } from "./Directory.ts";
  *   NewPassword: Redacted.make("N3w-Secret!"),
  * });
  * ```
+ *
+ * @binding
  */
 export interface ResetUserPassword extends Binding.Service<
   ResetUserPassword,

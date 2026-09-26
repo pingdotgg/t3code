@@ -156,9 +156,8 @@ export interface SearchJob extends Resource<
  * seven days, and can only be stopped while `RUNNING` (destroying the
  * resource stops a running job; completed jobs age out server-side).
  *
- * @resource
- * @section Creating a Search Job
- * @example Search All S3 Backups
+ * ### Creating a Search Job
+ * **Example:** Search All S3 Backups
  * ```typescript
  * const search = yield* BackupSearch.SearchJob("FindReports", {
  *   searchScope: { backupResourceTypes: ["S3"] },
@@ -170,7 +169,7 @@ export interface SearchJob extends Resource<
  * });
  * ```
  *
- * @example Search Specific Recovery Points
+ * **Example:** Search Specific Recovery Points
  * ```typescript
  * const search = yield* BackupSearch.SearchJob("AuditSearch", {
  *   searchScope: {
@@ -180,6 +179,8 @@ export interface SearchJob extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const SearchJob = Resource<SearchJob>("AWS.BackupSearch.SearchJob");
 

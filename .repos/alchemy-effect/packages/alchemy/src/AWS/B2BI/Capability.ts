@@ -65,9 +65,8 @@ export interface Capability extends Resource<
  * An AWS B2B Data Interchange (B2BI) capability. A capability contains the
  * information required to transform incoming or outgoing EDI documents: the
  * X12 transaction set, a transformer, and the S3 input/output locations.
- * @resource
- * @section Creating a Capability
- * @example Inbound X12 850 Capability
+ * ### Creating a Capability
+ * **Example:** Inbound X12 850 Capability
  * ```typescript
  * const capability = yield* B2BI.Capability("Orders", {
  *   name: "inbound-orders",
@@ -82,6 +81,8 @@ export interface Capability extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Capability = Resource<Capability>("AWS.B2BI.Capability");
 

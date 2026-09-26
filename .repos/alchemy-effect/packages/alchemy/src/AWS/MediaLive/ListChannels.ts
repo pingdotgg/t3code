@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level: the deploy-time grant is `medialive:ListChannels` on
  * `*`. Provide the implementation with
  * `Effect.provide(AWS.MediaLive.ListChannelsHttp)`.
- * @binding
- * @section Observing Channels
- * @example Find Channels Left Running
+ * ### Observing Channels
+ * **Example:** Find Channels Left Running
  * ```typescript
  * // init — bind the account-level operation
  * const listChannels = yield* AWS.MediaLive.ListChannels();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const { Channels } = yield* listChannels({ MaxResults: 20 });
  * const running = (Channels ?? []).filter((c) => c.State === "RUNNING");
  * ```
+ *
+ * @binding
  */
 export interface ListChannels extends Binding.Service<
   ListChannels,

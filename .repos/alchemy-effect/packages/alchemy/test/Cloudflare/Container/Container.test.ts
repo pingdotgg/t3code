@@ -1,26 +1,43 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Test from "@/Test/Alchemy";
-import { describe, expect } from "alchemy-test";
+import { destroy as destroyStack } from "@/Destroy.ts";
+import { State } from "@/State";
+import * as Plan from "@/Plan.ts";
+import { Stage } from "@/Stage.ts";
+import * as Layer from "effect/Layer";
+import * as Containers from "@distilled.cloud/cloudflare/containers";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
+import { assert, describe, expect } from "alchemy-test";
+import AttachmentStack, {
+  attachmentStack,
+  stackName as attachmentStackName,
+} from "./fixtures/attachment/stack.ts";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import AsyncContainerStack from "./fixtures/async/stack.ts";
 import EffectfulStack from "./fixtures/effectful/stack.ts";
 import ExternalStack from "./fixtures/external/stack.ts";
+import InferredClassStack from "./fixtures/inferred/stack.ts";
+import { DEMO_PLAIN, DEMO_SECRET } from "./fixtures/remote/object.ts";
 import RemoteStack from "./fixtures/remote/stack.ts";
 
 describe.concurrent.each([
   {
     dev: true,
-    stage: "test-local",
+    stage: process.env.ALCHEMY_TEST_STAGE
+      ? `${process.env.ALCHEMY_TEST_STAGE}-local`
+      : "test-local",
     // Must cover the full readiness budget (readinessRetries × 3s ≈ 3 min)
     // when a saturated machine keeps the local container answering 500s.
     timeout: 300_000,
   },
   {
     dev: false,
-    stage: "test-live",
+    stage: process.env.ALCHEMY_TEST_STAGE ?? "test-live",
     timeout: 300_000,
   },
 ])("Container (dev: $dev)", ({ dev, stage, timeout }) => {
@@ -83,6 +100,23 @@ describe.concurrent.each([
           "effectful container",
         );
         expect(hello).toContain("effectful container");
+      }).pipe(logLevel),
+      { timeout },
+    );
+
+    // A container is a real process — it has no workerd bindings, so a
+    // capability's only channel into it is the binding contract's `env`.
+    // The provider used to declare that contract and silently drop the
+    // values; this pins that a `Binding.Service`'s `host.bind({ env })`
+    // lands in the container's `process.env`, resolved Output and all.
+    // Same mechanism `Prisma.Connect` rides into a container.
+    test(
+      "a Binding.Service's bound env reaches the container",
+      Effect.gen(function* () {
+        const { url, bucketName } = yield* stack;
+
+        const body = yield* fetchReady(new URL("/bound-env", url), bucketName);
+        expect(JSON.parse(body)).toEqual({ value: bucketName });
       }).pipe(logLevel),
       { timeout },
     );
@@ -158,7 +192,140 @@ describe.concurrent.each([
     });
 
     test(
-      "pulls and re-pushes the remote image and serves it over its TCP port",
+      "preserves memoryMib and serves the remote image over its TCP port",
+      Effect.gen(function* () {
+        const { url, app } = yield* stack;
+
+        expect(app.configuration.memoryMib).toBe(4096);
+        expect(app.configuration.instanceType).toBeUndefined();
+        expect(app.applicationId.startsWith("dev:")).toBe(dev);
+
+        const hello = yield* fetchReady(new URL("/hello", url), "method");
+        expect(hello).toContain("method");
+      }).pipe(logLevel),
+      { timeout },
+    );
+
+    // A pre-built image has no Effect runtime to inject config into, so `env`
+    // is the only channel: it lands as the ContainerApplication's
+    // `environmentVariables` and shows up as plain `process.env` entries
+    // inside the image. Covers all three value shapes — a literal, a
+    // `Redacted` (encrypted in state, plain in the container), and an Output
+    // resolved from a sibling resource (the canonical shape of a database
+    // connection string).
+    test(
+      "passes env — literal, Redacted, and sibling-resource Output — into the image",
+      Effect.gen(function* () {
+        const { url, bucketName } = yield* stack;
+        const body = yield* fetchReady(new URL("/hello", url), "DEMO_PLAIN");
+        const echoed = JSON.parse(body) as { env: Record<string, string> };
+
+        expect(echoed.env.DEMO_PLAIN).toBe(DEMO_PLAIN);
+        expect(echoed.env.DEMO_SECRET).toBe(DEMO_SECRET);
+        expect(echoed.env.DEMO_BUCKET).toBe(bucketName);
+      }).pipe(logLevel),
+      { timeout },
+    );
+
+    // The proxy pattern from #1334 (`yield* fetch(yield* HttpServerRequest)`):
+    // worker → DO fetch handler → container port, forwarding the raw incoming
+    // request. In the live variant the incoming web Request carries an
+    // https:// URL and workerd rejects TLS on container ports ("Connecting to
+    // a container using HTTPS is not currently supported"), so this pins the
+    // runtime's scheme downgrade on the container hop; dev serves http:// and
+    // just pins the passthrough itself.
+    test(
+      "proxies the raw incoming request through the DO to the container",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+
+        // The echo image reflects the request as JSON ("method" only appears
+        // in a real echo response, never in an error page).
+        const body = yield* fetchReady(new URL("/passthrough", url), "method");
+        expect(body).toContain("method");
+      }).pipe(logLevel),
+      { timeout },
+    );
+  });
+  /**
+   * Container bound directly on a plain async Worker's `env` (issue #953),
+   * with the Container's logical id EQUAL to the env key
+   * (`ECHO: Container("ECHO", …)`). The Worker's two halves — the
+   * `durable_object_namespace` binding and the `containers` script metadata —
+   * describe the same env entry, so they are contributed under one `sid`.
+   * Contributing them under two (the env key and the ContainerApplication's
+   * logical id) made them collide for exactly this shape, and binding rows
+   * are collapsed by sid — last write wins — so the namespace binding was
+   * silently dropped. Live, the Worker then uploads the Container declaration
+   * itself as a `json` binding (`{"_id":"Effect","op":"alchemy/EffectClass"}`)
+   * and `getContainer` dies with `t.idFromName is not a function`; in dev the
+   * local runtime holds container metadata for a class it has no namespace
+   * for and the deploy dies with
+   * `Durable Object namespace AsyncEchoObject not found`.
+   */
+  describe("async container bound on env", () => {
+    const { test, beforeAll, afterAll, deploy, destroy } = make();
+    const stack = beforeAll(deploy(AsyncContainerStack), {
+      timeout: HOOK_TIMEOUT,
+    });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(AsyncContainerStack), {
+      timeout: HOOK_TIMEOUT,
+    });
+
+    test(
+      "binds the container class as a durable object namespace",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+
+        const body = yield* fetchReady(new URL("/binding", url), "kind");
+        expect(JSON.parse(body)).toEqual({ kind: "durable_object_namespace" });
+      }).pipe(logLevel),
+      { timeout },
+    );
+
+    test(
+      "serves through the container-backed DO class",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+
+        // The echo image reflects the request as JSON ("method" only appears
+        // in a real echo response, never in an error page) — proof the
+        // request went Worker → DO class → container port 8080 and back.
+        const hello = yield* fetchReady(new URL("/hello", url), "method");
+        expect(hello).toContain("method");
+      }).pipe(logLevel),
+      { timeout },
+    );
+  });
+  /**
+   * Issue #1321 — the same sid collision as above in the shape the
+   * Containers guide documents: `className` omitted, so the env key, the
+   * Container's logical id and the DO class are all one name
+   * (`Probe: Container("Probe", …)`). Deployed and driven over HTTP: the
+   * Worker must see a real namespace and reach the container through it.
+   */
+  describe("async container with inferred class name", () => {
+    const { test, beforeAll, afterAll, deploy, destroy } = make();
+    const stack = beforeAll(deploy(InferredClassStack), {
+      timeout: HOOK_TIMEOUT,
+    });
+    afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(InferredClassStack), {
+      timeout: HOOK_TIMEOUT,
+    });
+
+    test(
+      "binds the container class as a durable object namespace",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+
+        const body = yield* fetchReady(new URL("/binding", url), "kind");
+        expect(JSON.parse(body)).toEqual({ kind: "durable_object_namespace" });
+      }).pipe(logLevel),
+      { timeout },
+    );
+
+    test(
+      "serves through the container-backed DO class",
       Effect.gen(function* () {
         const { url } = yield* stack;
 
@@ -169,6 +336,437 @@ describe.concurrent.each([
     );
   });
 });
+
+describe.sequential("container attachment recovery (live)", () => {
+  const stage = process.env.ALCHEMY_TEST_STAGE ?? "test-live";
+  const providers = Cloudflare.providers();
+  const services = Layer.effectContext(
+    AttachmentStack.pipe(Effect.map((stack) => stack.services)),
+  ).pipe(Layer.provide(Layer.succeed(Stage, stage)));
+  const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+    providers,
+    state: Cloudflare.state(),
+    stage,
+    dev: false,
+  });
+  const stack = beforeAll(deploy(AttachmentStack), { timeout: 120_000 });
+  afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(AttachmentStack), {
+    timeout: 120_000,
+  });
+  const workerKey = {
+    stack: attachmentStackName,
+    stage,
+    fqn: "AttachmentWorker",
+  };
+  const containerKey = {
+    stack: attachmentStackName,
+    stage,
+    fqn: "AttachmentContainer",
+  };
+
+  test(
+    "preserves the live attachment when the Worker projection and cached attachment are stale",
+    Effect.gen(function* () {
+      const first = yield* stack;
+      const namespaceId = first.app.durableObjects?.namespaceId;
+      const otherNamespaceId = first.otherApp.durableObjects?.namespaceId;
+      assert(namespaceId);
+      assert(otherNamespaceId);
+      expect(otherNamespaceId).not.toBe(namespaceId);
+      const detached = yield* attachmentStack(false).pipe(
+        Effect.flatMap((stack) =>
+          Plan.make(stack).pipe(Effect.provide(stack.services)),
+        ),
+      );
+      expect(detached.resources.AttachmentContainer.action).toBe("replace");
+      const state = yield* yield* State;
+      const workerRow = yield* state.get(workerKey);
+      const containerRow = yield* state.get(containerKey);
+      assert(
+        workerRow?.status === "created" || workerRow?.status === "updated",
+      );
+      assert(
+        containerRow?.status === "created" ||
+          containerRow?.status === "updated",
+      );
+      for (const durableObjects of [
+        { namespaceId: otherNamespaceId },
+        undefined,
+      ]) {
+        yield* Effect.gen(function* () {
+          yield* state.set({
+            ...workerKey,
+            value: {
+              ...workerRow,
+              attr: { ...workerRow.attr, durableObjectNamespaces: {} },
+            },
+          });
+          yield* state.set({
+            ...containerKey,
+            value: {
+              ...containerRow,
+              attr: {
+                ...containerRow.attr,
+                durableObjects,
+                hash: { ...containerRow.attr.hash, image: "stale" },
+              },
+            },
+          });
+          const plan = yield* AttachmentStack.pipe(
+            Effect.flatMap((stack) =>
+              Plan.make(stack).pipe(Effect.provide(stack.services)),
+            ),
+          );
+          expect(plan.resources.AttachmentContainer.action).toBe("update");
+          const next = yield* deploy(AttachmentStack);
+          expect(next.worker.durableObjectNamespaces).toEqual(
+            first.worker.durableObjectNamespaces,
+          );
+          expect(next.app.applicationId).toBe(first.app.applicationId);
+          expect(next.app.durableObjects).toEqual({ namespaceId });
+          const observed = yield* readAttachmentApplication(
+            first.app.accountId,
+            first.app.applicationId,
+          );
+          expect(observed.durableObjects).toEqual({ namespaceId });
+          expect(observed.maxInstances).toBe(2);
+          expect(next.otherApp.applicationId).toBe(
+            first.otherApp.applicationId,
+          );
+          const other = yield* readAttachmentApplication(
+            first.otherApp.accountId,
+            first.otherApp.applicationId,
+          );
+          expect(other.durableObjects).toEqual({
+            namespaceId: otherNamespaceId,
+          });
+          expect(other.maxInstances).toBe(2);
+          const response = yield* fetchReady(
+            new URL("/hello", next.url),
+            "method",
+            8,
+          );
+          expect(JSON.parse(response).method).toBe("GET");
+        }).pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              const current = yield* state.get(containerKey);
+              if (
+                current &&
+                "attr" in current &&
+                current.attr?.applicationId &&
+                current.attr.applicationId !== first.app.applicationId
+              ) {
+                yield* destroyStack({
+                  stack: AttachmentStack,
+                  stage,
+                  dev: false,
+                });
+              }
+              yield* state
+                .set({ ...workerKey, value: workerRow })
+                .pipe(
+                  Effect.ensuring(
+                    state
+                      .set({ ...containerKey, value: containerRow })
+                      .pipe(Effect.orDie),
+                  ),
+                );
+            }).pipe(Effect.orDie),
+          ),
+        );
+      }
+    }).pipe(Effect.provide(services)),
+    { timeout: 120_000, retry: 0 },
+  );
+
+  test(
+    "recovers an interrupted create with an unresolved Worker attachment",
+    Effect.gen(function* () {
+      const first = yield* stack;
+      const namespaceId = first.app.durableObjects?.namespaceId;
+      assert(namespaceId);
+      const state = yield* yield* State;
+      const workerRow = yield* state.get(workerKey);
+      const containerRow = yield* state.get(containerKey);
+      assert(
+        workerRow?.status === "created" || workerRow?.status === "updated",
+      );
+      assert(
+        containerRow?.status === "created" ||
+          containerRow?.status === "updated",
+      );
+      const interrupted = {
+        ...containerRow,
+        status: "creating" as const,
+        attr: undefined,
+      };
+      yield* Effect.gen(function* () {
+        yield* state.set({
+          ...workerKey,
+          value: {
+            ...workerRow,
+            attr: { ...workerRow.attr, durableObjectNamespaces: {} },
+          },
+        });
+        yield* state.set({ ...containerKey, value: interrupted });
+        const plan = yield* AttachmentStack.pipe(
+          Effect.flatMap((stack) =>
+            Plan.make(stack).pipe(Effect.provide(stack.services)),
+          ),
+        );
+        expect(plan.resources.AttachmentContainer).toMatchObject({
+          action: "create",
+          state: {
+            instanceId: containerRow.instanceId,
+            attr: {
+              applicationId: first.app.applicationId,
+              applicationName: first.app.applicationName,
+              durableObjects: { namespaceId },
+            },
+          },
+        });
+        expect(yield* state.get(containerKey)).toEqual(interrupted);
+        const recovered = yield* deploy(AttachmentStack);
+        expect(recovered.app.applicationId).toBe(first.app.applicationId);
+        expect(recovered.app.durableObjects).toEqual({ namespaceId });
+        expect(recovered.worker.durableObjectNamespaces).toEqual(
+          first.worker.durableObjectNamespaces,
+        );
+        const committed = yield* state.get(containerKey);
+        assert(
+          committed?.status === "created" || committed?.status === "updated",
+        );
+        expect(committed).toMatchObject({
+          instanceId: containerRow.instanceId,
+          attr: {
+            applicationId: first.app.applicationId,
+            durableObjects: { namespaceId },
+          },
+        });
+        const observed = yield* readAttachmentApplication(
+          first.app.accountId,
+          first.app.applicationId,
+        );
+        expect(observed.durableObjects).toEqual({ namespaceId });
+        const other = yield* readAttachmentApplication(
+          first.otherApp.accountId,
+          first.otherApp.applicationId,
+        );
+        expect(other.durableObjects).toEqual(first.otherApp.durableObjects);
+        expect(recovered.otherApp.applicationId).toBe(
+          first.otherApp.applicationId,
+        );
+        const response = yield* fetchReady(
+          new URL("/hello", recovered.url),
+          "method",
+          8,
+        );
+        expect(JSON.parse(response).method).toBe("GET");
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            const current = yield* state.get(containerKey);
+            if (
+              current &&
+              "attr" in current &&
+              current.attr?.applicationId &&
+              current.attr.applicationId !== first.app.applicationId
+            ) {
+              yield* destroyStack({
+                stack: AttachmentStack,
+                stage,
+                dev: false,
+              });
+            }
+            yield* state
+              .set({ ...workerKey, value: workerRow })
+              .pipe(
+                Effect.ensuring(
+                  state
+                    .set({ ...containerKey, value: containerRow })
+                    .pipe(Effect.orDie),
+                ),
+              );
+          }).pipe(Effect.orDie),
+        ),
+      );
+    }).pipe(Effect.provide(services)),
+    { timeout: 120_000, retry: 0 },
+  );
+
+  test(
+    "recovers a missing application only with its recorded exact attachment",
+    Effect.gen(function* () {
+      const first = yield* stack;
+      const namespaceId = first.app.durableObjects?.namespaceId;
+      assert(namespaceId);
+      const state = yield* yield* State;
+      const workerRow = yield* state.get(workerKey);
+      const containerRow = yield* state.get(containerKey);
+      assert(
+        workerRow?.status === "created" || workerRow?.status === "updated",
+      );
+      assert(
+        containerRow?.status === "created" ||
+          containerRow?.status === "updated",
+      );
+      const corruptProjection = (
+        durableObjects: { namespaceId?: string } | undefined,
+      ) =>
+        Effect.gen(function* () {
+          yield* state.set({
+            ...workerKey,
+            value: {
+              ...workerRow,
+              attr: { ...workerRow.attr, durableObjectNamespaces: {} },
+            },
+          });
+          yield* state.set({
+            ...containerKey,
+            value: {
+              ...containerRow,
+              attr: {
+                ...containerRow.attr,
+                durableObjects,
+                hash: { ...containerRow.attr.hash, image: "stale" },
+              },
+            },
+          });
+        });
+      yield* Effect.gen(function* () {
+        yield* Containers.deleteContainerApplication({
+          accountId: first.app.accountId,
+          applicationId: first.app.applicationId,
+        });
+        const remaining = yield* Containers.listContainerApplications({
+          accountId: first.app.accountId,
+        }).pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced("1 second"),
+            until: (apps) =>
+              apps.every((app) => app.id !== first.app.applicationId),
+            times: 8,
+          }),
+        );
+        expect(
+          remaining.some((app) => app.id === first.app.applicationId),
+        ).toBe(false);
+        // Reconcile observes by id first; list deletion can propagate earlier.
+        const deleted = yield* Containers.getContainerApplication({
+          accountId: first.app.accountId,
+          applicationId: first.app.applicationId,
+        }).pipe(
+          Effect.tap((app) =>
+            Effect.logInfo(
+              `Deleted container application ${app.id} is absent from list but still readable by id`,
+            ),
+          ),
+          Effect.catchTag("ContainerApplicationNotFound", () =>
+            Effect.succeed(undefined),
+          ),
+          Effect.repeat({
+            schedule: Schedule.spaced("1 second"),
+            until: (app) => app === undefined,
+            times: 8,
+          }),
+        );
+        expect(deleted).toBeUndefined();
+        for (const missing of [undefined, {}]) {
+          yield* corruptProjection(missing);
+          const failed = yield* deploy(AttachmentStack).pipe(Effect.exit);
+          assert(Exit.isFailure(failed));
+          expect(Cause.pretty(failed.cause)).toContain(
+            "unresolved Durable Object namespace",
+          );
+          const applications = yield* Containers.listContainerApplications({
+            accountId: first.app.accountId,
+          });
+          expect(
+            applications.some((app) => app.name === first.app.applicationName),
+          ).toBe(false);
+        }
+        yield* corruptProjection({ namespaceId });
+        const recovered = yield* deploy(AttachmentStack);
+        expect(recovered.worker.durableObjectNamespaces).toEqual(
+          first.worker.durableObjectNamespaces,
+        );
+        expect(recovered.app.applicationId).not.toBe(first.app.applicationId);
+        expect(recovered.app.durableObjects).toEqual({ namespaceId });
+        const observed = yield* readAttachmentApplication(
+          first.app.accountId,
+          recovered.app.applicationId,
+        );
+        expect(observed.durableObjects).toEqual({ namespaceId });
+        expect(observed.maxInstances).toBe(2);
+        const other = yield* readAttachmentApplication(
+          first.otherApp.accountId,
+          first.otherApp.applicationId,
+        );
+        expect(other.durableObjects).toEqual(first.otherApp.durableObjects);
+        const response = yield* fetchReady(
+          new URL("/hello", recovered.url),
+          "method",
+          8,
+        );
+        expect(JSON.parse(response).method).toBe("GET");
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            // Delete the replacement while its current identity is still persisted.
+            yield* destroyStack({ stack: AttachmentStack, stage, dev: false });
+            yield* Effect.gen(function* () {
+              const remaining = yield* Containers.listContainerApplications({
+                accountId: first.app.accountId,
+              }).pipe(
+                Effect.repeat({
+                  schedule: Schedule.spaced("1 second"),
+                  until: (apps) =>
+                    apps.every(
+                      (app) =>
+                        app.name !== first.app.applicationName &&
+                        app.name !== first.otherApp.applicationName,
+                    ),
+                  times: 8,
+                }),
+              );
+              expect(
+                remaining.some(
+                  (app) =>
+                    app.name === first.app.applicationName ||
+                    app.name === first.otherApp.applicationName,
+                ),
+              ).toBe(false);
+            }).pipe(
+              Effect.ensuring(
+                state
+                  .set({ ...workerKey, value: workerRow })
+                  .pipe(
+                    Effect.ensuring(
+                      state
+                        .set({ ...containerKey, value: containerRow })
+                        .pipe(Effect.orDie),
+                    ),
+                    Effect.orDie,
+                  ),
+              ),
+            );
+          }).pipe(Effect.orDie),
+        ),
+      );
+    }).pipe(Effect.provide(services)),
+    { timeout: 120_000, retry: 0 },
+  );
+});
+
+const readAttachmentApplication = (accountId: string, applicationId: string) =>
+  Containers.getContainerApplication({ accountId, applicationId }).pipe(
+    Effect.retry({
+      while: (error) => error._tag === "ContainerApplicationNotFound",
+      schedule: Schedule.spaced("1 second"),
+      times: 8,
+    }),
+  );
 
 // Note on image choice for the non-Effect (`image`/`dockerfile`) variants:
 // stock nginx images crash-loop inside Cloudflare's container sandbox because
@@ -210,7 +808,7 @@ const freshConn = HttpClient.HttpClient.pipe(
 // contains `expected` — rejecting both transient non-200s and the deploy stub.
 // Each attempt is bounded so a worker that is hung waiting on its container
 // surfaces as a retryable failure rather than blocking the whole test budget.
-const fetchReady = (url: URL, expected: string) =>
+const fetchReady = (url: URL, expected: string, retries = readinessRetries) =>
   Effect.gen(function* () {
     const client = yield* freshConn;
     return yield* client.get(url).pipe(
@@ -226,7 +824,7 @@ const fetchReady = (url: URL, expected: string) =>
         ),
       ),
       Effect.timeout("10 seconds"),
-      Effect.retry({ schedule: readinessSchedule, times: readinessRetries }),
+      Effect.retry({ schedule: readinessSchedule, times: retries }),
     );
   });
 

@@ -81,9 +81,8 @@ export interface ObjectLambdaAccessPoint extends Resource<
  * `HeadObject` / `ListObjects` requests through a supporting access point
  * and transforms responses with a Lambda function (redaction, resizing,
  * format conversion, ...).
- * @resource
- * @section Creating Object Lambda Access Points
- * @example Transform GetObject responses with a Lambda
+ * ### Creating Object Lambda Access Points
+ * **Example:** Transform GetObject responses with a Lambda
  * ```typescript
  * import * as S3Control from "alchemy/AWS/S3Control";
  *
@@ -104,7 +103,7 @@ export interface ObjectLambdaAccessPoint extends Resource<
  * });
  * ```
  *
- * @example Pass Range/PartNumber through and enable metrics
+ * **Example:** Pass Range/PartNumber through and enable metrics
  * ```typescript
  * const olap = yield* S3Control.ObjectLambdaAccessPoint("transform-ap", {
  *   supportingAccessPoint: accessPoint.accessPointArn,
@@ -120,6 +119,8 @@ export interface ObjectLambdaAccessPoint extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const ObjectLambdaAccessPoint = Resource<ObjectLambdaAccessPoint>(
   "AWS.S3Control.ObjectLambdaAccessPoint",

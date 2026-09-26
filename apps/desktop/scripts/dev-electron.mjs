@@ -23,11 +23,27 @@ if (!Number.isInteger(port) || port <= 0) {
 
 const requiredFiles = [
   "dist-electron/main.cjs",
+  "dist-electron/electron/WindowsForegroundFocusWorker.cjs",
   "dist-electron/preload.cjs",
+  "dist-electron/snapShot/GlobalShiftShortcutWorker.cjs",
+  "dist-electron/snapShot/RegionSnapShotWorker.cjs",
+  "dist-electron/snapShot/SnapShotAccessibilityWorker.cjs",
   "../server/dist/bin.mjs",
 ];
 const watchedDirectories = [
   { directory: "dist-electron", files: new Set(["main.cjs", "preload.cjs"]) },
+  {
+    directory: "dist-electron/electron",
+    files: new Set(["WindowsForegroundFocusWorker.cjs"]),
+  },
+  {
+    directory: "dist-electron/snapShot",
+    files: new Set([
+      "GlobalShiftShortcutWorker.cjs",
+      "RegionSnapShotWorker.cjs",
+      "SnapShotAccessibilityWorker.cjs",
+    ]),
+  },
   { directory: "../server/dist", files: new Set(["bin.mjs"]) },
 ];
 const forcedShutdownTimeoutMs = 1_500;
@@ -36,6 +52,12 @@ const childTreeGracePeriodMs = 1_200;
 const remoteDebuggingPort = process.env.T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT?.trim();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone dev script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
+
+NodeChildProcess.execFileSync(
+  process.execPath,
+  [NodePath.join(desktopDir, "scripts/build-browser-secret.mjs")],
+  { stdio: "inherit" },
+);
 
 await waitForResources({
   baseDir: desktopDir,

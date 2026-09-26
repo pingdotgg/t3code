@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Predicate, Ref, Schema } from "effect"
 import { TestClock } from "effect/testing"
-import { Chat, IdGenerator, Prompt } from "effect/unstable/ai"
+import { Chat, IdGenerator, Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import { Persistence } from "effect/unstable/persistence"
 import * as TestUtils from "./utils.ts"
 
@@ -16,6 +16,43 @@ const PersistenceLayer = Layer.provideMerge(
 )
 
 describe("Chat", () => {
+  it.effect("does not replay a completed approved tool", () => {
+    let executions = 0
+    const toolkit = Toolkit.make(Tool.make("Counter", {
+      parameters: Schema.Struct({}),
+      success: Schema.Number,
+      needsApproval: true
+    }))
+
+    return Effect.gen(function*() {
+      const chat = yield* Chat.empty
+      const initial = yield* chat.generateText({ prompt: "Run the counter", toolkit }).pipe(
+        TestUtils.withLanguageModel({
+          generateText: [{ type: "tool-call", id: "counter-call", name: "Counter", params: {} }]
+        })
+      )
+      const approval = initial.content.find((part) => part.type === "tool-approval-request")
+      assert.isDefined(approval)
+
+      yield* chat.generateText({
+        toolkit,
+        prompt: [Prompt.toolMessage({
+          content: [Prompt.toolApprovalResponsePart({ approvalId: approval.approvalId, approved: true })]
+        })]
+      }).pipe(
+        TestUtils.withLanguageModel({ generateText: [{ type: "text", text: "Complete" }] })
+      )
+
+      yield* chat.generateText({ prompt: "Continue", toolkit }).pipe(
+        TestUtils.withLanguageModel({ generateText: [{ type: "text", text: "Continued" }] })
+      )
+
+      assert.strictEqual(executions, 1)
+    }).pipe(
+      Effect.provide(toolkit.toLayer({ Counter: () => Effect.sync(() => ++executions) }))
+    )
+  })
+
   it.effect("should persist chat history to the backing persistence store", () =>
     Effect.gen(function*() {
       const storeId = "chat"

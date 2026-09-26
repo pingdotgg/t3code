@@ -21,7 +21,7 @@ import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
 
 const decodeT3ProjectFileJson = Schema.decodeEffect(T3ProjectFileFromJson);
 
-export class T3ProjectFileLoadError extends Schema.TaggedErrorClass<T3ProjectFileLoadError>()(
+export class T3ProjectFileLoadError extends Schema.TaggedError<T3ProjectFileLoadError>()(
   "T3ProjectFileLoadError",
   {
     operation: Schema.Literals(["read", "decode"]),
@@ -59,6 +59,7 @@ const logT3ProjectFileLoadError = (error: T3ProjectFileLoadError) =>
     }),
   );
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -67,7 +68,7 @@ export const make = Effect.gen(function* () {
     function* (workspaceRoot) {
       const filePath = path.join(workspaceRoot, T3_PROJECT_FILE_NAME);
       const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTags({
           PlatformError: (error) =>
             error.reason._tag === "NotFound"
@@ -86,7 +87,7 @@ export const make = Effect.gen(function* () {
         return Option.none<T3ProjectFile>();
       }
       return yield* decodeT3ProjectFileJson(raw.value).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTags({
           SchemaError: (error) =>
             logT3ProjectFileLoadError(
