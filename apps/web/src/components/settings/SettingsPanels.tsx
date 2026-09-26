@@ -598,6 +598,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
+      ...(settings.usageLimitsMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.usageLimitsMeterEnabled
+        ? ["Usage limits meter"]
+        : []),
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
@@ -668,6 +671,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
+      settings.usageLimitsMeterEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -776,6 +780,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      usageLimitsMeterEnabled: DEFAULT_UNIFIED_SETTINGS.usageLimitsMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -2652,6 +2657,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
               aria-label="Rich text composer"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("usage-limits-meter")}
+          description="Show how much of the selected provider's subscription quota is left in the composer. Click it for the full breakdown."
+          resetAction={
+            settings.usageLimitsMeterEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.usageLimitsMeterEnabled ? (
+              <SettingResetButton
+                label="usage limits meter"
+                onClick={() =>
+                  updateSettings({
+                    usageLimitsMeterEnabled: DEFAULT_UNIFIED_SETTINGS.usageLimitsMeterEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.usageLimitsMeterEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ usageLimitsMeterEnabled: Boolean(checked) })
+              }
+              aria-label="Usage limits meter"
             />
           }
         />
