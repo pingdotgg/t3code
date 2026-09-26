@@ -6543,6 +6543,27 @@ export function makeClaudeAdapterV2(
               });
             }
             const currentTurn = yield* Ref.get(activeTurn);
+            const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId ?? null;
+            if (
+              currentTurn === null &&
+              turnInput.requestRuntimeRestart === true &&
+              nativeThreadId !== null &&
+              existing.nativeThreadId === nativeThreadId
+            ) {
+              // Stop after the turn settled: the background shells belong to
+              // the CLI process, so closing its query is what stops them.
+              yield* closeLiveQueryForNativeThread(nativeThreadId);
+              // A turn started while the close was pending may have opened a
+              // replacement process. Its Waiting and wake state are its own.
+              const current = yield* Ref.get(queryContext);
+              if (current === null || current.query === existing.query) {
+                yield* clearWakeStateForNativeThread(nativeThreadId);
+                yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                  status: "idle",
+                });
+              }
+              return;
+            }
             if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
               return yield* new ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
