@@ -50,8 +50,10 @@ Important fields common to both record types:
 - `attributes`: structured context
 - `events`: embedded logs and custom events
 
-`effect-span` records also contain `exit` with `Success`, `Failure`, or `Interrupted`. `otlp-span`
-records instead carry OTLP resource, scope, and optional status fields.
+`effect-span` records also contain `exit` with `Success`, `Failure`, or `Interrupted`. Their
+attribute strings and event names keep the first 500 characters (`db.query.text` keeps 200). A
+failure's `cause` keeps the first 8,000 characters, which fits a normal stack and `[cause]` chain.
+`otlp-span` records instead carry OTLP resource, scope, and optional status fields.
 
 The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
@@ -533,7 +535,9 @@ yield * Effect.logInfo("starting provider turn");
 yield * Effect.logDebug("waiting for approval response");
 ```
 
-Those messages show up as span events because `Logger.tracerLogger` is installed.
+Those messages show up as span events because `Logger.tracerLogger` is installed. A span keeps
+its newest 128 events and counts the older ones it drops in its `span.dropped_events_count`
+attribute. Logs from a fiber that outlives its span are not written.
 
 ### Use The Pipeable Metrics API
 

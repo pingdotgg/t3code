@@ -62,6 +62,7 @@ const TraceRecordLine = Schema.Struct({
   exit: Schema.optional(
     Schema.Struct({
       _tag: Schema.String,
+      cause: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -97,7 +98,7 @@ const readTraceRecords = Effect.fn("readTraceRecords")(function* (tracePath: str
     .map((line) => decodeTraceRecordLine(line));
 });
 
-const makeTestLayer = (tracePath: string) =>
+const makeTestLayer = (tracePath: string, delegate?: Tracer.Tracer) =>
   Layer.mergeAll(
     Layer.effect(
       Tracer.Tracer,
@@ -106,11 +107,26 @@ const makeTestLayer = (tracePath: string) =>
         maxBytes: 1024 * 1024,
         maxFiles: 2,
         batchWindowMs: 10_000,
+        ...(delegate ? { delegate } : {}),
       }),
     ),
     Logger.layer([Logger.tracerLogger], { mergeWithExisting: false }),
     Layer.succeed(References.MinimumLogLevel, "Info"),
   );
+
+// A delegate tracer that keeps its spans, to see what the local tracer
+// forwards to it.
+const makeRecordingDelegate = () => {
+  const spans: Array<Tracer.NativeSpan> = [];
+  const delegate = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      return span;
+    },
+  });
+  return { delegate, spans };
+};
 
 const nodeServicesIt = it.layer(NodeServices.layer);
 
@@ -503,6 +519,89 @@ describe("observability", () => {
           assert.equal(records.length, 1);
           assert.equal(records[0]?.name, "interrupt-span");
           assert.equal(records[0]?.exit?._tag, "Interrupted");
+        }),
+      ),
+    );
+
+    it.effect("clamps oversized failure causes and log event names", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+
+          yield* Effect.scoped(
+            Effect.exit(
+              Effect.logWarning("w".repeat(5_000)).pipe(
+                Effect.andThen(Effect.fail("f".repeat(20_000))),
+                Effect.withSpan("failing-span"),
+                Effect.provide(makeTestLayer(tracePath)),
+              ),
+            ),
+          );
+
+          const records = yield* readTraceRecords(tracePath);
+          assert.equal(records[0]?.events[0]?.name, `${"w".repeat(500)}…[truncated]`);
+          const cause = records[0]?.exit?.cause ?? "";
+          assert.equal(cause.length, 8_000 + "…[truncated]".length);
+          assert.isTrue(cause.endsWith("…[truncated]"));
+        }),
+      ),
+    );
+
+    it.effect("ignores events added after a span has ended", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+
+          const span = yield* Effect.scoped(
+            Effect.currentSpan.pipe(
+              Effect.tap((span) => Effect.sync(() => span.event("during", 1n))),
+              Effect.withSpan("ended-span"),
+              Effect.provide(makeTestLayer(tracePath)),
+            ),
+          );
+          span.event("after end", 2n);
+
+          // A fiber that outlives its span would grow this list.
+          assert.deepPropertyVal(span, "events", [["during", 1n, {}]]);
+        }),
+      ),
+    );
+
+    it.effect("keeps the newest events per span and records how many were dropped", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const { delegate, spans } = makeRecordingDelegate();
+
+          yield* Effect.scoped(
+            Effect.forEach(Arr.range(1, 200), (index) => Effect.logInfo(`event ${index}`), {
+              discard: true,
+            }).pipe(
+              Effect.withSpan("chatty-span"),
+              Effect.provide(makeTestLayer(tracePath, delegate)),
+            ),
+          );
+
+          const records = yield* readTraceRecords(tracePath);
+          const names = records[0]?.events.map((event) => event.name);
+          assert.deepEqual(
+            names,
+            Arr.range(73, 200).map((index) => `event ${index}`),
+          );
+          assert.equal(records[0]?.attributes["span.dropped_events_count"], 72);
+          assert.deepEqual(
+            spans[0]?.events.map(([name]) => name),
+            names,
+          );
         }),
       ),
     );

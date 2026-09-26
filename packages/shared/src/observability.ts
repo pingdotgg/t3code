@@ -259,19 +259,25 @@ export function compactTraceAttributes(
   return Object.fromEntries(entries);
 }
 
+// A failure repeats its pretty cause on every failing ancestor span. Normal
+// causes (message, stack, and [cause] chain) are well under the cap; it only
+// stops a pathological one, such as an error that embeds a large payload.
+const TRACE_CAUSE_MAX_LENGTH = 8_000;
+
 function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["exit"] {
   if (ExitRuntime.isSuccess(exit)) {
     return { _tag: "Success" };
   }
+  const cause = truncateTraceString(Cause.pretty(exit.cause), TRACE_CAUSE_MAX_LENGTH);
   if (Cause.hasInterruptsOnly(exit.cause)) {
     return {
       _tag: "Interrupted",
-      cause: Cause.pretty(exit.cause),
+      cause,
     };
   }
   return {
     _tag: "Failure",
-    cause: Cause.pretty(exit.cause),
+    cause,
   };
 }
 
@@ -280,14 +286,18 @@ const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
 const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
+function truncateTraceString(value: string, maxLength: number): string {
+  return value.length <= maxLength
+    ? value
+    : `${value.slice(0, maxLength)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+}
+
 // Clamps strings nested inside already-normalized attribute values (arrays and
 // plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
 // input reference when nothing was clamped.
 function truncateNestedValue(value: unknown): unknown {
   if (typeof value === "string") {
-    return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
-      ? value
-      : `${value.slice(0, TRACE_ATTRIBUTE_MAX_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+    return truncateTraceString(value, TRACE_ATTRIBUTE_MAX_LENGTH);
   }
   if (Array.isArray(value)) {
     const truncated = value.map(truncateNestedValue);
@@ -318,8 +328,7 @@ export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttri
     if (typeof value === "string" && ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)) {
       if (value.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH) continue;
       truncated ??= { ...attributes };
-      truncated[key] =
-        `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      truncated[key] = truncateTraceString(value, TRACE_ATTRIBUTE_TRUNCATED_LENGTH);
       continue;
     }
     const next = truncateNestedValue(value);
@@ -349,7 +358,8 @@ function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
       compactTraceAttributes(Object.fromEntries(span.attributes)),
     ),
     events: span.events.map(([name, startTime, attributes]) => ({
-      name,
+      // A log event is named after its whole formatted message.
+      name: truncateTraceString(name, TRACE_ATTRIBUTE_MAX_LENGTH),
       timeUnixNano: String(startTime),
       attributes: truncateTraceAttributes(compactTraceAttributes(attributes)),
     })),
@@ -457,6 +467,11 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   } satisfies TraceSink;
 });
 
+// Long-lived spans (a whole RPC stream, for example) would otherwise keep
+// every log event in memory until they end. Like the OpenTelemetry SDK, a
+// span keeps its newest 128 events and drops the oldest.
+const TRACE_SPAN_MAX_EVENTS = 128;
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -471,6 +486,7 @@ class LocalFileSpan implements Tracer.Span {
   status: Tracer.SpanStatus;
   attributes: Map<string, unknown>;
   events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]>;
+  private droppedEventCount = 0;
   private readonly delegate: Tracer.Span;
   private readonly push: (record: EffectTraceRecord) => void;
 
@@ -498,12 +514,20 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    if (this.droppedEventCount > 0) {
+      this.attribute("span.dropped_events_count", this.droppedEventCount);
+    }
     this.status = {
       _tag: "Ended",
       startTime: this.status.startTime,
       endTime,
       exit,
     };
+    // The delegate gets the kept events only now, so it holds the same bounded
+    // set. The OTLP delegate reads a span's events only at end.
+    for (const [name, startTime, attributes] of this.events) {
+      this.delegate.event(name, startTime, attributes);
+    }
     this.delegate.end(endTime, exit);
 
     if (this.sampled) {
@@ -516,10 +540,14 @@ class LocalFileSpan implements Tracer.Span {
     this.delegate.attribute(key, value);
   }
 
+  // Events on an ended span are never written, so they are not kept either.
   event(name: string, startTime: bigint, attributes?: Record<string, unknown>): void {
-    const nextAttributes = attributes ?? {};
-    this.events.push([name, startTime, nextAttributes]);
-    this.delegate.event(name, startTime, nextAttributes);
+    if (this.status._tag === "Ended") return;
+    if (this.events.length >= TRACE_SPAN_MAX_EVENTS) {
+      this.events.shift();
+      this.droppedEventCount += 1;
+    }
+    this.events.push([name, startTime, attributes ?? {}]);
   }
 
   addLinks(links: ReadonlyArray<Tracer.SpanLink>): void {
