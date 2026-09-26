@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   GrokSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -27,6 +28,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import {
   grokPromptSettlementBelongsToContext,
@@ -49,7 +51,7 @@ async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
   return writeFakeCli({
     directory: dir,
     name: "fake-grok",
-    env: extraEnv ?? {},
+    env: { T3_ACP_GROK: "1", ...extraEnv },
     source: execScriptSource({ scriptPath: mockAgentPath }),
   });
 }
@@ -291,6 +293,52 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       }).pipe(TestClock.withLive),
     );
   }
+
+  it.effect("offers T3 MCP to Grok through the stdio bridge", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-t3-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-test"),
+        threadId,
+        providerSessionId: "provider-session",
+        providerInstanceId: ProviderInstanceId.make("grok"),
+        endpoint: "http://127.0.0.1:9/mcp",
+        authorizationHeader: "Bearer mcp-secret",
+        capabilities: new Set(),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-t3-mcp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const created = requests.find((request) => request.method === "session/new");
+      expect(created?.params).toMatchObject({
+        mcpServers: [
+          {
+            name: "t3-code",
+            args: expect.arrayContaining(["acp-mcp-bridge"]),
+            env: expect.arrayContaining([
+              { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer mcp-secret" },
+            ]),
+          },
+        ],
+      });
+      // The credential rides in the bridge environment, never on its command line.
+      expect(created?.params).not.toMatchObject({
+        mcpServers: [{ args: expect.arrayContaining([expect.stringContaining("mcp-secret")]) }],
+      });
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("keeps runtime context out of native command arguments", () =>
     Effect.gen(function* () {

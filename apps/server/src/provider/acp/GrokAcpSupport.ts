@@ -1,3 +1,5 @@
+import type * as EffectAcpSchema from "effect-acp/compat";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type GrokSettings, ProviderDriverKind, type RuntimeMode } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -5,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -30,18 +32,23 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly runtimeMode?: RuntimeMode;
 }
 
+/**
+ * Launch argv for a runtime mode. `--permission-mode` on the argv beats the
+ * user's Grok config, so Supervised cannot inherit a configured always-approve.
+ * `grok agent` offers ask, its auto classifier, and always-approve. It has no
+ * Auto-accept edits (`acceptEdits` is only a settings-file default that
+ * `grok agent` treats as ask), so any other mode launches asking.
+ */
 export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   switch (runtimeMode) {
-    case "approval-required":
-      return ["--permission-mode", "default", "agent", "stdio"];
-    case "auto-accept-edits":
-      return ["--permission-mode", "acceptEdits", "agent", "stdio"];
+    case undefined:
+      return ["agent", "stdio"];
     case "auto":
       return ["--permission-mode", "auto", "agent", "stdio"];
     case "full-access":
       return ["agent", "--always-approve", "stdio"];
     default:
-      return ["agent", "stdio"];
+      return ["--permission-mode", "default", "agent", "stdio"];
   }
 }
 
@@ -68,6 +75,37 @@ function resolveGrokAuthMethodId(environment: NodeJS.ProcessEnv | undefined): st
     : GROK_AUTH_METHOD_CACHED_TOKEN;
 }
 
+export function grokAcpRuntimeProcessOwnership(
+  processGroupPlatform: NodeJS.Platform,
+): Pick<
+  AcpSessionRuntime.AcpSessionRuntimeOptions,
+  "ownDescendantProcessGroups" | "ownDetachedProcessGroup" | "processGroupPlatform"
+> {
+  return {
+    // macOS keeps the prior provider-group teardown until a stable libproc
+    // identity provider can cover Grok's nested detached tool groups.
+    ownDescendantProcessGroups: processGroupPlatform === "linux",
+    ownDetachedProcessGroup: true,
+    processGroupPlatform,
+  };
+}
+
+/**
+ * Current Grok treats Ctrl+C cancellation as a barrier against stale
+ * background-task wake prompts until the next genuine user turn. Replay sends
+ * the same metadata so recorded cancels match.
+ */
+const GROK_ACP_CANCEL_META = { cancelTrigger: "ctrl_c" } as const;
+
+/**
+ * Grok's Auto mode asks the client about an action its classifier blocks only
+ * when the client declares a type that can show a prompt; the default
+ * (`generic`) gets a silent denial instead. `extension` is the prompting type
+ * that keeps the permission options T3 already maps (no always-approve row,
+ * no per-command persistent grants).
+ */
+const GROK_ACP_INITIALIZE_META = { clientType: "extension" } as const;
+
 export const makeGrokAcpRuntime = (
   input: GrokAcpRuntimeInput,
 ): Effect.Effect<
@@ -76,6 +114,9 @@ export const makeGrokAcpRuntime = (
   Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const processGroupPlatform = yield* HostProcessPlatform.pipe(
+      Effect.provide(NodeServices.layer),
+    );
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
@@ -86,6 +127,9 @@ export const makeGrokAcpRuntime = (
           input.runtimeMode,
         ),
         authMethodId: resolveGrokAuthMethodId(input.environment),
+        cancelMeta: { ...input.cancelMeta, ...GROK_ACP_CANCEL_META },
+        initializeMeta: GROK_ACP_INITIALIZE_META,
+        ...grokAcpRuntimeProcessOwnership(processGroupPlatform),
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),

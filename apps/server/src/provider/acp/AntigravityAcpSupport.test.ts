@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
@@ -143,7 +143,7 @@ describe("applyAntigravityAcpModelSelection", () => {
       const { runtime, selections } = makeModelRuntime([
         {
           ...modelConfig,
-          options: [{ group: "gemini", name: "Gemini", options: modelConfig.options }],
+          options: [{ groupId: "gemini", name: "Gemini", options: modelConfig.options }],
         },
       ]);
       const model = yield* applyAntigravityAcpModelSelection({

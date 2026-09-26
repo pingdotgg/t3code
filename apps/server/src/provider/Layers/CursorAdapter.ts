@@ -38,7 +38,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -61,6 +61,7 @@ import {
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import {
+  type AcpPlanUpdate,
   type AcpSessionMode,
   type AcpSessionModeState,
   parsePermissionRequest,
@@ -426,13 +427,7 @@ export function makeCursorAdapter(
 
     const emitPlanUpdate = (
       ctx: CursorSessionContext,
-      payload: {
-        readonly explanation?: string | null;
-        readonly plan: ReadonlyArray<{
-          readonly step: string;
-          readonly status: "pending" | "inProgress" | "completed";
-        }>;
-      },
+      payload: AcpPlanUpdate,
       rawPayload: unknown,
       source: "acp.jsonrpc" | "acp.cursor.extension",
       method: string,
@@ -675,7 +670,7 @@ export function makeCursorAdapter(
                     if (ctx) {
                       yield* emitPlanUpdate(
                         ctx,
-                        extractTodosAsPlan(params),
+                        { nativePlanId: "legacy", kind: "items", ...extractTodosAsPlan(params) },
                         params,
                         "acp.cursor.extension",
                         "cursor/update_todos",
