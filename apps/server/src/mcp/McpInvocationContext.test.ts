@@ -34,7 +34,8 @@ it.effect("reports the scoped credential context when preview capability is unav
       providerSessionId: invocation.providerSessionId,
       providerInstanceId: invocation.providerInstanceId,
     });
-    expect(error.message).toBe("MCP credential does not grant the preview capability.");
+    expect(error.message).toContain("MCP credential does not grant the preview capability");
+    expect(error.message).toContain("use a headless browser from the shell");
   });
 });
 

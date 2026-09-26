@@ -235,7 +235,11 @@ function SubscriptionUsage(
       spacing={accessory || dense ? 2 : 6}
       modifiers={props.url ? [widgetURL(props.url)] : []}
     >
-      {compact ? (
+      {providers.length === 0 ? (
+        <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle("secondary")]}>
+          No subscription limits available.
+        </Text>
+      ) : compact ? (
         <VStack alignment="leading" spacing={accessory || dense ? 4 : 8}>
           {columns}
         </VStack>

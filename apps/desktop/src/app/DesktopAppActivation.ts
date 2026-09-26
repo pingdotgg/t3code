@@ -1,7 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat uid and an atomic stale-socket unlink at the Node adapter boundary.
+// @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat, an atomic rename, and a directory watch at the Node adapter boundary.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import {
   DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
@@ -44,6 +47,8 @@ export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAp
 }
 
 interface RunningControlServer {
+  /** Binds the address again if its socket file is gone. Directory changes run this too. */
+  readonly reclaim: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
 
@@ -70,12 +75,12 @@ function requestIdFromUnknown(value: unknown): string {
   return "invalid-request";
 }
 
-async function prepareUnixSocket(input: {
-  readonly address: string;
+/** Makes sure the socket directory is safe to use. Returns true when it had to create it. */
+async function prepareUnixDirectory(input: {
   readonly directory: string;
   readonly userId: number | undefined;
-}): Promise<void> {
-  await NodeFSP.mkdir(input.directory, { recursive: true, mode: 0o700 });
+}): Promise<boolean> {
+  const created = await NodeFSP.mkdir(input.directory, { recursive: true, mode: 0o700 });
   const stat = await NodeFSP.lstat(input.directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`${input.directory} is not a directory.`);
@@ -84,28 +89,43 @@ async function prepareUnixSocket(input: {
     throw new Error(`${input.directory} is owned by another user.`);
   }
   await NodeFSP.chmod(input.directory, 0o700);
-  await NodeFSP.unlink(input.address).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "ENOENT") throw error;
-  });
+  return created !== undefined;
 }
 
+async function inodeAt(path: string): Promise<number | null> {
+  return NodeFSP.lstat(path).then(
+    (stat) => stat.ino,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    },
+  );
+}
+
+function closeServer(server: NodeNet.Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+/**
+ * Serves `t3 app` requests on the local control address until `close`.
+ *
+ * Two desktop apps can share one state dir, for example nightly and a preview
+ * build. They share one socket path, so on Unix:
+ * - The newest app takes the path over.
+ * - `close` removes the socket file only while it is still this app's socket.
+ * - An app binds the path again when it is gone, for example after the app that
+ *   took it over quits.
+ */
 export async function startDesktopAppControlServer(input: {
   readonly address: string;
   readonly directory: string | null;
   readonly userId: number | undefined;
   readonly handle: (request: DesktopAppActivationRequest) => Promise<DesktopAppActivationResponse>;
   readonly cancel: (requestId: string) => void;
+  readonly onReclaimError: (error: unknown) => void;
 }): Promise<RunningControlServer> {
-  if (input.directory !== null) {
-    await prepareUnixSocket({
-      address: input.address,
-      directory: input.directory,
-      userId: input.userId,
-    });
-  }
-
   const sockets = new Set<NodeNet.Socket>();
-  const server = NodeNet.createServer((socket) => {
+  const handleConnection = (socket: NodeNet.Socket) => {
     sockets.add(socket);
     socket.setEncoding("utf8");
     let buffer = "";
@@ -160,40 +180,116 @@ export async function startDesktopAppControlServer(input: {
       sockets.delete(socket);
       if (!responseSent && activeRequestId !== null) input.cancel(activeRequestId);
     });
-  });
+  };
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => {
-      server.removeListener("listening", onListening);
-      reject(error);
-    };
-    const onListening = () => {
-      server.removeListener("error", onError);
-      resolve();
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(input.address);
-  });
+  const listen = (address: string) =>
+    new Promise<NodeNet.Server>((resolve, reject) => {
+      const server = NodeNet.createServer(handleConnection);
+      const onError = (error: Error) => {
+        server.removeListener("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        resolve(server);
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(address);
+    });
 
-  try {
-    if (input.directory !== null) {
-      await NodeFSP.chmod(input.address, 0o600);
+  // Closing a Unix socket server unlinks the path it was bound to, even when
+  // another app's socket lives there now. Bind a staging path and move it onto
+  // the address instead, so a later close only unlinks the staging path, which
+  // is already gone. `rename` takes the address over in one step. `link` claims
+  // it only while it is free, and fails with EEXIST otherwise.
+  const bindUnix = async (directory: string, mode: "take-over" | "claim-free") => {
+    const staging = NodePath.join(directory, `${NodeCrypto.randomBytes(6).toString("hex")}.tmp`);
+    const server = await listen(staging);
+    try {
+      await NodeFSP.chmod(staging, 0o600);
+      const inode = await inodeAt(staging);
+      if (mode === "take-over") {
+        await NodeFSP.rename(staging, input.address);
+      } else {
+        await NodeFSP.link(staging, input.address);
+        await NodeFSP.unlink(staging);
+      }
+      return { server, inode };
+    } catch (error) {
+      await closeServer(server);
+      throw error;
     }
-  } catch (error) {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    throw error;
+  };
+
+  let server: NodeNet.Server;
+  let inode: number | null = null;
+  if (input.directory === null) {
+    // Named pipes close with the app that owns them, so no other app can remove this one.
+    server = await listen(input.address);
+  } else {
+    await prepareUnixDirectory({ directory: input.directory, userId: input.userId });
+    ({ server, inode } = await bindUnix(input.directory, "take-over"));
   }
 
   let closed = false;
+  const reclaimOnce = async () => {
+    // Never replace a socket that exists, so two apps cannot trade the path back and forth.
+    if (closed || input.directory === null || (await inodeAt(input.address)) !== null) return;
+    if (await prepareUnixDirectory({ directory: input.directory, userId: input.userId })) {
+      // A watch follows the directory's inode, so a recreated directory needs a new one.
+      watchDirectory(input.directory);
+    }
+    const next = await bindUnix(input.directory, "claim-free").catch(
+      (error: NodeJS.ErrnoException) => {
+        // Another app bound the address first.
+        if (error.code === "EEXIST") return null;
+        throw error;
+      },
+    );
+    if (next === null) return;
+    const previous = server;
+    ({ server, inode } = next);
+    previous.close();
+  };
+  let pendingReclaim = Promise.resolve();
+  const reclaim = () => {
+    const run = pendingReclaim.then(reclaimOnce);
+    pendingReclaim = run.catch(() => undefined);
+    return run;
+  };
+  let watcher: NodeFS.FSWatcher | null = null;
+  const watchDirectory = (directory: string) => {
+    watcher?.close();
+    watcher = null;
+    try {
+      watcher = NodeFS.watch(directory, { persistent: false }, () => {
+        reclaim().catch(input.onReclaimError);
+      });
+      watcher.on("error", input.onReclaimError);
+    } catch (error) {
+      // The socket still works without a watcher. It only cannot recover after removal.
+      input.onReclaimError(error);
+    }
+  };
+  if (input.directory !== null) {
+    watchDirectory(input.directory);
+    // Catch a removal that happened before the watcher started.
+    reclaim().catch(input.onReclaimError);
+  }
+
   return {
+    reclaim,
     close: async () => {
       if (closed) return;
       closed = true;
+      // A running reclaim can replace the watcher, so close the watcher after it.
+      await pendingReclaim;
+      watcher?.close();
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await closeServer(server);
       server.removeAllListeners();
-      if (input.directory !== null) {
+      if (inode !== null && (await inodeAt(input.address)) === inode) {
         await NodeFSP.unlink(input.address).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== "ENOENT") throw error;
         });
@@ -258,6 +354,10 @@ export const make = Effect.gen(function* () {
             userId,
             handle: (request) => broker.request(request),
             cancel: (requestId) => broker.cancel(requestId),
+            onReclaimError: (cause) =>
+              void runPromise(
+                logWarning("failed to restore the desktop app control socket", { cause }),
+              ),
           }),
         catch: (cause) => new DesktopAppActivationStartError({ address: address.address, cause }),
       }),

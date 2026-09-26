@@ -567,13 +567,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
       yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings.Keybindings;
-        yield* Effect.all(
-          commands.map((command, index) =>
+        yield* Effect.forEach(
+          commands,
+          (command, index) =>
             keybindings.upsertKeybindingRule({
               key: `mod+${String.fromCharCode(97 + index)}`,
               command,
             }),
-          ),
           { concurrency: "unbounded", discard: true },
         );
       });

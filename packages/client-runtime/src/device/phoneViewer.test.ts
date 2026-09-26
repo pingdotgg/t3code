@@ -11,6 +11,7 @@ const gpu = vi.hoisted(() => ({
       scene: Scene;
       phone: Object3D | undefined;
       rotation: Quaternion | undefined;
+      displayAngle: number | undefined;
       yaw: number | undefined;
       cameraZ: number;
     }[];
@@ -50,6 +51,7 @@ vi.mock("three", async () => {
           scene,
           phone,
           rotation: phone?.quaternion.clone(),
+          displayAngle: phone?.children[0]?.rotation.z,
           yaw: phone?.rotation.y,
           cameraZ: camera.position.z,
         });
@@ -78,10 +80,24 @@ vi.mock("./modelScene.ts", async () => {
   };
 });
 
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PlaneGeometry, Quaternion } from "three";
+import {
+  Box3,
+  BoxGeometry,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  PlaneGeometry,
+  Quaternion,
+  Vector3,
+} from "three";
 import { disposeDeviceModel } from "./modelScene.ts";
 import { createPhoneViewer } from "./phoneViewer.ts";
-import { IOS_TABLET_SHAPE } from "./shapeProfile.ts";
+import {
+  ANDROID_PHONE_SHAPE,
+  IOS_TABLET_SHAPE,
+  resolveDeviceShape,
+  type DeviceShapeProfile,
+} from "./shapeProfile.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -90,7 +106,7 @@ afterEach(() => {
   models.pending.length = 0;
 });
 
-function fixture() {
+function fixture(profile?: DeviceShapeProfile) {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
   let now = 0;
@@ -104,7 +120,13 @@ function fixture() {
   const source = { width: 1206, height: 2622 } as HTMLCanvasElement;
   const onUnavailable = vi.fn();
   const onFramingAspect = vi.fn();
-  const viewer = createPhoneViewer({ canvas, source, onUnavailable, onFramingAspect });
+  const viewer = createPhoneViewer({
+    canvas,
+    source,
+    onUnavailable,
+    onFramingAspect,
+    ...(profile ? { profile } : {}),
+  });
   const draw = (time = now) => {
     now = time;
     const callbacks = [...pending.values()];
@@ -192,6 +214,164 @@ it("changes device shape without replacing the renderer, decoded source or pose"
   draw();
   expect(state.frames.at(-1)?.phone).toBe(tablet);
   viewer.dispose();
+});
+
+it("keeps the Android viewer while the resized framebuffer turns between fold postures", () => {
+  const openProfile = resolveDeviceShape({ platform: "android", portraitAspect: 0.96 });
+  const { viewer, draw, source, state } = fixture(openProfile);
+  const scene = state.frames.at(-1)!.scene;
+  source.width = 2076;
+  source.height = 2152;
+  viewer.setScreen({ width: 2076, height: 2152, orientation: "landscape_left" });
+  viewer.frameUpdated();
+  draw(0);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(0);
+  draw(225);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 4);
+  draw(450);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 2);
+  expect(state.frames.at(-1)!.scene).toBe(scene);
+  expect(gpu.instances).toHaveLength(1);
+
+  source.width = 1080;
+  source.height = 2424;
+  viewer.setScreen({ width: 1080, height: 2424, orientation: "portrait" }, ANDROID_PHONE_SHAPE);
+  viewer.frameUpdated();
+  draw(450);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 2);
+  draw(675);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(-Math.PI / 4);
+  draw(900);
+  expect(state.frames.at(-1)!.displayAngle).toBeCloseTo(0);
+  expect(state.frames.at(-1)!.scene).toBe(scene);
+  viewer.dispose();
+});
+
+it("animates the Android hinge on the same scene through an encoder resize", () => {
+  const openProfile = resolveDeviceShape({ platform: "android", portraitAspect: 0.96 });
+  const { viewer, draw, source, state } = fixture(openProfile);
+  viewer.setFoldAngle(180);
+  draw(0);
+  const shell = state.frames.at(-1)!.phone!;
+  const moving = shell.children[0]!.children[0]!;
+  viewer.setFoldAngle(0);
+  draw(425);
+  expect(moving.rotation.y).toBeCloseTo(Math.PI / 2);
+  source.width = 1080;
+  source.height = 2424;
+  viewer.setScreen({ width: 1080, height: 2424, orientation: "portrait" }, ANDROID_PHONE_SHAPE);
+  viewer.frameUpdated();
+  draw(850);
+  expect(moving.rotation.y).toBeCloseTo(Math.PI);
+  expect(state.frames.at(-1)!.phone).toBe(shell);
+  expect(gpu.instances).toHaveLength(1);
+  viewer.dispose();
+});
+
+it("resizes the fold body for a landscape inner display and keeps it through the cover frame", () => {
+  const openProfile = resolveDeviceShape({ platform: "android", portraitAspect: 0.83 });
+  const { viewer, draw, source, state } = fixture(openProfile);
+  viewer.setFoldAngle(180);
+  draw(0);
+  const portraitWidth = new Box3()
+    .setFromObject(state.frames.at(-1)!.phone!)
+    .getSize(new Vector3()).x;
+  source.width = 2208;
+  source.height = 1840;
+  viewer.setScreen({ width: 2208, height: 1840, orientation: "portrait" });
+  viewer.frameUpdated();
+  draw(10);
+  const landscape = state.frames.at(-1)!.phone!;
+  const landscapeWidth = new Box3().setFromObject(landscape).getSize(new Vector3()).x;
+  expect(landscapeWidth / portraitWidth).toBeGreaterThan(1.15);
+  source.width = 1080;
+  source.height = 2092;
+  viewer.setScreen({ width: 1080, height: 2092, orientation: "portrait" }, ANDROID_PHONE_SHAPE);
+  viewer.frameUpdated();
+  draw(20);
+  expect(state.frames.at(-1)!.phone).toBe(landscape);
+  expect(gpu.instances).toHaveLength(1);
+  viewer.dispose();
+});
+
+it("keeps the fold body through a rotated cover frame and learns the inner shape before fold mode", () => {
+  const { viewer, draw, source, state } = fixture(ANDROID_PHONE_SHAPE);
+  source.width = 2208;
+  source.height = 1840;
+  viewer.setScreen({ width: 2208, height: 1840, orientation: "portrait" });
+  viewer.frameUpdated();
+  draw(0);
+  viewer.setFoldAngle(180);
+  draw(10);
+  const landscape = state.frames.at(-1)!.phone!;
+  const width = new Box3().setFromObject(landscape).getSize(new Vector3()).x;
+  expect(width / new Box3().setFromObject(landscape).getSize(new Vector3()).y).toBeGreaterThan(1.1);
+  source.width = 2092;
+  source.height = 1080;
+  viewer.setScreen({ width: 2092, height: 1080, orientation: "landscape_left" });
+  viewer.frameUpdated();
+  draw(20);
+  expect(state.frames.at(-1)!.phone).toBe(landscape);
+  viewer.dispose();
+});
+
+it("retargets an unfinished hinge turn from its visible angle", () => {
+  const { viewer, draw, state } = fixture(ANDROID_PHONE_SHAPE);
+  viewer.setFoldAngle(180);
+  draw(0);
+  const moving = state.frames.at(-1)!.phone!.children[0]!.children[0]!;
+  viewer.setFoldAngle(0);
+  draw(200);
+  const visibleAngle = moving.rotation.y;
+  viewer.setFoldAngle(180);
+  draw(200);
+  expect(moving.rotation.y).toBeCloseTo(visibleAngle);
+  draw(1050);
+  expect(moving.rotation.y).toBeCloseTo(0);
+  viewer.dispose();
+});
+
+it("stops a hinge turn when a loaded model replaces the fold scene", async () => {
+  const { viewer, draw, pending } = fixture(ANDROID_PHONE_SHAPE);
+  viewer.setFoldAngle(180);
+  draw(0);
+  viewer.setFoldAngle(0);
+  viewer.setModel({ id: "iphone-18-pro", url: "/fold.glb" });
+  const asset = new Group();
+  const body = new Mesh(new BoxGeometry(1, 2, 0.1), new MeshBasicMaterial());
+  const display = new Mesh(new PlaneGeometry(0.9, 1.9), new MeshBasicMaterial());
+  display.name = "device-screen";
+  asset.add(body, display);
+  models.pending[0]!.resolve({ asset, dispose: () => disposeDeviceModel(asset) });
+  await Promise.resolve();
+  draw(200);
+  draw(1050);
+  expect(pending.size).toBe(0);
+  viewer.dispose();
+});
+
+it("keeps a loaded model when the fold angle changes and releases it once", async () => {
+  const { viewer, draw, state } = fixture(ANDROID_PHONE_SHAPE);
+  viewer.setModel({ id: "iphone-18-pro", url: "/pro.glb" });
+  const asset = new Group();
+  const body = new Mesh(new BoxGeometry(1.15, 2.3, 0.1), new MeshBasicMaterial());
+  body.position.z = -0.02;
+  const display = new Mesh(new PlaneGeometry(1, 2.2), new MeshBasicMaterial());
+  display.geometry.translate(0, 0, 0.043);
+  display.name = "device-screen";
+  asset.add(body, display);
+  const dispose = vi.fn(() => disposeDeviceModel(asset));
+  models.pending[0]!.resolve({ asset, dispose });
+  await Promise.resolve();
+  draw();
+  const loaded = state.frames.at(-1)!.phone;
+  expect(loaded?.getObjectByName("device-screen")).toBe(display);
+  viewer.setFoldAngle(180);
+  viewer.setFoldAngle(0);
+  draw();
+  expect(state.frames.at(-1)!.phone).toBe(loaded);
+  viewer.dispose();
+  expect(dispose).toHaveBeenCalledOnce();
 });
 
 it("retains the loaded model and pose through rotation and framebuffer resolution changes, then releases it once", async () => {
