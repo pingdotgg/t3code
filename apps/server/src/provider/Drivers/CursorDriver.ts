@@ -11,8 +11,9 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -206,7 +207,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         ),
       );
 
-      const { snapshot, onAvailableCommands, snapshotForCwd } =
+      const { snapshot, onAvailableCommands, snapshotForCwd, updateWorkspaceSkills } =
         yield* makeCursorCommandCatalog(managedSnapshot);
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
@@ -246,6 +247,28 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                 ),
                 Effect.flatMap((skills) => snapshotForCwd(cwd, skills)),
               ),
+        // The catalog owns Cursor's workspace snapshots and publishes them
+        // itself, so the rebuild writes there and hands the registry nothing.
+        snapshotsForCwds: (cwds) =>
+          Effect.gen(function* () {
+            if (!effectiveConfig.enabled) return;
+            const scannedAt = DateTime.formatIso(yield* DateTime.now);
+            const entries = yield* Effect.forEach(cwds, (cwd) =>
+              probeCursorSkills(cwd, processEnv).pipe(
+                Effect.map((skills) => [[cwd, skills] as const]),
+                Effect.catch((cause) =>
+                  Effect.logDebug("Cursor workspace skills rebuild failed", { cwd, cause }).pipe(
+                    Effect.as([]),
+                  ),
+                ),
+              ),
+            );
+            yield* updateWorkspaceSkills(new Map(entries.flat()), scannedAt);
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.as(new Map<string, ServerProvider>()),
+          ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

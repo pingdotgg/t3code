@@ -486,6 +486,28 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
 });
 
+/**
+ * Skills for several workspaces from one app-server, keyed by cwd. A cwd
+ * Codex does not answer for is left out.
+ */
+export const probeCodexSkillsForCwds = Effect.fn("probeCodexSkillsForCwds")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwds: ReadonlyArray<string>;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  // The workspaces travel in the request, so the process can start anywhere;
+  // a held workspace may since have been deleted.
+  const { client } = yield* withCodexAppServerClient({ ...input, cwd: process.cwd() });
+  const skillsResponse = yield* client.request("skills/list", { cwds: input.cwds });
+  return new Map(
+    input.cwds
+      .filter((cwd) => skillsResponse.data.some((entry) => entry.cwd === cwd))
+      .map((cwd) => [cwd, parseCodexSkillsListResponse(skillsResponse, cwd)] as const),
+  );
+});
+
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
   appendCustomCodexModels([], codexSettings.customModels);
 
