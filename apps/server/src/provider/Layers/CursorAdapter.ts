@@ -16,6 +16,7 @@ import type {
   SettingSource,
   ToolCall,
 } from "@cursor/sdk";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   EventId,
   type ModelSelection,
@@ -69,6 +70,7 @@ import {
 } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import { CURSOR_WINDOWS_SANDBOX_MESSAGE } from "./CursorProvider.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 /** Version 1 cursors hold a Cursor CLI (ACP) session id. The SDK cannot resume those. */
@@ -375,6 +377,7 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
     const path = yield* Path.Path;
     const serverConfig = yield* Effect.service(ServerConfig);
     const crypto = yield* Crypto.Crypto;
+    const platform = yield* HostProcessPlatform;
 
     const sessions = new Map<ThreadId, CursorSessionContext>();
     const threadLocks = new Map<ThreadId, Semaphore.Semaphore>();
@@ -818,6 +821,14 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
               provider: PROVIDER,
               operation: "startSession",
               issue: "cwd is required and must be non-empty.",
+            });
+          }
+          // The SDK would throw a generic error later. Fail with the fix instead.
+          if (platform === "win32" && cursorRuntimeAgentPolicy(input.runtimeMode).sandboxEnabled) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue: CURSOR_WINDOWS_SANDBOX_MESSAGE,
             });
           }
 

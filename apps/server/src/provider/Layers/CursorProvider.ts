@@ -7,6 +7,7 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -35,6 +36,14 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
+
+/**
+ * The Cursor SDK has no filesystem sandbox on Windows, and every runtime mode
+ * except Full access turns the sandbox on. Sessions fail with this message, and
+ * the provider status shows it on Windows.
+ */
+export const CURSOR_WINDOWS_SANDBOX_MESSAGE =
+  "Cursor's sandbox is not supported on Windows. Use Full access for Cursor threads. Supervised, Auto-accept edits, and Auto need the sandbox.";
 
 export function buildInitialCursorProviderSnapshot(
   cursorSettings: CursorSettings,
@@ -338,6 +347,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 
   const snapshot = catalogResult.success.value;
   const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
+  const platform = yield* HostProcessPlatform;
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -345,6 +355,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       version: null,
       status: "ready",
       auth: cursorSdkAuth(snapshot.user, authenticationType),
+      ...(platform === "win32" ? { message: CURSOR_WINDOWS_SANDBOX_MESSAGE } : {}),
     },
     discoveredModels,
     ...(discoveredModels.length === 0

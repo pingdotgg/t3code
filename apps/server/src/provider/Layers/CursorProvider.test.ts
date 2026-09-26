@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { CursorSettings } from "@t3tools/contracts";
 import { CursorSettings as CursorSettingsSchema } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
@@ -12,6 +13,7 @@ import {
   buildCursorProviderSnapshot,
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
+  CURSOR_WINDOWS_SANDBOX_MESSAGE,
 } from "./CursorProvider.ts";
 import { CursorSdkCatalogError, makeCursorSdkCatalogTestLayer } from "./CursorSdkCatalog.ts";
 
@@ -204,6 +206,26 @@ describe("checkCursorProviderStatus", () => {
         ],
         slashCommands: [{ name: "compact" }],
       });
+    }),
+  );
+
+  it.effect("tells Windows users that Cursor needs Full access", () =>
+    Effect.gen(function* () {
+      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provide(
+          makeCursorSdkCatalogTestLayer(() =>
+            Effect.succeed({
+              user: { apiKeyName: "test-key", createdAt: "2026-01-01T00:00:00.000Z" },
+              models: [sdkParameterizedModel],
+            }),
+          ),
+        ),
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      expect(provider).toMatchObject({ status: "ready", message: CURSOR_WINDOWS_SANDBOX_MESSAGE });
     }),
   );
 

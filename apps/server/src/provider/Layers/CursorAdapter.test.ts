@@ -1,6 +1,7 @@
 import { AgentNotFoundError, type InteractionUpdate, type RunResult } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -22,6 +23,7 @@ import {
   type CursorAgentSdkSession,
 } from "../CursorAgentSdk.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
+import { CURSOR_WINDOWS_SANDBOX_MESSAGE } from "./CursorProvider.ts";
 
 const instanceId = ProviderInstanceId.make("cursor");
 const provider = ProviderDriverKind.make("cursor");
@@ -261,6 +263,36 @@ it.layer(testLayer)("CursorAdapter", (it) => {
         autoReview: true,
         sandboxOptions: { enabled: true },
       });
+      yield* adapter.stopAll();
+    }),
+  );
+
+  it.effect("rejects sandboxed modes on Windows with a clear message", () =>
+    Effect.gen(function* () {
+      const sdk = makeFakeRunner([]);
+      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+
+      const failure = yield* Effect.flip(
+        adapter.startSession({
+          threadId: ThreadId.make("cursor-windows-supervised"),
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        }),
+      );
+      assert.equal(
+        failure._tag === "ProviderAdapterValidationError" && failure.issue,
+        CURSOR_WINDOWS_SANDBOX_MESSAGE,
+      );
+      assert.deepStrictEqual(sdk.opened, []);
+
+      yield* adapter.startSession({
+        threadId: ThreadId.make("cursor-windows-full-access"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      assert.deepInclude(sdk.opened[0]?.options.local, { sandboxOptions: { enabled: false } });
       yield* adapter.stopAll();
     }),
   );

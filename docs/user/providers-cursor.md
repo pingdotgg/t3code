@@ -23,6 +23,9 @@ from the API keys in your Cursor dashboard.
 - Cursor loads your project and user rules, skills, and MCP servers, as the CLI does.
 - Cursor does not send approval requests. See
   [permission modes](./permission-modes.md#provider-differences).
+- On Windows, Cursor runs only in **Full access**. The other modes need Cursor's sandbox, which
+  Cursor does not support on Windows. For the same reason, Cursor cannot generate commit messages
+  or thread titles on Windows.
 - Threads from older versions of T3 Code used the Cursor CLI. They continue in a new Cursor agent
   that does not see the earlier conversation. The same happens when a thread moves to another
   folder, such as a new worktree, because Cursor keeps its agents per folder.

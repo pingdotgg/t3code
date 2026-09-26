@@ -13,6 +13,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
@@ -62,6 +63,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   withAccess?: CursorAuth["withAccess"],
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcessPlatform;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -99,6 +101,14 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const apiKey = yield* resolveCursorApiKey(operation);
+      // Text generation always runs sandboxed, and the SDK has no sandbox on Windows.
+      if (platform === "win32") {
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "Cursor text generation needs Cursor's sandbox, which is not supported on Windows. Use another text-generation provider.",
+        });
+      }
       // The SDK loads sandbox.json independently of settingSources and lets it
       // expand the writable paths. Its public API cannot override that policy.
       if (yield* fs.exists(`${NodeOS.homedir()}/.cursor/sandbox.json`)) {

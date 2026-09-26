@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -243,6 +244,21 @@ describe("CursorTextGeneration", () => {
       expect(failure.detail).toContain("custom ~/.cursor/sandbox.json");
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
     }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("fails clearly on Windows, where Cursor has no sandbox", () =>
+    Effect.gen(function* () {
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      const failure = yield* Effect.flip(
+        generation.generateThreadTitle({
+          cwd: "C:\\workspace",
+          message: "Title",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        }),
+      );
+      expect(failure.detail).toContain("not supported on Windows");
+      expect(cursorSdkMock.create).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(fsLayer), Effect.provideService(HostProcessPlatform, "win32")),
   );
 
   it.effect("cancels the native run when text generation times out", () =>
