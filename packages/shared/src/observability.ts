@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
@@ -371,8 +372,12 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   });
 
   let buffer: Array<string> = [];
-  // Records lost to failed writes since the last flush reported them.
+  // Failure episode state. The latest write result says if the disk is
+  // failing. Records lost since the episode started are counted until a write
+  // succeeds and the flush reports the recovery.
+  let writeFailing = false;
   let droppedCount = 0;
+  let failureReported = false;
   let pendingFlushStats: TraceSinkFlushStats = {
     logicalWriteBytes: 0,
     count: 0,
@@ -412,9 +417,11 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
         // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
         // Retrying it would grow the backlog, and every later push would
         // retry all of it.
+        writeFailing = true;
         droppedCount += records.length - persistedCount;
         return;
       }
+      writeFailing = false;
       pendingFlushStats = {
         logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
         count: pendingFlushStats.count + nextIndex - persistedCount,
@@ -424,26 +431,42 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
+  // Logs only when writes start failing and when they recover, so a disk that
+  // stays broken costs one line, not one per flush. It drops the parent span:
+  // the timed fiber inherits the makeTraceSink span, which has ended but stays
+  // referenced for the life of the sink, and the tracer logger would add every
+  // log to it as an event.
   const flush = Effect.gen(function* () {
     flushUnsafe();
     const stats = pendingFlushStats;
-    const dropped = droppedCount;
     pendingFlushStats = {
       logicalWriteBytes: 0,
       count: 0,
       durationMs: 0,
     };
-    droppedCount = 0;
     if (stats.count > 0 && options.onFlush) {
       yield* options.onFlush(stats).pipe(Effect.ignore);
     }
-    if (dropped > 0) {
-      yield* Effect.logWarning("Dropped trace records after a failed write", {
+    if (droppedCount > 0 && !failureReported) {
+      failureReported = true;
+      yield* Effect.logWarning("Trace writes are failing, dropping records until they recover", {
         filePath: options.filePath,
-        droppedCount: dropped,
       });
     }
-  }).pipe(Effect.withTracerEnabled(false));
+    if (failureReported && !writeFailing) {
+      yield* Effect.logInfo("Trace writes recovered", {
+        filePath: options.filePath,
+        droppedCount,
+      });
+      failureReported = false;
+      droppedCount = 0;
+    }
+  }).pipe(
+    Effect.withTracerEnabled(false),
+    Effect.updateContext((context: Context.Context<never>) =>
+      Context.omit(Tracer.ParentSpan)(context),
+    ),
+  );
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(

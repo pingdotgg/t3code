@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import { RotatingFileSink } from "./logging.ts";
@@ -426,10 +427,18 @@ describe("observability", () => {
       ),
     );
 
-    it.effect("drops records after a failed write instead of retrying them on every push", () => {
-      const warnings: Array<unknown> = [];
-      const captureWarnings = Logger.make(({ logLevel, message }) => {
-        if (logLevel === "Warn") warnings.push(message);
+    it.effect("drops records after a failed write and logs once per failure episode", () => {
+      const logs: Array<{ readonly logLevel: string; readonly message: unknown }> = [];
+      const captureLogs = Logger.make(({ logLevel, message }) => {
+        logs.push({ logLevel, message });
+      });
+      const spans: Array<Tracer.NativeSpan> = [];
+      const recordingTracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
       });
 
       return Effect.gen(function* () {
@@ -446,37 +455,62 @@ describe("observability", () => {
           filePath: tracePath,
           maxBytes: 1024 * 1024,
           maxFiles: 2,
-          batchWindowMs: 10_000,
-        });
+          batchWindowMs: 1_000,
+        }).pipe(Effect.withTracer(recordingTracer));
 
         for (let index = 0; index < 1_024; index += 1) {
           sink.push(makeRecord("lost", String(index)));
         }
-        yield* sink.flush;
+        // Timed flushes run in the fiber forked inside the makeTraceSink span.
+        for (let index = 0; index < 5; index += 1) {
+          sink.push(makeRecord("lost"));
+          yield* TestClock.adjust("1 second");
+        }
 
-        // One write per full batch of 256, never a growing backlog.
+        // One write per batch, never a growing backlog.
         assert.deepStrictEqual(
           write.mock.calls.map(([chunk]) => String(chunk).split("\n").length - 1),
-          [256, 256, 256, 256],
+          [256, 256, 256, 256, 1, 1, 1, 1, 1],
         );
-        expect(warnings).toEqual([
-          [expect.any(String), { filePath: tracePath, droppedCount: 1_024 }],
+        expect(logs).toEqual([
+          { logLevel: "Warn", message: [expect.any(String), { filePath: tracePath }] },
         ]);
 
-        // Once the disk recovers, new records are written again.
+        // Once the disk recovers, new records are written and the loss is reported.
         yield* fileSystem.remove(tracePath, { recursive: true });
         sink.push(makeRecord("recovered"));
-        yield* sink.flush;
+        yield* TestClock.adjust("1 second");
 
         const records = yield* readTraceRecords(tracePath);
         assert.deepStrictEqual(
           records.map((record) => record.name),
           ["recovered"],
         );
-        assert.equal(warnings.length, 1);
+        expect(logs[1]).toEqual({
+          logLevel: "Info",
+          message: [expect.any(String), { filePath: tracePath, droppedCount: 1_029 }],
+        });
+
+        // A new failure episode warns again.
+        yield* fileSystem.remove(tracePath);
+        yield* fileSystem.makeDirectory(tracePath);
+        sink.push(makeRecord("lost-again"));
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(
+          logs.map((log) => log.logLevel),
+          ["Warn", "Info", "Warn"],
+        );
+
+        // The ended makeTraceSink span is never released, so it must not collect log events.
+        assert.deepStrictEqual(
+          spans.map((span) => [span.name, span.events.length]),
+          [["makeTraceSink", 0]],
+        );
       }).pipe(
         Effect.scoped,
-        Effect.provide(Logger.layer([captureWarnings], { mergeWithExisting: false })),
+        Effect.provide(
+          Logger.layer([captureLogs, Logger.tracerLogger], { mergeWithExisting: false }),
+        ),
       );
     });
 
