@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CheckpointId,
   EnvironmentId,
   NodeId,
   ProviderInstanceId,
@@ -1157,6 +1158,183 @@ describe("PiAdapterV2", () => {
           subagentItem.turnItem.type === "subagent" &&
           subagentItem.turnItem.childThreadId === null,
       );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const summarize of [false, true]) {
+    it.effect(
+      `follows an extension rewind ${summarize ? "with" : "without"} a branch summary`,
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* makeFakePi;
+          const { runtime, takeEvent } = yield* openRuntime(fake);
+          const root = { type: "model_change", id: "root", parentId: null };
+          const user = (id: string, parentId: string) => ({
+            type: "message",
+            id,
+            parentId,
+            message: { role: "user", content: [{ type: "text", text: id }] },
+          });
+          const reply = (id: string, parentId: string) => ({
+            type: "message",
+            id,
+            parentId,
+            message: { role: "assistant", content: [] },
+          });
+          fake.queueEntries({ entries: [root], leafId: "root" });
+          const providerThread = yield* runtime.ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          });
+          // Runs one turn to its terminal. `listings` answer the turn's
+          // get_entries requests in order.
+          const settle = Effect.fnUntraced(function* (
+            text: string,
+            runOrdinal: number,
+            ...listings: ReadonlyArray<unknown>
+          ) {
+            yield* startTurn(runtime, providerThread, "default", [], text, undefined, runOrdinal);
+            yield* fake.takeRequest("prompt");
+            for (const listing of listings) fake.queueEntries(listing);
+            // Pi acks every prompt; a command-only prompt then settles from
+            // an idle probe instead of agent events.
+            yield* fake.emit({ type: "response", command: "prompt", success: true });
+            if (!text.startsWith("/")) {
+              yield* fake.emit({ type: "agent_start" });
+              yield* fake.emit({ type: "agent_settled" });
+            }
+            const turn = yield* takeEvent(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+            );
+            const thread = yield* takeEvent(
+              (event) =>
+                event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+            );
+            yield* takeEvent((event) => event.type === "turn.terminal");
+            return {
+              turnRef:
+                turn.type === "provider_turn.updated" ? turn.providerTurn.nativeTurnRef : undefined,
+              head:
+                thread.type === "provider_thread.updated"
+                  ? thread.providerThread.nativeConversationHeadRef?.nativeId
+                  : undefined,
+              retained:
+                thread.type === "provider_thread.updated"
+                  ? thread.retainedNativeTurnIds
+                  : undefined,
+            };
+          });
+
+          yield* settle("prompt A", 1, {
+            entries: [user("uA", "root"), reply("aA", "uA")],
+            leafId: "aA",
+          });
+          const promptB = yield* settle("prompt B", 2, {
+            entries: [user("uB", "aA"), reply("aB", "uB")],
+            leafId: "aB",
+          });
+          assert.equal(promptB.turnRef?.nativeId, "uB");
+          assert.isUndefined(promptB.retained);
+
+          // The extension moves the leaf back to A's reply. With a summary,
+          // pi appends a branch_summary child of that reply as the new leaf.
+          const rewoundLeaf = summarize ? "summary" : "aA";
+          const summary = summarize
+            ? [{ type: "branch_summary", id: "summary", parentId: "aA" }]
+            : [];
+          const rewind = yield* settle(
+            "/rewind",
+            3,
+            { entries: summary, leafId: rewoundLeaf },
+            {
+              entries: [
+                root,
+                user("uA", "root"),
+                reply("aA", "uA"),
+                user("uB", "aA"),
+                reply("aB", "uB"),
+                ...summary,
+              ],
+              leafId: rewoundLeaf,
+            },
+          );
+          assert.deepEqual(rewind.retained, ["uA"]);
+          assert.equal(rewind.head, rewoundLeaf);
+          if (summarize) {
+            // The summary is this turn's only entry, and fork cannot re-root
+            // before a non-user entry, so rollback may not pass it.
+            assert.equal(rewind.turnRef?.strength, "weak");
+          } else {
+            // Nothing of this turn is on the branch; rollback can pass it.
+            assert.isNull(rewind.turnRef);
+          }
+
+          // get_entries is append-ordered: after a rewind to an older leaf,
+          // the abandoned branch still comes first in the next window.
+          const promptC = yield* settle("prompt C", 4, {
+            entries: [
+              ...(summarize ? [] : [user("uB", "aA"), reply("aB", "uB")]),
+              user("uC", rewoundLeaf),
+              reply("aC", "uC"),
+            ],
+            leafId: "aC",
+          });
+          assert.deepEqual(promptC.turnRef, {
+            driver: PI_PROVIDER,
+            nativeId: "uC",
+            strength: "strong",
+          });
+          assert.isUndefined(promptC.retained);
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+
+  it.effect("rolls back past turns that left nothing in the session tree", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turn = (ordinal: number, entryId: string | null): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef:
+          entryId === null ? null : { driver: PI_PROVIDER, nativeId: entryId, strength: "strong" },
+        ordinal,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      });
+      const rollBackToFirst = (turns: ReadonlyArray<OrchestrationV2ProviderTurn>) =>
+        runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-1"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        });
+      const forkedEntries = () =>
+        fake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId);
+
+      // Only a turn that left nothing follows the target: already there.
+      yield* rollBackToFirst([turn(1, "u1"), turn(2, null)]);
+      assert.deepEqual(forkedEntries(), []);
+      // Pi re-roots before the first later turn that left entries.
+      yield* rollBackToFirst([turn(1, "u1"), turn(2, null), turn(3, "u3")]);
+      assert.deepEqual(forkedEntries(), ["u3"]);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

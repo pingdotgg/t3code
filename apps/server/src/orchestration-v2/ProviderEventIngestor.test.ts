@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -14,6 +17,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PlanId,
+  type ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -309,6 +314,254 @@ layer("ProviderEventIngestorV2", (it) => {
         ["provider-thread.updated"],
       );
       assert.equal(latestThreadSequence, 2);
+    }),
+  );
+
+  it.effect("rolls back runs a provider rewound off its active branch", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const rewoundThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "rewound-thread",
+      });
+      const otherThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "other-thread",
+      });
+      const scopeId = CheckpointScopeId.make("checkpoint-scope:rewound");
+      // A run as execution leaves it: attempt, provider turn, root node, and a
+      // checkpoint once completed. A null native turn id is a weak ref.
+      const seedRun = Effect.fnUntraced(function* (input: {
+        readonly ordinal: number;
+        readonly providerThreadId: ProviderThreadId;
+        readonly status: "completed" | "interrupted" | "running";
+        readonly nativeTurnId: string | null;
+      }) {
+        const runId = RunId.make(`run:rewound:${input.ordinal}`);
+        const attemptId = RunAttemptId.make(`attempt:rewound:${input.ordinal}`);
+        const nodeId = NodeId.make(`node:rewound:${input.ordinal}`);
+        const providerTurnId = ProviderTurnId.make(`provider-turn:rewound:${input.ordinal}`);
+        const completedAt = input.status === "running" ? null : now;
+        const eventId = () => idAllocator.allocate.event({ threadId });
+        const events: Array<OrchestrationV2DomainEvent> = [
+          {
+            id: yield* eventId(),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: input.ordinal,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: input.providerThreadId,
+              userMessageId: MessageId.make(`message:rewound:${input.ordinal}`),
+              rootNodeId: nodeId,
+              activeAttemptId: attemptId,
+              status: input.status,
+              requestedAt: now,
+              startedAt: now,
+              completedAt,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: yield* eventId(),
+            type: "run-attempt.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: nodeId,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId: input.providerThreadId,
+              providerTurnId,
+              reason: "initial",
+              status: input.status,
+              startedAt: now,
+              completedAt,
+            },
+          },
+          {
+            id: yield* eventId(),
+            type: "provider-turn.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: providerTurnId,
+              providerThreadId: input.providerThreadId,
+              nodeId,
+              runAttemptId: attemptId,
+              nativeTurnRef:
+                input.nativeTurnId === null
+                  ? {
+                      driver: CODEX_DRIVER,
+                      nativeId: `synthetic:${input.ordinal}`,
+                      strength: "weak",
+                    }
+                  : { driver: CODEX_DRIVER, nativeId: input.nativeTurnId, strength: "strong" },
+              ordinal: input.ordinal,
+              status: input.status,
+              startedAt: now,
+              completedAt,
+            },
+          },
+          {
+            id: yield* eventId(),
+            type: "node.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "root_turn",
+              status: input.status,
+              countsForRun: true,
+              providerThreadId: input.providerThreadId,
+              providerTurnId,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: scopeId,
+              startedAt: now,
+              completedAt,
+            },
+          },
+          ...(input.status === "completed"
+            ? [
+                {
+                  id: yield* eventId(),
+                  type: "checkpoint.captured" as const,
+                  threadId,
+                  occurredAt: now,
+                  payload: {
+                    id: CheckpointId.make(`checkpoint:rewound:${input.ordinal}`),
+                    threadId,
+                    scopeId,
+                    runId,
+                    nodeId,
+                    parentCheckpointId: null,
+                    ordinalWithinScope: input.ordinal,
+                    appRunOrdinal: input.ordinal,
+                    ref: CheckpointRef.make(`refs/t3/checkpoints/rewound/${input.ordinal}`),
+                    status: "ready" as const,
+                    files: [],
+                    capturedAt: now,
+                  },
+                },
+              ]
+            : []),
+        ];
+        yield* eventSink.write({ events });
+        return runId;
+      });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      const otherProviderRun = yield* seedRun({
+        ordinal: 1,
+        providerThreadId: otherThreadId,
+        status: "completed",
+        nativeTurnId: "other-turn",
+      });
+      const keptRun = yield* seedRun({
+        ordinal: 2,
+        providerThreadId: rewoundThreadId,
+        status: "completed",
+        nativeTurnId: "kept-turn",
+      });
+      const abandonedRun = yield* seedRun({
+        ordinal: 3,
+        providerThreadId: rewoundThreadId,
+        status: "completed",
+        nativeTurnId: "abandoned-turn",
+      });
+      const unlocatedRun = yield* seedRun({
+        ordinal: 4,
+        providerThreadId: rewoundThreadId,
+        status: "interrupted",
+        nativeTurnId: null,
+      });
+      const rewindingRun = yield* seedRun({
+        ordinal: 5,
+        providerThreadId: rewoundThreadId,
+        status: "running",
+        nativeTurnId: null,
+      });
+
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        runId: rewindingRun,
+        event: {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            id: rewoundThreadId,
+            driver: CODEX_DRIVER,
+            providerInstanceId: modelSelection.instanceId,
+            providerSessionId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "rewound-thread",
+              strength: "strong",
+            },
+            nativeConversationHeadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "kept-turn-reply",
+              strength: "strong",
+            },
+            status: "idle",
+            firstRunOrdinal: 2,
+            lastRunOrdinal: 5,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+          retainedNativeTurnIds: ["turn-started-outside-t3", "kept-turn"],
+        },
+      });
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const runIds = [otherProviderRun, keptRun, abandonedRun, unlocatedRun, rewindingRun];
+      assert.deepEqual(
+        runIds.map((runId) => projection.runs.find((run) => run.id === runId)?.status),
+        ["completed", "completed", "rolled_back", "rolled_back", "running"],
+      );
+      assert.deepEqual(
+        runIds.map((runId) => projection.nodes.find((node) => node.runId === runId)?.status),
+        ["completed", "completed", "rolled_back", "rolled_back", "running"],
+      );
+      assert.deepEqual(
+        [otherProviderRun, keptRun, abandonedRun].map(
+          (runId) =>
+            projection.checkpoints.find((checkpoint) => checkpoint.runId === runId)?.status,
+        ),
+        ["ready", "ready", "stale"],
+      );
+      assert.equal(
+        projection.providerThreads.find((thread) => thread.id === rewoundThreadId)?.lastRunOrdinal,
+        5,
+      );
     }),
   );
 
