@@ -95,6 +95,21 @@ it.effect("different homes or instance env vars run separate probes", () =>
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
+// Both point at ~/.claude, but an explicit CLAUDE_CONFIG_DIR is a separate
+// login to the CLI (its own keychain entry and .claude.json).
+it.effect("an empty home and an explicit ~/.claude run separate probes", () =>
+  Effect.gen(function* () {
+    const query = yield* mockSdk();
+    const cache = yield* ClaudeProbeCache.ClaudeProbeCache;
+
+    yield* cache.capabilities(input(""));
+    const explicit = yield* cache.capabilities(input("~/.claude"));
+
+    assert.equal(query.mock.calls.length, 2);
+    assert.match(explicit?.email ?? "", /\.claude$/);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
 it.effect("retries a failed probe or usage read after a short TTL and keeps a success longer", () =>
   Effect.gen(function* () {
     const query = yield* mockSdk();
