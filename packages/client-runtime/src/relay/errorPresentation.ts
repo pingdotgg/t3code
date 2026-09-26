@@ -43,6 +43,9 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
       if (error.reason === "environment_link_not_found") {
         return "Relay has no active link for this environment. The environment server may not have re-established its link yet.";
       }
+      if (error.reason === "endpoint_provider_not_managed") {
+        return "This environment is linked for activity publishing only. In the host desktop app, open Settings > Connections and enable or repair T3 Connect. For a command-line host, run t3 connect again.";
+      }
       return error.reason
         ? `Relay rejected the environment connection request (${error.reason}).`
         : "Relay rejected the environment connection request.";

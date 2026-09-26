@@ -8,6 +8,7 @@ import {
 import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
+import { useRelayEnvironmentDiscovery } from "../state/environments";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -29,8 +30,8 @@ export interface CloudLinkDesiredState {
  * a single relay link, so consumers express the full desired state and
  * `reconcileCloudState` applies it: unlink when neither is wanted, otherwise
  * (re)link with the mode the managed-tunnel bit implies and set the publish
- * preference. Re-linking only happens when the managed-tunnel mode actually
- * changes, so flipping publish alone is cheap.
+ * preference. Re-linking happens when the mode changes, discovery detects
+ * drift or is refreshing an unknown mode, or the user requests a repair.
  */
 export function useCloudLinkController() {
   const { getToken, isSignedIn } = useAuth();
@@ -48,6 +49,7 @@ export function useCloudLinkController() {
     { reportFailure: false },
   );
   const primaryCloudLinkState = usePrimaryCloudLinkState();
+  const relayDiscovery = useRelayEnvironmentDiscovery();
   const [operationError, setOperationError] = useState<string | null>(null);
 
   const reportUpdateFailure = (cause: unknown) => {
@@ -76,8 +78,18 @@ export function useCloudLinkController() {
     primaryCloudLinkState.data?.managedTunnelActive ?? primaryCloudLinkState.data?.linked ?? false;
   const publishAgentActivity = primaryCloudLinkState.data?.publishAgentActivity ?? false;
   const linked = primaryCloudLinkState.data?.linked ?? false;
+  const relayEnvironment = primaryCloudLinkState.target
+    ? relayDiscovery.environments.get(primaryCloudLinkState.target.environmentId)?.environment
+    : undefined;
+  const managedTunnelOutOfSync =
+    linked &&
+    relayEnvironment !== undefined &&
+    managedTunnelActive !== (relayEnvironment.endpoint.providerKind === "cloudflare_tunnel");
 
-  const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
+  const reconcileCloudState = async (
+    desired: CloudLinkDesiredState,
+    { forceRelink = false }: { readonly forceRelink?: boolean } = {},
+  ): Promise<boolean> => {
     setOperationError(null);
     const target = primaryCloudLinkState.target;
     if (!target) {
@@ -115,7 +127,13 @@ export function useCloudLinkController() {
         reportUpdateFailure(new Error("Sign in to T3 Connect before enabling this."));
         return false;
       }
-      if (!linked || managedTunnelActive !== desired.managedTunnel) {
+      if (
+        forceRelink ||
+        !linked ||
+        (relayDiscovery.refreshing && relayEnvironment === undefined) ||
+        managedTunnelOutOfSync ||
+        managedTunnelActive !== desired.managedTunnel
+      ) {
         const linkResult = await linkPrimaryEnvironment({
           target,
           clerkToken,
@@ -156,6 +174,7 @@ export function useCloudLinkController() {
     linkState: primaryCloudLinkState,
     linked,
     managedTunnelActive,
+    managedTunnelOutOfSync,
     publishAgentActivity,
     operationError,
     reconcileCloudState,
