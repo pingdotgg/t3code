@@ -135,7 +135,9 @@ async function resetStreamOrThrow(model: LoadedModel): Promise<void> {
     await Promise.race([
       model.reset(),
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("Speech stream reset timed out.")), 1_000);
+        // Native reset already waits up to 1s for an in-flight feed,
+        // so allow extra headroom for the reset reply itself.
+        timeout = setTimeout(() => reject(new Error("Speech stream reset timed out.")), 2_500);
       }),
     ]);
   } finally {
