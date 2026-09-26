@@ -3,6 +3,35 @@ import XCTest
 
 @MainActor
 final class PairingServiceTests: XCTestCase {
+    func testPairingFormPreservesLiteralPlusInTokenAndClientLabel() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-pairing-form-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = PairingHTTPTransport()
+        let service = PairingService(
+            transport: transport,
+            environmentStore: EnvironmentStore(fileURL: directory.appendingPathComponent("environments.json")),
+            credentialStore: InMemoryCredentialStore()
+        )
+
+        _ = try await service.pair(
+            host: "https://studio.example",
+            code: "pair+once",
+            label: "Alex + iPhone"
+        )
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first { $0.url?.path == "/oauth/token" })
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(String(data: data, encoding: .utf8))
+        // Form decoding converts raw plus signs to spaces before percent decoding.
+        var form = URLComponents()
+        form.percentEncodedQuery = body.replacingOccurrences(of: "+", with: "%20")
+        let fields = try XCTUnwrap(form.queryItems)
+        XCTAssertEqual(fields.first { $0.name == "subject_token" }?.value, "pair+once")
+        XCTAssertEqual(fields.first { $0.name == "client_label" }?.value, "Alex + iPhone")
+    }
+
     func testPairingExchangesTokenAndPersistsSecretSeparately() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-swift-pairing-\(UUID().uuidString)", isDirectory: true)
