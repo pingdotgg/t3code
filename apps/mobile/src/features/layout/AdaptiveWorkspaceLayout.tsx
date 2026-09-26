@@ -9,7 +9,8 @@ import {
   CommonActions,
   NavigationContext,
   NavigationRouteContext,
-  StackActions,
+  type NavigationHelpers,
+  type ParamListBase,
   useNavigation,
 } from "@react-navigation/native";
 import {
@@ -41,8 +42,8 @@ import {
   type WorkspacePaneLayout,
 } from "../../lib/layout";
 import {
-  resolveThreadSelectionNavigationAction,
-  resolveThreadSelectionOverlayState,
+  resolveCompactThreadSelectionOverlayState,
+  resolveSplitThreadSelectionState,
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
@@ -205,6 +206,7 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
+  readonly rootNavigation: NavigationHelpers<ParamListBase>;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   if (!AsyncResult.isSuccess(preferencesResult)) {
@@ -229,6 +231,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly children: ReactNode;
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
+    readonly rootNavigation: NavigationHelpers<ParamListBase>;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
   },
@@ -500,38 +503,22 @@ function AdaptiveWorkspaceLayoutContent(
         environmentId: String(thread.environmentId),
         threadId: String(thread.id),
       };
-      const navigationAction = resolveThreadSelectionNavigationAction({
-        usesSplitView: layout.usesSplitView,
-        pathname,
-      });
-      const overlayState = resolveThreadSelectionOverlayState({
-        state: navigation.getState(),
-        workspaceRouteKey: props.workspaceRouteKey,
-        action: navigationAction,
-        params,
-      });
-      if (overlayState !== null) {
-        setFileInspectorPreferredVisible(false);
-        navigation.dispatch(CommonActions.reset(overlayState));
-        return;
-      }
-      if (navigationAction === "set-params") {
-        const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
-        if (nextThreadKey === selectedThreadKey) {
-          return;
+      setFileInspectorPreferredVisible(false);
+      props.rootNavigation.dispatch((state) => {
+        if (layout.usesSplitView) {
+          return CommonActions.reset(resolveSplitThreadSelectionState(state, params));
         }
-        setFileInspectorPreferredVisible(false);
-        navigation.navigate("Thread", params);
-        return;
-      }
-      if (navigationAction === "replace") {
-        setFileInspectorPreferredVisible(false);
-        navigation.dispatch(StackActions.replace("Thread", params));
-        return;
-      }
-      navigation.navigate("Thread", params);
+        const overlayState = resolveCompactThreadSelectionOverlayState({
+          state,
+          workspaceRouteKey: props.workspaceRouteKey,
+          params,
+        });
+        return overlayState === null
+          ? CommonActions.navigate("Thread", params)
+          : CommonActions.reset(overlayState);
+      });
     },
-    [layout.usesSplitView, pathname, navigation, selectedThreadKey, props.workspaceRouteKey],
+    [layout.usesSplitView, props.rootNavigation, props.workspaceRouteKey],
   );
 
   const contextValue = useMemo(

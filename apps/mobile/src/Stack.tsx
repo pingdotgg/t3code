@@ -2,6 +2,8 @@ import {
   createPathConfigForStaticNavigation,
   getPathFromState,
   NavigationState,
+  type NavigationHelpers,
+  type ParamListBase,
   StackActions,
   useNavigation,
 } from "@react-navigation/native";
@@ -511,6 +513,7 @@ function ThreadOutboxDrainWorker() {
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
+  readonly navigation: NavigationHelpers<ParamListBase>;
 }) {
   const navigation = useNavigation();
   const { pendingShare } = useIncomingShare();
@@ -549,6 +552,7 @@ function RootStackLayout(props: {
         <AdaptiveWorkspaceLayout
           pathname={workspaceLocation.pathname}
           workspaceRouteKey={workspaceLocation.routeKey}
+          rootNavigation={props.navigation}
         >
           {props.children}
           <HardwareKeyboardCommandOverlay />

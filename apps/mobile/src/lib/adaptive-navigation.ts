@@ -1,54 +1,42 @@
 import type { NavigationState } from "@react-navigation/native";
 
-export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
+export type AdaptiveNavigationAction = "push" | "replace";
 
-const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
-
-export function isBaseThreadRoute(pathname: string): boolean {
-  return BASE_THREAD_ROUTE_PATTERN.test(pathname);
-}
+type ThreadParams = ReactNavigation.RootParamList["Thread"];
 
 /**
- * A persistent sidebar selects a peer destination in place. A compact list
- * drills into a new destination so the native back stack remains available.
- * From Home the selection pushes (never replaces) so Home stays beneath the
- * thread — collapsing back to a compact width keeps a sane back stack.
+ * A persistent sidebar replaces the whole workspace, leaving Home beneath the
+ * selected thread. The thread already on the stack is reused so the chat
+ * updates in place.
  */
-export function resolveThreadSelectionNavigationAction(input: {
-  readonly usesSplitView: boolean;
-  readonly pathname: string;
-}): AdaptiveNavigationAction {
-  if (!input.usesSplitView || input.pathname === "/") {
-    return "push";
-  }
-
-  return isBaseThreadRoute(input.pathname) ? "set-params" : "replace";
+export function resolveSplitThreadSelectionState(state: NavigationState, params: ThreadParams) {
+  const thread = state.routes.findLast((route) => route.name === "Thread");
+  return {
+    ...state,
+    index: 1,
+    routes: [
+      ...state.routes.slice(0, 1),
+      thread ? { ...thread, params } : { name: "Thread", params },
+    ],
+  };
 }
 
 /** Dismiss sheets and select their underlying workspace destination in one stack update. */
-export function resolveThreadSelectionOverlayState(input: {
-  readonly state: NavigationState | undefined;
+export function resolveCompactThreadSelectionOverlayState(input: {
+  readonly state: NavigationState;
   readonly workspaceRouteKey: string | undefined;
-  readonly action: AdaptiveNavigationAction;
-  readonly params: ReactNavigation.RootParamList["Thread"];
+  readonly params: ThreadParams;
 }) {
-  if (input.state === undefined) return null;
   const workspaceIndex = input.state.routes.findIndex(
     (route) => route.key === input.workspaceRouteKey,
   );
   if (workspaceIndex < 0 || workspaceIndex >= input.state.index) return null;
 
-  const workspaceRoute = input.state.routes[workspaceIndex];
-  const routes = input.state.routes.slice(0, workspaceIndex + (input.action === "push" ? 1 : 0));
+  const routes = input.state.routes.slice(0, workspaceIndex + 1);
   return {
     ...input.state,
     index: routes.length,
-    routes: [
-      ...routes,
-      input.action === "set-params" && workspaceRoute?.name === "Thread"
-        ? { ...workspaceRoute, params: { ...workspaceRoute.params, ...input.params } }
-        : { name: "Thread", params: input.params },
-    ],
+    routes: [...routes, { name: "Thread", params: input.params }],
   };
 }
 
