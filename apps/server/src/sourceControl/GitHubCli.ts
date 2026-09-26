@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyString,
   type SourceControlRepositoryVisibility,
   type VcsError,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -135,7 +136,10 @@ export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandEr
   gitHubCliFailureFields,
 ) {
   get detail(): string {
-    return "GitHub CLI command failed.";
+    return (
+      (this.cause instanceof VcsProcessExitError ? this.cause.hostMessage : undefined) ??
+      "GitHub CLI command failed."
+    );
   }
 
   override get message(): string {

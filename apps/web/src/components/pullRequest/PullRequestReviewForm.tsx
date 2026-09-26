@@ -4,6 +4,7 @@
  * trigger and mode toggle, and each pending card can be dropped from the diff, so neither is
  * repeated here. The popover around it belongs to PullRequestComposer.
  */
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
@@ -15,6 +16,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { readableFailure } from "./pullRequestDetail.logic";
 import {
   pullRequestReviewKey,
   usePendingReviewComments,
@@ -100,8 +102,16 @@ export function PullRequestReviewForm({
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
-      // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      // The draft is kept: whatever went wrong, retyping the review is not the answer. The host's
+      // reason says which part to change — one comment it cannot place refuses the whole review.
+      toastManager.add({
+        type: "error",
+        title: "The review could not be submitted",
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          "Your draft is kept, so you can send it again.",
+        ),
+      });
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,

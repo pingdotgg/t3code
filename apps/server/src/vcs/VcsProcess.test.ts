@@ -44,15 +44,35 @@ const baseInput = {
 
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  input: VcsProcess.VcsProcessInput = baseInput,
 ) =>
   VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
-    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flatMap((service) => service.run(input)),
     Effect.flip,
   );
+
+const failedExit = (stdout: string, stderr: string) =>
+  Effect.succeed({
+    stdout,
+    stderr,
+    code: ChildProcessSpawner.ExitCode(1),
+    timedOut: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    stdoutInvalidUtf8: false,
+    stderrInvalidUtf8: false,
+  });
+
+const ghApiInput = {
+  operation: "test.gh-api",
+  command: "gh",
+  args: ["api", "--method", "POST", "repos/owner/repo/pulls/1/reviews", "--input", "-"],
+  cwd: "/workspace",
+} satisfies VcsProcess.VcsProcessInput;
 
 describe("VcsProcess.run", () => {
   it.effect.each([
@@ -93,6 +113,91 @@ describe("VcsProcess.run", () => {
         const encoded = yield* encodeExitError(error);
         expect(encoded).not.toContain("/private/repo");
       }),
+  );
+
+  it.effect.each([
+    {
+      name: "string errors",
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      body: JSON.stringify({
+        message: "Unprocessable Entity",
+        errors: ["Line could not be resolved"],
+        status: "422",
+      }),
+      hostMessage: "Line could not be resolved",
+    },
+    {
+      name: "error objects",
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      body: JSON.stringify({
+        message: "Validation Failed",
+        errors: [
+          { resource: "PullRequestReviewComment", code: "custom", message: "Path is missing" },
+          { resource: "PullRequestReviewComment", code: "custom", message: "Body is too long" },
+        ],
+        status: "422",
+      }),
+      hostMessage: "Path is missing; Body is too long",
+    },
+  ])("keeps GitHub's own reason for refusing a gh api request: $name", ({ body, hostMessage }) =>
+    Effect.gen(function* () {
+      // gh prints only the generic top-level message on stderr; the reason is in the body.
+      const error = yield* captureProcessResult(
+        failedExit(body, "gh: Unprocessable Entity (HTTP 422)\n"),
+        ghApiInput,
+      );
+      assert.instanceOf(error, VcsProcessExitError);
+      expect(error.failureKind).toBe("command-failed");
+      expect(error.hostMessage).toBe(hostMessage);
+    }),
+  );
+
+  it.effect.each([
+    { name: "a non-JSON body", command: "gh", stdout: "not json" },
+    {
+      name: "errors without a message",
+      command: "gh",
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      stdout: JSON.stringify({
+        message: "Validation Failed",
+        errors: [{ resource: "Label", code: "missing_field", field: "name" }],
+      }),
+    },
+    {
+      name: "a command other than gh",
+      command: "git",
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      stdout: JSON.stringify({ errors: ["Line could not be resolved"] }),
+    },
+    {
+      name: "a gh command other than api",
+      command: "gh",
+      args: ["pr", "view", "1", "--json", "number"],
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      stdout: JSON.stringify({ errors: ["Line could not be resolved"] }),
+    },
+  ])("keeps no host reason for $name", ({ command, args, stdout }) =>
+    Effect.gen(function* () {
+      const error = yield* captureProcessResult(failedExit(stdout, "failed\n"), {
+        ...ghApiInput,
+        command,
+        ...(args === undefined ? {} : { args }),
+      });
+      assert.instanceOf(error, VcsProcessExitError);
+      expect(error.hostMessage).toBeUndefined();
+    }),
+  );
+
+  it.effect("bounds the host reason GitHub gives", () =>
+    Effect.gen(function* () {
+      const error = yield* captureProcessResult(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        failedExit(JSON.stringify({ errors: ["x".repeat(2_000)] }), "gh: HTTP 422\n"),
+        ghApiInput,
+      );
+      assert.instanceOf(error, VcsProcessExitError);
+      expect(error.hostMessage?.length).toBeLessThanOrEqual(300);
+    }),
   );
 
   it.effect.each(["timeout", "spawn"] as const)(

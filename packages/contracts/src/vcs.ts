@@ -85,6 +85,7 @@ export interface VcsProcessExitFailure {
   readonly exitCode: number;
   readonly stderr: string;
   readonly stderrTruncated: boolean;
+  readonly hostMessage?: string | undefined;
 }
 
 export class VcsProcessSpawnError extends Schema.TaggedError<VcsProcessSpawnError>()(
@@ -123,6 +124,8 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
     retryable: Schema.optional(Schema.Boolean),
     stderrLength: Schema.optional(NonNegativeInt),
     stderrTruncated: Schema.optional(Schema.Boolean),
+    /** The host's own validation reason, when its API answered with one; never process output. */
+    hostMessage: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
@@ -156,6 +159,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
       ...(retryable === true ? { retryable: true } : {}),
       stderrLength: error.stderr.length,
       stderrTruncated: error.stderrTruncated,
+      ...(error.hostMessage === undefined ? {} : { hostMessage: error.hostMessage }),
     });
   }
 }
