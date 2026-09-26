@@ -318,11 +318,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       holdGit = true;
 
       yield* Effect.forkChild(
-        Effect.forEach(["/a", "/a", "/a", "/a", "/b"], (cwd) => resolver.resolve(cwd), {
-          concurrency: "unbounded",
-        }),
+        Effect.forEach(["/a", "/a", "/a", "/a"], (cwd) => resolver.resolve(cwd)),
       );
       expect((yield* Queue.take(heldCalls))[1]).toBe("/a");
+      // Let any extra "/a" refreshes take slots before "/b" asks for one.
+      yield* Effect.yieldNow;
+      yield* Effect.forkChild(resolver.resolve("/b"), { startImmediately: true });
       yield* Effect.yieldNow;
       // Repeat reads of "/a" did not take the slots "/b" needs.
       expect(Option.getOrUndefined(yield* Queue.poll(heldCalls))?.[1]).toBe("/b");
