@@ -29,6 +29,7 @@ export function useVoiceFastCommands() {
       fallback = value;
       try {
         localStorage.setItem(KEY, String(value));
+        storageUnavailable = false;
       } catch {
         storageUnavailable = true;
         // Keep the preference usable for this page when storage is unavailable.

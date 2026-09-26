@@ -32,6 +32,16 @@ it("keeps both subscribers usable when saving the preference throws", async () =
     expect(container.textContent).toBe("falsefalse");
     await act(async () => container.querySelector("button")!.click());
     expect(container.textContent).toBe("truetrue");
+    const recovered = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => recovered.get(key) ?? null,
+      setItem: (key: string, value: string) => recovered.set(key, value),
+    });
+    await act(async () => container.querySelector("button")!.click());
+    expect(recovered.get("t3code:voice-fast-commands:v1")).toBe("false");
+    recovered.set("t3code:voice-fast-commands:v1", "true");
+    await act(async () => window.dispatchEvent(new Event("storage")));
+    expect(container.textContent).toBe("truetrue");
   } finally {
     await act(async () => root.unmount());
     vi.unstubAllGlobals();

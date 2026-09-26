@@ -1,6 +1,3 @@
-import { Button } from "../../components/ui/button";
-import { Checkbox } from "../../components/ui/checkbox";
-import { Label } from "../../components/ui/label";
 /**
  * The voice entry point: mounts the T3 live client (mic capture, speaker
  * playback, transcripts, acknowledged navigation) inside the chat surface.
@@ -20,6 +17,9 @@ import { Label } from "../../components/ui/label";
  * atom changes) — no polling loops beyond the 1 Hz auto-collapse check while
  * expanded and live, no per-frame work, no animations.
  */
+import { Button } from "../../components/ui/button";
+import { Checkbox } from "../../components/ui/checkbox";
+import { Label } from "../../components/ui/label";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AuthOrchestrationReadScope } from "@t3tools/contracts";

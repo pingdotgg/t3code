@@ -1,9 +1,9 @@
-import { Button } from "../../components/ui/button";
 /**
  * Voice control row: connect, mute, end, clear, plus the activation-mode
  * talk control. Dumb component; all state and behavior come from the
  * controller via props.
  */
+import { Button } from "../../components/ui/button";
 import type { VoiceActivationMode } from "./overlayPreferences";
 
 export interface VoiceControlsProps {
@@ -53,7 +53,7 @@ export function VoiceControls(props: VoiceControlsProps) {
   const activation = props.activation ?? "manual";
   const talkInactive = sessionInactive && !props.starting;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 select-none">
       <span className="text-xs font-medium text-muted-foreground" data-voice-phase={props.phase}>
         {props.starting ? "Starting…" : phaseLabel(props.phase, props.micMuted, activation)}
       </span>

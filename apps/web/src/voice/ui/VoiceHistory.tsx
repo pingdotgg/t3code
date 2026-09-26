@@ -1,9 +1,9 @@
-import { Button } from "../../components/ui/button";
 /**
  * Voice history review surface: the list of saved voice sessions with their
  * entry counts, per-session delete, export of everything as JSON, and clear
  * all. Dumb component; the store lives in the recorder owned by the panel.
  */
+import { Button } from "../../components/ui/button";
 import type { VoiceHistorySessionSummary } from "../history";
 
 export interface VoiceHistoryProps {
