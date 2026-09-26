@@ -740,6 +740,18 @@ function claudeTotalProcessedTokens(value: unknown): number | undefined {
   return total > 0 ? total : undefined;
 }
 
+/**
+ * Active context-window usage (input + cache counters). Never consults an
+ * explicit `total_tokens`: on aggregate records (turn results, task progress
+ * ticks, some proxies) that field is a cumulative throughput total, not the
+ * prompt size, and treating it as context inflates the meter (clamped or
+ * not). Callers that need the cumulative figure use
+ * {@link claudeTotalProcessedTokens} instead.
+ */
+function claudeActiveTokens(usage: Record<string, unknown>): number {
+  return claudeUsageInputTokens(usage) + claudeUsageOutputTokens(usage);
+}
+
 function makeClaudeTokenUsageSnapshot(input: {
   readonly activeTokens: number;
   readonly inputTokens?: number;
@@ -795,7 +807,7 @@ function normalizeClaudeActiveTokenUsage(
   const activeUsage = lastClaudeUsageIteration(usage) ?? usage;
   const inputTokens = claudeUsageInputTokens(activeUsage);
   const outputTokens = claudeUsageOutputTokens(activeUsage);
-  const activeTokens = claudeTotalProcessedTokens(activeUsage) ?? inputTokens + outputTokens;
+  const activeTokens = claudeActiveTokens(activeUsage);
   if (activeTokens <= 0) {
     return undefined;
   }
@@ -916,46 +928,6 @@ function compactBoundaryTokenUsageSnapshot(
   }
   const { lastUsedTokens: _lastUsedTokens, ...snapshotWithoutBeforeTokens } = snapshot;
   return snapshotWithoutBeforeTokens;
-}
-
-function normalizeClaudeTaskProgressTokenUsage(
-  value: unknown,
-  context: ClaudeSessionContext,
-): ThreadTokenUsageSnapshot | undefined {
-  const totalTokens = claudeTotalProcessedTokens(value);
-  if (totalTokens === undefined || totalTokens <= 0) {
-    return undefined;
-  }
-
-  const lastUsedTokens = context.lastKnownTokenUsage?.usedTokens;
-  const activeTokens =
-    lastUsedTokens !== undefined ? Math.max(totalTokens, lastUsedTokens) : totalTokens;
-  if (lastUsedTokens !== undefined && activeTokens === lastUsedTokens) {
-    return undefined;
-  }
-
-  const usage = value as Record<string, unknown>;
-  const snapshot = makeClaudeTokenUsageSnapshot({
-    activeTokens,
-    ...(context.lastKnownContextWindow !== undefined
-      ? { contextWindow: context.lastKnownContextWindow }
-      : {}),
-    totalProcessedTokens: Math.max(
-      totalTokens,
-      context.lastKnownTotalProcessedTokens ?? totalTokens,
-    ),
-  });
-  if (!snapshot) {
-    return undefined;
-  }
-
-  const toolUses = finiteNonNegativeInteger(usage.tool_uses);
-  const durationMs = finiteNonNegativeInteger(usage.duration_ms);
-  return {
-    ...snapshot,
-    ...(toolUses !== undefined ? { toolUses } : {}),
-    ...(durationMs !== undefined ? { durationMs } : {}),
-  };
 }
 
 function asCanonicalTurnId(value: TurnId): TurnId {
@@ -2682,9 +2654,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resultUsageRecord !== undefined &&
       (hasResultUsageIteration ||
         claudeUsageInputTokens(resultUsageRecord) + claudeUsageOutputTokens(resultUsageRecord) > 0);
+    // A turn spanning multiple model round-trips (num_turns > 1) sums
+    // per-request usage into result.usage: the counters are cumulative
+    // throughput across the turn, not the final request's prompt size.
+    // Treating them as active context inflates the meter (112k on a 23k
+    // thread; clamped to a fake full-window when the sum passes it). Like
+    // explicit total_tokens, that aggregate only feeds totalProcessedTokens;
+    // the meter keeps the last per-request evidence (assistant/message_delta
+    // snapshots). Single-round-trip results (num_turns <= 1, or a producer
+    // that omits num_turns) stay per-request and keep feeding active usage.
+    const resultAggregateAcrossRoundTrips =
+      resultUsageRecord !== undefined &&
+      !hasResultUsageIteration &&
+      typeof result?.num_turns === "number" &&
+      Number.isFinite(result.num_turns) &&
+      result.num_turns > 1;
     const resultTotalOnly =
       resultUsageRecord !== undefined &&
       !resultHasActiveUsage &&
+      claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
+    const resultAggregateOnly =
+      (resultTotalOnly || resultAggregateAcrossRoundTrips) &&
       claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
     const resultIterationSnapshot = resultUsageRecord
       ? normalizeClaudeActiveTokenUsage(
@@ -2703,7 +2693,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       latestAssistantSnapshot ??
       (context.turnState?.compactedSinceLatestAssistantUsage
         ? undefined
-        : resultTotalOnly && lastGoodUsage
+        : resultAggregateOnly && lastGoodUsage
           ? {
               ...lastGoodUsage,
               ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
@@ -2888,6 +2878,27 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (event.type === "message_delta") {
       if (message.parent_tool_use_id !== null && message.parent_tool_use_id !== undefined) {
+        return;
+      }
+
+      // Native Anthropic message_delta usage carries only the cumulative
+      // output_tokens for the in-flight message — no input-side counters.
+      // Emitting that as a context snapshot collapsed the meter to the
+      // message's output size until the next full assistant usage landed.
+      // Skip deltas without input evidence; proxies that mirror the full
+      // usage object (input_tokens present) still update the meter live.
+      const deltaUsage = event.usage as unknown as Record<string, unknown> | undefined;
+      const hasInputEvidence =
+        deltaUsage !== undefined &&
+        deltaUsage !== null &&
+        typeof deltaUsage === "object" &&
+        !Array.isArray(deltaUsage) &&
+        ((deltaUsage.input_tokens !== undefined && deltaUsage.input_tokens !== null) ||
+          (deltaUsage.cache_read_input_tokens !== undefined &&
+            deltaUsage.cache_read_input_tokens !== null) ||
+          (deltaUsage.cache_creation_input_tokens !== undefined &&
+            deltaUsage.cache_creation_input_tokens !== null));
+      if (!hasInputEvidence) {
         return;
       }
 
@@ -3768,14 +3779,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       }
       case "task_progress": {
-        yield* emitThreadTokenUsage(
-          context,
-          normalizeClaudeTaskProgressTokenUsage(message.usage, context),
-          {
-            rawMethod: "claude/system/task_progress",
-            rawPayload: message,
-          },
-        );
+        // Task usage (`total_tokens`) is cumulative across the task's own
+        // requests — subagent throughput, not main-thread context size. It
+        // must not drive the thread's context-window meter (it ratcheted the
+        // meter far past the real context). Task-level totals still flow to
+        // the task UI via `typedUsage` below.
         const linkage = taskLinkageFor(context.taskAgents, message.task_id);
         const typedUsage = normalizeTaskUsage(message.usage);
         // Phases ride on the coordinator's ONE progress row per tick. A
@@ -3835,14 +3843,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       case "task_notification": {
         context.liveTaskIds.delete(message.task_id);
-        yield* emitThreadTokenUsage(
-          context,
-          normalizeClaudeTaskProgressTokenUsage(message.usage, context),
-          {
-            rawMethod: "claude/system/task_notification",
-            rawPayload: message,
-          },
-        );
+        // Same rationale as task_progress: task totals are not context
+        // evidence and must not move the context-window meter.
         const typedUsage = normalizeTaskUsage(message.usage);
         yield* offerRuntimeEvent({
           ...base,
