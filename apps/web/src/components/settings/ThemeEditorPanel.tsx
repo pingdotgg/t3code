@@ -1,3 +1,4 @@
+import { prefersReducedMotion as readReducedMotion } from "../../lib/reducedMotion";
 import {
   ChevronDownIcon,
   ChevronUpIcon,
@@ -520,7 +521,7 @@ export function ThemeEditorPanel({
     requestAnimationFrame(() => {
       panelRef.current
         ?.querySelector(`[data-theme-color-role="${visibleRole}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        ?.scrollIntoView({ behavior: readReducedMotion() ? "auto" : "smooth", block: "nearest" });
     });
   }, []);
 

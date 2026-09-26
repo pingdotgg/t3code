@@ -87,6 +87,34 @@ describe("settings search targets", () => {
     expect(add).not.toHaveBeenCalled();
   });
 
+  it("keeps the destination and focus when the preference changes or is unavailable", () => {
+    const scrollIntoView = vi.fn();
+    const focus = vi.fn();
+    const target = {
+      tagName: "DIV",
+      scrollIntoView,
+      focus,
+      classList: { remove: vi.fn(), add: vi.fn() },
+      addEventListener: vi.fn(),
+      offsetWidth: 100,
+    } as unknown as HTMLElement;
+    const getElementById = vi.fn(() => target);
+    vi.stubGlobal("document", { getElementById });
+    let reducedMotion = false;
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: reducedMotion }) });
+    expect(scrollToSettingsTarget("word-wrap")).toBe(true);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "smooth", block: "center" });
+    reducedMotion = true;
+    expect(scrollToSettingsTarget("word-wrap")).toBe(true);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "auto", block: "center" });
+    vi.stubGlobal("window", {});
+    expect(scrollToSettingsTarget("word-wrap")).toBe(true);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "smooth", block: "center" });
+    expect(getElementById.mock.calls).toEqual([["word-wrap"], ["word-wrap"], ["word-wrap"]]);
+    expect(focus).toHaveBeenCalledTimes(3);
+    expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+  });
+
   it("leaves not-yet-mounted destinations to their mount lifecycle", () => {
     vi.stubGlobal("document", {
       getElementById: vi.fn(() => null),

@@ -1,3 +1,5 @@
+import { prefersReducedMotion } from "../../lib/reducedMotion";
+
 export const PAGE_SCROLL_ANIMATION_MS = 150;
 export const PAGE_SCROLL_ACCELERATION_MS = 400;
 export const PAGE_SCROLL_MAX_MULTIPLIER = 2;
@@ -149,11 +151,13 @@ export function createPageScrollController({
   getContainer,
   getScrollPaddingBottomPx,
   onScrollStart,
+  isReducedMotion = prefersReducedMotion,
   env = getDefaultEnv(),
 }: {
   getContainer: () => PageScrollContainer | null;
   getScrollPaddingBottomPx: () => number;
   onScrollStart?: (key: PageScrollKey) => void;
+  isReducedMotion?: () => boolean;
   env?: PageScrollEnv;
 }) {
   const state = {
@@ -208,6 +212,11 @@ export function createPageScrollController({
 
   const smoothScrollBy = (container: PageScrollContainer, deltaY: number) => {
     cancelDiscreteAnimation();
+
+    if (isReducedMotion()) {
+      container.scrollTop += deltaY;
+      return;
+    }
 
     const startScrollTop = container.scrollTop;
     const startTime = env.now();

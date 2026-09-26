@@ -1,3 +1,4 @@
+import { prefersReducedMotion as readReducedMotion } from "../lib/reducedMotion";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -5433,7 +5434,7 @@ export default function ChatView(props: ChatViewProps) {
     setShowScrollToBottom(false);
     setTimelineAnchor(releaseChatTimelineAnchor);
     requestAnimationFrame(() => {
-      void legendListRef.current?.scrollToEnd?.({ animated });
+      void legendListRef.current?.scrollToEnd?.({ animated: animated && !readReducedMotion() });
     });
   }, []);
   useLayoutEffect(() => {
@@ -5646,7 +5647,7 @@ export default function ChatView(props: ChatViewProps) {
         void list
           .scrollToIndex({
             index: anchorIndex,
-            animated: true,
+            animated: !readReducedMotion(),
             viewPosition: 0,
             viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
           })
