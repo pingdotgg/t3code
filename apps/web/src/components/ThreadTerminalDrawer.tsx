@@ -90,7 +90,7 @@ import {
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../appearanceFonts";
 
-const MIN_DRAWER_HEIGHT = 180;
+const MIN_DRAWER_HEIGHT = 48;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 
 function maxDrawerHeight(): number {
@@ -1010,6 +1010,7 @@ interface ThreadTerminalDrawerProps {
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
+  onCollapsedChange?: (collapsed: boolean) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
@@ -1071,6 +1072,7 @@ export default function ThreadTerminalDrawer({
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
+  onCollapsedChange,
   onAddTerminalContext,
   keybindings,
   terminalLabelsById,
@@ -1115,6 +1117,7 @@ export default function ThreadTerminalDrawer({
     startHeight: number;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
+  const collapsedDuringDragRef = useRef(false);
 
   const normalizedTerminalIds = useMemo(() => {
     const normalizedIds: string[] = [];
@@ -1311,6 +1314,7 @@ export default function ThreadTerminalDrawer({
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     didResizeDuringDragRef.current = false;
+    collapsedDuringDragRef.current = false;
     resizeStateRef.current = {
       pointerId: event.pointerId,
       startY: event.clientY,
@@ -1323,9 +1327,19 @@ export default function ThreadTerminalDrawer({
       const resizeState = resizeStateRef.current;
       if (!resizeState || resizeState.pointerId !== event.pointerId) return;
       event.preventDefault();
-      const clampedHeight = clampDrawerHeight(
-        resizeState.startHeight + (resizeState.startY - event.clientY),
-      );
+      const nextHeight = resizeState.startHeight + (resizeState.startY - event.clientY);
+      if (nextHeight < MIN_DRAWER_HEIGHT) {
+        if (!collapsedDuringDragRef.current) {
+          collapsedDuringDragRef.current = true;
+          onCollapsedChange?.(true);
+        }
+        return;
+      }
+      if (collapsedDuringDragRef.current) {
+        collapsedDuringDragRef.current = false;
+        onCollapsedChange?.(false);
+      }
+      const clampedHeight = clampDrawerHeight(nextHeight);
       if (clampedHeight === drawerHeightRef.current) {
         return;
       }
@@ -1333,7 +1347,7 @@ export default function ThreadTerminalDrawer({
       drawerHeightRef.current = clampedHeight;
       setDrawerHeight(clampedHeight);
     },
-    [setDrawerHeight],
+    [onCollapsedChange, setDrawerHeight],
   );
 
   const handleResizePointerEnd = useCallback(
