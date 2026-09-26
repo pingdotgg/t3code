@@ -11,6 +11,7 @@ import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import * as TextGeneration from "./TextGeneration.ts";
+import { TranscriptionPostProcessingOutput } from "./TranscriptionPostProcessing.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -54,7 +55,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateTranscriptionPostProcessing";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -261,10 +263,22 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
+  const generateTranscriptionPostProcessing: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"] =
+    Effect.fn("CursorTextGeneration.generateTranscriptionPostProcessing")(function* (input) {
+      return yield* runCursorJson({
+        operation: "generateTranscriptionPostProcessing",
+        cwd: input.cwd,
+        prompt: input.prompt,
+        outputSchemaJson: TranscriptionPostProcessingOutput,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateTranscriptionPostProcessing,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

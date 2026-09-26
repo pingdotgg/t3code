@@ -1201,6 +1201,23 @@ describe("plus key parsing", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
+  it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "composer.dictation",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.splitVertical",
+    );
+  });
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>

@@ -18,3 +18,21 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export {
+  cancelEnvironmentSpeechModelDownload,
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
+  getEnvironmentSpeechStatus,
+  postProcessEnvironmentTranscript,
+  prepareEnvironmentSpeechModel,
+  updateEnvironmentSpeechCustomWords,
+  updateEnvironmentSpeechFillerWordRemoval,
+  updateEnvironmentSpeechAcceleration,
+  updateEnvironmentSpeechModelUnloadTimeout,
+  updateEnvironmentSpeechLanguage,
+  getEnvironmentSpeechStreamUrl,
+  removeEnvironmentSpeechModel,
+  selectEnvironmentSpeechModel,
+  transcribeEnvironmentPcm,
+} from "./environment.ts";
+export { openSpeechStream } from "./stream.ts";

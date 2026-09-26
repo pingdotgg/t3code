@@ -19,6 +19,7 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
+  MicIcon,
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
@@ -77,6 +78,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/voice": MicIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,

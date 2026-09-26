@@ -75,8 +75,18 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface TranscriptionPostProcessingInput {
+  cwd: string;
+  prompt: string;
+  modelSelection: ModelSelection;
+}
+
+export interface TranscriptionPostProcessingResult {
+  transcription: string;
+}
+
 /**
- * TextGeneration - Service tag for commit and change request text generation.
+ * Provider-backed generation for small, structured text tasks.
  */
 export class TextGeneration extends Context.Service<
   TextGeneration,
@@ -106,6 +116,9 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+    readonly generateTranscriptionPostProcessing: (
+      input: TranscriptionPostProcessingInput,
+    ) => Effect.Effect<TranscriptionPostProcessingResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -113,7 +126,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateTranscriptionPostProcessing";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -164,6 +178,16 @@ export const make = Effect.gen(function* () {
               ));
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
+        ),
+      ),
+    generateTranscriptionPostProcessing: (input) =>
+      resolveInstance(
+        registry,
+        "generateTranscriptionPostProcessing",
+        input.modelSelection.instanceId,
+      ).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generateTranscriptionPostProcessing(input),
         ),
       ),
   });

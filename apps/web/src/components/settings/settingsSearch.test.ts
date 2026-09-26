@@ -251,7 +251,9 @@ describe("searchSettings", () => {
 
   it("ranks keybinding commands after other settings", () => {
     const ids = searchSettings("model").map((item) => item.id);
-    expect(ids[0]).toBe("default-model");
+    expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
+      ids.indexOf("default-model"),
+    );
     expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
       ids.indexOf("text-generation-model"),
     );
@@ -268,6 +270,23 @@ describe("searchSettings", () => {
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("keeps voice settings on the voice page", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "local-voice-input")?.to).toBe(
+      "/settings/voice",
+    );
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "microphone")?.to).toBe(
+      "/settings/voice",
+    );
+    for (const id of [
+      "speech-post-processing",
+      "speech-post-processing-model",
+      "speech-correction-word",
+      "speech-post-processing-prompt",
+    ]) {
+      expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/voice");
+    }
   });
 
   it("serves anchor props to panels from the catalog", () => {
