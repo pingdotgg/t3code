@@ -100,8 +100,10 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
   /**
-   * Read the lightweight command snapshot used to bootstrap the in-memory
-   * orchestration engine without hydrating message/activity/checkpoint bodies.
+   * Read the compact command snapshot used to bootstrap the in-memory
+   * orchestration engine. It never hydrates message, activity or checkpoint
+   * bodies, and restores decision history only for live threads active within
+   * COMMAND_HISTORY_RESTORE_WINDOW of the newest thread.
    */
   readonly getCommandReadModel: () => Effect.Effect<CommandReadModel, ProjectionRepositoryError>;
 

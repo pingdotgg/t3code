@@ -2781,20 +2781,21 @@ pending_approval_requests AS (
         Effect.gen(function* () {
           const metadata = yield* getMetadataSnapshot();
           // Measured from the newest thread rather than the wall clock, so a
-          // server restarted after a long idle stretch still restores its latest work.
+          // server restarted after a long idle stretch still restores its latest
+          // work. Clamped to now, so a malformed or future timestamp can neither
+          // fail startup nor move the window past every thread.
           const newest = metadata.threads.reduce(
             (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
             "",
           );
-          const cutoff =
-            newest === ""
-              ? newest
-              : DateTime.formatIso(
-                  DateTime.subtractDuration(
-                    DateTime.makeUnsafe(newest),
-                    COMMAND_HISTORY_RESTORE_WINDOW,
-                  ),
-                );
+          const now = yield* DateTime.now;
+          const anchor = DateTime.make(newest).pipe(
+            Option.map((latest) => DateTime.min(latest, now)),
+            Option.getOrElse(() => now),
+          );
+          const cutoff = DateTime.formatIso(
+            DateTime.subtractDuration(anchor, COMMAND_HISTORY_RESTORE_WINDOW),
+          );
           const [messages, activities, checkpoints] = yield* Effect.all([
             listCommandMessages(cutoff),
             listCommandActivities(cutoff),

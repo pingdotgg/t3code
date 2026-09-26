@@ -18,6 +18,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -2138,6 +2139,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
+      yield* TestClock.setTime(Date.parse("2026-04-25T00:00:00.000Z"));
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_threads`;
@@ -2199,6 +2201,52 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         archived: [0, 0, 0],
         deleted: [0, 0, 0],
       });
+    }),
+  );
+
+  it.effect("restores recent history when a thread has a malformed or future timestamp", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* TestClock.setTime(Date.parse("2026-04-25T00:00:00.000Z"));
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`
+        INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('project', 'Project', '/tmp/project', '[]', '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          created_at, updated_at
+        )
+        VALUES
+          ('recent', 'project', 'Recent', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-04-20T00:00:00.000Z'),
+          ('odd', 'project', 'Odd', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+            '2026-04-01T00:00:00.000Z', '2026-13-01T00:00:00.000Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
+        VALUES ('recent-message', 'recent', 'turn', 'user', 'hello', 0, '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:00.000Z')
+      `;
+      const restoredMessages = () =>
+        snapshotQuery
+          .getCommandReadModel()
+          .pipe(
+            Effect.map(
+              (model) => model.threads.find((thread) => thread.id === "recent")?.messages.length,
+            ),
+          );
+
+      // A malformed timestamp sorts newest but cannot fail startup.
+      assert.equal(yield* restoredMessages(), 1);
+
+      // A timestamp a year ahead cannot move the window past every thread.
+      yield* sql`UPDATE projection_threads SET updated_at = '2027-04-20T00:00:00.000Z' WHERE thread_id = 'odd'`;
+      assert.equal(yield* restoredMessages(), 1);
     }),
   );
 
