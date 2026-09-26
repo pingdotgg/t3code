@@ -219,11 +219,29 @@ const ComposerMentionExtension = Node.create({
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
+  // Reuses the local shadcn Button: https://ui.shadcn.com/docs/components/base/button
   const chip = (
     <ContextChip
       kind="mention"
       render={<button type="button" />}
       onClick={() => actions.openMention(path)}
+      onContextMenu={(event) => {
+        if (!actions.showMentionMenu) return;
+        if (!actions.showMentionMenu(path, { x: event.clientX, y: event.clientY })) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onKeyDown={(event) => {
+        if (
+          !actions.showMentionMenu ||
+          !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+        )
+          return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (!actions.showMentionMenu(path, { x: rect.left, y: rect.bottom })) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       aria-label={`Preview ${path}`}
       contentEditable={false}
       spellCheck={false}
@@ -231,7 +249,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     >
       <FileTagChipContent
         path={path}
-        label={basenameOfPath(path)}
+        label={basenameOfPath(path.replace(/[\\/]+$/, ""))}
         theme={resolvedThemeFromDocument()}
       />
     </ContextChip>

@@ -31,6 +31,24 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it("keeps a directory mention whose label matches its trimmed basename", () => {
+    const text = "Inspect [src](src/) next";
+
+    expect(collectComposerInlineTokens(text)).toEqual([
+      {
+        type: "mention",
+        value: "src/",
+        source: "[src](src/)",
+        start: 8,
+        end: 19,
+      },
+    ]);
+  });
+
+  it("rejects file links whose path is only separators", () => {
+    expect(collectComposerInlineTokens("Inspect [](/) next")).toEqual([]);
+  });
+
   it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
     "collects %s skill names that begin with a digit",
     (prefix) => {

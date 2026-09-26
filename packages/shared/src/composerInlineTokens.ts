@@ -63,10 +63,13 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     } catch {
       // Preserve malformed source rather than dropping a user-authored token.
     }
-    const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-    const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
+    // Directory mentions keep a trailing separator through serialization, so
+    // the basename ignores it; an all-separator path names no file.
+    const trimmedPath = path.replace(/[\\/]+$/, "");
+    const separatorIndex = Math.max(trimmedPath.lastIndexOf("/"), trimmedPath.lastIndexOf("\\"));
+    const basename = separatorIndex >= 0 ? trimmedPath.slice(separatorIndex + 1) : trimmedPath;
     const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
-    if (!path || hasExternalScheme || label !== basename) {
+    if (!path || !basename || hasExternalScheme || label !== basename) {
       continue;
     }
     const start = (match.index ?? 0) + prefix.length;

@@ -36,15 +36,31 @@ export function composerContextSendBlockReason(
     : null;
 }
 
-/** Resolve the tapped source, not its display label, which can be only a basename. */
+/**
+ * A trailing separator names a directory: mobile has no route for one (its
+ * file screen calls `readFile`, which the server refuses for a directory).
+ * Shared by every mention press path so a directory mention never reaches
+ * that route, whether tapped from the composer or from a sent message.
+ */
+export function isDirectoryMentionPath(path: string) {
+  return /[\\/]$/.test(path);
+}
+
+/**
+ * Resolve the tapped source, not its display label, which can be only a
+ * basename. Directory mentions get null so callers skip navigation rather
+ * than dispatch a request the server would reject.
+ */
 export function composerMentionPath(source: string, context?: OrchestrationMessageContext) {
   const reference = collectComposerContextReferences(source)[0];
   if (reference) {
     const record = context?.records.find((entry) => entry.contextId === reference.contextId);
-    return record?.kind === "mention" && "path" in record ? record.path : null;
+    const path = record?.kind === "mention" && "path" in record ? record.path : null;
+    return path && isDirectoryMentionPath(path) ? null : path;
   }
   const token = collectComposerInlineTokens(`${source} `)[0];
-  return token?.type === "mention" && token.source === source ? token.value : null;
+  const path = token?.type === "mention" && token.source === source ? token.value : null;
+  return path && isDirectoryMentionPath(path) ? null : path;
 }
 
 export interface ComposerDocumentAttachment {
