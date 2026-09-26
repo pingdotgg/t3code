@@ -477,12 +477,18 @@ const platformConnectionSourceLayer = Layer.effect(
     // backends running alongside it (bearer auth). Reused registrations come
     // from the cache; a failed entry is skipped and retried on the next poll.
     const buildPlatformRegistrations = Effect.gen(function* () {
+      const refreshFailure = yield* Effect.tryPromise({
+        try: async () => {
+          await window.desktopBridge?.refreshLocalEnvironment?.();
+        },
+        catch: (cause) => ({ _tag: "Failure" as const, cause }),
+      }).pipe(Effect.match({ onSuccess: () => undefined, onFailure: (failure) => failure }));
       const previous = yield* Ref.get(cacheRef);
       const nowEpochMs = yield* Clock.currentTimeMillis;
       const next = new Map<string, CachedPlatformRegistration>();
       const registrations: Array<PlatformConnectionRegistration> = [];
 
-      const primaryTopologyRead = readPrimaryEnvironmentTargetResult();
+      const primaryTopologyRead = refreshFailure ?? readPrimaryEnvironmentTargetResult();
       const retainedPrimary = primaryRegistrationToRetainAfterTopologyRead(
         previous,
         primaryTopologyRead,
@@ -521,7 +527,7 @@ const platformConnectionSourceLayer = Layer.effect(
         }
       }
 
-      const topologyRead = readDesktopSecondaryBootstrapsResult();
+      const topologyRead = refreshFailure ?? readDesktopSecondaryBootstrapsResult();
       for (const [id, cached] of secondaryRegistrationsToRetainAfterTopologyRead(
         previous,
         topologyRead,

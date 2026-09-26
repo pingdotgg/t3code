@@ -46,12 +46,12 @@ describe("local environment IPC", () => {
     );
     return Effect.gen(function* () {
       yield* setLocalEnvironmentEnabled.handler(false);
-      assert.isFalse(yield* getLocalEnvironmentEnabled.handler());
+      assert.isFalse(yield* getLocalEnvironmentEnabled.handler(undefined));
       yield* setLocalEnvironmentEnabled.handler(false);
       assert.deepEqual(relaunchReasons, ["localEnvironmentEnabled=false"]);
 
       yield* setLocalEnvironmentEnabled.handler(true);
-      assert.isTrue(yield* getLocalEnvironmentEnabled.handler());
+      assert.isTrue(yield* getLocalEnvironmentEnabled.handler(undefined));
       const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
       assert.isTrue((yield* appSettings.get).wslBackendEnabled);
       assert.deepEqual(relaunchReasons, [

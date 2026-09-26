@@ -4,10 +4,11 @@ import * as Schema from "effect/Schema";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as IpcChannels from "../channels.ts";
-import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
+import { makeIpcMethod } from "../DesktopIpc.ts";
 
-export const getLocalEnvironmentEnabled = makeSyncIpcMethod({
+export const getLocalEnvironmentEnabled = makeIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
+  payload: Schema.Void,
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.localEnvironment.getEnabled")(function* () {
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;

@@ -30,6 +30,7 @@ describe("app startup failures", () => {
 
   beforeEach(() => {
     vi.resetModules();
+    vi.stubGlobal("window", {});
     bootShell = new BootElement("div");
     vi.stubGlobal("document", {
       getElementById: () => bootShell,
@@ -89,5 +90,51 @@ describe("app startup failures", () => {
     showBootError(new Error("late failure"));
 
     expect(createElement).not.toHaveBeenCalled();
+  });
+  it("waits for the desktop snapshot before importing primary auth and routing", async () => {
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const loadMain = vi.fn(() => ({ startup: Promise.resolve() }));
+    vi.doMock("./main", loadMain);
+    vi.stubGlobal("window", {
+      desktopBridge: { refreshLocalEnvironment: () => ready },
+    });
+
+    await import("./bootstrap");
+    expect(loadMain).not.toHaveBeenCalled();
+
+    resolveReady();
+    await vi.dynamicImportSettled();
+    expect(loadMain).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, {}])(
+    "starts without a refresh API in browser or older desktop",
+    async (bridge) => {
+      const loadMain = vi.fn(() => ({ startup: Promise.resolve() }));
+      vi.doMock("./main", loadMain);
+      vi.stubGlobal("window", { desktopBridge: bridge });
+
+      await import("./bootstrap");
+      await vi.dynamicImportSettled();
+      expect(loadMain).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("shows a failed initial snapshot without importing an uninitialized app", async () => {
+    const loadMain = vi.fn(() => ({ startup: Promise.resolve() }));
+    vi.doMock("./main", loadMain);
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        refreshLocalEnvironment: () => Promise.reject(new Error("IPC unavailable")),
+      },
+    });
+
+    await import("./bootstrap");
+    await vi.dynamicImportSettled();
+    expect(bootShell?.text).toContain("IPC unavailable");
+    expect(loadMain).not.toHaveBeenCalled();
   });
 });
