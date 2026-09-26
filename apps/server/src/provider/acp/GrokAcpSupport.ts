@@ -165,7 +165,7 @@ export function normalizeGrokReasoningEffort(value: string | undefined): string 
   return effort && isValidGrokReasoningEffortToken(effort) ? effort : undefined;
 }
 
-export function currentGrokModelIdFromSessionSetup(
+function currentGrokModelIdFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
     | EffectAcpSchema.NewSessionResponse
