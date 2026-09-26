@@ -1101,7 +1101,6 @@ describe("deriveMessagesTimelineRows", () => {
     previewAnnotations: [],
     reviewComments: [],
     submissionIntent: "foreground" as const,
-    queuedAfterToolActivityId: null,
     createdAt: "2026-01-01T00:00:01Z",
   });
 

@@ -1829,6 +1829,47 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(false);
   });
 
+  it("keeps a queued follow-up busy when the previous turn's checkpoint arrives late", () => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestTurn: completedTurn, session: readySession }),
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "ready",
+        latestTurn: { ...completedTurn, completedAt: "2026-03-29T00:01:00.000Z" },
+        latestUserMessageId: MessageId.make("message-followup"),
+        session: readySession,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
+  it.each(["ready", "interrupted"] as const)(
+    "ignores a delayed ready session update after queueing from %s",
+    (status) => {
+      const localDispatch = createLocalDispatchSnapshot(
+        makeThread({ latestTurn: completedTurn, session: { ...readySession, status } }),
+      );
+
+      expect(
+        hasServerAcknowledgedLocalDispatch({
+          localDispatch,
+          phase: "ready",
+          latestTurn: completedTurn,
+          latestUserMessageId: MessageId.make("message-followup"),
+          session: { ...readySession, updatedAt: "2026-03-29T00:01:00.000Z" },
+          hasPendingApproval: false,
+          hasPendingUserInput: false,
+          threadError: null,
+        }),
+      ).toBe(false);
+    },
+  );
+
   it("keeps a follow-up active while its provider session is starting", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestTurn: completedTurn, session: readySession }),
@@ -1925,7 +1966,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
-  it("acknowledges a steering message projected onto the current running turn", () => {
+  it.each(["running", "ready"] as const)("acknowledges a steer while %s", (status) => {
     const runningTurn = {
       ...completedTurn,
       state: "running" as const,
@@ -1957,10 +1998,10 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(
       hasServerAcknowledgedLocalDispatch({
         localDispatch,
-        phase: "running",
-        latestTurn: runningTurn,
+        phase: status,
+        latestTurn: status === "running" ? runningTurn : completedTurn,
         latestUserMessageId: MessageId.make("message-steer"),
-        session: runningSession,
+        session: status === "running" ? runningSession : readySession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
