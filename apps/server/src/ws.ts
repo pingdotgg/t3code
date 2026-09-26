@@ -1846,9 +1846,15 @@ const makeWsRpcLayer = (
               [input.createdAt.slice(0, 10), ...words, idPart].filter(Boolean).join("-"),
             );
           const shortFolder = folderFor(id.slice(0, 8));
-          const shortTaken = yield* fileSystem
-            .exists(shortFolder)
-            .pipe(Effect.orElseSucceed(() => false));
+          const shortTaken = yield* fileSystem.exists(shortFolder).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to check the Scratch thread folder.",
+                  cause,
+                }),
+            ),
+          );
           const folder = shortTaken ? folderFor(id) : shortFolder;
           yield* fileSystem.makeDirectory(folder, { recursive: true }).pipe(
             Effect.mapError(
