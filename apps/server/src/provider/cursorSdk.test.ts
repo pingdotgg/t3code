@@ -19,7 +19,7 @@ const dir = mkdtempSync(join(tmpdir(), "cursor-sdk-stub-"));
 const stub = join(dir, "stub.cjs");
 writeFileSync(
   stub,
-  "module.exports = { Agent: {}, AuthenticationError: class {}, Cursor: {}, CursorSdkError: class {}, InMemoryCredentialStore: class {} };",
+  "module.exports = { Agent: {}, AuthenticationError: class {}, createAgentPlatform: () => ({}), Cursor: {}, CursorSdkError: class {}, InMemoryCredentialStore: class {} };",
 );
 registerHooks({
   resolve(specifier, context, next) {
