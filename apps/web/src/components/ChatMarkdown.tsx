@@ -161,7 +161,12 @@ import {
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
-import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+import {
+  remotePathCopyQualifier,
+  remotePathScpHost,
+  useRemoteOpenResolution,
+  type RemoteOpenMode,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -1192,6 +1197,11 @@ interface MarkdownFileLinkProps {
   /** What the files panel opens: workspace-relative inside the workspace, the
       absolute host path outside it, null when the panel cannot show the file. */
   panelPath: string | null;
+  /** Sidebar name of the environment hosting the file when the viewing client
+      is not on that machine; null on local environments. */
+  hostEnvironment: string | null;
+  /** Connectable SSH host for scp/rsync from this machine; null when unknown. */
+  scpHost: string | null;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
@@ -1931,6 +1941,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   iconPath,
   displayPath,
   panelPath,
+  hostEnvironment,
+  scpHost,
   line,
   label,
   copyMarkdown,
@@ -2114,6 +2126,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       const api = readLocalApi();
       if (!api) return;
 
+      // Off-machine paths are ambiguous to paste, so the menu, the toast, and
+      // the scp form all name the host that holds the file.
+      const copyTitle = (label: string) =>
+        hostEnvironment ? `${label} on ${hostEnvironment}` : label;
       try {
         const clicked = await api.contextMenu.show(
           [
@@ -2123,8 +2139,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
             ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-            { id: "copy-relative", label: "Copy relative path" },
-            { id: "copy-full", label: "Copy full path" },
+            { id: "copy-relative", label: copyTitle("Copy relative path") },
+            { id: "copy-full", label: copyTitle("Copy full path") },
           ] as const,
           position,
         );
@@ -2146,11 +2162,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           return;
         }
         if (clicked === "copy-relative") {
-          handleCopy(displayPath, "Relative path");
+          handleCopy(displayPath, copyTitle("Relative path"));
           return;
         }
         if (clicked === "copy-full") {
-          handleCopy(targetPath, "Full path");
+          // `iconPath` is the position-free path, so the scp form works as an
+          // scp/rsync source even when the link targets `file.ts:12:3`.
+          handleCopy(scpHost ? `${scpHost}:${iconPath}` : targetPath, copyTitle("Full path"));
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -2165,12 +2183,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleOpenInBrowser,
       handleOpenInEditor,
       handleRevealInFileManager,
+      hostEnvironment,
+      iconPath,
       onOpenInBrowser,
       onOpenMedia,
       onOpen,
       onReveal,
       openInEditorMenuLabel,
       revealLabel,
+      scpHost,
       targetPath,
     ],
   );
@@ -2217,6 +2238,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               render={<a href={href} />}
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
+              {...(hostEnvironment !== null ? { "data-host-environment": hostEnvironment } : {})}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -2242,6 +2264,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}
+              {...(hostEnvironment !== null ? { "data-host-environment": hostEnvironment } : {})}
               onClick={handleContextMenu}
               onContextMenu={handleContextMenu}
             >
@@ -2256,6 +2279,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         <div className="overflow-x-auto whitespace-nowrap scrollbar-thumb-border/78 scrollbar-track-transparent [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/78 [&::-webkit-scrollbar-track]:bg-transparent">
           {targetPath}
         </div>
+        {hostEnvironment !== null && (
+          <div className="text-muted-foreground">Path on {hostEnvironment}</div>
+        )}
       </TooltipPopup>
     </Tooltip>
   );
@@ -2276,6 +2302,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
+    previous.hostEnvironment === next.hostEnvironment &&
+    previous.scpHost === next.scpHost &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
@@ -2333,6 +2361,10 @@ function useChatMarkdownState({
     remoteOpen.isResolved,
   );
   const preparedConnection = usePreparedConnection(environmentId);
+  // File chips copy host paths; when this client is not on the environment
+  // machine, the copy needs to say which machine it names.
+  const remoteHostEnvironment = remotePathCopyQualifier(remoteOpen);
+  const remoteScpHost = remotePathScpHost(remoteOpen.state);
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
       const requestId = ++mediaRequestId.current;
@@ -2642,6 +2674,8 @@ function useChatMarkdownState({
           iconPath={fileLinkMeta.filePath}
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
+          hostEnvironment={remoteHostEnvironment}
+          scpHost={remoteScpHost}
           line={fileLinkMeta.line}
           label={labelParts.join(" · ")}
           copyMarkdown={copyMarkdown}
@@ -2682,6 +2716,8 @@ function useChatMarkdownState({
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,
+      remoteHostEnvironment,
+      remoteScpHost,
       threadRef,
     ],
   );
