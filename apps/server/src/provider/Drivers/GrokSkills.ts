@@ -25,6 +25,9 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { spawnAndCollect } from "../providerSnapshot.ts";
 
 const GROK_SKILLS_PROBE_TIMEOUT_MS = 4_000;
+const GROK_SKILL_MENTION_PATTERN =
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+const HAS_GROK_SKILL_MENTION_PATTERN = new RegExp(GROK_SKILL_MENTION_PATTERN.source, "u");
 
 class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   "GrokSkillsProbeError",
@@ -149,3 +152,14 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   }
   return skills;
 });
+
+/** Grok invokes skills with `/name`; T3 composers insert `$name`. */
+export function hasGrokSkillMention(prompt: string): boolean {
+  return HAS_GROK_SKILL_MENTION_PATTERN.test(prompt);
+}
+
+export function rewriteGrokSkillMentions(prompt: string, skillNames: ReadonlySet<string>): string {
+  return prompt.replace(GROK_SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
+    skillNames.has(name) ? `${prefix}/${name}` : match,
+  );
+}

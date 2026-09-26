@@ -54,6 +54,52 @@ async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
   });
 }
 
+async function makeMockGrokWrapperWithSkills(options: {
+  readonly skills: ReadonlyArray<unknown>;
+  /** `inspect --json` fails until this flag file exists, then reports the skills. */
+  readonly inspectOkPath: string;
+  /** When set, `inspect --json` writes this file, then waits for `inspectOkPath`. */
+  readonly inspectHangPath?: string;
+  readonly extraEnv?: Record<string, string>;
+}) {
+  const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-skills-"));
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-grok",
+    env: options.extraEnv ?? {},
+    source: [
+      'import { readFileSync as readInspectFlag, writeFileSync } from "node:fs";',
+      'import { pathToFileURL } from "node:url";',
+      "const args = process.argv.slice(2);",
+      'if (args[0] === "inspect" && args[1] === "--json") {',
+      ...(options.inspectHangPath
+        ? [
+            `  writeFileSync(${JSON.stringify(options.inspectHangPath)}, "started", "utf8");`,
+            "  await new Promise((resolve) => {",
+            "    const timer = setInterval(() => {",
+            "      try {",
+            `        readInspectFlag(${JSON.stringify(options.inspectOkPath)}, "utf8");`,
+            "        clearInterval(timer);",
+            "        resolve(undefined);",
+            "      } catch {}",
+            "    }, 20);",
+            "  });",
+          ]
+        : []),
+      "  try {",
+      `    readInspectFlag(${JSON.stringify(options.inspectOkPath)}, "utf8");`,
+      "  } catch {",
+      "    process.exit(1);",
+      "  }",
+      `  process.stdout.write(${JSON.stringify(JSON.stringify({ skills: options.skills }))});`,
+      "  process.exit(0);",
+      "}",
+      `await import(pathToFileURL(${JSON.stringify(mockAgentPath)}).href);`,
+      "",
+    ].join("\n"),
+  });
+}
+
 function waitForFileContent(
   filePath: string,
   attempts = 40,
@@ -361,6 +407,158 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.include(prompts[1]?.[1]?.text, "with low reasoning effort");
       assert.include(prompts[1]?.[1]?.text, "embed images and videos");
     }),
+  );
+
+  it.effect("sends skills in Grok's native form and retries discovery after failure", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-skill-dispatch");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-skill-dispatch-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const inspectOkPath = NodePath.join(tempDir, "inspect-ok");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapperWithSkills({
+          skills: [
+            {
+              name: "review",
+              description: "Review the change.",
+              source: { type: "user", path: "/mock/.grok/skills/review/SKILL.md" },
+              userInvocable: true,
+            },
+            {
+              name: "always-approve",
+              description: "Collides with the built-in.",
+              source: { type: "user", path: "/mock/.grok/skills/always-approve/SKILL.md" },
+              userInvocable: true,
+            },
+          ],
+          inspectOkPath,
+          extraEnv: { T3_ACP_REQUEST_LOG_PATH: requestLogPath },
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      // Discovery fails while the flag file is missing: the turn still
+      // succeeds and the mention stays literal.
+      yield* adapter.sendTurn({ threadId, input: "please $review this" });
+      // Discovery succeeds now: the mention is rewritten and cached.
+      yield* Effect.promise(() => NodeFSP.writeFile(inspectOkPath, "ok", "utf8"));
+      yield* adapter.sendTurn({ threadId, input: "please $review this" });
+      // A skill mention must not lower into the blocked built-in.
+      const blocked = yield* Effect.flip(
+        adapter.sendTurn({ threadId, input: "$always-approve now" }),
+      );
+      assert.include(blocked.message, "/always-approve");
+      yield* adapter.stopSession(threadId);
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const prompts = requests
+        .filter((request) => request.method === "session/prompt")
+        .map(
+          (request) => (request.params as { prompt: Array<{ type: string; text: string }> }).prompt,
+        );
+      assert.equal(prompts.length, 2);
+      assert.deepEqual(prompts[0]?.[0], { type: "text", text: "please $review this" });
+      assert.deepEqual(prompts[1]?.[0], { type: "text", text: "please /review this" });
+    }),
+  );
+
+  it.effect("lets Stop cancel a steered prompt while skill discovery is pending", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-stop-during-skill-discovery");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-stop-skill-discovery-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const inspectHangPath = NodePath.join(tempDir, "inspect-started");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapperWithSkills({
+          skills: [],
+          inspectOkPath: NodePath.join(tempDir, "inspect-ok"),
+          inspectHangPath,
+          extraEnv: {
+            T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          },
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const firstSendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hang until stopped" })
+        .pipe(Effect.forkChild);
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+      const steerFiber = yield* adapter
+        .sendTurn({ threadId, input: "$review this instead" })
+        .pipe(Effect.forkChild);
+      yield* waitForFileContent(inspectHangPath, 80);
+
+      // The probe never exits; Stop must not queue behind its 4s timeout.
+      yield* adapter.interruptTurn(threadId).pipe(Effect.timeout("1 second"));
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/cancel"');
+
+      yield* Fiber.interrupt(steerFiber);
+      yield* Fiber.interrupt(firstSendTurnFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("does not start a turn when Stop lands during skill discovery", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-stop-before-skill-turn");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-stop-before-skill-turn-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const inspectOkPath = NodePath.join(tempDir, "inspect-ok");
+      const inspectHangPath = NodePath.join(tempDir, "inspect-started");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapperWithSkills({
+          skills: [
+            {
+              name: "review",
+              description: "Review the change.",
+              source: { type: "user", path: "/mock/.grok/skills/review/SKILL.md" },
+              userInvocable: true,
+            },
+          ],
+          inspectOkPath,
+          inspectHangPath,
+          extraEnv: { T3_ACP_REQUEST_LOG_PATH: requestLogPath },
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const sendFiber = yield* adapter
+        .sendTurn({ threadId, input: "$review this" })
+        .pipe(Effect.forkChild);
+      yield* waitForFileContent(inspectHangPath, 80);
+      yield* adapter.interruptTurn(threadId).pipe(Effect.timeout("1 second"));
+      yield* Effect.promise(() => NodeFSP.writeFile(inspectOkPath, "ok", "utf8"));
+      yield* Fiber.await(sendFiber).pipe(Effect.timeout("3 seconds"));
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isFalse(requests.some((request) => request.method === "session/prompt"));
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>

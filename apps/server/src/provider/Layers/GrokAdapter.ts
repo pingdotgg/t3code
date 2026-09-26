@@ -83,6 +83,11 @@ import {
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
 } from "../acp/XAiAcpExtension.ts";
+import {
+  discoverGrokSkills,
+  hasGrokSkillMention,
+  rewriteGrokSkillMentions,
+} from "../Drivers/GrokSkills.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -90,6 +95,7 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 
 const PROVIDER = ProviderDriverKind.make("grok");
 const GROK_RESUME_VERSION = 1 as const;
+const ALWAYS_APPROVE_COMMAND = /^\/always-approve(?:\s|$)/i;
 const NANOS_PER_MILLI = 1_000_000n;
 // ACP does not expose Grok's private `streaming_reasoning` phase. Once it has
 // emitted standard ACP progress, ten silent minutes is long enough to avoid
@@ -152,6 +158,9 @@ interface GrokSessionContext {
   /** True after enter_plan_mode until the turn ends or exit_plan_mode resolves. */
   planModeActive: boolean;
   activeTurnId: TurnId | undefined;
+  grokSkillNames: ReadonlySet<string> | undefined;
+  /** Bumped by every Stop, so a send that awaited outside the lock sees it. */
+  stopRequests: number;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
   /** Number of sendTurn prompts currently in flight or being prepared.
@@ -1299,6 +1308,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             lastKnownProposedPlanTurnId: undefined,
             planModeActive: false,
             activeTurnId: undefined,
+            grokSkillNames: undefined,
+            stopRequests: 0,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
             promptEpoch: 0,
@@ -1520,7 +1531,37 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const sendTurn: GrokAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
-        if (/^\/always-approve(?:\s|$)/i.test(input.input?.trim() ?? "")) {
+        // Skill discovery can take seconds, so it runs outside the thread
+        // lock: interruptTurn needs that lock to cancel a steered prompt.
+        const rawText = input.input?.trim();
+        const sessionCtx = sessions.get(input.threadId);
+        let grokSkillNames = sessionCtx?.grokSkillNames;
+        let stopsBeforeDiscovery: number | undefined;
+        if (sessionCtx && rawText && hasGrokSkillMention(rawText) && grokSkillNames === undefined) {
+          stopsBeforeDiscovery = sessionCtx.stopRequests;
+          const skills = yield* discoverGrokSkills(
+            grokSettings,
+            options?.environment ?? hostEnvironment,
+            sessionCtx.session.cwd,
+          ).pipe(
+            Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            Effect.orElseSucceed(() => undefined),
+          );
+          // Cache only on success: a failed probe must not poison the
+          // session, so the next skill mention retries discovery.
+          if (skills !== undefined) {
+            grokSkillNames = new Set(
+              skills.filter((skill) => skill.enabled).map((skill) => skill.name),
+            );
+            sessionCtx.grokSkillNames = grokSkillNames;
+          }
+        }
+        const text =
+          rawText && grokSkillNames ? rewriteGrokSkillMentions(rawText, grokSkillNames) : rawText;
+        // Checked after lowering so a skill named `always-approve` cannot
+        // reach the built-in either.
+        if (text && ALWAYS_APPROVE_COMMAND.test(text)) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
             method: "session/prompt",
@@ -1546,6 +1587,17 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             // Bind the turn id before cooperative yields so interruptTurn can
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
+            // A Stop during discovery had no turn to mark yet; a replaced
+            // session did not produce the catalog the rewrite used.
+            const sameSession = ctx === sessionCtx;
+            if (
+              sameSession &&
+              stopsBeforeDiscovery !== undefined &&
+              ctx.stopRequests !== stopsBeforeDiscovery
+            ) {
+              ctx.interruptedTurnIds.add(turnId);
+            }
+            const turnText = sameSession ? text : rawText;
             // New turn: do not fall back to a previous turn's plan.md body when
             // exit_plan_mode omits planContent.
             if (steeringTurnId === undefined) {
@@ -1571,7 +1623,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 "reasoningEffort",
               );
 
-              const text = input.input?.trim();
               // Grok ingests images only. Generic files reach the agent
               // through the path line ProviderService puts in the prompt.
               const imagePromptParts = yield* Effect.forEach(
@@ -1608,7 +1659,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   }),
               );
               const promptParts: Array<EffectAcpSchema.ContentBlock> = [
-                ...(text ? [{ type: "text" as const, text }] : []),
+                ...(turnText ? [{ type: "text" as const, text: turnText }] : []),
                 ...imagePromptParts,
               ];
 
@@ -1640,7 +1691,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 : undefined;
               // ACP slash commands must receive only their own arguments.
               const runtimeInstructions =
-                text && /^\/[^\s/]+(?:\s|$)/.test(text)
+                turnText && /^\/[^\s/]+(?:\s|$)/.test(turnText)
                   ? undefined
                   : buildRuntimeInstructions({
                       harness: "Grok",
@@ -2028,6 +2079,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             return { _tag: "Ignore" as const };
           }
           const interruptedTurnId = turnId ?? activeTurnId;
+          ctx.stopRequests += 1;
           if (interruptedTurnId !== undefined) {
             ctx.interruptedTurnIds.add(interruptedTurnId);
           }

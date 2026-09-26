@@ -4,7 +4,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { discoverGrokSkills } from "./GrokSkills.ts";
+import { discoverGrokSkills, hasGrokSkillMention, rewriteGrokSkillMentions } from "./GrokSkills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
@@ -170,5 +170,34 @@ describe("discoverGrokSkills", () => {
       );
       expect(failed._tag).toBe("Failure");
     });
+  });
+});
+
+describe("rewriteGrokSkillMentions", () => {
+  it("rewrites only discovered skill mentions into Grok slash invocations", () => {
+    const names = new Set(["poteto-mode"]);
+    expect(hasGrokSkillMention("please $poteto-mode this")).toBe(true);
+    expect(rewriteGrokSkillMentions("please $poteto-mode this", names)).toBe(
+      "please /poteto-mode this",
+    );
+    expect(rewriteGrokSkillMentions("use $poteto-mode, keep $HOME and 5$poteto-mode", names)).toBe(
+      "use $poteto-mode, keep $HOME and 5$poteto-mode",
+    );
+    expect(rewriteGrokSkillMentions("please $review this", names)).toBe("please $review this");
+    expect(hasGrokSkillMention("pay $20 tomorrow")).toBe(false);
+    expect(rewriteGrokSkillMentions("pay $20 tomorrow", new Set(["20"]))).toBe("pay $20 tomorrow");
+  });
+
+  it("rewrites currency-prefixed skill mentions into Grok slash invocations", () => {
+    const names = new Set(["review", "2spec"]);
+    for (const symbol of ["€", "£", "¥"]) {
+      expect(hasGrokSkillMention(`please ${symbol}review this`)).toBe(true);
+      expect(rewriteGrokSkillMentions(`${symbol}review then ${symbol}2spec this`, names)).toBe(
+        "/review then /2spec this",
+      );
+      const money = `${symbol}20 ${symbol}20k`;
+      expect(hasGrokSkillMention(money)).toBe(false);
+      expect(rewriteGrokSkillMentions(money, names)).toBe(money);
+    }
   });
 });
