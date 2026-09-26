@@ -68,6 +68,25 @@ import {
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
+type ThreadCommandTarget = {
+  readonly environmentId: string;
+  readonly input: { readonly threadId: string };
+};
+
+/** Serializes commands for one thread, including a first turn that is still creating its worktree. */
+export const threadCommandConcurrency = {
+  mode: "serial" as const,
+  key: ({ environmentId, input }: ThreadCommandTarget) =>
+    JSON.stringify([environmentId, input.threadId]),
+};
+
+/** Pin state is independent of worktree bootstrap, so pinning must not wait behind it. */
+export const threadPinCommandConcurrency = {
+  mode: "serial" as const,
+  key: ({ environmentId, input }: ThreadCommandTarget) =>
+    JSON.stringify([environmentId, input.threadId, "pin"]),
+};
+
 export type {
   ArchiveThreadInput,
   CreateThreadInput,
@@ -101,11 +120,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationShellSnapshot | null>,
 ) {
   const scheduler = createAtomCommandScheduler();
-  const concurrency = {
-    mode: "serial" as const,
-    key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
-      JSON.stringify([environmentId, input.threadId]),
-  };
+  const concurrency = threadCommandConcurrency;
   const commands = {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
@@ -159,19 +174,19 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:pin",
       execute: (input: PinThreadInput) => pinThread(input),
       scheduler,
-      concurrency,
+      concurrency: threadPinCommandConcurrency,
     }),
     unpin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unpin",
       execute: (input: UnpinThreadInput) => unpinThread(input),
       scheduler,
-      concurrency,
+      concurrency: threadPinCommandConcurrency,
     }),
     reorderPin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-pin",
       execute: (input: ReorderPinnedThreadInput) => reorderPinnedThread(input),
       scheduler,
-      concurrency,
+      concurrency: threadPinCommandConcurrency,
     }),
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
