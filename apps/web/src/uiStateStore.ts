@@ -1,5 +1,5 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import type { PullRequestMergeMethod, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
@@ -424,6 +424,11 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  // The server thread the user most recently had open. Session-only: after a
+  // reload there is no "thread you came from", and a days-old thread would
+  // be a misleading one. Backs the composer's "Previous worktree" entry.
+  lastViewedThreadRef: ScopedThreadRef | null;
+  setLastViewedThreadRef: (threadRef: ScopedThreadRef) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -440,6 +445,14 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  lastViewedThreadRef: null,
+  setLastViewedThreadRef: (threadRef) =>
+    set((state) =>
+      state.lastViewedThreadRef?.environmentId === threadRef.environmentId &&
+      state.lastViewedThreadRef.threadId === threadRef.threadId
+        ? state
+        : { lastViewedThreadRef: threadRef },
+    ),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

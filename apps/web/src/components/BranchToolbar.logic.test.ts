@@ -26,6 +26,63 @@ const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 describe("resolvePreviousWorktreeSeed", () => {
+  it("prefers the worktree of the thread the user came from", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        originThread: { branch: "t3/origin", worktreePath: "/repo/.t3/worktrees/origin" },
+        threads: [
+          {
+            branch: "t3/origin",
+            worktreePath: "/repo/.t3/worktrees/origin",
+            updatedAt: "2026-07-20T00:00:00.000Z",
+          },
+          {
+            branch: "t3/agent-finished-later",
+            worktreePath: "/repo/.t3/worktrees/later",
+            updatedAt: "2026-07-22T00:00:00.000Z",
+          },
+        ],
+        currentWorktreePath: null,
+      }),
+    ).toEqual({ branch: "t3/origin", worktreePath: "/repo/.t3/worktrees/origin" });
+  });
+
+  it("falls back to recency when the origin has no worktree, is current, or is archived", () => {
+    const threads = [
+      {
+        branch: "t3/newer",
+        worktreePath: "/repo/.t3/worktrees/newer",
+        updatedAt: "2026-07-22T00:00:00.000Z",
+      },
+    ];
+    const expected = { branch: "t3/newer", worktreePath: "/repo/.t3/worktrees/newer" };
+    expect(
+      resolvePreviousWorktreeSeed({
+        originThread: { branch: "main", worktreePath: null },
+        threads,
+        currentWorktreePath: null,
+      }),
+    ).toEqual(expected);
+    expect(
+      resolvePreviousWorktreeSeed({
+        originThread: { branch: "t3/current", worktreePath: "/repo/.t3/worktrees/current" },
+        threads,
+        currentWorktreePath: "/repo/.t3/worktrees/current",
+      }),
+    ).toEqual(expected);
+    expect(
+      resolvePreviousWorktreeSeed({
+        originThread: {
+          branch: "t3/archived",
+          worktreePath: "/repo/.t3/worktrees/archived",
+          archivedAt: "2026-07-23T00:00:00.000Z",
+        },
+        threads,
+        currentWorktreePath: null,
+      }),
+    ).toEqual(expected);
+  });
+
   it("picks the most recently updated worktree thread", () => {
     expect(
       resolvePreviousWorktreeSeed({
