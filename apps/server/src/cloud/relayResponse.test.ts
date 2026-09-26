@@ -69,6 +69,39 @@ it.effect("makes revoked authorization actionable and non-retryable", () =>
     expect(error.message).toContain("invalid_bearer");
     expect(error.message).toContain("t3 connect login");
     expect(error.message).toContain("Trace ID: trace-auth");
+    expect(shouldRetryCloudLink(error)).toBe(false);
+  }),
+);
+
+it.effect("retries expired link proofs and preserves the relay diagnostics", () =>
+  Effect.gen(function* () {
+    let requests = 0;
+    const result = yield* Effect.suspend(() => {
+      requests++;
+      return filterRelayResponse(
+        requests === 1
+          ? response(401, {
+              _tag: "RelayEnvironmentLinkProofExpiredError",
+              code: "environment_link_proof_expired",
+              traceId: "trace-expired",
+            })
+          : response(200, { ok: true }),
+      );
+    }).pipe(
+      Effect.mapError(relayRequestError),
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("Relay environment link proof expired");
+          expect(error.message).toContain("date and time");
+          expect(error.message).toContain("Trace ID: trace-expired");
+        }),
+      ),
+      Effect.retry({ while: shouldRetryCloudLink, times: 1 }),
+      Effect.result,
+    );
+
+    expect(requests).toBe(2);
+    expect(result._tag).toBe("Success");
   }),
 );
 

@@ -68,6 +68,13 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
 
+  if (
+    response.status === 401 &&
+    Option.isSome(decoded) &&
+    decoded.value._tag === "RelayEnvironmentLinkProofExpiredError"
+  ) {
+    return yield* new EnvironmentHttpInternalServerError({ message });
+  }
   if (response.status === 401) return yield* new EnvironmentHttpUnauthorizedError({ message });
   if (response.status === 403) return yield* new EnvironmentHttpForbiddenError({ message });
   if (
