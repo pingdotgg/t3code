@@ -666,6 +666,72 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
   ],
 });
 
+const contextOverflowMessage = "The request exceeds the model's context window.";
+
+const contextOverflowEvent = (sessionID: string) => ({
+  type: "session.error",
+  properties: {
+    sessionID,
+    error: { name: "ContextOverflowError", data: { message: contextOverflowMessage } },
+  },
+});
+
+// OpenCode writes each compaction summary as an assistant message flagged `summary`.
+const compactionSummaryEvents = (sessionID: string, messageID: string) => [
+  {
+    type: "message.updated",
+    properties: {
+      sessionID,
+      info: {
+        id: messageID,
+        role: "assistant",
+        parentID: `${messageID}-marker`,
+        mode: "compaction",
+        agent: "compaction",
+        summary: true,
+      },
+    },
+  },
+  {
+    type: "message.part.updated",
+    properties: {
+      sessionID,
+      part: {
+        id: `${messageID}-text`,
+        messageID,
+        sessionID,
+        type: "text",
+        text: "## Objective",
+        time: { start: 1 },
+      },
+    },
+  },
+  {
+    type: "message.part.delta",
+    properties: {
+      sessionID,
+      messageID,
+      partID: `${messageID}-text`,
+      field: "text",
+      delta: "\n- Fix the review findings",
+    },
+  },
+  {
+    type: "message.part.updated",
+    properties: {
+      sessionID,
+      part: {
+        id: `${messageID}-text`,
+        messageID,
+        sessionID,
+        type: "text",
+        text: "## Objective\n- Fix the review findings",
+        time: { start: 1, end: 2 },
+      },
+    },
+  },
+];
+
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
@@ -1120,13 +1186,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       const threadId = asThreadId("thread-opencode-compact");
-      runtimeMock.state.subscribedEvents.push({
-        type: "session.compacted",
-        properties: { sessionID: "http://127.0.0.1:9999/session" },
-      });
+      const sessionID = "http://127.0.0.1:9999/session";
+      runtimeMock.state.subscribedEvents.push(
+        ...compactionSummaryEvents(sessionID, "msg-manual-summary"),
+        {
+          type: "session.compacted",
+          properties: { sessionID },
+        },
+      );
       const eventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
-        Stream.take(3),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1148,6 +1218,186 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
       );
       NodeAssert.equal(compacted, true);
+      NodeAssert.deepEqual(
+        events.filter((event) => event.type === "content.delta" || event.type === "item.completed"),
+        [],
+      );
+    }),
+  );
+
+  it.effect("keeps the turn running while OpenCode compacts after a context overflow", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-overflow-recovered");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const enqueue = makeOpenCodeEventQueue();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Fix the review findings",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      // OpenCode 1.18 recovers on its own: it reports the overflow, summarizes
+      // the history, replays the prompt, and keeps working until idle.
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "busy" } } });
+      enqueue(contextOverflowEvent(sessionID));
+      enqueue({
+        type: "message.updated",
+        properties: { sessionID, info: { id: "msg-summary-marker", role: "user" } },
+      });
+      for (const event of compactionSummaryEvents(sessionID, "msg-summary")) {
+        enqueue(event);
+      }
+      enqueue({ type: "session.compacted", properties: { sessionID } });
+      enqueue({
+        type: "message.updated",
+        properties: { sessionID, info: { id: "msg-replayed-prompt", role: "user" } },
+      });
+      enqueue({
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: { id: "msg-continued", role: "assistant", parentID: "msg-replayed-prompt" },
+        },
+      });
+      enqueue({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: "part-continued",
+            messageID: "msg-continued",
+            sessionID,
+            type: "text",
+            text: "Pushed the fixes.",
+            time: { start: 3, end: 4 },
+          },
+        },
+      });
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const warnings = events.filter((event) => event.type === "runtime.warning");
+      NodeAssert.deepEqual(
+        warnings.map((event) => [event.turnId, event.payload.message]),
+        [
+          [
+            turn.turnId,
+            "Context window exceeded. Waiting for OpenCode to compact the conversation.",
+          ],
+        ],
+      );
+      NodeAssert.equal(
+        events.some((event) => event.type === "runtime.error"),
+        false,
+      );
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => event.payload.delta),
+        ["Pushed the fixes."],
+      );
+      const compacted = events.find((event) => event.type === "thread.state.changed");
+      NodeAssert.equal(compacted?.turnId, turn.turnId);
+      const completed = events.at(-1);
+      NodeAssert.equal(completed?.type, "turn.completed");
+      NodeAssert.equal(completed?.turnId, turn.turnId);
+      NodeAssert.equal(
+        completed?.type === "turn.completed" ? completed.payload.state : undefined,
+        "completed",
+      );
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.lastError, undefined);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fails the turn when OpenCode goes idle before a compaction succeeds", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-overflow-failed");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const enqueue = makeOpenCodeEventQueue();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "runtime.error"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Fix the review findings",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      // The compaction request overflows too, so OpenCode stops without a
+      // `session.compacted` event.
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "busy" } } });
+      enqueue(contextOverflowEvent(sessionID));
+      enqueue({
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: {
+            id: "msg-summary",
+            role: "assistant",
+            mode: "compaction",
+            agent: "compaction",
+            summary: true,
+          },
+        },
+      });
+      enqueue(contextOverflowEvent(sessionID));
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events.filter((event) => event.type === "runtime.warning").length, 1);
+      const terminal = events.filter(
+        (event) => event.type === "turn.completed" || event.type === "runtime.error",
+      );
+      NodeAssert.deepEqual(
+        terminal.map((event) =>
+          event.type === "turn.completed"
+            ? [event.type, event.turnId, event.payload.state, event.payload.errorMessage]
+            : [event.type, event.turnId, event.payload.message],
+        ),
+        [
+          ["turn.completed", turn.turnId, "failed", contextOverflowMessage],
+          ["runtime.error", undefined, contextOverflowMessage],
+        ],
+      );
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(session?.status, "error");
+      NodeAssert.equal(session?.lastError, contextOverflowMessage);
+      NodeAssert.equal(session?.activeTurnId, undefined);
+      yield* adapter.stopSession(threadId);
     }),
   );
   it.effect("falls back to a fresh session when the persisted session is gone", () =>
