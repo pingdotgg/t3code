@@ -7,6 +7,7 @@ import * as NodeURL from "node:url";
 import { describe, expect, it, vi } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -808,6 +809,51 @@ describe("terminatePosixOwnedProcessTree", () => {
       yield* Effect.sleep("60 millis");
       expect(identityCalls + childrenCalls).toBe(callsAtClose);
     }),
+  );
+
+  it.live("slows down while idle and stable, and speeds up for prompts and new processes", () =>
+    Effect.gen(function* () {
+      let ticks = 0;
+      const fixture = makeController({
+        processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
+      });
+      const controller: AcpPosixProcessTreeController = {
+        ...fixture.controller,
+        childPidsOf: (pid) => {
+          if (pid === 100) ticks += 1;
+          return fixture.controller.childPidsOf(pid);
+        },
+      };
+      let busy = false;
+      const frontier = new Map<number, AcpOwnedPosixProcess>();
+      yield* observePosixOwnershipLedgerContinuously({
+        busy: Effect.sync(() => busy),
+        childQueues: new Map(),
+        controller,
+        frontier,
+        ledger: new Map(),
+        root: { value: undefined },
+        rootPid: 100,
+      }).pipe(Effect.forkScoped);
+      const ticksDuring = (window: Duration.Input) =>
+        Effect.gen(function* () {
+          const before = ticks;
+          yield* Effect.sleep(window);
+          return ticks - before;
+        });
+
+      // Polling every 25 ms would tick about 40 times here.
+      yield* Effect.sleep("600 millis");
+      expect(yield* ticksDuring("1 second")).toBeLessThanOrEqual(4);
+
+      fixture.processes.set(120, identity(120, 110, 120, 120));
+      yield* Effect.sleep("600 millis");
+      expect(frontier.has(120)).toBe(true);
+
+      busy = true;
+      yield* Effect.sleep("600 millis");
+      expect(yield* ticksDuring("500 millis")).toBeGreaterThanOrEqual(8);
+    }).pipe(Effect.scoped),
   );
 
   it.live("terminates nested owned groups bottom-up and catches a TERM fork race", () =>

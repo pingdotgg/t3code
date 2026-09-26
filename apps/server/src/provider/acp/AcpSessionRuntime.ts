@@ -667,6 +667,7 @@ function makeLinuxProcessTreeController(): AcpPosixProcessTreeController {
   };
 }
 
+/** Returns whether the tracked process set changed: a process joined or left. */
 export function observePosixOwnershipLedger(input: {
   readonly childQueues: Map<number, Array<number>>;
   readonly controller: AcpPosixProcessTreeController;
@@ -675,7 +676,8 @@ export function observePosixOwnershipLedger(input: {
   readonly maxProcesses?: number;
   readonly root: AcpPosixOwnershipRoot;
   readonly rootPid: number;
-}): void {
+}): boolean {
+  let changed = false;
   let rootIdentity: AcpPosixProcessIdentity | undefined = input.root.value;
   if (rootIdentity === undefined) {
     if (input.root.captureAttempted === true) {
@@ -699,6 +701,7 @@ export function observePosixOwnershipLedger(input: {
     input.ledger.set(processIdentityKey(rootIdentity), ownedRoot);
     input.frontier.set(rootIdentity.pid, ownedRoot);
     input.root.value = ownedRoot;
+    changed = true;
   }
   const maxProcesses = Math.max(1, input.maxProcesses ?? Number.POSITIVE_INFINITY);
   let remainingBudget = maxProcesses;
@@ -715,6 +718,7 @@ export function observePosixOwnershipLedger(input: {
     const observedParent = input.controller.identity(parent.pid);
     if (!samePosixProcessIdentity(parent, observedParent)) {
       input.childQueues.delete(parent.pid);
+      changed = true;
       continue;
     }
     const refreshedParent = { ...parent, ...observedParent };
@@ -742,6 +746,7 @@ export function observePosixOwnershipLedger(input: {
         }
         reservedPid = undefined;
       }
+      if (reservedPid === undefined) changed = true;
       const childKey = processIdentityKey(child);
       const owned =
         reservedPid === undefined
@@ -757,9 +762,21 @@ export function observePosixOwnershipLedger(input: {
     if (queuedChildren.length === 0) input.childQueues.delete(refreshedParent.pid);
     else input.childQueues.set(refreshedParent.pid, queuedChildren);
   }
+  return changed;
 }
 
+/** Slowest poll for an idle session whose process tree has stopped changing. */
+const IDLE_OWNERSHIP_POLL_MILLIS = 500;
+
+/**
+ * Polls the ownership ledger for the session's lifetime. A descendant escapes
+ * only if its parent exits between two polls, so polling stays fast while
+ * `busy` (a prompt is running, which is when agents spawn tools) and right
+ * after the tree changes. An idle, stable session backs off, since each poll
+ * reads `/proc` for every tracked process and thread.
+ */
 export function observePosixOwnershipLedgerContinuously(input: {
+  readonly busy?: Effect.Effect<boolean>;
   readonly childQueues: Map<number, Array<number>>;
   readonly controller: AcpPosixProcessTreeController;
   readonly frontier: Map<number, AcpOwnedPosixProcess>;
@@ -767,15 +784,21 @@ export function observePosixOwnershipLedgerContinuously(input: {
   readonly root: AcpPosixOwnershipRoot;
   readonly rootPid: number;
 }): Effect.Effect<never> {
+  let interval = 0;
   return Effect.forever(
     Effect.gen(function* () {
       const startedAt = yield* Clock.currentTimeMillis;
-      yield* Effect.sync(() => observePosixOwnershipLedger({ ...input, maxProcesses: 64 })).pipe(
-        Effect.exit,
-      );
-      const targetInterval = input.frontier.size <= 32 ? 25 : input.frontier.size <= 128 ? 50 : 100;
+      const changed = yield* Effect.sync(() =>
+        observePosixOwnershipLedger({ ...input, maxProcesses: 64 }),
+      ).pipe(Effect.orElseSucceed(() => false));
+      const busy = input.busy === undefined ? false : yield* input.busy;
+      const fastInterval = input.frontier.size <= 32 ? 25 : input.frontier.size <= 128 ? 50 : 100;
+      interval =
+        changed || busy
+          ? fastInterval
+          : Math.min(Math.max(interval * 2, fastInterval), IDLE_OWNERSHIP_POLL_MILLIS);
       const completedAt = yield* Clock.currentTimeMillis;
-      yield* Effect.sleep(`${Math.max(5, targetInterval - (completedAt - startedAt))} millis`);
+      yield* Effect.sleep(`${Math.max(5, interval - (completedAt - startedAt))} millis`);
     }),
   ).pipe(withWallClock);
 }
@@ -1658,6 +1681,7 @@ export const make = (
       // poll for the whole session.
       if (linuxCgroupLease === undefined) {
         yield* observePosixOwnershipLedgerContinuously({
+          busy: Ref.get(activePromptRef).pipe(Effect.map(Option.isSome)),
           childQueues: posixOwnershipChildQueues,
           controller: posixController,
           frontier: posixOwnershipFrontier,
