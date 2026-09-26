@@ -157,6 +157,7 @@ import {
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import {
   resolveThreadFeedLiveFollow,
+  resolveThreadFeedVisibleContentPosition,
   type ThreadFeedLiveFollowEvent,
   type ThreadWorkGroupScrollPosition,
 } from "./thread-feed-live-follow";
@@ -1918,6 +1919,7 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
   );
 }
 
+/** Empty-state copy shown when the transcript has no messages yet. */
 function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;
   readonly detail: string;
@@ -1947,7 +1949,8 @@ function ThreadFeedPlaceholder(props: {
   );
 }
 
-export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+/** Virtualized thread transcript that pins to live appends and restores history scroll. */
+function ThreadFeedImpl(props: ThreadFeedProps) {
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2923,9 +2926,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                     },
                   }
             }
-            maintainVisibleContentPosition={
-              endFollowEnabled && !disclosureToggleSettling ? false : maintainVisibleContentPosition
-            }
+            maintainVisibleContentPosition={resolveThreadFeedVisibleContentPosition({
+              following: endFollowEnabled,
+              disclosureSettling: disclosureToggleSettling,
+              readingPosition: maintainVisibleContentPosition,
+            })}
             data={presentedFeed}
             extraData={listAppearanceData}
             renderItem={renderItem}
@@ -3016,4 +3021,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       </View>
     </PresentationSource>
   );
-});
+}
+
+export const ThreadFeed = memo(ThreadFeedImpl);

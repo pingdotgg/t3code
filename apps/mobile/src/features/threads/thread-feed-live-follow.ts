@@ -65,6 +65,32 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
 }
 
+// While follow is armed, keep size restoration so estimate→actual corrections
+// cannot land in the render gap after the first upward drag. Data restoration
+// stays off so maintainScrollAtEnd can follow appends (pending messages, stream).
+export const THREAD_FEED_FOLLOWING_VISIBLE_CONTENT_POSITION = {
+  data: false,
+  size: true,
+} as const;
+
+/**
+ * Size-only restoration while following so estimate→actual corrections cannot land in a drag gap.
+ *
+ * @param input.following - Live-follow is armed
+ * @param input.disclosureSettling - A disclosure animation is still settling
+ * @param input.readingPosition - Full restoration used while reading history
+ */
+export function resolveThreadFeedVisibleContentPosition<Position>(input: {
+  readonly following: boolean;
+  readonly disclosureSettling: boolean;
+  readonly readingPosition: Position;
+}): Position | typeof THREAD_FEED_FOLLOWING_VISIBLE_CONTENT_POSITION {
+  return input.following && !input.disclosureSettling
+    ? THREAD_FEED_FOLLOWING_VISIBLE_CONTENT_POSITION
+    : input.readingPosition;
+}
+
+/** Updates live-follow from a user scroll, layout, or disclosure event. */
 export function resolveThreadFeedLiveFollow(
   current: boolean,
   event: ThreadFeedLiveFollowEvent,

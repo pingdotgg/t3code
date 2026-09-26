@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   resolveThreadFeedLiveFollow,
   resolveThreadFeedSubmissionAnchor,
+  resolveThreadFeedVisibleContentPosition,
   resolveThreadWorkGroupInitialScroll,
   shouldFollowThreadWorkGroupAppend,
+  THREAD_FEED_FOLLOWING_VISIBLE_CONTENT_POSITION,
 } from "./thread-feed-live-follow";
 
 describe("tool-group scroll restoration", () => {
@@ -221,3 +223,62 @@ describe("resolveThreadFeedLiveFollow", () => {
     expect(resolveThreadFeedLiveFollow(false, { type: "reset" })).toBe(true);
   });
 });
+
+/** LegendList predicate stub; these cases assert object identity, not this callback. */
+function restoreThreadFeedReadingPositionStub() {
+  return true;
+}
+
+const threadFeedReadingPosition = {
+  data: true,
+  size: true,
+  shouldRestorePosition: restoreThreadFeedReadingPositionStub,
+};
+
+/** Returns the size-only follow position so the first upward drag cannot measure in a gap. */
+function keepsSizeRestorationArmedWhileFollowing() {
+  expect(
+    resolveThreadFeedVisibleContentPosition({
+      following: true,
+      disclosureSettling: false,
+      readingPosition: threadFeedReadingPosition,
+    }),
+  ).toEqual(THREAD_FEED_FOLLOWING_VISIBLE_CONTENT_POSITION);
+}
+
+/** Returns the caller's reading position while history is on screen. */
+function keepsFullRestorationWhileReadingHistory() {
+  expect(
+    resolveThreadFeedVisibleContentPosition({
+      following: false,
+      disclosureSettling: false,
+      readingPosition: threadFeedReadingPosition,
+    }),
+  ).toBe(threadFeedReadingPosition);
+}
+
+/** Returns the reading position while a disclosure settles, even if follow is still armed. */
+function keepsFullRestorationWhileDisclosureSettles() {
+  expect(
+    resolveThreadFeedVisibleContentPosition({
+      following: true,
+      disclosureSettling: true,
+      readingPosition: threadFeedReadingPosition,
+    }),
+  ).toBe(threadFeedReadingPosition);
+}
+
+/** Chooses follow vs history visible-content restoration. */
+function resolveThreadFeedVisibleContentPositionCases() {
+  it(
+    "keeps size restoration armed while following so the first upward drag cannot measure in a gap",
+    keepsSizeRestorationArmedWhileFollowing,
+  );
+  it("keeps full restoration while reading history", keepsFullRestorationWhileReadingHistory);
+  it(
+    "keeps full restoration while a disclosure settles even if follow is still armed",
+    keepsFullRestorationWhileDisclosureSettles,
+  );
+}
+
+describe("resolveThreadFeedVisibleContentPosition", resolveThreadFeedVisibleContentPositionCases);
