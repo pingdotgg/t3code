@@ -375,7 +375,13 @@ const makeBroker = Effect.gen(function* () {
   );
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
 
-  const settingsFailure = () => brokerInvalidRequest("Could not access voice settings.", 500);
+  const settingsFailure = (cause: unknown) =>
+    new VoiceBrokerError({
+      code: "invalid_request",
+      message: "Could not access voice settings.",
+      status: 500,
+      cause,
+    });
   const getSettings = Effect.fn("VoiceLiveBroker.getSettings")(function* () {
     const config = yield* loadConfig;
     const key = yield* secrets

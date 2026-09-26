@@ -19,7 +19,7 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import { ServerSecretStore, SecretStoreReadError } from "../auth/ServerSecretStore.ts";
 import {
   DEFAULT_DELEGATION_INSTRUCTIONS,
   VoiceLiveBroker,
@@ -97,7 +97,7 @@ const makeUpstreamFetch = (state: UpstreamRecorder): typeof fetch => {
   return fetchLike as typeof fetch;
 };
 
-const makeSecretStoreLayer = (values: Record<string, string>) =>
+const makeSecretStoreLayer = (values: Record<string, string>, readError?: SecretStoreReadError) =>
   Layer.mock(ServerSecretStore)({
     set: (name, value) =>
       Effect.sync(() => {
@@ -108,9 +108,11 @@ const makeSecretStoreLayer = (values: Record<string, string>) =>
         delete values[name];
       }),
     get: (name: string) =>
-      name in values
-        ? Effect.succeed(Option.some(new TextEncoder().encode(values[name] ?? "")))
-        : Effect.succeed(Option.none()),
+      readError && name === OPENAI_API_KEY_SECRET_NAME
+        ? Effect.fail(readError)
+        : name in values
+          ? Effect.succeed(Option.some(new TextEncoder().encode(values[name] ?? "")))
+          : Effect.succeed(Option.none()),
   });
 
 const makeEnvironmentAuthLayer = () =>
@@ -151,6 +153,7 @@ const makeEnvironmentAuthLayer = () =>
 
 const makeTest = (options?: {
   readonly secrets?: Record<string, string>;
+  readonly secretReadError?: SecretStoreReadError;
   readonly upstream?: (state: UpstreamRecorder) => void;
 }) =>
   Effect.gen(function* () {
@@ -166,13 +169,16 @@ const makeTest = (options?: {
           ),
         ),
         Layer.provide(
-          makeSecretStoreLayer(options?.secrets ?? { [OPENAI_API_KEY_SECRET_NAME]: "test-key" }),
+          makeSecretStoreLayer(
+            options?.secrets ?? { [OPENAI_API_KEY_SECRET_NAME]: "test-key" },
+            options?.secretReadError,
+          ),
         ),
         Layer.provide(NodeServices.layer),
       ),
     );
     const broker = Context.get(context, VoiceLiveBroker);
-    return { state, handlers: voiceBrokerRouteHandlers(broker) };
+    return { state, broker, handlers: voiceBrokerRouteHandlers(broker) };
   });
 
 const MINT_PATH = "/api/voice/sessions";
@@ -846,6 +852,29 @@ describe("voice broker routes", () => {
 });
 
 describe("voice settings", () => {
+  it.effect("preserves settings failure causes without exposing them over HTTP", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cause = new SecretStoreReadError({
+          resource: "private-key-path",
+          cause: new Error("sensitive detail"),
+        });
+        const { broker, handlers } = yield* makeTest({ secretReadError: cause });
+        const failure = yield* broker.getSettings().pipe(Effect.flip);
+        expect(failure.cause).toBe(cause);
+        const response = yield* runHandler(handlers.getSettings, {
+          method: "GET",
+          path: "/api/voice/settings",
+          token: ADMIN_TOKEN,
+        }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+        expect(response.status).toBe(500);
+        expect(yield* responseBody(response)).toEqual({
+          code: "invalid_request",
+          message: "Could not access voice settings.",
+        });
+      }),
+    ),
+  );
   it.effect("requires administrator access before reading or writing settings", () =>
     Effect.scoped(
       Effect.gen(function* () {
