@@ -39,6 +39,7 @@ import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -805,108 +806,133 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
-
-    if (event.payload.restoreFiles !== false) {
-      if (!checkpointCwd) {
+    // The guard above ran at decision time against the projected read model,
+    // but the restore runs later on this reactor's worker while the provider
+    // worker starts turns on its own worker. Turn-start dispatch holds the
+    // same per-workspace lease (see ProviderCommandReactor), so take it here
+    // too and re-check liveness inside it before rewriting the tree.
+    const revertUnderLease = Effect.gen(function* () {
+      const live = yield* resolveThreadDetail(event.payload.threadId);
+      // pending/startedTurns are deliberately not checked here: entries linger
+      // until the provider emits runtime events, which may never come for a
+      // session that failed to start, so they would block legitimate reverts.
+      if (!live || live.session?.status === "starting" || live.session?.status === "running") {
         yield* appendRevertFailureActivity({
           threadId: event.payload.threadId,
           turnCount: event.payload.turnCount,
-          detail: "Checkpoint workspace is unavailable or is not a git repository.",
-          createdAt: now,
+          detail: "A turn started while the revert was queued; interrupt it and retry.",
+          createdAt: DateTime.formatIso(yield* DateTime.now),
         }).pipe(Effect.catch(() => Effect.void));
         return;
       }
 
-      if (!(yield* isRestoreWorkspaceIsolated(thread, checkpointCwd))) {
-        yield* appendRevertFailureActivity({
-          threadId: thread.id,
-          turnCount: event.payload.turnCount,
-          detail:
-            "File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead.",
-          createdAt: now,
-        }).pipe(Effect.catch(() => Effect.void));
-        return;
-      }
+      yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
 
-      const targetCheckpointRef =
-        event.payload.turnCount === 0
-          ? checkpointRefForThreadTurn(event.payload.threadId, 0)
-          : thread.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
-            )?.checkpointRef;
-
-      if (!targetCheckpointRef) {
-        yield* appendRevertFailureActivity({
-          threadId: event.payload.threadId,
-          turnCount: event.payload.turnCount,
-          detail: `Checkpoint ref for turn ${event.payload.turnCount} is unavailable in read model.`,
-          createdAt: now,
-        }).pipe(Effect.catch(() => Effect.void));
-        return;
-      }
-
-      const restored = yield* checkpointStore.restoreCheckpoint({
-        cwd: checkpointCwd,
-        checkpointRef: targetCheckpointRef,
-        fallbackToHead: event.payload.turnCount === 0,
-      });
-      if (!restored) {
-        yield* appendRevertFailureActivity({
-          threadId: event.payload.threadId,
-          turnCount: event.payload.turnCount,
-          detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
-          createdAt: now,
-        }).pipe(Effect.catch(() => Effect.void));
-        return;
-      }
-
-      // Refresh the workspace entry index so the @-mention file picker
-      // reflects the reverted filesystem state.
-      yield* refreshWorkspaceEntries(checkpointCwd);
-    }
-
-    const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
-    if (rolledBackTurns > 0) {
-      yield* providerService.rollbackConversation({
-        threadId: event.payload.threadId,
-        numTurns: rolledBackTurns,
-      });
-    }
-
-    const staleCheckpointRefs: Array<CheckpointRef> = [];
-    for (const checkpoint of thread.checkpoints) {
-      if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
-        staleCheckpointRefs.push(checkpoint.checkpointRef);
-      }
-    }
-
-    if (checkpointCwd && staleCheckpointRefs.length > 0) {
-      yield* checkpointStore.deleteCheckpointRefs({
-        cwd: checkpointCwd,
-        checkpointRefs: staleCheckpointRefs,
-      });
-    }
-
-    yield* orchestrationEngine
-      .dispatch({
-        type: "thread.revert.complete",
-        commandId: yield* serverCommandId("checkpoint-revert-complete"),
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        createdAt: now,
-      })
-      .pipe(
-        Effect.catch((error) =>
-          appendRevertFailureActivity({
+      if (event.payload.restoreFiles !== false) {
+        if (!checkpointCwd) {
+          yield* appendRevertFailureActivity({
             threadId: event.payload.threadId,
             turnCount: event.payload.turnCount,
-            detail: error.message,
+            detail: "Checkpoint workspace is unavailable or is not a git repository.",
             createdAt: now,
-          }),
-        ),
-        Effect.asVoid,
-      );
+          }).pipe(Effect.catch(() => Effect.void));
+          return;
+        }
+
+        if (!(yield* isRestoreWorkspaceIsolated(live, checkpointCwd))) {
+          yield* appendRevertFailureActivity({
+            threadId: live.id,
+            turnCount: event.payload.turnCount,
+            detail:
+              "File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead.",
+            createdAt: now,
+          }).pipe(Effect.catch(() => Effect.void));
+          return;
+        }
+
+        const targetCheckpointRef =
+          event.payload.turnCount === 0
+            ? checkpointRefForThreadTurn(event.payload.threadId, 0)
+            : live.checkpoints.find(
+                (checkpoint) => checkpoint.checkpointTurnCount === event.payload.turnCount,
+              )?.checkpointRef;
+
+        if (!targetCheckpointRef) {
+          yield* appendRevertFailureActivity({
+            threadId: event.payload.threadId,
+            turnCount: event.payload.turnCount,
+            detail: `Checkpoint ref for turn ${event.payload.turnCount} is unavailable in read model.`,
+            createdAt: now,
+          }).pipe(Effect.catch(() => Effect.void));
+          return;
+        }
+
+        const restored = yield* checkpointStore.restoreCheckpoint({
+          cwd: checkpointCwd,
+          checkpointRef: targetCheckpointRef,
+          fallbackToHead: event.payload.turnCount === 0,
+        });
+        if (!restored) {
+          yield* appendRevertFailureActivity({
+            threadId: event.payload.threadId,
+            turnCount: event.payload.turnCount,
+            detail: `Filesystem checkpoint is unavailable for turn ${event.payload.turnCount}.`,
+            createdAt: now,
+          }).pipe(Effect.catch(() => Effect.void));
+          return;
+        }
+
+        // Refresh the workspace entry index so the @-mention file picker
+        // reflects the reverted filesystem state.
+        yield* refreshWorkspaceEntries(checkpointCwd);
+      }
+
+      const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
+      if (rolledBackTurns > 0) {
+        yield* providerService.rollbackConversation({
+          threadId: event.payload.threadId,
+          numTurns: rolledBackTurns,
+        });
+      }
+
+      const staleCheckpointRefs: Array<CheckpointRef> = [];
+      for (const checkpoint of live.checkpoints) {
+        if (checkpoint.checkpointTurnCount > event.payload.turnCount) {
+          staleCheckpointRefs.push(checkpoint.checkpointRef);
+        }
+      }
+
+      if (checkpointCwd && staleCheckpointRefs.length > 0) {
+        yield* checkpointStore.deleteCheckpointRefs({
+          cwd: checkpointCwd,
+          checkpointRefs: staleCheckpointRefs,
+        });
+      }
+
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.revert.complete",
+          commandId: yield* serverCommandId("checkpoint-revert-complete"),
+          threadId: event.payload.threadId,
+          turnCount: event.payload.turnCount,
+          createdAt: now,
+        })
+        .pipe(
+          Effect.catch((error) =>
+            appendRevertFailureActivity({
+              threadId: event.payload.threadId,
+              turnCount: event.payload.turnCount,
+              detail: error.message,
+              createdAt: now,
+            }),
+          ),
+          Effect.asVoid,
+        );
+    });
+
+    yield* thread.worktreePath
+      ? withWorkspaceLease(path.resolve(thread.worktreePath), revertUnderLease)
+      : revertUnderLease;
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {

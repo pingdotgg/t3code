@@ -67,6 +67,7 @@ import { ProviderValidationError } from "../../provider/Errors.ts";
 import { ServerConfig } from "../../config.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
+import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import { PullRequestService } from "../../pullRequest/PullRequestService.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
@@ -1941,6 +1942,85 @@ describe("CheckpointReactor", () => {
       expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
       expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
       expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 2))).toBe(true);
+    }),
+  );
+
+  effectIt.effect("re-checks session liveness under the workspace lease before restoring", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-lease-liveness-diff"),
+        threadId,
+        turnId: asTurnId("turn-lease-liveness"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      });
+      const before = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (thread) => thread.id === threadId,
+      );
+
+      // Hold the workspace lease so the queued revert parks before its
+      // liveness re-check, then start a turn while it waits.
+      const leaseHeld = yield* Deferred.make<void>();
+      const releaseLease = yield* Deferred.make<void>();
+      yield* Effect.forkScoped(
+        withWorkspaceLease(
+          NodePath.resolve(harness.cwd),
+          Effect.gen(function* () {
+            yield* Deferred.succeed(leaseHeld, undefined);
+            yield* Deferred.await(releaseLease);
+          }),
+        ),
+      );
+      yield* Deferred.await(leaseHeld);
+
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-lease-liveness-revert"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-lease-liveness-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+
+      yield* Deferred.succeed(releaseLease, undefined);
+      yield* Effect.promise(harness.drain);
+
+      const after = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      expect(after?.checkpoints).toEqual(before?.checkpoints);
+      expect(after?.activities).toContainEqual(
+        expect.objectContaining({
+          kind: "checkpoint.revert.failed",
+          payload: expect.objectContaining({
+            detail: "A turn started while the revert was queued; interrupt it and retry.",
+          }),
+        }),
+      );
+      expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
     }),
   );
 
