@@ -90,6 +90,47 @@ describe("AcpMcpOverAcpBridge", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not queue later messages behind a slow tool call", () =>
+    Effect.gen(function* () {
+      const slowCallStarted = Promise.withResolvers<void>();
+      const releaseSlowCall = Promise.withResolvers<void>();
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.succeed("connection-1"),
+        fetchImplementation: async (_url, init) => {
+          const request = JSON.parse(String(init?.body)) as {
+            readonly id?: unknown;
+            readonly method?: unknown;
+          };
+          if (request.id === undefined) return new Response(null, { status: 202 });
+          if (request.method === "tools/call") {
+            slowCallStarted.resolve();
+            await releaseSlowCall.promise;
+          }
+          return Response.json(
+            { jsonrpc: "2.0", id: request.id, result: {} },
+            { headers: { "mcp-session-id": "session-42" } },
+          );
+        },
+      });
+      const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+      yield* bridge.message({ connectionId, method: "initialize" });
+      const slowCall = yield* bridge
+        .message({ connectionId, method: "tools/call" })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => slowCallStarted.promise);
+
+      // ACP runs notification handlers on its reader, so a notification that
+      // waited for the tool call would stall every other message in the session.
+      yield* bridge.notification({ connectionId, method: "notifications/cancelled" });
+      expect(yield* bridge.message({ connectionId, method: "tools/list" })).toEqual({});
+
+      releaseSlowCall.resolve();
+      expect(yield* Fiber.join(slowCall)).toEqual({});
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects unknown servers, connections, and oversized messages", () =>
     Effect.gen(function* () {
       const bridge = yield* makeAcpMcpOverAcpBridge({

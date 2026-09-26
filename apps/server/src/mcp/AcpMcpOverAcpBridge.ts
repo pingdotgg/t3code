@@ -94,52 +94,56 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         : Effect.succeed(connection);
     });
 
+  // Only session setup is ordered: sends wait while there is no session id so
+  // they reuse the one `initialize` negotiates, then run concurrently. ACP runs
+  // notification handlers on its reader, so a notification queued behind a
+  // long tool call would stall the whole ACP session.
   const send = (
     connection: Connection,
     message: unknown,
-  ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> =>
-    connection.mutex.withPermits(1)(
-      Effect.gen(function* () {
-        const body = JSON.stringify(message);
-        if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {
-          return yield* Effect.fail(new AcpMcpOverAcpError("MCP-over-ACP message exceeds 8 MiB."));
-        }
-        const response = yield* Effect.tryPromise({
-          try: (signal) =>
-            fetchImplementation(options.endpoint, {
-              method: "POST",
-              signal,
-              headers: {
-                "content-type": "application/json",
-                accept: "application/json, text/event-stream",
-                authorization: options.authorization,
-                ...(connection.sessionId === null
-                  ? {}
-                  : { "mcp-session-id": connection.sessionId }),
-                ...(connection.protocolVersion === null
-                  ? {}
-                  : { "mcp-protocol-version": connection.protocolVersion }),
-              },
-              body,
-            }),
-          catch: bridgeError,
-        });
-        connection.sessionId = response.headers.get("mcp-session-id") ?? connection.sessionId;
-        if (!response.ok) {
-          yield* Effect.promise(
-            () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
-          );
-          return yield* Effect.fail(
-            new AcpMcpOverAcpError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
-          );
-        }
-        const payloads = [...(yield* Stream.runCollect(responsePayloads(response)))];
-        for (const payload of payloads) {
-          connection.protocolVersion = protocolVersionOf(payload) ?? connection.protocolVersion;
-        }
-        return payloads;
-      }).pipe(Effect.mapError(bridgeError)),
+  ): Effect.Effect<ReadonlyArray<unknown>, AcpMcpOverAcpError> => {
+    const exchange = Effect.gen(function* () {
+      const body = JSON.stringify(message);
+      if (Buffer.byteLength(body) > MAX_MESSAGE_BYTES) {
+        return yield* Effect.fail(new AcpMcpOverAcpError("MCP-over-ACP message exceeds 8 MiB."));
+      }
+      const response = yield* Effect.tryPromise({
+        try: (signal) =>
+          fetchImplementation(options.endpoint, {
+            method: "POST",
+            signal,
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              authorization: options.authorization,
+              ...(connection.sessionId === null ? {} : { "mcp-session-id": connection.sessionId }),
+              ...(connection.protocolVersion === null
+                ? {}
+                : { "mcp-protocol-version": connection.protocolVersion }),
+            },
+            body,
+          }),
+        catch: bridgeError,
+      });
+      connection.sessionId = response.headers.get("mcp-session-id") ?? connection.sessionId;
+      if (!response.ok) {
+        yield* Effect.promise(
+          () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
+        );
+        return yield* Effect.fail(
+          new AcpMcpOverAcpError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
+        );
+      }
+      const payloads = [...(yield* Stream.runCollect(responsePayloads(response)))];
+      for (const payload of payloads) {
+        connection.protocolVersion = protocolVersionOf(payload) ?? connection.protocolVersion;
+      }
+      return payloads;
+    }).pipe(Effect.mapError(bridgeError));
+    return Effect.suspend(() =>
+      connection.sessionId === null ? connection.mutex.withPermits(1)(exchange) : exchange,
     );
+  };
 
   const disconnect = (
     request: AcpSchema.DisconnectMcpRequest,
