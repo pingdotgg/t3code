@@ -29,6 +29,7 @@ import {
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderRuntimeEvent,
   ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -1593,7 +1594,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* Effect.promise(() => started.promise);
       yield* advanceTestClock(10_000);
       NodeAssert.equal(Exit.isFailure(yield* Fiber.join(sendFiber)), true);
-      yield* advanceTestClock(6_000);
+      yield* advanceTestClock(7_000);
       const exited = Option.getOrThrow(yield* Fiber.join(exitedFiber));
       NodeAssert.ok(exited.type === "session.exited");
       NodeAssert.equal(exited.payload.exitKind, "error");
@@ -2289,6 +2290,419 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(session?.activeTurnId, undefined);
       NodeAssert.equal(turn.turnId !== undefined, true);
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("admits a busy event as the only evidence just after the probe deadline", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-busy-event-after-probe-deadline");
+      const sessionId = "ses_busy_event_after_probe_deadline";
+      const pushEvent = makeOpenCodeEventQueue();
+      const fifthProbeObserved = promiseWithResolvers<void>();
+      const terminalObserved = promiseWithResolvers<void>();
+      const terminalEvents: Array<ProviderRuntimeEvent> = [];
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionId);
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (runtimeMock.state.sessionStatusCalls === 5) {
+          fifthProbeObserved.resolve(undefined);
+        }
+        return { data: {} };
+      };
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "runtime.error"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            terminalEvents.push(event);
+            if (event.type === "turn.completed") {
+              terminalObserved.resolve(undefined);
+            }
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Keep this admitted turn alive",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      for (const delayMs of [250, 500, 1_000, 2_000]) {
+        yield* advanceTestClock(delayMs);
+      }
+      yield* Effect.promise(() => fifthProbeObserved.promise);
+      yield* advanceTestClock(2_000);
+      const abortCallsBeforeAdmissionEvidence = runtimeMock.state.abortCalls.filter(
+        (candidate) => candidate === sessionId,
+      ).length;
+
+      pushEvent({
+        id: "evt-busy-after-probe-deadline",
+        type: "session.status",
+        properties: {
+          sessionID: sessionId,
+          status: { type: "busy" },
+        },
+      });
+      pushEvent({
+        id: "evt-idle-after-probe-deadline",
+        type: "session.status",
+        properties: {
+          sessionID: sessionId,
+          status: { type: "idle" },
+        },
+      });
+      yield* Effect.promise(() => terminalObserved.promise);
+
+      const turnCompleted = terminalEvents.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(turnCompleted?.payload.state, "completed");
+      NodeAssert.equal(
+        terminalEvents.some((event) => event.type === "runtime.error"),
+        false,
+      );
+      NodeAssert.equal(
+        runtimeMock.state.abortCalls.filter((candidate) => candidate === sessionId).length,
+        abortCallsBeforeAdmissionEvidence,
+      );
+      NodeAssert.equal(turnCompleted?.turnId, turn.turnId);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps the turn admitted when the fifth probe finds the exact user message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-message-on-fifth-admission-probe");
+      const sessionId = "ses_message_on_fifth_admission_probe";
+      const pushEvent = makeOpenCodeEventQueue();
+      const fifthProbeObserved = promiseWithResolvers<void>();
+      const terminalObserved = promiseWithResolvers<void>();
+      const terminalEvents: Array<ProviderRuntimeEvent> = [];
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionId);
+      runtimeMock.state.messageFailures = 4;
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        const prompt = runtimeMock.state.promptCalls.at(-1) as { messageID?: string } | undefined;
+        if (prompt?.messageID) {
+          runtimeMock.state.messages.push({
+            info: { id: prompt.messageID, role: "user" },
+            parts: [],
+          });
+        }
+      };
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (runtimeMock.state.sessionStatusCalls === 5) {
+          fifthProbeObserved.resolve(undefined);
+        }
+        throw new Error("status unavailable");
+      };
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "runtime.error"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            terminalEvents.push(event);
+            if (event.type === "turn.completed") {
+              terminalObserved.resolve(undefined);
+            }
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Recover from the exact fifth-probe message",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      for (const delayMs of [250, 500, 1_000, 2_000]) {
+        yield* advanceTestClock(delayMs);
+      }
+      yield* Effect.promise(() => fifthProbeObserved.promise);
+      yield* advanceTestClock(3_000);
+
+      NodeAssert.equal(runtimeMock.state.messageCalls.length, 5);
+      NodeAssert.equal(
+        runtimeMock.state.abortCalls.filter((candidate) => candidate === sessionId).length,
+        0,
+      );
+      pushEvent({
+        id: "evt-busy-after-fifth-message-probe",
+        type: "session.status",
+        properties: {
+          sessionID: sessionId,
+          status: { type: "busy" },
+        },
+      });
+      pushEvent({
+        id: "evt-idle-after-fifth-message-probe",
+        type: "session.status",
+        properties: {
+          sessionID: sessionId,
+          status: { type: "idle" },
+        },
+      });
+      yield* Effect.promise(() => terminalObserved.promise);
+
+      const turnCompleted = terminalEvents.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(turnCompleted?.payload.state, "completed");
+      NodeAssert.equal(turnCompleted?.turnId, turn.turnId);
+      NodeAssert.equal(
+        terminalEvents.some((event) => event.type === "runtime.error"),
+        false,
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fails admission after bounded probes and grace produce no evidence", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-admission-without-evidence");
+      const sessionId = "ses_admission_without_evidence";
+      const fifthProbeObserved = promiseWithResolvers<void>();
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionId);
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (runtimeMock.state.sessionStatusCalls === 5) {
+          fifthProbeObserved.resolve(undefined);
+        }
+        return { data: {} };
+      };
+
+      const terminalFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "runtime.error"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Fail when admission has no evidence",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      for (const delayMs of [250, 500, 1_000, 2_000]) {
+        yield* advanceTestClock(delayMs);
+      }
+      yield* Effect.promise(() => fifthProbeObserved.promise);
+      yield* advanceTestClock(2_000);
+      const abortCallsBeforeTerminalFailure = runtimeMock.state.abortCalls.filter(
+        (candidate) => candidate === sessionId,
+      ).length;
+      yield* advanceTestClock(1_000);
+
+      const terminalEvents = Array.from(yield* Fiber.join(terminalFiber));
+      NodeAssert.equal(runtimeMock.state.sessionStatusCalls, 5);
+      NodeAssert.equal(
+        runtimeMock.state.abortCalls.filter((candidate) => candidate === sessionId).length,
+        abortCallsBeforeTerminalFailure + 1,
+      );
+      NodeAssert.deepEqual(
+        terminalEvents.map((event) => event.type),
+        ["turn.completed", "runtime.error"],
+      );
+      const completed = terminalEvents[0];
+      NodeAssert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        NodeAssert.equal(completed.payload.state, "failed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not fail admission when the turn is interrupted during grace", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt-during-admission-grace");
+      const sessionId = "ses_interrupt_during_admission_grace";
+      const fifthProbeObserved = promiseWithResolvers<void>();
+      const terminalEvents: Array<ProviderRuntimeEvent> = [];
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionId);
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (runtimeMock.state.sessionStatusCalls === 5) {
+          fifthProbeObserved.resolve(undefined);
+        }
+        return { data: {} };
+      };
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.aborted" ||
+              event.type === "turn.completed" ||
+              event.type === "runtime.error"),
+        ),
+        Stream.runForEach((event) => Effect.sync(() => terminalEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Interrupt while admission waits for late evidence",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      for (const delayMs of [250, 500, 1_000, 2_000]) {
+        yield* advanceTestClock(delayMs);
+      }
+      yield* Effect.promise(() => fifthProbeObserved.promise);
+      yield* advanceTestClock(2_000);
+      const abortCallsBeforeInterrupt = runtimeMock.state.abortCalls.filter(
+        (candidate) => candidate === sessionId,
+      ).length;
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      yield* advanceTestClock(1_000);
+
+      NodeAssert.equal(
+        runtimeMock.state.abortCalls.filter((candidate) => candidate === sessionId).length,
+        abortCallsBeforeInterrupt + 1,
+      );
+      NodeAssert.deepEqual(
+        terminalEvents.map((event) => event.type),
+        ["turn.aborted"],
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not fail admission after cleanup abort loses ownership to interruption", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-interrupt-during-admission-cleanup");
+      const sessionId = "ses_interrupt_during_admission_cleanup";
+      const fifthProbeObserved = promiseWithResolvers<void>();
+      const admissionAbortStarted = promiseWithResolvers<void>();
+      const interruptAbortStarted = promiseWithResolvers<void>();
+      const releaseAdmissionAbort = promiseWithResolvers<void>();
+      const terminalEvents: Array<ProviderRuntimeEvent> = [];
+      let ownedAbortCalls = 0;
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionId);
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (runtimeMock.state.sessionStatusCalls === 5) {
+          fifthProbeObserved.resolve(undefined);
+        }
+        return { data: {} };
+      };
+      runtimeMock.state.abortImplementation = async (candidate) => {
+        if (candidate !== sessionId) return;
+        ownedAbortCalls += 1;
+        if (ownedAbortCalls === 1) {
+          admissionAbortStarted.resolve(undefined);
+          await releaseAdmissionAbort.promise;
+        } else if (ownedAbortCalls === 2) {
+          interruptAbortStarted.resolve(undefined);
+        }
+      };
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.aborted" ||
+              event.type === "turn.completed" ||
+              event.type === "runtime.error"),
+        ),
+        Stream.runForEach((event) => Effect.sync(() => terminalEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Interrupt while admission cleanup is aborting",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      for (const delayMs of [250, 500, 1_000, 2_000]) {
+        yield* advanceTestClock(delayMs);
+      }
+      yield* Effect.promise(() => fifthProbeObserved.promise);
+      yield* advanceTestClock(3_000);
+      yield* Effect.promise(() => admissionAbortStarted.promise);
+
+      const interruptFiber = yield* adapter
+        .interruptTurn(threadId, turn.turnId)
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => interruptAbortStarted.promise);
+      releaseAdmissionAbort.resolve(undefined);
+      yield* Fiber.join(interruptFiber);
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(ownedAbortCalls, 2);
+      NodeAssert.deepEqual(
+        terminalEvents.map((event) => event.type),
+        ["turn.aborted"],
+      );
+      const sessions = yield* adapter.listSessions();
+      const session = sessions.find((candidate) => candidate.threadId === threadId);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+
+      runtimeMock.state.abortImplementation = null;
+      yield* Fiber.interrupt(eventsFiber);
       yield* adapter.stopSession(threadId);
     }),
   );

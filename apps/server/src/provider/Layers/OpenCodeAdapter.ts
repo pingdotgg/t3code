@@ -227,6 +227,7 @@ interface OpenCodePromptAdmission {
   accepted: boolean;
   cancelled: boolean;
   readonly acceptance: Deferred.Deferred<void>;
+  readonly admissionObserved: Deferred.Deferred<void>;
   readonly messageReceipt: Deferred.Deferred<void>;
   readonly submissionSettled: Deferred.Deferred<void>;
   promptFiber?: Fiber.Fiber<void, ProviderAdapterRequestError>;
@@ -1279,9 +1280,12 @@ export function makeOpenCodeAdapter(
       promptAdmission: OpenCodePromptAdmission,
     ) {
       if (
+        (yield* Ref.get(context.stopped)) ||
+        sessions.get(context.session.threadId) !== context ||
         context.promptAdmission !== promptAdmission ||
         context.activeTurnId !== promptAdmission.turnId ||
-        context.promptGeneration !== promptAdmission.generation
+        context.promptGeneration !== promptAdmission.generation ||
+        promptAdmission.cancelled
       ) {
         return;
       }
@@ -1292,6 +1296,16 @@ export function makeOpenCodeAdapter(
           context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
         ).pipe(Effect.timeout("1 second")),
       );
+      if (
+        (yield* Ref.get(context.stopped)) ||
+        sessions.get(context.session.threadId) !== context ||
+        context.promptAdmission !== promptAdmission ||
+        context.activeTurnId !== promptAdmission.turnId ||
+        context.promptGeneration !== promptAdmission.generation ||
+        promptAdmission.cancelled
+      ) {
+        return;
+      }
       if (Exit.isFailure(abortExit)) {
         yield* emitUnexpectedExit(
           context,
@@ -1489,6 +1503,27 @@ export function makeOpenCodeAdapter(
 
           const delayMs = Math.min(250 * 2 ** retryCount, 2_000);
           yield* Effect.sleep(`${delayMs} millis`);
+        }
+        const eventObserved = yield* Deferred.await(promptAdmission.admissionObserved).pipe(
+          Effect.timeout("1 second"),
+          Effect.option,
+        );
+        if (
+          (Option.isSome(eventObserved) ||
+            promptAdmission.messageObserved ||
+            promptAdmission.busyObserved) &&
+          context.promptAdmission === promptAdmission &&
+          context.activeTurnId === promptAdmission.turnId &&
+          context.promptGeneration === promptAdmission.generation &&
+          !promptAdmission.cancelled
+        ) {
+          context.promptAdmission = undefined;
+          context.awaitingBusyAfterInterruption = false;
+          const idle = promptAdmission.idleDuringAdmission ?? promptAdmission.priorIdle;
+          if (idle) {
+            yield* scheduleIdleReconciliation(context, idle.turnId, idle.raw);
+          }
+          return;
         }
         yield* failPromptAdmissionRecovery(context, promptAdmission);
       }).pipe(
@@ -2334,7 +2369,10 @@ export function makeOpenCodeAdapter(
             promptAdmission?.messageId === event.properties.info.id
           ) {
             promptAdmission.messageObserved = true;
-            yield* Deferred.succeed(promptAdmission.messageReceipt, undefined);
+            yield* Deferred.succeed(promptAdmission.admissionObserved, undefined).pipe(
+              Effect.ignore,
+            );
+            yield* Deferred.succeed(promptAdmission.messageReceipt, undefined).pipe(Effect.ignore);
             if (promptAdmission.accepted) {
               const idle = promptAdmission.idleDuringAdmission;
               context.awaitingBusyAfterInterruption = false;
@@ -2595,6 +2633,9 @@ export function makeOpenCodeAdapter(
             context.awaitingBusyAfterInterruption = false;
             if (context.promptAdmission?.turnId === turnId) {
               context.promptAdmission.busyObserved = true;
+              yield* Deferred.succeed(context.promptAdmission.admissionObserved, undefined).pipe(
+                Effect.ignore,
+              );
               yield* schedulePromptAdmissionRecovery(context, event);
             }
             yield* updateProviderSession(context, {
@@ -3193,6 +3234,7 @@ export function makeOpenCodeAdapter(
             accepted: false,
             cancelled: false,
             acceptance: Deferred.makeUnsafe<void>(),
+            admissionObserved: Deferred.makeUnsafe<void>(),
             messageReceipt: Deferred.makeUnsafe<void>(),
             submissionSettled: Deferred.makeUnsafe<void>(),
             recoveryRaw: undefined,
