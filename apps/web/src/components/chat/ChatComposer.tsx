@@ -1270,6 +1270,12 @@ export interface ChatComposerHandle {
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
+  /**
+   * Attach a cropped image region with its chip at the caret, followed by the comment as prose.
+   * The draft is held while `crop` runs, so a send or stash waits for the citation.
+   * Resolves false when the composer cannot take text or refuses the attachment.
+   */
+  citeImageRegion: (crop: () => Promise<File>, comment: string) => Promise<boolean>;
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
@@ -2712,7 +2718,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const addComposerImage = useCallback(
-    (image: ComposerImageAttachment) => addComposerDraftImages(attachmentDraftTarget, [image]),
+    (image: ComposerImageAttachment, options?: { allowDuplicates?: boolean }) =>
+      addComposerDraftImages(attachmentDraftTarget, [image], options),
     [attachmentDraftTarget, addComposerDraftImages],
   );
 
@@ -3812,7 +3819,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         event?.preventDefault();
         toastManager.add({
           type: "info",
-          title: "Still bringing a pasted attachment into this message.",
+          title: "Still adding an attachment to this message.",
           description: "Send again once its chip resolves.",
         });
         return;
@@ -4302,15 +4309,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       let unrestoredImageNames: string[] = [];
       if (entry.attachments.length > 0) {
         const existingIds = new Set(composerImagesRef.current.map((image) => image.id));
-        // The draft store also dedupes by mimeType+sizeBytes+name, so filter
-        // on the same key here. Counting a duplicate against capacity would
-        // burn a slot the store then refuses to fill, pushing a genuinely
-        // unique image into the overflow list for nothing.
-        const existingDedupKeys = new Set(
-          composerImagesRef.current.map(
-            (image) => `${image.mimeType}\0${image.sizeBytes}\0${image.name}`,
-          ),
-        );
+        // A chip in the restored prompt points at its own attachment, such as one of two
+        // citations of the same region, so that attachment comes back even when the draft
+        // already holds an identical image. An unreferenced image is skipped when the draft,
+        // a referenced image, or an earlier unreferenced one already has its
+        // mimeType+sizeBytes+name, the key the store dedupes by.
+        const dedupKey = (image: { mimeType: string; sizeBytes: number; name: string }) =>
+          `${image.mimeType}\0${image.sizeBytes}\0${image.name}`;
+        const referencedIds = new Set(collectInlineContextIds(restoredPrompt));
+        const isReferenced = (attachment: { id: string }) =>
+          referencedIds.has(toKindScopedComposerContextId("image", attachment.id));
+        const takenDedupKeys = new Set([
+          ...composerImagesRef.current.map(dedupKey),
+          ...entry.attachments.filter(isReferenced).map(dedupKey),
+        ]);
         const capacity = Math.max(
           0,
           PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
@@ -4318,20 +4330,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             composerFilesRef.current.length -
             restoredFileCount,
         );
-        const pending = entry.attachments.filter(
-          (attachment) =>
-            !existingIds.has(attachment.id) &&
-            !existingDedupKeys.has(
-              `${attachment.mimeType}\0${attachment.sizeBytes}\0${attachment.name}`,
-            ),
-        );
+        const unreferenced = entry.attachments.filter((attachment) => {
+          if (existingIds.has(attachment.id) || isReferenced(attachment)) return false;
+          const key = dedupKey(attachment);
+          if (takenDedupKeys.has(key)) return false;
+          takenDedupKeys.add(key);
+          return true;
+        });
+        // Referenced images come first so a chip keeps its attachment when slots run out.
+        const pending = [
+          ...entry.attachments.filter(
+            (attachment) => !existingIds.has(attachment.id) && isReferenced(attachment),
+          ),
+          ...unreferenced,
+        ];
         // Anything past the attachment limit cannot be restored. The entry is
         // already out of the queue, so report the overflow by name instead of
         // discarding it silently.
         unrestoredImageNames = pending.slice(capacity).map((attachment) => attachment.name);
         const restoredImages = hydrateImagesFromPersisted(pending.slice(0, capacity));
         if (restoredImages.length > 0) {
-          addComposerDraftImages(composerDraftTarget, restoredImages);
+          // Deduped above; the store's own dedup would drop a referenced citation's twin.
+          addComposerDraftImages(composerDraftTarget, restoredImages, { allowDuplicates: true });
         }
       }
 
@@ -4428,12 +4448,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const stashCurrentPrompt = useCallback(async () => {
-    // Stashing clears the draft. A pasted attachment still downloading would then land in the
-    // emptied composer instead of travelling with the entry it belongs to.
+    // Stashing clears the draft. An attachment still arriving (a pasted file downloading, a cited
+    // region cropping) would then land in the emptied composer instead of travelling with the
+    // entry it belongs to.
     if (pendingDraftWork.has(attachmentTargetKeyRef.current)) {
       toastManager.add({
         type: "info",
-        title: "Still bringing a pasted attachment into this message.",
+        title: "Still adding an attachment to this message.",
         description: "Stash again once its chip resolves.",
       });
       return;
@@ -5279,6 +5300,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       readonly source?: ChatFileAttachment["source"];
       readonly selection?: { start: number; end: number };
       readonly skipImageInlineChip?: boolean;
+      /** A cited image region: its chip always lands inline, followed by this comment. */
+      readonly citationComment?: string;
     },
   ): Promise<boolean> => {
     if (!activeThreadId || files.length === 0 || isRevertingCheckpointRef.current) return false;
@@ -5303,15 +5326,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // runs. An explicit selection replace and states where the editor refuses
     // input (connecting, approval, pending questions, project selection) still
     // get chips so the image is never invisible, unless paste-as-text explicitly
-    // requests no inline image chip.
+    // requests no inline image chip. A cited region always gets its chip, since
+    // its comment follows the chip.
     const imageAttachmentsGetChips =
-      !options?.skipImageInlineChip &&
-      (options?.selection !== undefined ||
-        isConnecting ||
-        isComposerApprovalState ||
-        pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        stripInlineContextReferences(promptRef.current).trim().length > 0);
+      options?.citationComment !== undefined ||
+      (!options?.skipImageInlineChip &&
+        (options?.selection !== undefined ||
+          isConnecting ||
+          isComposerApprovalState ||
+          pendingUserInputs.length > 0 ||
+          projectSelectionRequired ||
+          stripInlineContextReferences(promptRef.current).trim().length > 0));
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (via the pending counter)
@@ -5401,7 +5426,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (storedFiles.length > 0) {
         insertedAny = insertAttachmentReferences(
           storedFiles.map(fileContextReference),
-          options?.selection,
+          options?.selection ? { selection: options.selection } : undefined,
         );
       }
       if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
@@ -5460,9 +5485,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         for (const image of nextImages) URL.revokeObjectURL(image.previewUrl);
         return false;
       }
+      // A citation's chip and comment go through the live editor, so they must land in the
+      // draft the user cited from. A thread switch, a new question, or a state that refuses
+      // text while the crop was prepared cancels the citation instead.
+      if (
+        options?.citationComment !== undefined &&
+        (attachmentTargetKeyRef.current !== attachmentTargetKey || composerRefusesTextRef.current)
+      ) {
+        for (const image of nextImages) URL.revokeObjectURL(image.previewUrl);
+        return false;
+      }
       const storedImageIds = new Set(
         nextImages.length === 1 && nextImages[0]
-          ? addComposerImage(nextImages[0])
+          ? // Citing one region twice is two references, like quoting the same text twice.
+            addComposerImage(nextImages[0], {
+              allowDuplicates: options?.citationComment !== undefined,
+            })
           : nextImages.length > 1
             ? addComposerImagesToDraft(nextImages)
             : [],
@@ -5470,7 +5508,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
       if (storedImages.length > 0 && imageAttachmentsGetChips) {
         insertedAny =
-          insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+          insertAttachmentReferences(
+            storedImages.map(imageContextReference),
+            options?.citationComment !== undefined
+              ? { trailingText: options.citationComment, focusEditor: false }
+              : undefined,
+          ) || insertedAny;
       }
       // Only failures are reported here. Success must not pass `null`: by
       // now other work (a failed send, an overlapping paste) may have set a
@@ -5501,20 +5544,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    */
   const insertAttachmentReferences = (
     references: ReadonlyArray<ComposerContextReference>,
-    selection?: { start: number; end: number },
+    options?: {
+      readonly selection?: { start: number; end: number };
+      /** Prose that follows the chips, such as a cited region's comment. */
+      readonly trailingText?: string;
+      readonly focusEditor?: boolean;
+    },
   ): boolean => {
     if (references.length === 0) return false;
     // Question answers carry attachments beside the answer, never as chips. Falling back to
     // the thread prompt here would hide the file behind a reference the question never shows.
     if (questionAttachmentTarget) return false;
-    if (selection) {
-      const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
+    if (options?.selection) {
+      const edit = inlineContextReferenceReplacement(
+        promptRef.current,
+        options.selection,
+        references,
+      );
       return applyPromptReplacement(edit.start, edit.end, edit.text);
     }
-    const text = references.map(formatInlineContextReference).join(" ");
-    const inserted = insertComposerText(`${text} `, "cursor", { ensureLeadingBoundary: true });
+    const chips = references.map(formatInlineContextReference).join(" ");
+    const trailingText = options?.trailingText?.trim() ?? "";
+    const inserted = insertComposerText(
+      `${trailingText ? `${chips} ${trailingText}` : chips} `,
+      "cursor",
+      {
+        ensureLeadingBoundary: true,
+        ...(options?.focusEditor !== undefined ? { focusEditor: options.focusEditor } : {}),
+      },
+    );
     if (!inserted) {
-      setPrompt(ensureInlineContextReferences(promptRef.current, references));
+      const withReferences = ensureInlineContextReferences(promptRef.current, references);
+      setPrompt(
+        trailingText
+          ? `${withReferences}${/\s$/.test(withReferences) ? "" : " "}${trailingText}`
+          : withReferences,
+      );
     }
     return true;
   };
@@ -5650,6 +5715,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event.stopPropagation();
   };
 
+  // The editor takes no typed or inserted text while any of these holds.
+  const composerRefusesText =
+    isConnecting ||
+    isComposerApprovalState ||
+    pendingUserInputs.length > 0 ||
+    projectSelectionRequired;
+  // Live refusal state, for a citation whose crop finishes preparing after the composer changed.
+  const composerRefusesTextRef = useRef(composerRefusesText);
+  composerRefusesTextRef.current = composerRefusesText;
   const insertComposerText = useCallback(
     (
       text: string,
@@ -5658,14 +5732,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ensureLeadingBoundary?: boolean;
         citationCommentAnchor?: AssistantCitationSourceAnchor;
         clipboardData?: DataTransfer;
+        /** False when the insert comes from a modal surface that keeps focus. */
+        focusEditor?: boolean;
       },
     ): boolean => {
       if (
         text.length === 0 ||
-        isConnecting ||
-        isComposerApprovalState ||
-        pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
+        composerRefusesText ||
         (options?.citationCommentAnchor && !composerEditorRef.current)
       ) {
         return false;
@@ -5692,15 +5765,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
               focusEditorAfterReplace: false,
             }
-          : undefined,
+          : options?.focusEditor === false
+            ? { focusEditorAfterReplace: false }
+            : undefined,
       );
     },
     [
       applyPromptReplacement,
-      isComposerApprovalState,
-      isConnecting,
-      pendingUserInputs.length,
-      projectSelectionRequired,
+      composerRefusesText,
       promptRef,
       readComposerSnapshot,
       importContextFragment,
@@ -5924,6 +5996,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           "cursor",
           { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
         ),
+      // Checked before the crop is attached, so a refused cite never strands an attachment.
+      citeImageRegion: async (crop, comment) => {
+        if (composerRefusesText) return false;
+        // Held like a pasted attachment's download, so a send or stash waits for the citation
+        // instead of leaving it to land in an emptied or already-sent draft.
+        const draftKey = attachmentTargetKey;
+        pendingDraftWork.begin(draftKey);
+        try {
+          return await addComposerAttachments([await crop()], { citationComment: comment });
+        } finally {
+          pendingDraftWork.end(draftKey);
+        }
+      },
       openModelPicker,
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {
@@ -6052,6 +6137,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThread,
       addComposerAttachments,
+      composerRefusesText,
       foldPastedText,
       composerDraftTarget,
       composerCursor,

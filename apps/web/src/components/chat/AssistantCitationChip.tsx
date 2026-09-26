@@ -20,7 +20,7 @@ import {
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
+import { CitationCommentEditor } from "./CitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -194,9 +194,12 @@ export function AssistantCitationChip({
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <AssistantCitationCommentEditor
+              <CitationCommentEditor
                 key={serializeAssistantCitation(citation)}
-                citation={citation}
+                initialComment={citation.comment ?? ""}
+                label="Comment on selected text"
+                description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+                submitLabel="Save"
                 inputRef={commentInputRef}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;

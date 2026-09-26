@@ -59,6 +59,10 @@
       "types": "./src/mediaActions.ts",
       "default": "./src/mediaActions.ts"
     },
+    "./image-region-citation": {
+      "types": "./src/imageRegionCitation.ts",
+      "default": "./src/imageRegionCitation.ts"
+    },
     "./codex-file-citations": {
       "types": "./src/codexFileCitations.ts",
       "default": "./src/codexFileCitations.ts"

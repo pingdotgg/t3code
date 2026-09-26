@@ -184,6 +184,7 @@ import {
   retargetNewTaskDraft,
   setComposerDraftText,
   insertComposerDraftContext,
+  insertComposerDraftImageCitation,
   insertComposerDraftText,
   rememberComposerDraftSelection,
   setComposerDraftAttachmentUpload,
@@ -808,6 +809,32 @@ describe("mobile composer drafts", () => {
     );
     expect(getComposerDraftSnapshot(key).attachments).toEqual([file]);
     expect(getComposerDraftSnapshot(key).text).toBe(`replaced ${link}`);
+  });
+
+  it("cites an image region as its chip followed by the comment", () => {
+    const draftKey = "cite-environment:cite-thread";
+    const crop = {
+      id: "crop",
+      type: "image" as const,
+      name: "shot region.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,AAAA",
+      previewUri: "file:///crop.png",
+    };
+    setComposerDraftText(draftKey, "Fix these:");
+    rememberComposerDraftSelection(draftKey, "Fix these:", { start: 10, end: 10 });
+
+    expect(insertComposerDraftImageCitation(draftKey, crop, "  padding is too big ")).toBe(true);
+
+    const draft = getComposerDraftSnapshot(draftKey);
+    expect(draft.text).toBe(
+      "Fix these: ![shot region.png](t3-context://v1/image/crop) padding is too big ",
+    );
+    expect(draft.attachments).toEqual([crop]);
+    expect(draft.context?.records).toEqual([
+      expect.objectContaining({ kind: "image", attachmentId: "crop", name: "shot region.png" }),
+    ]);
   });
 
   it("inserts context at the saved caret and retains its payload through persistence and restore", () => {

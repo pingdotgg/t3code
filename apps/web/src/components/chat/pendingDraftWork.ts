@@ -1,7 +1,8 @@
 /**
  * Work a draft has started but not finished — compressing a pasted image, downloading a pasted
- * attachment's bytes. Sending while any of it is outstanding snapshots a message whose chip has
- * nothing behind it, and the late result lands in whatever draft is open by then.
+ * attachment's bytes, cropping a cited image region. Sending while any of it is outstanding
+ * snapshots a message whose chip has nothing behind it, and the late result lands in whatever
+ * draft is open by then.
  *
  * Counted rather than flagged: two pastes can be in flight at once, and the first to finish must
  * not clear the second's claim.

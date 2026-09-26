@@ -7,14 +7,29 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, ImageIcon, TextIcon, XIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ImageIcon,
+  SquareDashedMousePointerIcon,
+  TextIcon,
+  XIcon,
+} from "lucide-react";
+import {
+  imageRegionCitationName,
+  type ImageRegion,
+} from "@t3tools/client-runtime/image-region-citation";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Popover, PopoverPopup } from "../ui/popover";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
+import { useComposerHandleContext } from "../../composerHandleContext";
 import { OpenMediaLink } from "../media/OpenMediaLink";
-import { MediaActions, type MediaActionSource } from "../media/MediaActions";
+import { MediaActions, useMediaActionUrl, type MediaActionSource } from "../media/MediaActions";
+import { readMediaImageRegion } from "../media/mediaContent";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import {
@@ -23,6 +38,8 @@ import {
   snapShotAccessibilityDetails,
 } from "./SnapShotAttachmentDetails";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { CitationCommentEditor } from "./CitationCommentEditor";
+import { ImageRegionCiteLayer } from "./ImageRegionCiteLayer";
 import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
@@ -100,10 +117,99 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         },
       }
     : source;
+  const actionUrl = useMediaActionUrl(source);
+  const accessibilityDetails = item?.source ? snapShotAccessibilityDetails(item.source) : undefined;
+  const showingAccessibilityDetails =
+    Boolean(accessibilityDetails) && accessibilityDetailsSrc === item?.src;
+
+  // Citing sends a crop of the image to the composer, so it needs a composer and loaded pixels.
+  const composerRef = useComposerHandleContext();
+  const [citeMode, setCiteMode] = useState(false);
+  const [pendingRegion, setPendingRegion] = useState<ImageRegion | null>(null);
+  const [citedRegionsBySrc, setCitedRegionsBySrc] = useState<
+    ReadonlyMap<string, ReadonlyArray<ImageRegion>>
+  >(() => new Map());
+  const [citing, setCiting] = useState(false);
+  const pendingRegionRef = useRef<HTMLDivElement>(null);
+  const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const citableSrc =
+    composerRef !== null &&
+    item !== undefined &&
+    item.type !== "video" &&
+    item.src !== null &&
+    failedImageSrc !== item.src &&
+    !showingAccessibilityDetails
+      ? item.src
+      : null;
+  const selecting = citeMode && citableSrc !== null;
+  const toggleCiteMode = () => {
+    setCiteMode((current) => !current);
+    setPendingRegion(null);
+  };
+  const citeRegion = async (region: ImageRegion, comment: string) => {
+    if (!item || citableSrc === null) return;
+    const composer = composerRef?.current;
+    if (!composer) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "No composer to cite into",
+          description: "Open a thread, then cite the region again.",
+        }),
+      );
+      return;
+    }
+    const src = citableSrc;
+    const name = imageRegionCitationName(item.name);
+    // The crop's outline matches the one the user drew.
+    const outlineColor = pendingRegionRef.current
+      ? getComputedStyle(pendingRegionRef.current).borderTopColor
+      : "";
+    setCiting(true);
+    try {
+      const crop = async () =>
+        readMediaImageRegion(await actionUrl(), region, { name, outlineColor });
+      if (!(await composer.citeImageRegion(crop, comment))) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "The composer can't take this region right now",
+            description:
+              "Finish any pending approval or question, or wait for the connection, then cite again.",
+          }),
+        );
+        return;
+      }
+      setCitedRegionsBySrc((current) =>
+        new Map(current).set(src, [...(current.get(src) ?? []), region]),
+      );
+      setPendingRegion((current) => (current === region ? null : current));
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not cite the region",
+          description: error instanceof Error ? error.message : "The image could not be read.",
+        }),
+      );
+    } finally {
+      setCiting(false);
+    }
+  };
 
   const navigateImage = useCallback((direction: -1 | 1) => {
     setImageOffset((current) => current + direction);
+    setPendingRegion(null);
   }, []);
+
+  // Closing the comment box removes the focused field, dropping focus to the page. The dialog
+  // keeps its keys (C, arrows) without focusing the media, whose tooltip shows the file path.
+  useEffect(() => {
+    if (pendingRegion === null && document.activeElement === document.body) {
+      popupRef.current?.focus({ preventScroll: true });
+    }
+  }, [pendingRegion]);
 
   // The element that opened the preview gets focus back on close. Without
   // this a close button click leaves focus on the unmounted dialog, and the
@@ -122,6 +228,19 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || isContextMenuOpen() || event.target instanceof HTMLVideoElement)
       return;
+    if (
+      citableSrc !== null &&
+      event.key.toLowerCase() === "c" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.repeat
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleCiteMode();
+      return;
+    }
     if (zoomableImageRef.current?.pan(event.key)) {
       event.preventDefault();
       event.stopPropagation();
@@ -142,14 +261,21 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   useEffect(() => {
     const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || isContextMenuOpen()) return;
+      if (event.key !== "Escape" || event.isComposing || isContextMenuOpen()) return;
       event.preventDefault();
       event.stopPropagation();
-      onClose();
+      // Each Escape backs out one step: the pending region, then region selection, then the dialog.
+      if (selecting && pendingRegion) {
+        setPendingRegion(null);
+      } else if (selecting) {
+        setCiteMode(false);
+      } else {
+        onClose();
+      }
     };
     window.addEventListener("keydown", onEscape, { capture: true });
     return () => window.removeEventListener("keydown", onEscape, { capture: true });
-  }, [onClose]);
+  }, [onClose, pendingRegion, selecting]);
 
   if (!item) return null;
   const mediaLabel = item.type === "video" ? "video" : "image";
@@ -157,9 +283,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
       <OpenMediaLink originalUrl={item.originalUrl} />
     ) : null;
-  const accessibilityDetails = item.source ? snapShotAccessibilityDetails(item.source) : undefined;
-  const showingAccessibilityDetails =
-    Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
   const contentsLabel = showingAccessibilityDetails
     ? "Show screenshot"
     : accessibilityDetails?.format === "json"
@@ -176,6 +299,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     >
       <DialogPopup
         {...composerFloatingLayerProps}
+        ref={popupRef}
         variant="media"
         showCloseButton={false}
         bottomStickOnMobile={false}
@@ -238,8 +362,53 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 src={item.src}
                 name={item.name}
                 onError={() => setFailedImageSrc(item.src)}
+                selecting={selecting}
+                overlay={
+                  selecting ? (
+                    <ImageRegionCiteLayer
+                      cited={citedRegionsBySrc.get(item.src) ?? []}
+                      pending={pendingRegion}
+                      pendingRef={pendingRegionRef}
+                      onSelect={setPendingRegion}
+                    />
+                  ) : undefined
+                }
               />
             )}
+            <Popover
+              open={selecting && pendingRegion !== null}
+              onOpenChange={(open) => {
+                if (!open) setPendingRegion(null);
+              }}
+            >
+              <PopoverPopup
+                {...composerFloatingLayerProps}
+                anchor={pendingRegionRef}
+                side="bottom"
+                align="start"
+                width="md"
+                padding="compact"
+                aria-label="Comment on selected region"
+                initialFocus={() => {
+                  commentInputRef.current?.focus({ preventScroll: true });
+                  return false;
+                }}
+                finalFocus={false}
+              >
+                {pendingRegion ? (
+                  <CitationCommentEditor
+                    key={`${pendingRegion.x}:${pendingRegion.y}:${pendingRegion.width}:${pendingRegion.height}`}
+                    label="Comment on selected region"
+                    description="Enter to cite the region with this comment; Shift+Enter for a new line."
+                    submitLabel={citing ? "Citing…" : "Cite"}
+                    submitDisabled={citing}
+                    inputRef={commentInputRef}
+                    onSubmit={(comment) => void citeRegion(pendingRegion, comment)}
+                    onCancel={() => setPendingRegion(null)}
+                  />
+                ) : null}
+              </PopoverPopup>
+            </Popover>
             <div className="mt-2 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/80">
               <span className="truncate" aria-live="polite" aria-atomic="true">
                 {item.name}
@@ -266,6 +435,28 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 </Tooltip>
               ) : item.source ? (
                 <SnapShotContentsButton source={item.source} side="top" />
+              ) : null}
+              {citableSrc !== null ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-pressed={selecting}
+                        aria-keyshortcuts="C"
+                        data-pressed={selecting ? "" : undefined}
+                        onClick={toggleCiteMode}
+                        size="micro"
+                        variant="overlay"
+                      />
+                    }
+                  >
+                    <SquareDashedMousePointerIcon aria-hidden="true" />
+                    Cite
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">
+                    {selecting ? "Stop selecting (C)" : "Select a region to cite (C)"}
+                  </TooltipPopup>
+                </Tooltip>
               ) : null}
             </div>
           </div>

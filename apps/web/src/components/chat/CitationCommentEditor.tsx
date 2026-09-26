@@ -1,30 +1,41 @@
-import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH } from "@t3tools/contracts";
 import { useState, type Ref } from "react";
 
 import { Button } from "../ui/button";
 
-export function AssistantCitationCommentEditor({
-  citation,
+/** The comment field shared by text and image citations. Enter submits; Escape cancels. */
+export function CitationCommentEditor({
+  initialComment = "",
+  label,
+  description,
+  submitLabel,
+  submitDisabled = false,
   inputRef,
   onSubmit,
   onSubmitAndSend,
   onCancel,
   onDraftChange,
 }: {
-  citation: AssistantCitation;
+  initialComment?: string;
+  label: string;
+  description: string;
+  submitLabel: string;
+  /** Holds submission while the owner finishes the previous one. */
+  submitDisabled?: boolean;
   inputRef?: Ref<HTMLTextAreaElement>;
-  onSubmit: (comment: string) => boolean;
-  onSubmitAndSend?: (comment: string) => boolean;
+  onSubmit: (comment: string) => void;
+  onSubmitAndSend?: (comment: string) => void;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
 }) {
-  const [comment, setComment] = useState(citation.comment ?? "");
+  const [comment, setComment] = useState(initialComment);
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
+  const blocked = commentTooLong || submitDisabled;
   const submit = () => {
-    if (!commentTooLong) onSubmit(comment);
+    if (!blocked) onSubmit(comment);
   };
   const submitAndSend = () => {
-    if (commentTooLong) return;
+    if (blocked) return;
     if (onSubmitAndSend) {
       onSubmitAndSend(comment);
     } else {
@@ -46,8 +57,8 @@ export function AssistantCitationCommentEditor({
     >
       <textarea
         ref={inputRef}
-        aria-label="Comment on selected text"
-        aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+        aria-label={label}
+        aria-description={description}
         aria-invalid={commentTooLong || undefined}
         placeholder="Add an optional comment..."
         rows={2}
@@ -90,11 +101,11 @@ export function AssistantCitationCommentEditor({
         </Button>
         <Button
           size="xs"
-          disabled={commentTooLong}
+          disabled={blocked}
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >
-          {commentTooLong ? "Shorten comment" : "Save"}
+          {commentTooLong ? "Shorten comment" : submitLabel}
         </Button>
       </div>
     </div>

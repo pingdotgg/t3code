@@ -35,6 +35,7 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
+import { ImageCiteProvider } from "../imageCite/ImageCiteProvider";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
@@ -556,7 +557,23 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   return Platform.OS === "android" ? <View className="flex-1 bg-header">{content}</View> : content;
 }
 
+/** An image opened here can be cited into the thread the file belongs to. */
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+  const threadId = firstRouteParam(props.route.params.threadId);
+  const content = <ThreadFileScreenContent {...props} />;
+  return threadId === null ? (
+    content
+  ) : (
+    <ImageCiteProvider
+      environmentId={EnvironmentId.make(props.route.params.environmentId)}
+      threadId={ThreadId.make(threadId)}
+    >
+      {content}
+    </ImageCiteProvider>
+  );
+}
+
+function ThreadFileScreenContent(props: ThreadFileRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
   const { fileInspector } = useAdaptiveWorkspaceLayout();
