@@ -49,6 +49,25 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
+  // Cmd+Tab (macOS) and Alt+Tab (Windows/Linux) are claimed by the OS window
+  // switcher and never reach the page. macOS can still use Option+Tab; on
+  // Windows and Linux no Alt+Tab variant is deliverable in a browser, so the
+  // switcher uses Ctrl+` there instead. All are rebindable in Settings.
+  { key: "alt+tab", command: "project.switcher", when: "isMac && !terminalFocus" },
+  { key: "alt+shift+tab", command: "project.switcherPrevious", when: "isMac && !terminalFocus" },
+  { key: "ctrl+`", command: "project.switcher", when: "!isMac && !terminalFocus" },
+  { key: "ctrl+shift+`", command: "project.switcherPrevious", when: "!isMac && !terminalFocus" },
+  // Cycles active threads within the current project. Desktop can capture
+  // Ctrl+Tab (left hand, no browser in the way); browsers reserve Ctrl+Tab, so
+  // web uses Alt/Option+Backquote instead. Both are left-hand chords.
+  { key: "ctrl+tab", command: "thread.switcher", when: "isDesktop && !terminalFocus" },
+  {
+    key: "ctrl+shift+tab",
+    command: "thread.switcherPrevious",
+    when: "isDesktop && !terminalFocus",
+  },
+  { key: "alt+`", command: "thread.switcher", when: "isWeb && !terminalFocus" },
+  { key: "alt+shift+`", command: "thread.switcherPrevious", when: "isWeb && !terminalFocus" },
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+h", command: "composer.host", when: "!terminalFocus" },
   { key: "mod+shift+e", command: "composer.effort", when: "!terminalFocus" },

@@ -36,6 +36,9 @@ const CORE_WHEN_VARIABLES = [
   "terminalOpen",
   "isWeb",
   "isDesktop",
+  "isMac",
+  "isWindows",
+  "isLinux",
   "true",
   "false",
 ] as const;
