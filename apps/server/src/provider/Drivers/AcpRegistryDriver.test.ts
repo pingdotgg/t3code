@@ -70,6 +70,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         slashCommands: [{ name: "stale" }],
         skills: [{ name: "stale-skill", path: "stale", enabled: true }],
+        supportsPlanMode: false,
       },
     });
 
@@ -115,6 +116,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         slashCommands: [],
         skills: [],
+        supportsPlanMode: false,
       },
     });
     expect(snapshot.auth.status).toBe("unknown");
@@ -122,7 +124,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(
       applyAcpRegistryLiveConfiguration(
         snapshot,
-        { models: [], currentModelId: null, configOptions: [] },
+        { models: [], currentModelId: null, configOptions: [], supportsPlanMode: false },
         [],
       ).auth.status,
     ).toBe("unknown");
@@ -159,6 +161,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         slashCommands: [],
         skills: [],
+        supportsPlanMode: false,
       },
     });
 
@@ -169,6 +172,7 @@ describe("acpRegistrySnapshotReadiness", () => {
           models: [{ id: "live-model", name: "Live model", description: null }],
           currentModelId: "live-model",
           configOptions: [],
+          supportsPlanMode: false,
         },
         [],
       ),
@@ -176,6 +180,55 @@ describe("acpRegistrySnapshotReadiness", () => {
       auth: { status: "unknown", canLogout: true },
       models: [{ slug: "live-model", isDefault: true }],
     });
+  });
+
+  it("shows Plan only after the agent reports a plan mode", () => {
+    const ready = {
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "test-agent",
+        version: "1.0.0",
+        distribution: "npx",
+      },
+    } as const;
+    const probe = (supportsPlanMode: boolean) => ({
+      probe: {
+        instanceId: identity.instanceId,
+        ready: true as const,
+        icon: null,
+        authMethods: [],
+        models: [],
+        currentModelId: null,
+        configOptions: [],
+        sessionManagement: noSessionManagement,
+      },
+      slashCommands: [],
+      skills: [],
+      supportsPlanMode,
+    });
+    const live = (supportsPlanMode: boolean) => ({
+      models: [],
+      currentModelId: null,
+      configOptions: [],
+      supportsPlanMode,
+    });
+
+    // Before discovery nothing says the agent has a plan mode.
+    expect(buildCheckedAcpRegistrySnapshot(ready).showInteractionModeToggle).toBe(false);
+    const withoutPlan = buildCheckedAcpRegistrySnapshot({ ...ready, probe: probe(false) });
+    expect(withoutPlan.showInteractionModeToggle).toBe(false);
+    expect(
+      buildCheckedAcpRegistrySnapshot({ ...ready, probe: probe(true) }).showInteractionModeToggle,
+    ).toBe(true);
+    // A live session's modes replace the probe's.
+    const withPlan = applyAcpRegistryLiveConfiguration(withoutPlan, live(true), []);
+    expect(withPlan.showInteractionModeToggle).toBe(true);
+    expect(
+      applyAcpRegistryLiveConfiguration(withPlan, live(false), []).showInteractionModeToggle,
+    ).toBe(false);
   });
 
   it("maps registry inspection status to provider readiness", () => {
@@ -244,6 +297,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         slashCommands: [{ name: "plan", description: "Create a plan", input: { hint: "topic" } }],
         skills: [{ name: "workspace-skill", path: "acp://skill/workspace-skill", enabled: true }],
+        supportsPlanMode: false,
       },
     });
 
@@ -302,6 +356,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         },
         slashCommands: [],
         skills: [],
+        supportsPlanMode: false,
       },
     });
 
@@ -381,6 +436,7 @@ describe("acpRegistrySnapshotReadiness", () => {
               },
               slashCommands: [{ name: "review" }],
               skills: [],
+              supportsPlanMode: false,
             };
           }),
       ).pipe(

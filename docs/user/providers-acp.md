@@ -44,8 +44,9 @@ choose **Sign out**. Signing out stops running threads of the same agent on that
 ## Models and options
 
 The model picker lists the models the agent reports. Other settings the agent offers, such as
-reasoning effort or its own mode picker, appear in the composer's model options menu. Agents
-with a plan or architect mode follow T3 Code's Plan toggle. Slash commands the agent provides
+reasoning effort or its own mode picker, appear in the composer's model options menu. The Plan
+toggle appears only for agents with a plan or architect mode, after T3 Code has checked the agent
+or started a session with it. Slash commands the agent provides
 appear in the `/` menu, and commands it names with a `$` prefix appear in the `$` skill menu.
 
 ## Permissions

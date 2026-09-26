@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type { AcpSessionRuntimeStartResult } from "./AcpSessionRuntime.ts";
 import {
@@ -18,6 +19,7 @@ import {
   acpRegistryProbeResult,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
+  normalizeAcpRegistryLiveConfiguration,
   probeAcpRegistryConfiguration,
 } from "./AcpRegistryProbe.ts";
 import { AcpRegistryCatalog } from "./AcpRegistrySupport.ts";
@@ -191,6 +193,43 @@ describe("ACP Registry probe", () => {
       { id: "haiku", name: "Haiku", description: null },
     ]);
     expect(result.currentModelId).toBe("sonnet");
+  });
+
+  it("reports a plan mode only when the agent can switch to one", () => {
+    const modeState = (ids: ReadonlyArray<string>) => ({
+      currentModeId: ids[0]!,
+      availableModes: ids.map((id) => ({ id, name: id })),
+    });
+    const collaborationMode = (
+      values: ReadonlyArray<string>,
+    ): EffectAcpSchema.SessionConfigOption => ({
+      id: "collaboration",
+      name: "Collaboration",
+      category: "collaboration_mode",
+      type: "select",
+      currentValue: values[0]!,
+      options: [
+        {
+          groupId: "modes",
+          name: "Modes",
+          options: values.map((value) => ({ value, name: value })),
+        },
+      ],
+    });
+
+    expect(
+      normalizeAcpRegistryLiveConfiguration([], modeState(["code", "architect"])).supportsPlanMode,
+    ).toBe(true);
+    expect(
+      normalizeAcpRegistryLiveConfiguration([collaborationMode(["default", "plan"])])
+        .supportsPlanMode,
+    ).toBe(true);
+    expect(
+      normalizeAcpRegistryLiveConfiguration(
+        [collaborationMode(["default", "review"])],
+        modeState(["default", "yolo"]),
+      ).supportsPlanMode,
+    ).toBe(false);
   });
 
   it("omits overlong opaque model ids instead of publishing mutated ids", () => {

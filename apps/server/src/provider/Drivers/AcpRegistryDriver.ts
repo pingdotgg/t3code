@@ -206,6 +206,9 @@ function baseSnapshot(
     supportsTextGeneration: false,
     // ACP has no portable conversation rewind, so V1 clients hide revert.
     supportsConversationRollback: false,
+    // Plan switches the agent to its plan mode. Hide it until a probe or a
+    // live session reports one.
+    showInteractionModeToggle: input.probe?.supportsPlanMode ?? false,
     enabled: input.settings.enabled,
     installed: input.installed,
     version: input.version,
@@ -247,6 +250,7 @@ export function applyAcpRegistryLiveConfiguration(
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
+    showInteractionModeToggle: configuration.supportsPlanMode,
     models: modelsFromDiscovery(configuration, customModels),
   };
 }

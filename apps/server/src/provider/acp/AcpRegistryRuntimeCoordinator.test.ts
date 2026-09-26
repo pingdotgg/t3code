@@ -123,11 +123,13 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         models: [{ id: "sonnet", name: "Sonnet", description: null }],
         currentModelId: "sonnet",
         configOptions: [],
+        supportsPlanMode: false,
       } satisfies AcpRegistryLiveConfiguration;
       const replacement = {
         models: [{ id: "opus", name: "Opus", description: null }],
         currentModelId: "opus",
         configOptions: [],
+        supportsPlanMode: false,
       } satisfies AcpRegistryLiveConfiguration;
 
       yield* coordinator.publishLiveConfiguration(instanceId, first);

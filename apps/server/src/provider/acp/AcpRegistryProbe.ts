@@ -168,6 +168,34 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
+  /** Whether T3's Plan toggle has an agent mode to switch to. */
+  readonly supportsPlanMode: boolean;
+}
+
+/** The agent mode ids T3's Plan toggle switches to. */
+export function isAcpRegistryPlanModeId(id: string): boolean {
+  return id === "plan" || id === "architect";
+}
+
+/**
+ * Whether the adapter can put this agent in a plan mode: a session mode, or a
+ * mode or collaboration-mode choice, with a plan id.
+ */
+function acpRegistrySupportsPlanMode(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  modeState: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
+): boolean {
+  return (
+    modeState?.availableModes.some((mode) => isAcpRegistryPlanModeId(mode.id)) === true ||
+    configOptions.some(
+      (option) =>
+        option.type === "select" &&
+        (option.category === "mode" || option.category === "collaboration_mode") &&
+        option.options
+          .flatMap((entry) => ("value" in entry ? [entry] : entry.options))
+          .some((choice) => isAcpRegistryPlanModeId(choice.value)),
+    )
+  );
 }
 
 /** Normalizes volatile session configuration using the same bounds as discovery probes. */
@@ -189,6 +217,7 @@ export function normalizeAcpRegistryLiveConfiguration(
       ? boundedCurrentModelId
       : null,
     configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    supportsPlanMode: acpRegistrySupportsPlanMode(configOptions, modeState),
   };
 }
 
@@ -243,10 +272,12 @@ export function acpRegistryProbeResult(
   icon: string | null = null,
   spawn?: AcpRegistryAuthSpawnContext,
 ): AcpRegistryProbeResult {
-  const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
-    started.sessionSetupResult.configOptions ?? [],
-    parseSessionModeState(started.sessionSetupResult),
-  );
+  // The plan signal is server state, not part of the wire result.
+  const { supportsPlanMode: _supportsPlanMode, ...liveConfiguration } =
+    normalizeAcpRegistryLiveConfiguration(
+      started.sessionSetupResult.configOptions ?? [],
+      parseSessionModeState(started.sessionSetupResult),
+    );
   return AcpRegistryProbeResult.make({
     instanceId,
     ready: true,
@@ -295,6 +326,7 @@ export interface AcpRegistryConfigurationProbeResult {
   readonly probe: AcpRegistryProbeResult;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly supportsPlanMode: boolean;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
@@ -441,6 +473,10 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
+      supportsPlanMode: acpRegistrySupportsPlanMode(
+        result.started.sessionSetupResult.configOptions ?? [],
+        parseSessionModeState(result.started.sessionSetupResult),
+      ),
     };
   },
 );

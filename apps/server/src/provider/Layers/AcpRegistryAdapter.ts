@@ -73,6 +73,7 @@ import {
 } from "../acp/AcpCoreRuntimeEvents.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
+  isAcpRegistryPlanModeId,
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
@@ -807,16 +808,12 @@ export const makeAcpRegistryAdapter = Effect.fn("makeAcpRegistryAdapter")(functi
           option.type === "select" ? [{ id: option.id, value: option.currentValue }] : [],
         ),
       };
-      const planMode = modeState?.availableModes.find(
-        (mode) => mode.id === "plan" || mode.id === "architect",
-      );
+      const planMode = modeState?.availableModes.find((mode) => isAcpRegistryPlanModeId(mode.id));
       if (planMode && modeState?.currentModeId !== planMode.id) {
         yield* runtime.setMode(planMode.id);
       }
       for (const option of planSensitive) {
-        const planValue = selectChoices(option).find(
-          (choice) => choice === "plan" || choice === "architect",
-        );
+        const planValue = selectChoices(option).find(isAcpRegistryPlanModeId);
         if (option.type === "select" && planValue && option.currentValue !== planValue) {
           yield* runtime.setConfigOption(option.id, planValue);
         }
