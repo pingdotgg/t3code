@@ -642,7 +642,7 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
       if (ctx.activeTurn === turn) {
         ctx.activeTurn = undefined;
         const { activeTurnId: _activeTurnId, ...session } = ctx.session;
-        ctx.session = { ...session, updatedAt: yield* nowIso };
+        ctx.session = { ...session, status: "ready", updatedAt: yield* nowIso };
       }
       yield* Deferred.succeed(turn.completed, undefined);
     });
@@ -931,16 +931,17 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
         input.threadId,
         Effect.gen(function* () {
           const ctx = yield* requireSession(input.threadId);
-          // A Cursor run cannot take a new message. A steer interrupts the
-          // active run and starts the message as the next turn.
-          if (ctx.activeTurn !== undefined) {
-            yield* interruptTurnInternal(ctx, ctx.activeTurn);
-          }
           const modelSelection =
             input.modelSelection?.instanceId === boundInstanceId
               ? input.modelSelection
               : ctx.modelSelection;
           const message = yield* buildUserMessage(ctx, input, modelSelection.model);
+          // A Cursor run cannot take a new message. A steer interrupts the
+          // active run and starts the message as the next turn. Build the
+          // message first, so an invalid steer keeps the active run.
+          if (ctx.activeTurn !== undefined) {
+            yield* interruptTurnInternal(ctx, ctx.activeTurn);
+          }
           const turnId = TurnId.make(yield* randomUUIDv4);
           const turn: CursorTurn = {
             turnId,
@@ -960,6 +961,7 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
           ctx.modelSelection = modelSelection;
           ctx.session = {
             ...ctx.session,
+            status: "running",
             model: modelSelection.model,
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
@@ -1013,12 +1015,14 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
         }),
       );
 
-    // A thread runs at most one Cursor turn, so interrupt whichever is active.
-    const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
+    // A thread runs at most one Cursor turn. Without a turn id, interrupt
+    // whichever is active. A stop for an earlier turn keeps a newer steer.
+    const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
-        if (ctx.activeTurn !== undefined) {
-          yield* interruptTurnInternal(ctx, ctx.activeTurn);
+        const turn = ctx.activeTurn;
+        if (turn !== undefined && (turnId === undefined || turn.turnId === turnId)) {
+          yield* interruptTurnInternal(ctx, turn);
         }
       });
 

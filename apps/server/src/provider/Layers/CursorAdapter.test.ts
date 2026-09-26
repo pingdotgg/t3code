@@ -6,6 +6,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -472,6 +473,42 @@ it.layer(testLayer)("CursorAdapter", (it) => {
         ["started", second.turnId],
         ["completed", second.turnId],
       ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps the running turn through an invalid steer or a stop for another turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cursor-keep-running");
+      const cancelled = yield* Deferred.make<void>();
+      const sdk = makeFakeRunner([
+        {
+          updates: [{ type: "text-delta", text: "Working" }],
+          wait: Deferred.await(cancelled).pipe(
+            Effect.as({ id: "run-1", status: "cancelled" } satisfies RunResult),
+          ),
+          onCancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
+        },
+      ]);
+      const adapter = yield* makeAdapter(sdk.runner);
+
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const turn = yield* adapter.sendTurn({ threadId, input: "Start" });
+      assert.deepInclude((yield* adapter.listSessions())[0], {
+        status: "running",
+        activeTurnId: turn.turnId,
+      });
+
+      const invalidSteer = yield* Effect.flip(adapter.sendTurn({ threadId, input: "   " }));
+      assert.equal(invalidSteer._tag, "ProviderAdapterValidationError");
+      yield* adapter.interruptTurn(threadId, TurnId.make("turn-earlier"));
+      assert.deepStrictEqual(sdk.cancelled, []);
+
+      yield* adapter.interruptTurn(threadId, turn.turnId);
+      assert.deepStrictEqual(sdk.cancelled, ["run-1"]);
+      const [session] = yield* adapter.listSessions();
+      assert.equal(session?.status, "ready");
+      assert.isUndefined(session?.activeTurnId);
       yield* adapter.stopSession(threadId);
     }),
   );
