@@ -295,6 +295,7 @@ type TestDisplayMediaHandler = (
 
 interface TestHostWebContents {
   readonly id: number;
+  readonly getZoomFactor: () => number;
   readonly mainFrame: { readonly frameTreeNodeId: number };
   readonly executeJavaScript: ReturnType<typeof vi.fn>;
   readonly isDestroyed: () => boolean;
@@ -312,6 +313,7 @@ const makeTestHostWebContents = (): TestHostWebContents => {
   let handler: TestDisplayMediaHandler | undefined;
   return {
     id: 7,
+    getZoomFactor: () => 1,
     mainFrame: { frameTreeNodeId: 7 },
     executeJavaScript: vi.fn(async () => true),
     isDestroyed: () => false,
@@ -560,7 +562,7 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const preview = makeFaviconWebContents();
         const sendInputEvent = vi.fn();
-        const hostWebContents = { sendInputEvent };
+        const hostWebContents = { sendInputEvent, getZoomFactor: () => 1 };
         Object.assign(preview.webContents, { hostWebContents });
         fromId.mockReturnValue(preview.webContents);
         getFocusedWebContents.mockReturnValue(preview.webContents as never);
@@ -1387,6 +1389,7 @@ describe("PreviewManager", () => {
   effectIt.effect("keeps the tab's own zoom instead of the guest's reported zoom", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const hostWebContents = { getZoomFactor: () => 1.44 };
         let effectiveZoom = 0.9;
         let zoomReadable = true;
         let url = "https://example.com";
@@ -1394,6 +1397,7 @@ describe("PreviewManager", () => {
         const setZoomFactor = vi.fn();
         fromId.mockReturnValue({
           id: 42,
+          hostWebContents,
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => url,
@@ -1434,7 +1438,7 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_zoom", 42);
 
         expect(states.at(-1)?.zoomFactor).toBe(1);
-        expect(setZoomFactor).toHaveBeenCalledWith(1);
+        expect(setZoomFactor).toHaveBeenCalledWith(1.44);
 
         // An app zoom leaves the guest reporting the inherited level. Navigating
         // must not adopt it as the preview's zoom.
@@ -1452,7 +1456,7 @@ describe("PreviewManager", () => {
 
         // Only the preview's own zoom controls move it.
         yield* manager.zoomIn("tab_zoom");
-        expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+        expect(setZoomFactor).toHaveBeenCalledWith(1.1 * 1.44);
         expect(states.at(-1)?.zoomFactor).toBe(1.1);
 
         zoomReadable = false;
@@ -1464,6 +1468,7 @@ describe("PreviewManager", () => {
         const replacementSetZoomFactor = vi.fn();
         fromId.mockReturnValue({
           id: 43,
+          hostWebContents,
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => url,
@@ -1491,7 +1496,7 @@ describe("PreviewManager", () => {
 
         yield* manager.registerWebview("tab_zoom", 43);
 
-        expect(replacementSetZoomFactor).toHaveBeenCalledWith(1.1);
+        expect(replacementSetZoomFactor).toHaveBeenCalledWith(1.1 * 1.44);
         expect(states.at(-1)?.zoomFactor).toBe(1.1);
       }),
     ),
@@ -1502,9 +1507,11 @@ describe("PreviewManager", () => {
   effectIt.effect("re-applies each tab's own zoom when the app window zooms", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        let hostZoom = 1;
         const setZoomFactor = vi.fn();
         fromId.mockReturnValue({
           id: 42,
+          hostWebContents: { getZoomFactor: () => hostZoom },
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => "https://example.com",
@@ -1535,10 +1542,11 @@ describe("PreviewManager", () => {
         yield* manager.zoomIn("tab_reapply");
         setZoomFactor.mockClear();
 
-        yield* manager.reapplyZoom();
-
-        expect(setZoomFactor).toHaveBeenCalledTimes(1);
-        expect(setZoomFactor).toHaveBeenCalledWith(1.1);
+        for (const zoom of [1.44, 0.8, 1]) {
+          hostZoom = zoom;
+          yield* manager.reapplyZoom();
+          expect(setZoomFactor).toHaveBeenLastCalledWith(1.1 * hostZoom);
+        }
       }),
     ),
   );
