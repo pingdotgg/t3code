@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatTailcatConnectionError,
+  issuedConnectionCodeStatus,
   tailcatDiagnosticsJson,
   tailcatPathKindLabel,
   tailcatPathLabel,
@@ -12,6 +13,33 @@ import {
 } from "./TailcatRemoteAccess.logic";
 
 const ADDRESS = `tc${"a".repeat(40)}`;
+
+describe("issuedConnectionCodeStatus", () => {
+  const live = { expiresAtMs: 2_000, nowMs: 1_000 };
+
+  it("stays live until the pairing window has opened and closed again", () => {
+    expect(
+      issuedConnectionCodeStatus({ ...live, pairingWindowOpened: false, pairingOpen: false }),
+    ).toBe("live");
+    expect(
+      issuedConnectionCodeStatus({ ...live, pairingWindowOpened: true, pairingOpen: true }),
+    ).toBe("live");
+    expect(
+      issuedConnectionCodeStatus({ ...live, pairingWindowOpened: true, pairingOpen: false }),
+    ).toBe("redeemed");
+  });
+
+  it("reports expiry first, since the window also closes when the code lapses", () => {
+    expect(
+      issuedConnectionCodeStatus({
+        expiresAtMs: 2_000,
+        nowMs: 2_000,
+        pairingWindowOpened: true,
+        pairingOpen: false,
+      }),
+    ).toBe("expired");
+  });
+});
 
 describe("tailcat labels", () => {
   it("labels the measured path", () => {

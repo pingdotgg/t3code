@@ -164,7 +164,10 @@ import {
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
-import { isDesktopTailcatAvailable } from "~/state/desktopTailcat";
+import {
+  isDesktopTailcatAvailable,
+  refreshDesktopTailcatDiagnostics,
+} from "~/state/desktopTailcat";
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import {
   type EnvironmentPresentation,
@@ -1643,7 +1646,14 @@ function SavedBackendListRow({
             serverConfig={environment.serverConfig}
           />
           {tailcatProfile ? (
-            <MenuItem onClick={() => setTailcatDetailsOpen(true)}>Tailcat details…</MenuItem>
+            <MenuItem
+              onClick={() => {
+                refreshDesktopTailcatDiagnostics(tailcatProfile.connectionId);
+                setTailcatDetailsOpen(true);
+              }}
+            >
+              Tailcat details…
+            </MenuItem>
           ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>

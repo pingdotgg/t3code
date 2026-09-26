@@ -46,6 +46,23 @@ export function tailcatRuntimeLabel(runtime: TailcatRuntimeInfo | null): string 
   return runtime === null ? null : `${runtime.source} ${runtime.version}`;
 }
 
+/**
+ * What the connection-code card shows for the code it issued. The listener
+ * reports an open pairing window while any unredeemed code is live, so once the
+ * window has opened for this code, its closing before expiry means it was
+ * redeemed.
+ */
+export function issuedConnectionCodeStatus(input: {
+  readonly expiresAtMs: number;
+  readonly nowMs: number;
+  readonly pairingWindowOpened: boolean;
+  readonly pairingOpen: boolean;
+}): "live" | "expired" | "redeemed" {
+  if (input.expiresAtMs <= input.nowMs) return "expired";
+  if (input.pairingWindowOpened && !input.pairingOpen) return "redeemed";
+  return "live";
+}
+
 /** "Direct", "Relay (via fra)", "Relay", or "Unknown" for a measured path. */
 export function tailcatPathKindLabel(path: TailcatPathProbe): string {
   switch (path.kind) {

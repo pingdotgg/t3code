@@ -92,7 +92,11 @@ export function createDesktopTailcatDiagnosticsAtomFamily(
 export const desktopTailcatDiagnosticsAtom =
   createDesktopTailcatDiagnosticsAtomFamily(getDesktopTailcatBridge);
 
-function refreshDesktopTailcatDiagnostics(connectionId: string): void {
+/**
+ * Re-reads a forwarder's diagnostics. The saved row keeps the atom mounted for
+ * its subtitle, so a stale snapshot never revalidates on its own.
+ */
+export function refreshDesktopTailcatDiagnostics(connectionId: string): void {
   appAtomRegistry.refresh(desktopTailcatDiagnosticsAtom(connectionId));
 }
 

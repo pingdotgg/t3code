@@ -40,6 +40,7 @@ import { SettingsRow, useRelativeTimeTick } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   formatTailcatConnectionError,
+  issuedConnectionCodeStatus,
   tailcatDiagnosticsJson,
   tailcatRuntimeLabel,
   tailcatStatusBadgeVariant,
@@ -53,9 +54,13 @@ import {
 const ConnectionCodeReveal = memo(function ConnectionCodeReveal({
   code,
   expiresAt,
+  pairingWindowOpened,
+  pairingOpen,
 }: {
   readonly code: string;
   readonly expiresAt: string;
+  readonly pairingWindowOpened: boolean;
+  readonly pairingOpen: boolean;
 }) {
   const nowMs = useRelativeTimeTick(1_000);
   const { copyToClipboard } = useCopyToClipboard<void>({
@@ -78,10 +83,24 @@ const ConnectionCodeReveal = memo(function ConnectionCodeReveal({
     },
   });
 
-  if (Date.parse(expiresAt) <= nowMs) {
+  const status = issuedConnectionCodeStatus({
+    expiresAtMs: Date.parse(expiresAt),
+    nowMs,
+    pairingWindowOpened,
+    pairingOpen,
+  });
+  if (status === "expired") {
     return (
       <p className="text-xs text-muted-foreground">
         That code expired unused. Create a new one when the other device is ready.
+      </p>
+    );
+  }
+  if (status === "redeemed") {
+    return (
+      <p className="text-xs text-muted-foreground">
+        That code was redeemed; the device is listed under Trusted devices. Create a new code for
+        each additional device.
       </p>
     );
   }
@@ -257,7 +276,12 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
   });
   const [isToggling, setIsToggling] = useState(false);
   const [isCreatingCode, setIsCreatingCode] = useState(false);
-  const [issuedCode, setIssuedCode] = useState<TailcatConnectionCodeResult | null>(null);
+  // `windowOpened` records that the listener reported the pairing window open
+  // for this code, so the card can tell a redeemed code from a new one.
+  const [issuedCode, setIssuedCode] = useState<{
+    readonly result: TailcatConnectionCodeResult;
+    readonly windowOpened: boolean;
+  } | null>(null);
   const [revokingPeerId, setRevokingPeerId] = useState<string | null>(null);
   const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -332,7 +356,7 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
       }
       return;
     }
-    setIssuedCode(result.value);
+    setIssuedCode({ result: result.value, windowOpened: false });
   }, [createConnectionCode, environmentId]);
 
   const handleRename = useCallback(
@@ -386,6 +410,10 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
       });
     }
   }, [environmentId, regenerateIdentity, runCommand]);
+
+  if (issuedCode !== null && !issuedCode.windowOpened && state?.pairingOpen === true) {
+    setIssuedCode({ ...issuedCode, windowOpened: true });
+  }
 
   const runtimeLabel = state ? tailcatRuntimeLabel(state.runtime) : null;
   const connectionCodeSetting = searchableSetting("tailcat-connection-code");
@@ -507,7 +535,12 @@ export const TailcatRemoteAccessRow = memo(function TailcatRemoteAccessRow({
                 </Button>
               </div>
               {issuedCode !== null ? (
-                <ConnectionCodeReveal code={issuedCode.code} expiresAt={issuedCode.expiresAt} />
+                <ConnectionCodeReveal
+                  code={issuedCode.result.code}
+                  expiresAt={issuedCode.result.expiresAt}
+                  pairingWindowOpened={issuedCode.windowOpened}
+                  pairingOpen={state.pairingOpen}
+                />
               ) : !state.enabled ? (
                 <p className="text-2xs text-muted-foreground/70">
                   Enable remote access to create codes.
