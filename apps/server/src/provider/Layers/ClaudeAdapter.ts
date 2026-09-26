@@ -1608,9 +1608,10 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   const sdkContent: Array<Record<string, unknown>> = [];
 
   // Claude Code expands a skill only from the LAST text block, and only when
-  // `/name` is its first character. A `$skill` chip anywhere in the prompt is
-  // therefore split into [leading text, "/name trailing text"] so the CLI
-  // runs it natively and the prose around it survives. See ClaudeSkillDispatch.
+  // `/name` is its first character. A `$skill` chip anywhere in the prompt
+  // therefore gets a trailing invocation. For a mid-prompt chip, an earlier
+  // block preserves the complete request through native skill expansion.
+  // See ClaudeSkillDispatch.
   const dispatch = planClaudeSkillDispatch(text, dependencies.skillNames);
   if (dispatch?.leadingText !== undefined) {
     sdkContent.push({ type: "text", text: dispatch.leadingText });

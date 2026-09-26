@@ -18,8 +18,9 @@
  *    its Skill tool when it reads `/name` in the prompt, so earlier mentions
  *    are rewritten to `/name` inline.
  *
- * So one mention anywhere in the prompt becomes a guaranteed invocation, and
- * the user's text on either side is kept in order.
+ * Native expansion moves command metadata ahead of earlier text blocks. For
+ * a mid-prompt mention, keep the complete request in an earlier block as well
+ * as the final invocation, so expansion cannot split the user's sentence.
  *
  * @module provider/Drivers/ClaudeSkillDispatch
  */
@@ -33,7 +34,7 @@ const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
 export interface ClaudeSkillDispatch {
-  /** Text before the dispatched mention, or `undefined` when it opens the prompt. */
+  /** Complete request before the command block, or `undefined` for a leading invocation. */
   readonly leadingText: string | undefined;
   /** `/name` plus the trailing text, ready to be the message's last text block. */
   readonly commandText: string;
@@ -63,17 +64,16 @@ export function planClaudeSkillDispatch(
 
   const leading = prompt.slice(0, last.start);
   const trailing = prompt.slice(last.end);
-  const leadingWithInlineSlashes = mentions
-    .slice(0, -1)
+  const requestWithInlineSlashes = mentions
     .reduceRight(
       (text, mention) =>
         `${text.slice(0, mention.start)}/${mention.name}${text.slice(mention.end)}`,
-      leading,
+      prompt,
     )
     .trimEnd();
 
   return {
-    leadingText: leadingWithInlineSlashes.length > 0 ? leadingWithInlineSlashes : undefined,
+    leadingText: leading.trim().length > 0 ? requestWithInlineSlashes : undefined,
     commandText: `/${last.name}${trailing}`.trimEnd(),
     skillName: last.name,
   };

@@ -11,9 +11,9 @@ describe("planClaudeSkillDispatch", () => {
     expect(planClaudeSkillDispatch("echo $HOME then $unknown", SKILLS)).toBeUndefined();
   });
 
-  it("moves a mid-prompt mention into a trailing slash command", () => {
+  it("preserves the complete request before a mid-prompt skill invocation", () => {
     expect(planClaudeSkillDispatch("ok, now $implement all the tickets", SKILLS)).toEqual({
-      leadingText: "ok, now",
+      leadingText: "ok, now /implement all the tickets",
       commandText: "/implement all the tickets",
       skillName: "implement",
     });
@@ -29,7 +29,7 @@ describe("planClaudeSkillDispatch", () => {
 
   it("dispatches a known skill whose name begins with a digit", () => {
     expect(planClaudeSkillDispatch("use $2spec for this", SKILLS)).toEqual({
-      leadingText: "use",
+      leadingText: "use /2spec for this",
       commandText: "/2spec for this",
       skillName: "2spec",
     });
@@ -37,7 +37,7 @@ describe("planClaudeSkillDispatch", () => {
 
   it("dispatches the last mention and rewrites earlier ones inline", () => {
     expect(planClaudeSkillDispatch("$review the diff, then $implement the fixes", SKILLS)).toEqual({
-      leadingText: "/review the diff, then",
+      leadingText: "/review the diff, then /implement the fixes",
       commandText: "/implement the fixes",
       skillName: "implement",
     });
@@ -51,7 +51,7 @@ describe("planClaudeSkillDispatch", () => {
           SKILLS,
         ),
       ).toEqual({
-        leadingText: "/review the diff, then",
+        leadingText: "/review the diff, then /implement the fixes",
         commandText: "/implement the fixes",
         skillName: "implement",
       });
@@ -66,6 +66,23 @@ describe("planClaudeSkillDispatch", () => {
 
   it("ignores a dollar token glued to other text", () => {
     expect(planClaudeSkillDispatch("cost is 5$implement", SKILLS)).toBeUndefined();
+  });
+
+  it.each([
+    ["do not $implement fixes yet", "do not /implement fixes yet", "/implement fixes yet"],
+    ["before $implement", "before /implement", "/implement"],
+    [
+      "please $implement the fixes\n\nThen report the result",
+      "please /implement the fixes\n\nThen report the result",
+      "/implement the fixes\n\nThen report the result",
+    ],
+    ["Ultrathink:\n$implement fixes", "Ultrathink:\n/implement fixes", "/implement fixes"],
+  ])("keeps the instruction intact for %s", (prompt, leadingText, commandText) => {
+    expect(planClaudeSkillDispatch(prompt, SKILLS)).toEqual({
+      leadingText,
+      commandText,
+      skillName: "implement",
+    });
   });
 
   it("ignores currency amounts and compact monetary expressions", () => {
