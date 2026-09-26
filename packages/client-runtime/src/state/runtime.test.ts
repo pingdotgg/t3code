@@ -275,7 +275,7 @@ describe("environmentRpcKey", () => {
 
 describe("environment query lifecycle", () => {
   it.effect(
-    "retries an interrupted query without exposing a failure during session replacement",
+    "retries a query without exposing a failure when session loss races the connection signal",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -321,7 +321,8 @@ describe("environment query lifecycle", () => {
 
           yield* firstStarted.await;
           yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
-          yield* Effect.yieldNow;
+          // Do not yield here: the in-flight request can observe session loss
+          // before the atom processes the paired connection signal.
           failFirst.openUnsafe();
           yield* firstSettled.await;
           yield* Effect.yieldNow;
