@@ -121,6 +121,46 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("omits Cursor account usage when no file login is saved", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      for (const platform of ["linux", "win32", "darwin"] as const) {
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: `usage-service-cursor-no-login-${platform}`,
+              home,
+              settings,
+              platform,
+              environment: { AGENT_CLI_CREDENTIAL_STORE: "file" },
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
+        await NodeFSP.writeFile(authPath, "invalid json");
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-cursor-invalid-login", home, settings }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
+      assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -233,10 +273,7 @@ describe("UsageService", () => {
         const summary = yield* service.readSummary(WINDOW);
         assert.strictEqual(summary.buckets[0]?.provider, "opencode");
         assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
-        assert.strictEqual(
-          summary.sources.find((source) => source.fingerprint.provider === "cursor")?.status,
-          "missing",
-        );
+        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
         assert.strictEqual(
           summary.buckets[0]?.sourcePath,
           yield* Effect.promise(() => NodeFSP.realpath(root)),
@@ -246,10 +283,6 @@ describe("UsageService", () => {
           summary.sources.find((source) => source.fingerprint.provider === "opencode")
             ?.distinctSessions,
           1,
-        );
-        assert.include(
-          summary.sources.find((source) => source.fingerprint.provider === "cursor")?.message ?? "",
-          "Cursor account history needs a Cursor CLI login",
         );
       }).pipe(Effect.scoped),
   );

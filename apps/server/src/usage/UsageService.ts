@@ -635,6 +635,8 @@ export const make = Effect.gen(function* () {
             cursorUntilMs,
           ),
         );
+    // No saved login means there is no account source to report, not a setup error.
+    if (account.missing && account.error === null) return scanned;
     if (account.accountKey !== null && account.error === null && !account.missing) {
       // The same account includes CLI and desktop history from every machine.
       // A stable remote fingerprint prevents connected environments counting it twice.
