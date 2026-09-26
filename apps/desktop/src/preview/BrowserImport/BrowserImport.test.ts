@@ -78,7 +78,7 @@ const withImporter = Effect.fnUntraced(function* () {
   return { importer, home, root };
 });
 
-describe("BrowserImport.importCookies", () => {
+describe("BrowserImport", () => {
   it.effect("rejects a source profile the browser never reported", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -107,28 +107,24 @@ describe("BrowserImport.importCookies", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "refuses to import while the source browser holds its profile",
+    "lists Chromium profiles while the source browser is running",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const { importer, root } = yield* withImporter();
         // The lock Chromium leaves while it is running, dangling target and
-        // all. This must stop the import before it ever asks the keychain.
+        // all. SQLite snapshots the live database consistently, so the source
+        // and its profiles remain available without asking the user to quit.
         yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
 
-        const error = yield* importer
-          .importCookies({
-            input: {
-              sourceId: "helium",
-              sourceProfileDirectory: "Default",
-              targetProfileId: "default",
-            },
-            scope: "persist:t3code-preview-test",
-            persistent: true,
-          })
-          .pipe(Effect.flip);
+        const sources = yield* importer.listSources;
+        const source = sources.find((candidate) => candidate.id === "helium");
 
-        assert.equal(error.reason, "browserRunning");
+        assert.deepEqual(source, {
+          id: "helium",
+          name: "Helium",
+          profiles: [{ directory: "Default", name: "Default" }],
+        });
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
