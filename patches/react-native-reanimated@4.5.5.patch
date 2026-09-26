@@ -67,3 +67,25 @@ index f9711f4eb6185ea99e08280ff90edd45e4152e12..ca812666ca54ec55d9d4409910b21ae9
        continue;
      }
  
+diff --git a/android/src/main/java/com/swmansion/reanimated/NodesManager.kt b/android/src/main/java/com/swmansion/reanimated/NodesManager.kt
+--- a/android/src/main/java/com/swmansion/reanimated/NodesManager.kt
++++ b/android/src/main/java/com/swmansion/reanimated/NodesManager.kt
+@@ -207,2 +207,8 @@
+             if (UiThreadUtil.isOnUiThread()) {
++                // SVG layout events can arrive during drawing. Do not flush unrelated updates
++                // unless an animation handler is registered for this event.
++                val eventName = mCustomEventNamesResolver.resolveCustomEventName(event.eventName) ?: return
++                if (!mNativeProxy!!.isAnyHandlerWaitingForEvent(eventName, event.viewTag)) {
++                    return
++                }
+                 // Ensure draw-pass tracking is attached before event handling; the backend reads
+diff --git a/Common/cpp/reanimated/Events/UIEventHandlerRegistry.cpp b/Common/cpp/reanimated/Events/UIEventHandlerRegistry.cpp
+--- a/Common/cpp/reanimated/Events/UIEventHandlerRegistry.cpp
++++ b/Common/cpp/reanimated/Events/UIEventHandlerRegistry.cpp
+@@ -89,2 +89,6 @@
+   const std::lock_guard<std::mutex> lock(instanceMutex);
++  auto handlersWithoutTag = eventMappingsWithoutTag.find(eventName);
++  if (handlersWithoutTag != eventMappingsWithoutTag.end() && !handlersWithoutTag->second.empty()) {
++    return true;
++  }
+   const auto eventHash = std::make_pair(emitterReactTag, eventName);
