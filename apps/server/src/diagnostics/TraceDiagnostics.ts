@@ -164,23 +164,42 @@ function isNotFoundError(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "NotFound";
 }
 
-function insertBoundedSlowestSpan(
-  slowestSpans: ServerTraceDiagnosticsSpanOccurrence[],
-  span: ServerTraceDiagnosticsSpanOccurrence,
+/**
+ * Adds `item` to `items`, which stays sorted by `order` and holds at most
+ * `limit` entries. Same result as a stable sort and slice over every item, but
+ * memory stays bounded however many items stream in.
+ */
+function insertBounded<A>(
+  items: A[],
+  item: A,
+  limit: number,
+  order: (left: A, right: A) => number,
 ): void {
-  if (
-    slowestSpans.length >= TOP_LIMIT &&
-    span.durationMs <= slowestSpans[slowestSpans.length - 1]!.durationMs
-  ) {
+  if (items.length >= limit && order(item, items[items.length - 1]!) >= 0) {
     return;
   }
 
-  slowestSpans.push(span);
-  slowestSpans.sort((left, right) => right.durationMs - left.durationMs);
-  if (slowestSpans.length > TOP_LIMIT) {
-    slowestSpans.length = TOP_LIMIT;
+  items.push(item);
+  items.sort(order);
+  if (items.length > limit) {
+    items.length = limit;
   }
 }
+
+const slowestFirst = (
+  left: ServerTraceDiagnosticsSpanOccurrence,
+  right: ServerTraceDiagnosticsSpanOccurrence,
+) => right.durationMs - left.durationMs;
+
+const latestEndedFirst = (
+  left: ServerTraceDiagnosticsRecentFailure,
+  right: ServerTraceDiagnosticsRecentFailure,
+) => DateTime.toEpochMillis(right.endedAt) - DateTime.toEpochMillis(left.endedAt);
+
+const latestSeenFirst = (
+  left: ServerTraceDiagnosticsLogEvent,
+  right: ServerTraceDiagnosticsLogEvent,
+) => DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt);
 
 /**
  * Folds trace NDJSON into diagnostics. Call `addLine` once per line as the
@@ -265,11 +284,11 @@ export function makeTraceDiagnosticsAggregator(
     if (durationMs >= slowSpanThresholdMs) {
       slowSpanCount += 1;
     }
-    insertBoundedSlowestSpan(slowestSpans, spanItem);
+    insertBounded(slowestSpans, spanItem, TOP_LIMIT, slowestFirst);
 
     if (isFailure) {
       const cause = readExitCause(parsed.exit);
-      latestFailures.push({ ...spanItem, cause });
+      insertBounded(latestFailures, { ...spanItem, cause }, RECENT_LIMIT, latestEndedFirst);
 
       const failureKey = `${name}\0${cause}`;
       const existing = failuresByKey.get(failureKey);
@@ -304,14 +323,12 @@ export function makeTraceDiagnosticsAggregator(
 
         const seenAt = unixNanoToDateTime(rawEvent.timeUnixNano) ?? endedAt;
         const message = toStringValue(rawEvent.name)?.trim() ?? "Log event";
-        latestWarningAndErrorLogs.push({
-          spanName: name,
-          level,
-          message,
-          seenAt,
-          traceId,
-          spanId,
-        });
+        insertBounded(
+          latestWarningAndErrorLogs,
+          { spanName: name, level, message, seenAt, traceId, spanId },
+          RECENT_LIMIT,
+          latestSeenFirst,
+        );
       }
     }
   };
@@ -359,18 +376,8 @@ export function makeTraceDiagnosticsAggregator(
             DateTime.toEpochMillis(right.lastSeenAt) - DateTime.toEpochMillis(left.lastSeenAt),
         )
         .slice(0, TOP_LIMIT),
-      latestFailures: latestFailures
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.endedAt) - DateTime.toEpochMillis(left.endedAt),
-        )
-        .slice(0, RECENT_LIMIT),
-      latestWarningAndErrorLogs: latestWarningAndErrorLogs
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt),
-        )
-        .slice(0, RECENT_LIMIT),
+      latestFailures,
+      latestWarningAndErrorLogs,
       partialFailure: input.partialFailure ? Option.some(true) : Option.none(),
       error: Option.fromNullishOr(input.error),
     };
@@ -418,7 +425,6 @@ export const make = Effect.gen(function* () {
       const slowSpanThresholdMs = options.slowSpanThresholdMs ?? DEFAULT_SLOW_SPAN_THRESHOLD_MS;
       const paths = toRotatedTracePaths(options.traceFilePath, options.maxFiles);
       const aggregator = makeTraceDiagnosticsAggregator(slowSpanThresholdMs);
-      // One aggregator reads every file, so keep them in order, oldest first.
       const results = yield* Effect.forEach(
         paths,
         (path) =>
@@ -434,9 +440,8 @@ export const make = Effect.gen(function* () {
             ),
             Effect.result,
           ),
-        {
-          concurrency: 1,
-        },
+        // Every file feeds one aggregator, so read them one at a time, oldest first.
+        { concurrency: 1 },
       );
       const foundFile = results.some((result) => Result.isSuccess(result) && result.success);
       const readFailure = results.find(Result.isFailure);

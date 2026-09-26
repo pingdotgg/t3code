@@ -310,25 +310,43 @@ describe("TraceDiagnostics", () => {
     }),
   );
 
-  it.effect("keeps only the slowest span occurrences while aggregating large inputs", () =>
+  it.effect("keeps only the top spans, failures, and warning logs from large inputs", () =>
     Effect.sync(() => {
+      // Shuffled, so some older records arrive after the lists are full.
+      const indexes = Array.from({ length: 30 }, (_, step) => (step * 7) % 30);
       const diagnostics = aggregateLines(
-        Array.from({ length: 25 }, (_, index) =>
+        indexes.map((index) =>
           record({
             name: `span-${index}`,
             traceId: `trace-${index}`,
             spanId: `span-${index}`,
             startMs: index * 1_000,
             durationMs: index,
+            exit: { _tag: "Failure", cause: "Provider crashed" },
+            events: [
+              {
+                name: `warning ${index}`,
+                timeUnixNano: ns(index * 1_000),
+                attributes: { "effect.logLevel": "Warning" },
+              },
+            ],
           }),
         ),
       );
+      const newestTwenty = Array.from({ length: 20 }, (_, rank) => `trace-${29 - rank}`);
 
-      assert.equal(diagnostics.recordCount, 25);
-      assert.equal(diagnostics.slowestSpans.length, 10);
+      assert.equal(diagnostics.recordCount, 30);
       assert.deepStrictEqual(
         diagnostics.slowestSpans.map((span) => span.durationMs),
-        [24, 23, 22, 21, 20, 19, 18, 17, 16, 15],
+        [29, 28, 27, 26, 25, 24, 23, 22, 21, 20],
+      );
+      assert.deepStrictEqual(
+        diagnostics.latestFailures.map((failure) => failure.traceId),
+        newestTwenty,
+      );
+      assert.deepStrictEqual(
+        diagnostics.latestWarningAndErrorLogs.map((log) => log.traceId),
+        newestTwenty,
       );
     }),
   );
