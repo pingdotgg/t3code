@@ -1252,6 +1252,55 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
   );
 });
 
+const piDriver = ProviderDriverKind.make("pi");
+const piInstanceId = ProviderInstanceId.make("pi");
+const pi = makeFakeCodexAdapter(piDriver);
+const piRouting = makeProviderServiceLayer({
+  registry: makeStaticInstanceRegistry([[piInstanceId, pi.adapter]]),
+});
+piRouting.layer("ProviderServiceLive Pi", (it) => {
+  it.effect("persists the rollback boundary Pi records when a turn settles", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-pi-turn-boundary");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: piInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      // Pi reads a turn's first user entry only after the turn settles, so
+      // sendTurn cannot carry it and a later crash must not lose it.
+      const cursor = {
+        schemaVersion: 1,
+        sessionFile: "/pi/sessions/thread.jsonl",
+        turnEntryIds: ["user-1"],
+      };
+      pi.updateSession(threadId, (session) => ({ ...session, resumeCursor: cursor }));
+      const completed = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-pi-turn-settled"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      pi.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-pi-turn-settled"),
+        provider: piDriver,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("pi-turn"),
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(completed);
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(binding));
+      assert.deepEqual(binding.value.resumeCursor, cursor);
+    }),
+  );
+});
+
 const unsupportedRollback = makeProviderServiceLayer({ supportsConversationRollback: false });
 unsupportedRollback.layer("ProviderServiceLive unsupported rewind", (it) => {
   it.effect("rejects rewind without starting or changing the provider conversation", () =>
