@@ -25,9 +25,9 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
 to you for approval.
 
-Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. For
-Grok, **Always allow this session** remembers the matching command or tool input. Other actions
-still require approval.
+Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Grok
+file-change approvals offer **Allow all edits this session**. Its command approvals have no
+session-wide choice, because Grok would remember that command for the whole project.
 
 ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).

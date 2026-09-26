@@ -1165,12 +1165,16 @@ export function makeCursorAdapterV2(
         const emitToolArtifacts = Effect.fnUntraced(function* (input: {
           readonly active: ActiveCursorToolCall;
           readonly completed: boolean;
+          /** Terminal status for a tool the turn ended before Cursor completed it. */
+          readonly unfinishedStatus?: "interrupted" | "failed" | "cancelled";
         }) {
           const { active } = input;
           const toolCall = active.toolCall;
           const now = yield* DateTime.now;
           const failed = input.completed && cursorToolFailed(toolCall);
-          const status = input.completed ? (failed ? "failed" : "completed") : "running";
+          const status = !input.completed
+            ? "running"
+            : (input.unfinishedStatus ?? (failed ? "failed" : "completed"));
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CURSOR_PROVIDER,
             nativeItemId: active.callId,
@@ -1968,8 +1972,14 @@ export function makeCursorAdapterV2(
           }
           input.context.finalized = true;
           const completedAt = yield* DateTime.now;
+          // Tools still here never got a tool-call-completed. A stopped or
+          // failed turn cut them short, so they end with the turn's status.
           for (const tool of input.context.tools.values()) {
-            yield* emitToolArtifacts({ active: tool, completed: true });
+            yield* emitToolArtifacts({
+              active: tool,
+              completed: true,
+              ...(input.status === "completed" ? {} : { unfinishedStatus: input.status }),
+            });
           }
           input.context.tools.clear();
           // This interaction stops delivering updates at finalization. Tasks

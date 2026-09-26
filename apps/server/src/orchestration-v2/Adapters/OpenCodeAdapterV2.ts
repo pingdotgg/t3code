@@ -3117,15 +3117,13 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   providerThread: threadInput.existingProviderThread,
                 });
               }
+              // No title: OpenCode generates one from the first prompt only when
+              // session.create leaves it unset (SessionPrompt.ensureTitle).
               const response = yield* sdkCall(
                 "session.create",
-                {
-                  title: `T3 Code ${threadInput.threadId}`,
-                  permission: openCodePermissionRules(threadInput.runtimePolicy),
-                },
+                { permission: openCodePermissionRules(threadInput.runtimePolicy) },
                 () =>
                   client.session.create({
-                    title: `T3 Code ${threadInput.threadId}`,
                     permission: openCodePermissionRules(threadInput.runtimePolicy),
                   }),
               );

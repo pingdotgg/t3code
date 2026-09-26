@@ -128,12 +128,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         data-composer-context-control
         onContextMenu={handleWorkspaceContextMenu}
       >
-        {forceNewWorktree ? (
-          <FolderGit2Icon
+        {activeWorktreePath ? (
+          <FolderGitIcon
             className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
           />
-        ) : activeWorktreePath ? (
-          <FolderGitIcon
+        ) : effectiveEnvMode === "worktree" ? (
+          <FolderGit2Icon
             className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
           />
         ) : (
@@ -144,7 +144,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         <ComposerContextLabel displayMode={displayMode}>
           {forceNewWorktree
             ? resolveEnvModeLabel("worktree")
-            : (workspaceDisplayName ?? resolveLockedWorkspaceLabel(activeWorktreePath))}
+            : (workspaceDisplayName ??
+              resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode))}
         </ComposerContextLabel>
         {displayMode === "panel" ? (
           <span className="shrink-0 text-3xs font-normal text-muted-foreground/70">
@@ -160,7 +161,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
           {forceNewWorktree
             ? "Each model starts in its own worktree."
-            : (workspacePath ?? resolveLockedWorkspaceLabel(activeWorktreePath))}
+            : (workspacePath ?? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode))}
         </TooltipPopup>
       </Tooltip>
     );

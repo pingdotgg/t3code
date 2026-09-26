@@ -85,6 +85,15 @@ export function assertToolCallReadOnlyOnRequestGrokOutput(
     return frame.method === "session/request_permission" ? [frame.params?.toolCall?.kind] : [];
   });
   assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
+
+  // Grok's edit prompt is the one whose "always" answer lasts only the session.
+  const approval = projectionFor(result, transcript.scenario).turnItems.find(
+    (item) => item.type === "approval_request",
+  );
+  assert.deepEqual(
+    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
+    ["cancel", "decline", "acceptForSession", "accept"],
+  );
 }
 
 function writtenContent(item: OrchestrationV2TurnItem): string | undefined {

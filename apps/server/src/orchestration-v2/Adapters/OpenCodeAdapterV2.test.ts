@@ -1944,6 +1944,7 @@ describe("OpenCodeAdapterV2", () => {
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
       let createCount = 0;
+      const createInputs: Array<unknown> = [];
       const fakeClient = {
         event: {
           subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
@@ -1961,8 +1962,9 @@ describe("OpenCodeAdapterV2", () => {
           }),
         },
         session: {
-          create: async () => {
+          create: async (input: unknown) => {
             createCount += 1;
+            createInputs.push(input);
             return { data: { id: `ses_native_${createCount}`, time: { created: 1, updated: 1 } } };
           },
         },
@@ -2038,6 +2040,11 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.notEqual(minted.id, placeholder.id);
       assert.equal(minted.nativeThreadRef?.nativeId, "ses_native_2");
+      // OpenCode names a session from its first prompt only when create
+      // leaves the title unset, so the adapter never sends one.
+      for (const input of createInputs) {
+        assert.notProperty(input, "title");
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(

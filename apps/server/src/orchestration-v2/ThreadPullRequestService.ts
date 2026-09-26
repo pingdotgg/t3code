@@ -67,8 +67,13 @@ export const resolveProjectForPullRequestDiscovery = Effect.fn(
 )(function* (
   project: OrchestrationProjectShell,
   repositoryIdentities: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+  options?: { readonly refresh?: boolean },
 ) {
-  const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot);
+  // Identities stay cached for 15 minutes. A finished turn may have added the
+  // remote its pull request lives on, so post-turn discovery refreshes.
+  const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
+    refresh: options?.refresh ?? false,
+  });
   return {
     project: { ...project, repositoryIdentity },
     repository: sourceControlRepositorySelector(repositoryIdentity),
@@ -114,11 +119,31 @@ export const make = Effect.gen(function* () {
     }
   };
 
+  /**
+   * A sweep for one thread reads only that thread's shell, not every thread's.
+   * Finished runs and checkpoints queue one of these each. A sweep over all
+   * threads reads only active, unsettled ones, since discovery skips the rest;
+   * backfill looks up settled threads, so its passes read every active thread.
+   */
+  const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
+    threadId === null
+      ? orchestrator.getShellSnapshot({
+          location: "active",
+          unsettledOnly: !(backfill || pendingBackfill.size > 0),
+        })
+      : Effect.gen(function* () {
+          // Read the sequence first. The thread is then at least this new, so a
+          // sync guarded by the sequence is rejected rather than missing a change.
+          const snapshotSequence = yield* orchestrator.getThreadEventSequence(threadId);
+          const thread = yield* orchestrator.getThreadShell(threadId);
+          return { snapshotSequence, threads: thread === null ? [] : [thread] };
+        });
+
   const synchronize = Effect.fn("ThreadPullRequestServiceV2.synchronize")(function* (
     request: RefreshRequest,
   ) {
     const [threadSnapshot, projectShells] = yield* Effect.all([
-      orchestrator.getShellSnapshot(),
+      readThreadSnapshot(request),
       snapshots.getProjectShellsWithoutEnrichment(),
     ]);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
@@ -132,14 +157,19 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    const visibleThreadIds = new Set(threadSnapshot.threads.map((thread) => thread.id));
-    for (const threadId of pendingBackfill.keys()) {
+    // A single-thread read only shows whether its own thread is gone. A thread
+    // with no branch has nothing to look up, and its entry would keep every
+    // periodic pass on the full read.
+    const visibleThreadIds = new Set(
+      threadSnapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
+    );
+    const checkedIds = request.threadId === null ? [...pendingBackfill.keys()] : [request.threadId];
+    for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
     const threads = threadSnapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
-        (request.threadId === null || thread.id === request.threadId) &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
           pendingBackfill.has(thread.id)) &&
@@ -157,7 +187,9 @@ export const make = Effect.gen(function* () {
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
           const { project: resolvedProject, repository } =
-            yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities);
+            yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
+              refresh: request.refresh,
+            });
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
             first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
