@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -164,9 +165,6 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       ...overrides,
     });
 }
-
-const noClaudeCapabilities = () =>
-  Effect.sync(() => undefined as TestClaudeCapabilities | undefined);
 
 function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -3039,30 +3037,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         );
       });
 
-      it.effect("returns warning when the Claude initialization result is unavailable", () =>
+      it.effect("says why the capability probe failed instead of reporting an auth problem", () =>
         Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            noClaudeCapabilities,
+          const timedOut = yield* checkClaudeProviderStatus(defaultClaudeSettings, () =>
+            Effect.fail(new Cause.TimeoutError()),
           );
-          assert.strictEqual(status.status, "warning");
-          assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(timedOut.status, "warning");
+          assert.strictEqual(timedOut.installed, true);
+          assert.strictEqual(timedOut.auth.status, "unknown");
           assert.strictEqual(
-            status.message,
-            "Could not verify Claude authentication status from initialization result.",
+            timedOut.message,
+            "Timed out after 25s while checking Claude account status.",
+          );
+
+          const failed = yield* checkClaudeProviderStatus(defaultClaudeSettings, () =>
+            Effect.fail(
+              new Cause.UnknownError(new Error("Claude Code process exited with code 1")),
+            ),
+          );
+          assert.strictEqual(failed.status, "warning");
+          assert.strictEqual(failed.auth.status, "unknown");
+          assert.strictEqual(
+            failed.message,
+            "Claude Agent CLI failed while checking account status.",
           );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":false}\n',
-                  stderr: "",
-                  code: 1,
-                };
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),
