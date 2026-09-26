@@ -1869,7 +1869,7 @@ const makeWsRpcLayer = (
 
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatus(cwd, { automaticRemoteRefreshInterval: automaticGitFetchInterval })
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
@@ -3296,7 +3296,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            vcsStatusBroadcaster.refreshStatus(input.cwd, {
+              automaticRemoteRefreshInterval: automaticGitFetchInterval,
+            }),
             {
               "rpc.aggregate": "vcs",
             },
