@@ -2,6 +2,8 @@ import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
   resolveSidebarDropTarget,
+  isSidebarProjectHeaderItem,
+  isSidebarProjectMoreItem,
   sidebarListItemId,
   sidebarMarkerId,
   type SidebarListItem,
@@ -135,6 +137,7 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
+      if (item.kind !== "thread") continue;
       if (item.section === "pinned" || item.section === "active")
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;
@@ -172,12 +175,36 @@ export function createSidebarSortingStrategy(input: {
     groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
     const projected: SidebarListItem[] = [];
     const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
+    const projectSection = (section: "pinned" | "active"): SidebarListItem[] => {
+      const headers = items
+        .filter(isSidebarProjectHeaderItem)
+        .filter((header) => header.section === section);
+      const result: SidebarListItem[] = [];
+      const seen = new Set<string>();
+      for (const header of headers) {
+        const projectItems = groups[section].filter(
+          (item) => item.projectKey === header.projectKey,
+        );
+        if (projectItems.length === 0) continue;
+        seen.add(header.projectKey);
+        result.push(header);
+        result.push(...projectItems);
+        const more = items
+          .filter(isSidebarProjectMoreItem)
+          .find((item) => item.section === section && item.projectKey === header.projectKey);
+        if (more) result.push(more);
+      }
+      result.push(...groups[section].filter((item) => item.projectKey === undefined));
+      result.push(...groups[section].filter((item) => !seen.has(item.projectKey ?? "")));
+      return result;
+    };
     const section = (name: "active" | "settled") => {
-      if (groups[name].length > 0) projected.push(...groups[name]);
+      const rows = name === "active" ? projectSection(name) : groups[name];
+      if (rows.length > 0) projected.push(...rows);
       else marker(`${name}-placeholder`);
     };
     marker("pinned-header");
-    projected.push(...groups.pinned);
+    projected.push(...projectSection("pinned"));
     marker("pinned-divider");
     section("active");
     if (
@@ -196,7 +223,9 @@ export function createSidebarSortingStrategy(input: {
       const fallback =
         item.kind === "thread" && (item.section === "pinned" || item.section === "active")
           ? cardHeight
-          : slimHeight;
+          : isSidebarProjectHeaderItem(item) || isSidebarProjectMoreItem(item)
+            ? cardHeight
+            : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
       return item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")

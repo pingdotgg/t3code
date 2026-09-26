@@ -40,6 +40,8 @@ export interface ThreadActionMenuState {
     readonly label: string;
     /** True when the list is already scoped to this thread's project. */
     readonly isActive: boolean;
+    /** Number of selected projects; absent on older callers without multi-select. */
+    readonly selectedProjectCount?: number;
   } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
@@ -132,8 +134,12 @@ export function buildThreadActionMenuItems(
           {
             id: "filter-by-project" as const,
             label: state.projectFilter.isActive
-              ? "Show all projects"
-              : `Filter by ${state.projectFilter.label}`,
+              ? (state.projectFilter.selectedProjectCount ?? 1) > 1
+                ? `Remove ${state.projectFilter.label} from project filter`
+                : "Show all projects"
+              : (state.projectFilter.selectedProjectCount ?? 0) > 0
+                ? `Add ${state.projectFilter.label} to project filter`
+                : `Filter by ${state.projectFilter.label}`,
             icon: "folder-tree",
           },
         ]
