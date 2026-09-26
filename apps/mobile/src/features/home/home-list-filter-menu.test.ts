@@ -37,3 +37,31 @@ describe("buildHomeListFilterMenu", () => {
     expect(onProjectChange).toHaveBeenNthCalledWith(2, "environment-1:project-2");
   });
 });
+
+describe("buildHomeListFilterMenu clear action", () => {
+  it("offers a trailing Clear filters group only while a scope is active", () => {
+    const onEnvironmentChange = vi.fn();
+    const onProjectChange = vi.fn();
+    const build = (selectedProjectKey: string | null) =>
+      buildHomeListFilterMenu({
+        environments: [],
+        projects: [{ key: "p", label: "P" }],
+        selectedEnvironmentId: null,
+        selectedProjectKey,
+        onEnvironmentChange,
+        onProjectChange,
+      });
+
+    expect(build(null).items.at(-1)).toMatchObject({ type: "submenu", title: "Project" });
+    const group = build("p").items.at(-1);
+    expect(group).toMatchObject({
+      type: "submenu",
+      displayInline: true,
+      items: [{ type: "action", title: "Clear filters" }],
+    });
+    if (group?.type !== "submenu") throw new Error("Expected inline group");
+    group.items[0]?.onPress();
+    expect(onEnvironmentChange).toHaveBeenCalledWith(null);
+    expect(onProjectChange).toHaveBeenCalledWith(null);
+  });
+});

@@ -2,6 +2,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useMemo } from "react";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
+import { hasActiveHomeListFilters } from "./home-list-filter-menu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
@@ -14,8 +15,7 @@ export function HomeHeader(props: HomeHeaderProps) {
   // The list uses a fixed creation order and ignores sort/group options, so
   // the filter menu only carries the filters and the "customized" icon state
   // keys off those alone.
-  const hasCustomListOptions =
-    props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
+  const hasCustomListOptions = hasActiveHomeListFilters(props);
   const menuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -54,12 +54,27 @@ export function HomeHeader(props: HomeHeaderProps) {
               ],
             },
           ] satisfies MenuAction[])),
+      ...(hasCustomListOptions
+        ? [{ id: "clear-filters", title: "Clear filters" } satisfies MenuAction]
+        : []),
     ],
-    [props.environments, props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+    [
+      hasCustomListOptions,
+      props.environments,
+      props.projects,
+      props.selectedEnvironmentId,
+      props.selectedProjectKey,
+    ],
   );
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       const id = event.nativeEvent.event;
+      if (id === "clear-filters") {
+        props.onEnvironmentChange(null);
+        props.onProjectChange(null);
+        return;
+      }
+
       if (id === "environment:all") {
         props.onEnvironmentChange(null);
         return;

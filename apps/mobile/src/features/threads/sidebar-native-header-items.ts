@@ -26,6 +26,7 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
       : {
           type: "submenu" as const,
           label: item.title,
+          inline: item.displayInline,
           items: toNativeHeaderMenuItems(item.items),
         },
   );

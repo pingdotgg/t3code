@@ -8,7 +8,7 @@ import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
-import { buildHomeListFilterMenu } from "./home-list-filter-menu";
+import { buildHomeListFilterMenu, hasActiveHomeListFilters } from "./home-list-filter-menu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
@@ -19,8 +19,7 @@ export function HomeHeader(props: HomeHeaderProps) {
   // The list uses a fixed creation order and ignores sort/group options, so
   // the filter menu only carries the filters and the "customized" icon state
   // keys off those alone.
-  const hasCustomListOptions =
-    props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
+  const hasCustomListOptions = hasActiveHomeListFilters(props);
   const focusSearch = useCallback(() => {
     searchBarRef.current?.focus();
     return searchBarRef.current !== null;
@@ -137,6 +136,20 @@ export function HomeHeader(props: HomeHeaderProps) {
                     <NativeHeaderToolbar.Label>{project.label}</NativeHeaderToolbar.Label>
                   </NativeHeaderToolbar.MenuAction>
                 ))}
+              </NativeHeaderToolbar.Menu>
+            ) : null}
+
+            {hasCustomListOptions ? (
+              <NativeHeaderToolbar.Menu inline>
+                <NativeHeaderToolbar.MenuAction
+                  onPress={() => {
+                    props.onEnvironmentChange(null);
+                    props.onProjectChange(null);
+                  }}
+                  subtitle="Show all environments and projects"
+                >
+                  <NativeHeaderToolbar.Label>Clear filters</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
               </NativeHeaderToolbar.Menu>
             ) : null}
           </NativeHeaderToolbar.Menu>
