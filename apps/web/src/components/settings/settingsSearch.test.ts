@@ -102,11 +102,12 @@ describe("searchSettings", () => {
     expect(searchSettings("administrative access")[0]?.id).toBe("connections-environment");
   });
 
-  it("lists thread confirmations in panel order", () => {
+  it("lists confirmations in panel order", () => {
     expect(searchSettings("confirmation").map((item) => item.id)).toEqual([
       "unpin-confirmation",
       "archive-confirmation",
       "delete-confirmation",
+      "terminal-close-confirmation",
     ]);
   });
 

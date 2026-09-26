@@ -685,6 +685,10 @@ function shouldRedirectInputToComposer(event: Event): boolean {
   return true;
 }
 
+/**
+ * Determines whether an unhandled single-character keypress should redirect
+ * focus to the thread composer, skipping shortcuts owned by active surfaces.
+ */
 function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.isComposing) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
@@ -697,7 +701,15 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   const launcherKeys = document
     .querySelector("[data-surface-launcher-keys]")
     ?.getAttribute("data-surface-launcher-keys");
-  if (launcherKeys && launcherKeys.toLowerCase().includes(event.key.toLowerCase())) return false;
+  if (launcherKeys) {
+    const layoutKey = event.key.toLowerCase();
+    const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1]?.toLowerCase();
+    const normalizedKeys = launcherKeys.toLowerCase();
+    if (normalizedKeys.includes(layoutKey)) return false;
+    if (letterCode && !/^[a-z]$/.test(layoutKey) && normalizedKeys.includes(letterCode)) {
+      return false;
+    }
+  }
 
   return true;
 }
@@ -10421,6 +10433,7 @@ export default function ChatView(props: ChatViewProps) {
         >
           <RightPanelTabs
             mode="sheet"
+            open={rightPanelOpen}
             // Same effective inset as the closed-state titlebar controls
             // (pr-3 in the tab bar plus this pixel equals the absolute
             // right inset plus mr-px), so the cluster does not creep when
