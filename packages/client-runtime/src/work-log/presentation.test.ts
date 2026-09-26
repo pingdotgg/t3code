@@ -86,6 +86,58 @@ describe("workEntryIndicatesToolFailure", () => {
     ).toBe(false);
   });
 
+  it.each([
+    "FILE NOT FOUND",
+    "No files found",
+    "ENOENT",
+    "No such file or directory",
+    "No such file",
+    "CommandNotFoundException",
+    "Command not found",
+    "Cannot find path 'example'\nbecause it does not exist",
+    "The term 'example'\nis not recognized",
+    "Is not recognized as the name of a cmdlet",
+    "A parameter cannot be found that matches parameter name",
+    "<exited with exit code 12>",
+    "Exited with exit code\t2",
+    "Exit with exit code 1",
+    "Exit code: 9",
+    "Exit code\n3",
+  ])("detects an error after a long successful output: %s", (error) => {
+    const entry = {
+      ...base,
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed",
+      detail: `${"Synthetic successful output.\n".repeat(512)}${error}`,
+    };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(true);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(true);
+  });
+
+  it.each([
+    "Cannot find path",
+    "Because it does not exist",
+    "Is not recognized",
+    "The term 'example'",
+    "<exited with exit code 0>",
+    "Exit code: 0",
+    "Exit code: -1",
+    "Exit code: 12things",
+  ])("keeps incomplete or non-failure markers successful: %s", (detail) => {
+    expect(workEntryIndicatesToolFailure({ ...base, tone: "tool", detail })).toBe(false);
+  });
+
+  it("matches paired failure phrases across legacy detail and command fields", () => {
+    const entry = {
+      ...base,
+      tone: "tool" as const,
+      detail: "Cannot find path 'example'",
+      command: "Because it does not exist",
+    };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(true);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+  });
+
   it("does not treat error text in a command as rendered failure", () => {
     const entry = {
       label: "Ran command",
