@@ -30,8 +30,8 @@ function initialConfigOption<E>(
   );
 }
 
-// Bounded like the snapshot fetches: a wedged environment must not pin the
-// permissions check (and with it the settings UI) in a loading state for long.
+// Bounded so a wedged environment cannot pin the permissions check (and with it
+// the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 
 /**

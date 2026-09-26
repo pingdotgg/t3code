@@ -12,9 +12,13 @@ import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 
-// Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
-// fallback for long. The cached shell renders while this runs.
-const DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS = 6_000;
+// Long enough for a slow but alive server to finish. On timeout the socket asks
+// the same server for the same full snapshot, so a short deadline only throws
+// the first build away. The socket fallback is for setups where /api fails but
+// /ws works, such as a proxy that blocks /api. A dead server is caught by the
+// socket ping, which drops the session and interrupts this load. The cached
+// shell renders while this runs.
+const DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS = 20_000;
 
 /**
  * Load the environment shell snapshot (projects + thread shells) over HTTP
