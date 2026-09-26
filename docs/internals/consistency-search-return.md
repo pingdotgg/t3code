@@ -29,9 +29,9 @@ constraint.
 
 Web and Electron share the nested command picker. React Native’s palette closes
 before presenting its destination sheet, so it has no in-palette return path;
-reopening starts fresh there. Opening file or content search from a palette action creates a bounded parent
-context: Escape returns to that command query. Launching a mode directly by its
-shortcut starts fresh. Selecting a file or otherwise closing the overlay discards
+reopening starts fresh there. On web and Electron, opening file or content search
+from a palette action creates a bounded parent context: Escape returns to that
+command query. Launching a mode directly by its shortcut starts fresh. Selecting a file or otherwise closing the overlay discards
 that return context and must not reopen the palette. Child input never replaces
 the parent query.
 
