@@ -295,6 +295,13 @@ function resolveBrowserChromeSurface(): HTMLElement {
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
+  // With a background scene active, the scene's solid canvas tint is the
+  // stable chrome color: the live surface colors are translucent glass and
+  // would hand the OS window frame a semi-transparent fill.
+  const backdropTint =
+    document.documentElement.dataset.appBackdrop === "on"
+      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-backdrop-tint"))
+      : null;
   const themeChromeColor = document.documentElement.dataset.themeId
     ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
     : null;
@@ -302,11 +309,14 @@ export function syncBrowserChromeTheme() {
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
+  const backgroundColor = backdropTint ?? themeChromeColor ?? surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;
-  document.body.style.backgroundColor = backgroundColor;
+  // With a background scene active the body must stay clear: the fixed scene
+  // layer paints beneath it, and an opaque body fill would hide the scene.
+  document.body.style.backgroundColor =
+    document.documentElement.dataset.appBackdrop === "on" ? "transparent" : backgroundColor;
   // Update every theme-color meta so any element another layer added (for
   // example a media-scoped one) carries the resolved color too.
   const themeColorMetas = document.querySelectorAll<HTMLMetaElement>(

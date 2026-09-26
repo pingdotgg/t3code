@@ -1,3 +1,5 @@
+import { getThemeDefinition, resolveThemeHalf } from "../themePalette";
+import { applyThemeBackground, resolveThemeBackgroundUrl } from "../themeBackground";
 import { usePreviewedLayoutSetting } from "../hooks/useInterfaceLayout";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -58,7 +60,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { syncBrowserChromeTheme, useTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -177,6 +179,7 @@ function RootRouteView() {
           <ContrastAppearanceSync />
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
+          <ThemeBackgroundSync />
           <FontAppearanceSync />
           <CustomSnoozeDialogHost />
           <CommandPalette>
@@ -217,6 +220,7 @@ function RootRouteView() {
         <ContrastAppearanceSync />
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
+        <ThemeBackgroundSync />
         <FontAppearanceSync />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
@@ -293,6 +297,40 @@ function GlassAppearanceSync() {
       style.removeProperty("--glass-blur");
     }
   }, [glassOpacity]);
+
+  return null;
+}
+
+/**
+ * Keep the scene layer in step with the backdrop setting and the active
+ * theme. Runs after the useTheme effect inside this component has applied
+ * the palette, so the solid tints captured below reflect the current theme.
+ */
+function ThemeBackgroundSync() {
+  const themeBackground = useClientSettings((settings) => settings.themeBackground);
+  const themeBackgroundTransparency = useClientSettings(
+    (settings) => settings.themeBackgroundTransparency,
+  );
+  const { theme, resolvedTheme, themeHalves } = useTheme();
+
+  useEffect(() => {
+    const definition = getThemeDefinition(resolveThemeHalf(theme, themeHalves, resolvedTheme));
+    applyThemeBackground(
+      resolveThemeBackgroundUrl(themeBackground, definition?.id ?? null),
+      definition,
+      resolvedTheme,
+    );
+    // The OS window frame and theme-color meta follow the scene tint while a
+    // scene is on and the theme surface once it is off.
+    syncBrowserChromeTheme();
+  }, [themeBackground, theme, resolvedTheme, themeHalves]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--backdrop-transparency",
+      `${themeBackgroundTransparency}%`,
+    );
+  }, [themeBackgroundTransparency]);
 
   return null;
 }

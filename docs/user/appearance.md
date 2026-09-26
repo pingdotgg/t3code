@@ -25,8 +25,9 @@ of the selected theme.
 
 On web and desktop, choose **Customize interface** at the bottom of the sidebar, in the command
 palette, or under **Settings → Appearance**. Pick a layout to start from: **Balanced**, **Minimal**,
-**Focus**, or **Detailed**. Hovering a layout marks what it would hide before you choose it. The same
-panel changes the theme, light or dark mode, text size, and chat width.
+**Focus**, or **Detailed**. Hover or keyboard-focus a layout to preview it on the real interface. Leaving the card or
+pressing Escape ends the preview; click to keep it. The same panel changes the theme, light or
+dark mode, background scene and transparency, text size, and chat width.
 
 To fine-tune, choose **Thread rows**, **Header**, or **Composer**. That part of the app stays lit
 while you edit it in place: drag an item to move it, or use its minus button to hide it. Hidden
@@ -37,6 +38,17 @@ arrange both layouts.
 Changes apply immediately. **Undo** (⌘Z or Ctrl+Z) steps back one change, **Revert** returns to how
 things looked when you started, and **Done** or Escape keeps your changes. The arrangement is saved
 on each device or browser. Mobile does not have this mode.
+
+## Background scenes
+
+On web and desktop, choose a **Background scene** under **Settings → Appearance** or in **Customize interface** to show a dimmed
+scenic backdrop behind the interface. **Theme scene** follows the active theme, so each built-in
+theme ships with its own matching scene, and a library of standalone scenes (Alpine, Aurora,
+Coastline, Dune, Fjord, Forest Lake, Highlands, Meadow, Nightfall, Terraces) works with any theme.
+A picked scene keeps it across theme changes.
+Scenes are off (**None**) until you pick one. **Background transparency** controls how much of the
+scene shows through the interface, from solid up to fully transparent glass. The backdrop is a
+device-local appearance preference.
 
 ## Motion
 

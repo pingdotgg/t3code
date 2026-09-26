@@ -33,6 +33,8 @@ const CUSTOMIZE_SETTING_KEYS = [
   "wordWrap",
   "appearanceContrast",
   "glassOpacity",
+  "themeBackground",
+  "themeBackgroundTransparency",
   "panelAnimationDurationMs",
   "diffColorScheme",
   "environmentIdentificationMode",

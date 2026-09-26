@@ -1,3 +1,5 @@
+import { THEME_BACKGROUND_CHOICES, THEME_BACKGROUND_LABELS } from "../../themeBackground";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { MAX_INTERFACE_FONT_SIZE, MIN_INTERFACE_FONT_SIZE } from "@t3tools/contracts";
 import {
   CheckIcon,
@@ -442,6 +444,8 @@ export function CustomizePopover({
     chatWidth: settings.chatWidth,
     contextWindowMeterEnabled: settings.contextWindowMeterEnabled,
   }));
+  const scene = useClientSettings((settings) => settings.themeBackground);
+  const transparency = useClientSettings((settings) => settings.themeBackgroundTransparency);
   const chatWidth = presetSettings.chatWidth;
   const matched = matchPreset(presetSettings);
   const historyLength = useCustomizeInterfaceStore((store) => store.history.length);
@@ -482,6 +486,60 @@ export function CustomizePopover({
         </div>
         <div className="border-t border-border/70 py-1.5">
           <ThemeSwatches />
+          <Row label="Background scene">
+            <div className="w-44">
+              <Select
+                value={scene}
+                onValueChange={(value) => {
+                  const choice = THEME_BACKGROUND_CHOICES.find((choice) => choice === value);
+                  if (choice) commit({ themeBackground: choice });
+                }}
+              >
+                <SelectTrigger aria-label="Background scene">
+                  <SelectValue>{THEME_BACKGROUND_LABELS[scene]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {THEME_BACKGROUND_CHOICES.map((choice) => (
+                    <SelectItem key={choice} value={choice}>
+                      {THEME_BACKGROUND_LABELS[choice]}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+          </Row>
+          <Row label="Transparency" htmlFor="customize-background-transparency">
+            <div className="flex w-44 items-center gap-2">
+              <input
+                id="customize-background-transparency"
+                aria-label="Background transparency"
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={transparency}
+                className="settings-slider min-w-0 flex-1"
+                style={
+                  {
+                    "--settings-slider-progress": `${transparency}%`,
+                    "--settings-slider-fill-offset": `${0.5 - transparency / 100}rem`,
+                  } as CSSProperties
+                }
+                onChange={(event) =>
+                  commit(
+                    { themeBackgroundTransparency: Number(event.currentTarget.value) },
+                    "themeBackgroundTransparency",
+                  )
+                }
+              />
+              <output
+                htmlFor="customize-background-transparency"
+                className="w-9 text-right text-xs tabular-nums text-muted-foreground"
+              >
+                {transparency}%
+              </output>
+            </div>
+          </Row>
           <TextSizeSlider />
           <Row label="Chat width">
             <Segmented
