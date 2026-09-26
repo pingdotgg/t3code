@@ -18,12 +18,19 @@ export function ThreadDetailsCard({
   handle,
   onPresentationChange,
   children,
+  editing = false,
+  contentKey = "",
 }: {
   threadRef: ScopedThreadRef;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
   onPresentationChange: (presentation: ThreadPanelPresentation) => void;
-  children: (density: "full" | "compact" | "essential") => ReactNode;
+  editing?: boolean;
+  contentKey?: string;
+  children: (
+    density: "full" | "compact" | "essential",
+    renderCard: (content: ReactNode, action?: ReactNode) => ReactNode,
+  ) => ReactNode;
 }) {
   const canvas = useChatCanvas();
   const preferredPlacement = canvas
@@ -44,7 +51,7 @@ export function ThreadDetailsCard({
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
   );
   const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
-  const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}`;
+  const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${editing}:${contentKey}`;
   const [measurements, setMeasurements] = useState({
     key: measurementKey,
     heights: { full: 0, compact: 0 },
@@ -52,7 +59,7 @@ export function ThreadDetailsCard({
   const contentHeights =
     measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
   const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
-  const density = resolveThreadDetailsCardDensity(height, contentHeights);
+  const density = editing ? "full" : resolveThreadDetailsCardDensity(height, contentHeights);
   const reportDetailsCard = canvas?.reportDetailsCard;
   const cardLeft = preferredPlacement?.x;
   const cardRight = preferredPlacement
@@ -95,18 +102,19 @@ export function ThreadDetailsCard({
     observer.observe(element);
     return () => observer.disconnect();
   }, [contentElement, density, measurementKey]);
-  const card = (
+  const renderCard = (content: ReactNode, action?: ReactNode) => (
     <div
       className={cn(
-        "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-3xl",
+        "dropdown-glass isolate contain-paint group/thread-details relative grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-3xl",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
       style={placement ? { maxHeight: height } : undefined}
       data-thread-details-card
     >
+      {action}
       <ScrollArea scrollFade className="min-h-0">
-        <div ref={setContentElement}>{children(density)}</div>
+        <div ref={setContentElement}>{content}</div>
       </ScrollArea>
     </div>
   );
@@ -132,7 +140,7 @@ export function ThreadDetailsCard({
             data-density={density}
             data-thread-details-panel="inline"
           >
-            {card}
+            {children(density, renderCard)}
           </aside>
         ) : null
       ) : (
@@ -146,8 +154,8 @@ export function ThreadDetailsCard({
           variant="panel"
           padding="none"
         >
-          <div data-density={density} data-thread-details-panel="popover">
-            {card}
+          <div className="relative" data-density={density} data-thread-details-panel="popover">
+            {children(density, renderCard)}
           </div>
         </PopoverPopup>
       )}

@@ -162,6 +162,7 @@ function relationshipThreadTitle(input: {
 }
 
 export function ThreadRelationshipsPanel(props: {
+  readonly alwaysVisible?: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
@@ -242,7 +243,7 @@ export function ThreadRelationshipsPanel(props: {
     projection?.subagents.filter((agent) => agent.status === "running").length ??
     active.filter(({ edge }) => edge.status === "running").length;
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (relationshipRows.length === 0 && runningCount === 0 && !props.alwaysVisible) {
     return null;
   }
 
@@ -314,6 +315,9 @@ export function ThreadRelationshipsPanel(props: {
         ) : null
       }
     >
+      {relationshipRows.length === 0 && runningCount === 0 ? (
+        <p className="px-2.5 py-1.5 text-2xs text-muted-foreground">No related threads.</p>
+      ) : null}
       {groups.map((group) => (
         <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
           {(visibleRows) =>

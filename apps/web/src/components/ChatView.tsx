@@ -5539,6 +5539,11 @@ export default function ChatView(props: ChatViewProps) {
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
   }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
+  const [threadPanelCustomizeRequested, setThreadPanelCustomizeRequested] = useState(false);
+  const handleThreadPanelCustomizeRequest = useCallback(
+    () => setThreadPanelCustomizeRequested(false),
+    [],
+  );
   const toggleThreadPanel = useCallback(() => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
@@ -7357,6 +7362,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "threadPanel.customize") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!threadPanelOpen) toggleThreadPanel();
+        setThreadPanelCustomizeRequested(true);
+        return;
+      }
+
       if (command === "threadPanel.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -7541,6 +7554,7 @@ export default function ChatView(props: ChatViewProps) {
     getShortcutContext,
     toggleRightPanel,
     toggleThreadPanel,
+    threadPanelOpen,
     toggleTerminalVisibility,
     composerRef,
   ]);
@@ -10298,6 +10312,8 @@ export default function ChatView(props: ChatViewProps) {
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
+    customizeRequested: threadPanelCustomizeRequested,
+    onCustomizeRequestHandled: handleThreadPanelCustomizeRequest,
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,

@@ -37,6 +37,7 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
  * Renders nothing when the thread has no bound automations.
  */
 export function ThreadAutomationsPanel(props: {
+  readonly alwaysVisible?: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
@@ -58,7 +59,7 @@ export function ThreadAutomationsPanel(props: {
   // A load error must not look like "no automations" — this thread may have
   // tasks whose controls would silently vanish. Only hide the section when we
   // positively know there is nothing bound to it.
-  if (tasksQuery.error === null && boundTasks.length === 0) return null;
+  if (tasksQuery.error === null && boundTasks.length === 0 && !props.alwaysVisible) return null;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -130,6 +131,10 @@ export function ThreadAutomationsPanel(props: {
       {tasksQuery.error !== null ? (
         <p className="px-2.5 py-1.5 text-2xs text-destructive">
           Could not load automations: {tasksQuery.error}
+        </p>
+      ) : boundTasks.length === 0 ? (
+        <p className="px-2.5 py-1.5 text-2xs text-muted-foreground">
+          {tasksQuery.data === null ? "Loading automations…" : "No automations."}
         </p>
       ) : null}
 
