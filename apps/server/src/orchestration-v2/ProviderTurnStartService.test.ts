@@ -13,19 +13,20 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  WorktreeMutationError,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
 import { ProviderAuthService } from "../provider/Services/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -35,6 +36,8 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorktreeRevivalService from "../vcs/WorktreeRevivalService.ts";
+import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -54,12 +57,7 @@ it("does not commit running state when inherited background routing cannot be re
     "checkpoint_scope_provider_turn_start_projection_failure",
   );
   const projection = {
-    thread: {
-      id: threadId,
-      projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
-      branch: "feature/restore",
-      worktreePath: "/tmp/missing-provider-turn-start-worktree",
-    },
+    thread: { id: threadId, branch: null, worktreePath: null },
     runs: [
       {
         id: runId,
@@ -85,22 +83,12 @@ it("does not commit running state when inherited background routing cannot be re
     Effect.succeed({ committed: true, storedEvents: [] } as never),
   );
   const startRootRun = vi.fn(() => Effect.void);
-  const pruneWorktrees = vi.fn(() => Effect.void);
-  const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
-        Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
-        Layer.mock(ProjectService.ProjectService)({
-          getById: () =>
-            Effect.succeed(
-              Option.some({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
-            ),
-        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () => {
             projectionReadCount += 1;
@@ -127,6 +115,7 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        Layer.mock(WorktreeRevivalService.WorktreeRevivalService)({}),
       ),
     ),
   );
@@ -138,12 +127,6 @@ it("does not commit running state when inherited background routing cannot be re
 
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(projectionReadCount).toBe(2);
-    expect(pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
-    expect(createWorktree).toHaveBeenCalledWith({
-      cwd: "/tmp/provider-turn-start-project",
-      refName: "feature/restore",
-      path: "/tmp/missing-provider-turn-start-worktree",
-    });
     expect(writeIfRunCurrent).not.toHaveBeenCalled();
     expect(startRootRun).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer), Effect.runPromise);
@@ -400,9 +383,7 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        FileSystem.layerNoop({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(WorktreeRevivalService.WorktreeRevivalService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () =>
             Effect.succeed({
@@ -643,3 +624,292 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+/**
+ * A worktree thread whose run is starting. `setGeneration` and `setRunStatus`
+ * let one layer instance observe several starts, since the per-runtime
+ * worktree generation lives in that instance.
+ */
+function makeWorktreeTurnStartFixture(input: {
+  readonly revival: "revived" | "unchanged" | "failed";
+  readonly revivalGate?: Effect.Effect<void>;
+  /** Whether `get` reports the session as already open. */
+  readonly liveSession?: boolean;
+  /** Whether the adapter shares one session across provider threads. */
+  readonly sharedSession?: boolean;
+}) {
+  const threadId = ThreadId.make(`thread_worktree_turn_start_${input.revival}`);
+  const runId = RunId.make(`run_worktree_turn_start_${input.revival}`);
+  const attemptId = RunAttemptId.make(`attempt_worktree_turn_start_${input.revival}`);
+  const rootNodeId = NodeId.make(`node_worktree_turn_start_${input.revival}`);
+  const providerThreadId = ProviderThreadId.make(
+    `provider_thread_worktree_turn_start_${input.revival}`,
+  );
+  const providerSessionId = ProviderSessionId.make(
+    `provider_session_worktree_turn_start_${input.revival}`,
+  );
+  const messageId = MessageId.make(`message_worktree_turn_start_${input.revival}`);
+  const checkpointScopeId = CheckpointScopeId.make(
+    `checkpoint_scope_worktree_turn_start_${input.revival}`,
+  );
+  const providerInstanceId = ProviderInstanceId.make(`provider_instance_${input.revival}`);
+  const order: string[] = [];
+  const providerThread = {
+    id: providerThreadId,
+    providerSessionId,
+    providerInstanceId,
+    nativeThreadRef: null,
+    handoffIds: [],
+    forkedFrom: null,
+    appThreadId: threadId,
+  };
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make(`project_worktree_turn_start_${input.revival}`),
+      branch: "feature/revival",
+      worktreePath: "/tmp/t3-worktrees/feature-revival",
+    },
+    runs: [
+      {
+        id: runId,
+        status: "starting",
+        rootNodeId,
+        activeAttemptId: attemptId,
+        providerThreadId,
+        userMessageId: messageId,
+        providerInstanceId,
+        modelSelection: { instanceId: providerInstanceId, model: "test-model" },
+        ordinal: 1,
+      },
+    ],
+    nodes: [{ id: rootNodeId, checkpointScopeId }],
+    attempts: [{ id: attemptId, providerTurnId: null }],
+    providerThreads: [providerThread],
+    providerSessions: [{ id: providerSessionId }],
+    providerTurns: [],
+    messages: [
+      {
+        id: messageId,
+        text: "continue",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+    ],
+    checkpointScopes: [{ id: checkpointScopeId }],
+    contextHandoffs: [],
+    contextTransfers: [],
+    turnItems: [],
+    subagents: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  let runStatus: OrchestrationV2Run["status"] = "starting";
+  let generation = 0;
+  const currentProjection = (): OrchestrationV2ThreadProjection => ({
+    ...projection,
+    runs: projection.runs.map((candidate) =>
+      candidate.id === runId ? { ...candidate, status: runStatus } : candidate,
+    ),
+  });
+  const session = {
+    driver: "claudeAgent",
+    instanceId: providerInstanceId,
+    providerSessionId,
+    providerSession: {
+      id: providerSessionId,
+      capabilities: {
+        sessions: { supportsMultipleProviderThreadsPerSession: input.sharedSession === true },
+      },
+    },
+    ensureThread: () => Effect.succeed(providerThread),
+    resumeThread: () => Effect.succeed(providerThread),
+    forkThread: () => Effect.succeed(providerThread),
+  } as unknown as ProviderAdapterV2SessionRuntime;
+  const open = vi.fn(() =>
+    Effect.sync(() => {
+      order.push("open");
+      return session;
+    }),
+  );
+  const close = vi.fn(() =>
+    Effect.sync(() => {
+      order.push("close");
+    }),
+  );
+  const get = vi.fn(() =>
+    Effect.succeed(
+      input.liveSession === true
+        ? Option.some(session)
+        : Option.none<ProviderAdapterV2SessionRuntime>(),
+    ),
+  );
+  const reviveForThread = vi.fn(() =>
+    Effect.sync(() => {
+      order.push("revive");
+    }).pipe(
+      Effect.andThen(input.revivalGate ?? Effect.void),
+      Effect.andThen(
+        input.revival === "failed"
+          ? Effect.fail(
+              new WorktreeMutationError({
+                operation: "revive",
+                stage: "missing_branch",
+                branch: "feature/revival",
+              }),
+            )
+          : Effect.sync(() => ({ revived: input.revival === "revived", generation })),
+      ),
+    ),
+  );
+  const startRootRun = vi.fn(() =>
+    Effect.sync(() => {
+      order.push("start-root-run");
+    }),
+  );
+  const events: Array<OrchestrationV2DomainEvent> = [];
+  const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent: ({ events: written }) =>
+            Effect.sync(() => {
+              events.push(...written);
+              return { committed: true, storedEvents: [] } as never;
+            }),
+        }),
+        IdAllocator.layer,
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getTurnStartContext: () =>
+            Effect.sync(() => ({ ...currentProjection(), hasConversation: true })),
+          getRuntimeRecoveryProjection: () => Effect.sync(currentProjection),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open, close, get }),
+        Layer.mock(ProviderAuthService)({}),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({
+          resolve: () =>
+            Effect.succeed({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: "/tmp/t3-worktrees/feature-revival",
+            }),
+        }),
+        Layer.mock(WorktreeRevivalService.WorktreeRevivalService)({ reviveForThread }),
+      ),
+    ),
+  );
+  return {
+    layer,
+    order,
+    events,
+    open,
+    close,
+    startRootRun,
+    start: Effect.flatMap(ProviderTurnStart.ProviderTurnStartServiceV2, (service) =>
+      service.start({ threadId, runId }),
+    ),
+    setRunStatus: (status: OrchestrationV2Run["status"]) => {
+      runStatus = status;
+    },
+    setGeneration: (next: number) => {
+      generation = next;
+    },
+  };
+}
+
+effectIt.effect("restarts a per-thread provider session after reviving its worktree", () =>
+  Effect.gen(function* () {
+    const fixture = makeWorktreeTurnStartFixture({ revival: "revived", liveSession: true });
+
+    yield* fixture.start.pipe(Effect.provide(fixture.layer));
+
+    expect(fixture.order).toEqual(["revive", "close", "open", "start-root-run"]);
+  }),
+);
+
+effectIt.effect("keeps a shared provider session open after reviving a worktree", () =>
+  Effect.gen(function* () {
+    const fixture = makeWorktreeTurnStartFixture({
+      revival: "revived",
+      liveSession: true,
+      sharedSession: true,
+    });
+
+    yield* fixture.start.pipe(Effect.provide(fixture.layer));
+
+    expect(fixture.order).toEqual(["revive", "open", "start-root-run"]);
+    expect(fixture.close).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("restarts a live session after another thread recreated its worktree", () =>
+  Effect.gen(function* () {
+    const fixture = makeWorktreeTurnStartFixture({ revival: "unchanged", liveSession: true });
+
+    yield* Effect.gen(function* () {
+      yield* fixture.start;
+      fixture.setGeneration(1);
+      yield* fixture.start;
+    }).pipe(Effect.provide(fixture.layer));
+
+    expect(fixture.order).toEqual([
+      "revive",
+      "open",
+      "start-root-run",
+      "revive",
+      "close",
+      "open",
+      "start-root-run",
+    ]);
+  }),
+);
+
+effectIt.effect("fails the run with the reason when its worktree cannot be restored", () =>
+  Effect.gen(function* () {
+    const fixture = makeWorktreeTurnStartFixture({ revival: "failed", liveSession: true });
+
+    yield* fixture.start.pipe(Effect.provide(fixture.layer));
+
+    expect(fixture.order).toEqual(["revive"]);
+    expect(fixture.events).toMatchObject([
+      {
+        type: "turn-item.updated",
+        payload: {
+          type: "error",
+          title: "Worktree could not be restored",
+          failure: {
+            message: "Cannot recreate the worktree: branch 'feature/revival' no longer exists.",
+          },
+        },
+      },
+      { type: "run.updated", payload: { status: "failed" } },
+      { type: "run-attempt.updated", payload: { status: "failed" } },
+      { type: "node.updated", payload: { status: "failed" } },
+    ]);
+  }),
+);
+
+effectIt.effect("does not open a provider session for a run superseded during revival", () =>
+  Effect.gen(function* () {
+    const revivalStarted = yield* Deferred.make<void>();
+    const releaseRevival = yield* Deferred.make<void>();
+    const fixture = makeWorktreeTurnStartFixture({
+      revival: "revived",
+      liveSession: true,
+      revivalGate: Deferred.succeed(revivalStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseRevival)),
+      ),
+    });
+
+    const start = yield* fixture.start.pipe(Effect.provide(fixture.layer), Effect.forkChild);
+    yield* Deferred.await(revivalStarted);
+    fixture.setRunStatus("cancelled");
+    yield* Deferred.succeed(releaseRevival, undefined);
+    yield* Fiber.join(start);
+
+    expect(fixture.order).toEqual(["revive"]);
+    expect(fixture.close).not.toHaveBeenCalled();
+    expect(fixture.open).not.toHaveBeenCalled();
+  }),
+);

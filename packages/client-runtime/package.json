@@ -362,6 +362,10 @@
     "./device/duo-control": {
       "types": "./src/device/duoControl.ts",
       "default": "./src/device/duoControl.ts"
+    },
+    "./state/worktrees": {
+      "types": "./src/state/worktrees.ts",
+      "default": "./src/state/worktrees.ts"
     }
   },
   "scripts": {

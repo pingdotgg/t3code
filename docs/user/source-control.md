@@ -135,6 +135,25 @@ server, but the host's own site will not show them, and the count reads **viewed
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
 
+## Manage thread worktrees
+
+Open **Settings → Source Control → Worktrees** to see the Git worktrees managed by T3 Code.
+Worktrees are grouped by project. Each row shows its branch, a linked thread, recent activity, and
+whether local work protects it from cleanup. Select an available thread title to return to that
+conversation.
+
+T3 Code only performs automatic cleanup when a worktree has no active thread, no local changes, and
+no unpushed commits. Removing a safe worktree keeps its local branch and T3 checkpoint history. If a
+thread needs that worktree again, T3 Code recreates it from the retained branch before starting the
+next turn and runs the project's setup script there again. If the worktree cannot be recreated, for
+example because its branch was deleted, the turn stops and shows why.
+
+**Auto-remove after** sets how long an unused safe worktree is kept. Enable **Remove with last
+thread** to remove a safe worktree as soon as its last linked thread is deleted instead of waiting
+out that period. Protected worktrees remain listed for you to inspect; T3 Code never automatically
+removes dirty or unpushed worktrees. A detached worktree counts as unpushed until its commit is on
+the default branch.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,

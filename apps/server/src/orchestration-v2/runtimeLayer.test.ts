@@ -53,6 +53,7 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
+import { layerNoop as worktreeRevivalTestLayer } from "../vcs/WorktreeRevivalService.testkit.ts";
 import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
 import {
   OrchestratorDispatchError,
@@ -166,6 +167,7 @@ const TestLayer = Layer.mergeAll(
   ProjectionProjectRepositoryLive,
   effectOutboxLayer,
 ).pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -178,6 +180,7 @@ const TestLayer = Layer.mergeAll(
 );
 
 const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -195,6 +198,7 @@ const ProjectDeletionTestLayer = Layer.mergeAll(
   OrchestrationV2EventSinkLayerLive,
   threadCommandExecutorLayer,
 ).pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(
     Layer.mock(ProjectEnrichmentService)({
       peek: () =>
@@ -332,6 +336,7 @@ const SharedApplicationDataPlaneTestLayer = Layer.merge(
   OrchestrationLayerLive,
   OrchestrationV2LayerLive,
 ).pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService, {
       peek: () =>

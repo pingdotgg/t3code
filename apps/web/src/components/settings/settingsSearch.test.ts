@@ -70,6 +70,7 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    expect(searchSettings("worktrees")[0]?.id).toBe("worktrees");
   });
 
   it("keeps catalog order for multiple title matches", () => {
@@ -378,6 +379,13 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(model.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(model.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(model.scope, "project")).toBe(true);
+  });
+
+  it("reaches the worktree inventory from every selection", () => {
+    const worktrees = getSettingsSearchTargetScope("worktrees")!;
+    for (const kind of ["all", "environment", "project", "checkout"] as const) {
+      expect(isSettingsSearchScopeAvailable(worktrees.scope, kind)).toBe(true);
+    }
   });
 
   it("reaches source control discovery and git fetch interval from the default scope", () => {
