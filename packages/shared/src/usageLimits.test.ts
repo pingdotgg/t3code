@@ -1079,10 +1079,11 @@ describe("Provider usage-limit recovery", () => {
     });
   });
 
-  it.each([1, 2])("offers Claude recovery with %i reset credits", (availableCount) => {
+  it.each(["claude", "claudeAgent"])("offers %s recovery with reset credits", (driver) => {
+    const availableCount = driver === "claude" ? 1 : 2;
     const claude = provider({
       instanceId: ProviderInstanceId.make("claude"),
-      driver: ProviderDriverKind.make("claude"),
+      driver: ProviderDriverKind.make(driver),
       usageLimits: {
         ...selected.usageLimits!,
         resetCredits: { availableCount, nextCreditId: "grant_a" },

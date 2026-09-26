@@ -3109,6 +3109,7 @@ export default function ChatView(props: ChatViewProps) {
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
+    readonly instanceId: ProviderInstanceId;
     readonly now: number;
   } | null>(null);
   // Null while the provider list or the thread itself is unavailable, such as
@@ -3133,20 +3134,24 @@ export default function ChatView(props: ChatViewProps) {
     setUsageLimitsPanel(null);
   }
   const usageLimitSources = serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES;
+  const usageLimitRecoveryInstanceId = isServerThread
+    ? (activeThread?.session?.providerInstanceId ?? null)
+    : activeProviderInstanceId;
   const usageLimitRecovery = useMemo(
     () =>
       providerUsageLimitRecovery(
         visibleThreadError,
-        activeProviderInstanceId,
+        usageLimitRecoveryInstanceId,
         providerStatuses,
         usageLimitSources,
       ),
-    [visibleThreadError, activeProviderInstanceId, providerStatuses, usageLimitSources],
+    [visibleThreadError, usageLimitRecoveryInstanceId, providerStatuses, usageLimitSources],
   );
   const [autoOpenedUsageLimitError, setAutoOpenedUsageLimitError] = useState<string | null>(null);
   const usageLimitErrorKey = `${usageLimitsKey}:${visibleThreadError}`;
   if (
     usageLimitRecovery !== null &&
+    usageLimitRecoveryInstanceId !== null &&
     usageLimitsKey !== null &&
     autoOpenedUsageLimitError !== usageLimitErrorKey
   ) {
@@ -3156,6 +3161,7 @@ export default function ChatView(props: ChatViewProps) {
     setUsageLimitsPanel({
       key: usageLimitsKey,
       threadKey: routeThreadKey,
+      instanceId: usageLimitRecoveryInstanceId,
       now: Date.parse(usageLimitRecovery.report.createdAt),
     });
   }
@@ -3163,22 +3169,15 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       usageLimitsPanel !== null &&
       usageLimitsKey !== null &&
-      usageLimitsPanel.key === usageLimitsKey &&
-      activeProviderInstanceId !== null
+      usageLimitsPanel.key === usageLimitsKey
         ? collectProviderUsageLimits(
-            activeProviderInstanceId,
+            usageLimitsPanel.instanceId,
             providerStatuses,
             usageLimitSources,
             usageLimitsPanel.now,
           )
         : null,
-    [
-      activeProviderInstanceId,
-      providerStatuses,
-      usageLimitSources,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
+    [providerStatuses, usageLimitSources, usageLimitsKey, usageLimitsPanel],
   );
   const usageLimitsBanner = useMemo(
     () =>
@@ -3210,8 +3209,13 @@ export default function ChatView(props: ChatViewProps) {
             now,
           )
         : null;
-    if (report && usageLimitsKey !== null) {
-      setUsageLimitsPanel({ key: usageLimitsKey, threadKey: routeThreadKey, now });
+    if (report && usageLimitsKey !== null && activeProviderInstanceId !== null) {
+      setUsageLimitsPanel({
+        key: usageLimitsKey,
+        threadKey: routeThreadKey,
+        instanceId: activeProviderInstanceId,
+        now,
+      });
       return true;
     }
     setUsageLimitsPanel(null);

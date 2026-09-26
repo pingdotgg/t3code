@@ -521,7 +521,11 @@ export function providerUsageLimitRecovery(
   );
   if (!prefix) return null;
   const selectedProvider = providers.find((provider) => provider.instanceId === instanceId);
-  if (!selectedProvider || selectedProvider.driver !== prefix[1]?.toLowerCase()) {
+  if (
+    !selectedProvider ||
+    (selectedProvider.driver !== prefix[1]?.toLowerCase() &&
+      !(prefix[1] === "Claude" && selectedProvider.driver === "claudeAgent"))
+  ) {
     return null;
   }
   const now = Math.max(

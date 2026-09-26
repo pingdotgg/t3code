@@ -20,6 +20,7 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  ProviderInstanceId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -452,6 +453,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
+    readonly instanceId: ProviderInstanceId;
     readonly now: number;
   } | null>(null);
   // A pending approval or question is part of the key: once it is answered,
@@ -467,15 +469,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setUsageLimitsPanel(null);
   }
   const usageLimitError = props.selectedThread.session?.lastError;
+  const usageLimitRecoveryInstanceId =
+    props.selectedThread.session?.providerInstanceId ??
+    props.selectedThread.modelSelection.instanceId;
   const usageLimitRecovery = useMemo(
     () =>
       providerUsageLimitRecovery(
         usageLimitError,
-        props.selectedThread.modelSelection.instanceId,
+        usageLimitRecoveryInstanceId,
         props.serverConfig?.providers ?? [],
         props.serverConfig?.usageLimitSources ?? [],
       ),
-    [usageLimitError, props.selectedThread.modelSelection.instanceId, props.serverConfig],
+    [usageLimitError, usageLimitRecoveryInstanceId, props.serverConfig],
   );
   const [autoOpenedUsageLimitError, setAutoOpenedUsageLimitError] = useState<string | null>(null);
   const usageLimitErrorKey = `${usageLimitsKey}:${usageLimitError}`;
@@ -484,6 +489,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setUsageLimitsPanel({
       key: usageLimitsKey,
       threadKey: selectedThreadKey,
+      instanceId: usageLimitRecoveryInstanceId,
       now: Date.parse(usageLimitRecovery.report.createdAt),
     });
   }
@@ -491,18 +497,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     () =>
       usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
         ? collectProviderUsageLimits(
-            props.selectedThread.modelSelection.instanceId,
+            usageLimitsPanel.instanceId,
             props.serverConfig?.providers ?? [],
             props.serverConfig?.usageLimitSources ?? [],
             usageLimitsPanel.now,
           )
         : null,
-    [
-      props.selectedThread.modelSelection.instanceId,
-      props.serverConfig,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
+    [props.serverConfig, usageLimitsKey, usageLimitsPanel],
   );
   const showUsageLimits = useCallback(
     (report: UsageLimitsReport | null) =>
@@ -512,10 +513,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           : {
               key: usageLimitsKey,
               threadKey: selectedThreadKey,
+              instanceId: props.selectedThread.modelSelection.instanceId,
               now: Date.parse(report.createdAt),
             },
       ),
-    [selectedThreadKey, usageLimitsKey],
+    [props.selectedThread.modelSelection.instanceId, selectedThreadKey, usageLimitsKey],
   );
   const dismissUsageLimits = useCallback(() => setUsageLimitsPanel(null), []);
   // A send may resolve after navigating away, so only the originating
