@@ -115,14 +115,15 @@ const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningS
 export class Api extends Cloudflare.Worker<Api, {}>()("Api") {}
 
 export const ApiLive = Api.make(
-  RelayDeploymentConfig.pipe(
-    Effect.map(({ relayPublicDomain }) => ({
+  Effect.all([RelayDeploymentConfig, RelayConfiguration.managedEndpointCleanupModeEnv]).pipe(
+    Effect.map(([{ relayPublicDomain }, cleanupModeEnv]) => ({
       main: import.meta.filename,
       compatibility: {
         date: "2026-05-22",
         flags: ["nodejs_compat"],
       },
       domain: relayPublicDomain,
+      env: cleanupModeEnv,
     })),
     Effect.orDie,
   ),
@@ -182,7 +183,6 @@ export const ApiLive = Api.make(
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
-    const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
 
     //
     // 3. Runtime layers and app construction
@@ -190,6 +190,14 @@ export const ApiLive = Api.make(
     const alchemyRuntimeContext: Alchemy.BaseRuntimeContext = yield* Cloudflare.Worker;
 
     const loadSettings = Effect.gen(function* () {
+      // Read the cleanup mode from the declared `env` binding, never from a
+      // Config value captured in Init: only the binding is updated on deploy.
+      const managedEndpointCleanupMode =
+        yield* RelayConfiguration.decodeManagedEndpointCleanupModeEnv(
+          (yield* Cloudflare.Workers.WorkerEnvironment)[
+            RelayConfiguration.RELAY_TUNNEL_CLEANUP_MODE
+          ],
+        );
       return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: relayPublicOrigin,
         ...(fcmServiceAccount ? { fcmServiceAccount } : {}),

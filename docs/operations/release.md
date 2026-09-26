@@ -140,10 +140,19 @@ Required `production` environment secrets:
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 
-The relay Worker reads these variables and secrets when it is deployed. Alchemy does not redeploy the
-Worker when only one of these values changes ([alchemy-run/alchemy#1831](https://github.com/alchemy-run/alchemy/issues/1831)),
-so a push to `main` without relay code changes leaves the old value in place. After changing one, run
-the **Deploy T3 Connect relay** workflow manually from `main` with **force** checked.
+After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from
+`main`. Whether it needs **force** depends on where the relay reads the value:
+
+- The tunnel cleanup modes are Worker `env` bindings, and `RELAY_DOMAIN`, `RELAY_API_ZONE_NAME`, and
+  `RELAY_TUNNEL_ZONE_NAME` configure deployed resources. A normal run applies them.
+- `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_AUDIENCE`, the `APNS_*` values, and
+  `FCM_SERVICE_ACCOUNT` are read in the Worker's startup code.
+  Alchemy does not redeploy the Worker when only one of these changes
+  ([alchemy-run/alchemy#1831](https://github.com/alchemy-run/alchemy/issues/1831)), so they need the
+  run with **force** checked.
+
+A forced run also replaces the Postgres runtime role and its password
+([alchemy-run/alchemy#1832](https://github.com/alchemy-run/alchemy/issues/1832)).
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
@@ -168,7 +177,7 @@ because those builds register recovery and replace a deleted tunnel after wake.
 1. Deploy the relay and migration with cleanup `off`.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
    legacy and are never candidates.
-3. Set `dry-run`, run a forced relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
+3. Set `dry-run`, run a relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
    `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
    them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
    `relay.managed_endpoint_reaper.sweep` span in Axiom.
@@ -178,10 +187,10 @@ because those builds register recovery and replace a deleted tunnel after wake.
 The job runs every five minutes with a five-minute grace period for tunnels that lost their
 connector, so a candidate is usually removed five to ten minutes after it goes down. Tunnels that
 never connected wait an hour. One sweep attempts at most 100 deletions, so a backlog takes longer.
-Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a forced
-relay deploy. Confirm the new `mode` on the next sweep span.
+Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a relay
+deploy without force. Confirm the new `mode` on the next sweep span.
 
-To roll back, set cleanup to `off` and run a forced relay deploy before downgrading any host. Keep the
+To roll back, set cleanup to `off` and run a relay deploy before downgrading any host. Keep the
 recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
 
 ### Disposable-host canary
@@ -201,8 +210,8 @@ stage, test Cloudflare account, disposable host, and disposable T3 home. Keep pr
    and pause it with `kill -STOP <first-pid>`. Wait until Cloudflare reports it down for over five
    minutes.
 5. Confirm dry-run counts the first tunnel in `wouldDelete` and the second in `skippedLegacy`.
-6. Set cleanup `enabled` on the disposable stage and deploy it with `--force`. Confirm in the test
-   Cloudflare account that the first tunnel is deleted and the legacy tunnel still exists.
+6. Set cleanup `enabled` on the disposable stage and deploy. Confirm in the test Cloudflare account
+   that the first tunnel is deleted and the legacy tunnel still exists.
 7. Resume the first child with `kill -CONT <first-pid>`. Confirm the running server detects the
    repeated rejection, requests recovery, and becomes reachable at the same hostname without a
    restart.
