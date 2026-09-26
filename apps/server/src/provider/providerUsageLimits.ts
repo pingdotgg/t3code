@@ -125,7 +125,7 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
  * Limits stamped before the check started came from a cache (Claude
  * instances share one probe), so they can be minutes old. Those do not
  * replace newer published windows, such as a turn's update. Reset credits
- * still come from the probe, because each check reads them itself.
+ * still come from `probed`, because each check reads them itself.
  */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
