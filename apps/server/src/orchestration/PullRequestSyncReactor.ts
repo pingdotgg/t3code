@@ -27,15 +27,18 @@ import * as Stream from "effect/Stream";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
-import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import {
+  ProjectionStoreV2,
+  type ProjectionThreadPullRequests,
+} from "../orchestration-v2/ProjectionStore.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
 interface LinkEntry {
-  readonly thread: ProjectionSnapshotQuery.ProjectionThreadPullRequests;
+  readonly thread: ProjectionThreadPullRequests;
   readonly link: ThreadPullRequestLink;
 }
 
@@ -103,7 +106,7 @@ function stacksEqual(
   );
 }
 
-function isUnsettled(thread: ProjectionSnapshotQuery.ProjectionThreadPullRequests): boolean {
+function isUnsettled(thread: ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
 
@@ -125,8 +128,8 @@ export class PullRequestSyncReactor extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* OrchestratorV2;
+  const projections = yield* ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
 
@@ -152,14 +155,14 @@ export const make = Effect.gen(function* () {
       Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.logWarning(message, fields);
 
   const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* (requestedKey?: string) {
-    const threads = yield* snapshots.listThreadsWithPullRequests();
+    const threads = yield* projections.getThreadsWithPullRequests();
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     const nowIso = DateTime.formatIso(now);
 
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of threads) {
-      for (const link of visibleThreadPullRequests(thread.pullRequests)) {
+      for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
         const key = threadPullRequestKeyOf(link);
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
@@ -198,7 +201,9 @@ export const make = Effect.gen(function* () {
         if (linkedThisSweep.has(dedupeKey)) continue;
         // Tombstones count as present: a dismissed layer is never re-added.
         if (
-          thread.pullRequests.some((existing) => threadPullRequestKeysEqual(existing, layerKey))
+          (thread.pullRequests ?? []).some((existing) =>
+            threadPullRequestKeysEqual(existing, layerKey),
+          )
         ) {
           continue;
         }
@@ -314,11 +319,19 @@ export const make = Effect.gen(function* () {
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
-    const events = yield* engine.subscribeDomainEvents;
+    const events = engine.streamDomainEvents;
     yield* forkParked(
       Stream.runForEach(events, (event) =>
-        event.type === "thread.pull-request-linked" ? requestSync(event.payload.link) : Effect.void,
-      ),
+        event.type === "thread.pull-request-synced"
+          ? Effect.forEach(
+              visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
+                (link) => link.snapshot === null,
+              ),
+              requestSync,
+              { discard: true },
+            )
+          : Effect.void,
+      ).pipe(Effect.catchCause(logSkipped("pull request sync event stream failed", {}))),
     );
     yield* forkParked(
       Effect.gen(function* () {

@@ -6,14 +6,8 @@
  *
  * @module ProjectionThreadSessionRepository
  */
-import {
-  RuntimeMode,
-  IsoDateTime,
-  OrchestrationSessionStatus,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-} from "@t3tools/contracts";
+import { RuntimeMode, IsoDateTime, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import { OrchestrationSessionStatus } from "@t3tools/contracts/legacy-orchestration";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";

@@ -1,5 +1,4 @@
 import type {
-  OrchestrationCommand,
   ProjectCloneSnapshot,
   ProjectCloneStage,
   ProjectCloneStartInput,
@@ -468,13 +467,6 @@ function bootstrapProjectId(bootstrap: unknown): ProjectId | null {
   const createThread = (bootstrap as { createThread?: { projectId?: ProjectId } }).createThread;
   return createThread?.projectId ?? null;
 }
-
-/** Removing a project mid-clone stops the clone and drops its partial checkout. */
-export const discardCloneForDeletedProject = (
-  tracker: ProjectCloneTracker["Service"],
-  command: OrchestrationCommand,
-): Effect.Effect<void> =>
-  command.type === "project.delete" ? tracker.discard(command.projectId) : Effect.void;
 
 function describeCloneFailure(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);

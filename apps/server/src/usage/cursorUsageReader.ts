@@ -5,7 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
-import { readMacCursorAccessToken } from "../provider/cursorCredentialStore.ts";
+import { readMacCursorAccessToken } from "../provider/cursorKeychainToken.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)

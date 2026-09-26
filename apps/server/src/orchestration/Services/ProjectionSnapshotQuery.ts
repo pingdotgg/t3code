@@ -11,6 +11,10 @@ import type {
   ApprovalRequestId,
   CheckpointRef,
   MessageId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
+import type {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationProject,
@@ -24,9 +28,7 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
@@ -63,12 +65,6 @@ export interface ProjectionFullThreadDiffContext {
   readonly latestCheckpointTurnCount: number;
   readonly toCheckpointRef: CheckpointRef | null;
 }
-
-/** The thread fields pull request sync reads, for a thread with at least one link. */
-export type ProjectionThreadPullRequests = Pick<
-  OrchestrationThreadShell,
-  "id" | "projectId" | "settledOverride" | "settledAt" | "pullRequests"
->;
 
 export interface ProjectionThreadDetailQuery {
   /**
@@ -120,15 +116,22 @@ export interface ProjectionSnapshotQueryShape {
    *
    * Returns only projects and thread shell summaries so clients can bootstrap
    * lightweight navigation state without hydrating every thread body.
-   *
-   * `unsettledOnly` is for background sweeps, not clients. It skips settled
-   * threads and their sessions, PR links, and turns, and its `updatedAt`
-   * ignores those rows. It still resolves every project, which keeps
-   * repository identities cached for client connects.
    */
-  readonly getShellSnapshot: (options?: {
-    readonly unsettledOnly?: boolean;
-  }) => Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>;
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read the shell snapshot with null optional repository metadata.
+   *
+   * Transactional callers use this method and enrich the returned projects
+   * only after their transaction has closed.
+   */
+  readonly getShellSnapshotWithoutEnrichment: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read archived thread shell summaries for the archive page.
@@ -138,16 +141,6 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getArchivedShellSnapshot: () => Effect.Effect<
     OrchestrationShellSnapshot,
-    ProjectionRepositoryError
-  >;
-
-  /**
-   * Read active (not deleted, not archived) threads that have at least one pull
-   * request link, in shell snapshot order. Skips repository identity, so no
-   * legacy `linkedPullRequest` is derived.
-   */
-  readonly listThreadsWithPullRequests: () => Effect.Effect<
-    ReadonlyArray<ProjectionThreadPullRequests>,
     ProjectionRepositoryError
   >;
 
@@ -208,6 +201,11 @@ export interface ProjectionSnapshotQueryShape {
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectionRepositoryError>;
 
+  /** Read every active project shell without hydrating thread rows or enrichment. */
+  readonly getProjectShellsWithoutEnrichment: () => Effect.Effect<
+    ReadonlyArray<OrchestrationProjectShell>,
+    ProjectionRepositoryError
+  >;
   readonly getProjectShells: (
     projectIds?: ReadonlyArray<ProjectId>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectionRepositoryError>;
@@ -295,10 +293,6 @@ export interface ProjectionSnapshotQueryShape {
    * response carries `page` metadata (see `OrchestrationThreadDetailWindow`).
    * Without a window the full thread is returned with no `page` field —
    * pagination is strictly opt-in.
-   *
-   * Activity payloads are projected for clients as they are read in small
-   * sequential batches. Callers still apply the full snapshot projector for
-   * collection-level activity pruning.
    */
   readonly getThreadDetailSnapshot: (
     threadId: ThreadId,

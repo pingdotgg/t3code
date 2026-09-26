@@ -170,7 +170,7 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +
  }
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..4d8abe3c4fc45bda48c2958bc9ca933c77f2cc47 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f552fa35828 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
 @@ -60,17 +60,46 @@ public class MenuViewImplementation: UIButton {
@@ -222,7 +222,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..4d8abe3c4fc45bda48c2958bc9ca933c
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +115,98 @@ public class MenuViewImplementation: UIButton {
+@@ -86,8 +115,102 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -309,19 +309,23 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..4d8abe3c4fc45bda48c2958bc9ca933c
 +            if let existing = longPressInteraction {
 +                existing.view?.removeInteraction(existing)
 +            }
-+            let interaction = UIContextMenuInteraction(delegate: self)
++            // UIControl's built-in interaction presents a compact menu that
++            // preserves the keyboard; a separate view interaction presents a
++            // rich context menu and temporarily hides it.
++            guard let interaction = self.contextMenuInteraction else { return }
 +            host.addInteraction(interaction)
 +            longPressInteraction = interaction
 +            return
 +        }
 +        if let existing = longPressInteraction {
 +            existing.view?.removeInteraction(existing)
++            self.addInteraction(existing)
 +            longPressInteraction = nil
 +        }
      }
  
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +243,8 @@ public class MenuViewImplementation: UIButton {
+@@ -124,4 +247,8 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
@@ -379,7 +383,7 @@ index e6509355275596c451f9d082223cc16bfe504e1a..dd16e1a7403970cc3a404355f95ed995
  	actionsHash: string; // just a workaround to make sure we don't have to manually compare MenuActions manually in C++ (since it's a struct and that's a pain)
  	title?: string;
 diff --git a/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts b/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts
-index 24ee7fdcd9f81cfe2c813cfca9d4e276b846fb7b..5ee7b45bafea8547d68949aaba70584055f9fb53 100644
+index 24ee7fdcd9f81cfe2c813cfca9d4e276b846fb7b..c1b4ea53b29193283295d35c18e068f2836c6176 100644
 --- a/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts
 +++ b/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts
 @@ -41,6 +41,9 @@ export interface NativeProps extends ViewProps {
@@ -393,7 +397,7 @@ index 24ee7fdcd9f81cfe2c813cfca9d4e276b846fb7b..5ee7b45bafea8547d68949aaba705840
      actionsHash: string;
      title?: string;
 diff --git a/lib/typescript/src/index.d.ts b/lib/typescript/src/index.d.ts
-index 61d210aa9364f0354f77bddaecdc0a127b1cdbb4..84ac2bc8b4edac045ed59896d5eb4e6eaef4725d 100644
+index 61d210aa9364f0354f77bddaecdc0a127b1cdbb4..0672bea3352b9ad0623124e308f740c70a7e6940 100644
 --- a/lib/typescript/src/index.d.ts
 +++ b/lib/typescript/src/index.d.ts
 @@ -4,6 +4,7 @@ declare const MenuView: import("react").ForwardRefExoticComponent<{
@@ -405,7 +409,7 @@ index 61d210aa9364f0354f77bddaecdc0a127b1cdbb4..84ac2bc8b4edac045ed59896d5eb4e6e
      title?: string;
      isAnchoredToRight?: boolean;
 diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
-index eac7940ab7eb6a69ac329848c9f3eeffdcbaf43d..271cd27f777be06bc02f05d4b4dac5bb940f5f0f 100644
+index eac7940ab7eb6a69ac329848c9f3eeffdcbaf43d..19e82df15b042bc0cda27349b2b8a8ee1d3f0b51 100644
 --- a/lib/typescript/src/types.d.ts
 +++ b/lib/typescript/src/types.d.ts
 @@ -113,6 +113,12 @@ type MenuComponentPropsBase = {

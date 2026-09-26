@@ -1,6 +1,7 @@
 import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   NodeRuntimeUnavailableError,
   nodeRuntimeUnavailableMessage,
@@ -46,8 +47,11 @@ import {
   removeAntigravityRuntimeTempDirs,
   removeAntigravitySessionFiles,
 } from "../acp/AntigravitySessionFiles.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
+import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -70,6 +74,7 @@ export type AntigravityDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | IdAllocatorV2
   | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
@@ -89,9 +94,13 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
       const installation = yield* AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
+      const idAllocator = yield* IdAllocatorV2;
+      const continuationRequests = yield* ProviderContinuationRequests;
+      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const settings = { ...config, enabled } satisfies AntigravitySettings;
       const auth: AntigravityAuthConfig = {
         authMethod: settings.authMethod,
@@ -395,16 +404,33 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const defaultModel = modelManifest.current.pipe(
         Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
       );
-      const adapter = yield* makeAntigravityAdapter(settings, {
+      const orchestrationAdapter = makeAntigravityAdapterV2({
         instanceId,
+        crypto,
+        fileSystem,
+        path,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
         makeRuntime,
         withProcess: authFlow.withProcess,
         defaultModel,
         onSessionStarted: provider.onSessionStarted,
-        onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
-        onAvailableCommands: provider.onAvailableCommands,
-        onAuthRequired: provider.onAuthRequired,
-        ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
+        onSessionEvent: (event) => {
+          if (event._tag === "ConfigOptionsUpdated") {
+            return provider.onConfigOptionsUpdated(event.configOptions);
+          }
+          return event._tag === "AvailableCommandsUpdated"
+            ? provider.onAvailableCommands(event.availableCommands)
+            : Effect.void;
+        },
+        continuationRequests,
+        nativeLogging: (threadId) =>
+          makeNativeLogger({
+            nativeEventLogger: loggers.native,
+            provider: DRIVER,
+            threadId,
+          }),
       });
       const textGeneration = yield* makeAntigravityTextGeneration({
         profileDirectory,
@@ -490,7 +516,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                     }),
                 ),
               ),
-        adapter,
+        orchestrationAdapter,
         textGeneration,
         auth: authFlow.controller,
         refreshModels,

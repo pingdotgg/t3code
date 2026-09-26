@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { act, createElement } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   LIVE_REFRESH_IDLE_AFTER_MS,
@@ -7,12 +9,103 @@ import {
   shouldLiveRefresh,
   shouldRefreshOnArrival,
   shouldRefreshOnInterval,
+  useLiveRefresh,
 } from "./useLiveRefresh";
 
 describe("live refresh cadence", () => {
+  it("polls every 45 seconds, pauses while hidden or busy, respects disabling, and cleans up", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    const window = new EventTarget();
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const refresh = vi.fn();
+    let renderer: ReactTestRenderer | undefined;
+    function Probe({ pending = false, enabled = true }) {
+      useLiveRefresh(pending ? null : refresh, { intervalMs: 45_000, enabled });
+      return null;
+    }
+    try {
+      act(() => {
+        renderer = create(createElement(Probe));
+      });
+      act(() => vi.advanceTimersByTime(44_999));
+      expect(refresh).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1));
+      expect(refresh).toHaveBeenCalledTimes(1);
+      act(() => vi.advanceTimersByTime(45_000));
+      expect(refresh).toHaveBeenCalledTimes(2);
+      document.visibilityState = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+      act(() => vi.advanceTimersByTime(90_000));
+      expect(refresh).toHaveBeenCalledTimes(2);
+      document.visibilityState = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+      expect(refresh).toHaveBeenCalledTimes(3);
+      act(() => renderer?.update(createElement(Probe, { pending: true })));
+      act(() => vi.advanceTimersByTime(45_000));
+      expect(refresh).toHaveBeenCalledTimes(3);
+      act(() => renderer?.update(createElement(Probe)));
+      act(() => vi.advanceTimersByTime(45_000));
+      expect(refresh).toHaveBeenCalledTimes(4);
+      act(() => renderer?.update(createElement(Probe, { enabled: false })));
+      act(() => vi.advanceTimersByTime(90_000));
+      window.dispatchEvent(new Event("focus"));
+      expect(refresh).toHaveBeenCalledTimes(4);
+      act(() => renderer?.unmount());
+      act(() => vi.advanceTimersByTime(45_000));
+      expect(refresh).toHaveBeenCalledTimes(4);
+    } finally {
+      act(() => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("waits five minutes between automatic host reads", () => {
     expect(LIVE_REFRESH_INTERVAL_MS).toBe(5 * 60_000);
   });
+
+  it.each(["focus", "visibilitychange"])(
+    "keeps an idle view paused after %s until input",
+    (event) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+      const window = new EventTarget();
+      vi.stubGlobal("document", document);
+      vi.stubGlobal("window", window);
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const refresh = vi.fn();
+      let renderer: ReactTestRenderer | undefined;
+      function Probe() {
+        useLiveRefresh(refresh, { intervalMs: 45_000 });
+        return null;
+      }
+      try {
+        act(() => {
+          renderer = create(createElement(Probe));
+        });
+        act(() => vi.advanceTimersByTime(LIVE_REFRESH_IDLE_AFTER_MS));
+        refresh.mockClear();
+        act(() => (event === "focus" ? window : document).dispatchEvent(new Event(event)));
+        expect(refresh).not.toHaveBeenCalled();
+        act(() => vi.advanceTimersByTime(90_000));
+        expect(refresh).not.toHaveBeenCalled();
+        act(() => document.dispatchEvent(new Event("pointerdown")));
+        expect(refresh).toHaveBeenCalledTimes(1);
+        act(() => vi.advanceTimersByTime(45_000));
+        expect(refresh).toHaveBeenCalledTimes(2);
+      } finally {
+        act(() => renderer?.unmount());
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 });
 
 describe("shouldLiveRefresh", () => {

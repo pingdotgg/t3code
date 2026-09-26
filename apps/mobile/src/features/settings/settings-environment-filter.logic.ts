@@ -13,3 +13,21 @@ export function toggleSettingsEnvironment(
   }
   return ids.every((id) => next.has(id)) ? null : next;
 }
+
+/** Restrict the selected environments to the selected project group, if any. */
+export function settingsTargetsForProject<T extends { readonly environmentId: EnvironmentId }>(
+  targets: readonly T[],
+  group:
+    | {
+        readonly members: readonly {
+          readonly project: { readonly environmentId: EnvironmentId };
+        }[];
+      }
+    | null
+    | undefined,
+): readonly T[] {
+  if (group === null) return targets;
+  return targets.filter((target) =>
+    group?.members.some((member) => member.project.environmentId === target.environmentId),
+  );
+}

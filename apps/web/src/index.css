@@ -116,6 +116,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
+  --chat-content-max-width: 46rem;
+  --thread-details-panel-width: 19.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
   /* Horizontal gutter shared by the page header and the chat column, clear of
@@ -174,6 +176,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --text-5xs--line-height: 1;
   /* Motion. drawer is the decelerating curve for surfaces that slide or pop in
      (composer context, pills). */
+  --inset-shadow-control-highlight: 0 1px rgb(255 255 255 / 16%);
+  --inset-shadow-control-pressed: 0 1px rgb(0 0 0 / 8%);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* The composer's elevation: a soft drop pulled in under the surface, shared
      by the composer, its context strip and attached banners. */
@@ -874,6 +878,28 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
+  .surface-subheader {
+    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+
+  [data-preview-panel-mode="inline"] [data-right-panel-surface-content] [data-surface-subheader] {
+    height: calc(var(--spacing) * 7);
+    min-height: calc(var(--spacing) * 7);
+    margin-bottom: calc(var(--spacing) * 3);
+    border-bottom-color: transparent;
+  }
+
+  .chat-content-lane {
+    margin-inline: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: var(--chat-content-max-width);
+  }
+
+  .messages-timeline-row-frame {
+    padding-inline: 0;
+  }
+
   .settings-slider {
     --settings-slider-progress: 0%;
     --settings-slider-fill-offset: 0.5rem;
@@ -1187,7 +1213,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    compatibility overrides so both navigation implementations receive the
    same palette. Success, info, provider, and channel identity colors remain
    independent; error, warning, and update roles are themeable below. */
-
 /* The non-empty marker adds enough specificity to outrank the generated root
    dark variant without reintroducing raw `.dark` selectors. */
 html[data-theme-id]:not([data-theme-id=""]) {
@@ -1994,17 +2019,14 @@ code {
   --diff-deletion-foreground: light-dark(var(--color-red-600), var(--color-red-400));
 }
 
-/* Chat timeline and composer column width, set from the Chat width setting. */
-:root {
-  --chat-max-width: 48rem;
-}
-
+/* Chat width setting. Comfortable keeps the default --chat-content-max-width,
+   which sizes the timeline lane, the composer, and ChatCanvas's width probe. */
 :root[data-chat-width="wide"] {
-  --chat-max-width: 72rem;
+  --chat-content-max-width: 72rem;
 }
 
 :root[data-chat-width="full"] {
-  --chat-max-width: 100%;
+  --chat-content-max-width: 100%;
 }
 
 :root[data-diff-color-scheme="blue-orange"] {
@@ -2234,4 +2256,45 @@ code {
 
 .composer-tiptap li[data-checked] > div > p {
   margin: 0;
+}
+
+@layer components {
+  .chat-composer-lane {
+    padding-inline-start: calc(
+      env(safe-area-inset-left) + 0.75rem + var(--chat-lane-inset-start, 0px)
+    );
+    padding-inline-end: calc(
+      env(safe-area-inset-right) + 0.75rem + var(--chat-lane-inset-end, 0px)
+    );
+  }
+  [data-chat-canvas] .messages-timeline-scroll {
+    padding-inline-start: calc(
+      0.75rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
+    );
+    padding-inline-end: calc(
+      0.75rem + var(--chat-lane-inset-end, 0px) - var(--chat-timeline-gutter, 0px)
+    );
+  }
+  .chat-scroll-to-bottom {
+    inset-inline-start: var(--chat-lane-inset-start, 0px);
+    inset-inline-end: var(--chat-lane-inset-end, 0px);
+  }
+  @media (min-width: 640px) {
+    .chat-composer-lane {
+      padding-inline-start: calc(
+        env(safe-area-inset-left) + 1.25rem + var(--chat-lane-inset-start, 0px)
+      );
+      padding-inline-end: calc(
+        env(safe-area-inset-right) + 1.25rem + var(--chat-lane-inset-end, 0px)
+      );
+    }
+    [data-chat-canvas] .messages-timeline-scroll {
+      padding-inline-start: calc(
+        1.25rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
+      );
+      padding-inline-end: calc(
+        1.25rem + var(--chat-lane-inset-end, 0px) - var(--chat-timeline-gutter, 0px)
+      );
+    }
+  }
 }

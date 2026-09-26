@@ -59,6 +59,16 @@ export interface ProjectionProjectRepositoryShape {
   readonly getById: (
     input: GetProjectionProjectInput,
   ) => Effect.Effect<Option.Option<ProjectionProject>, ProjectionRepositoryError>;
+
+  /**
+   * List all projected project rows.
+   *
+   * Returned in deterministic creation order.
+   */
+  readonly listAll: () => Effect.Effect<
+    ReadonlyArray<ProjectionProject>,
+    ProjectionRepositoryError
+  >;
 }
 
 /**

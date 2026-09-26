@@ -15,6 +15,7 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  msgpackr-extract: true
   msw: false
   node-pty: true
   sharp: true
@@ -211,6 +212,12 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+
+# @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
+# walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.
+# pnpm keeps optional deps inside the virtual store, so hoist it to the root.
+publicHoistPattern:
+  - "@cursor/sdk-*"
 
 supportedArchitectures:
   cpu: [current, x64]

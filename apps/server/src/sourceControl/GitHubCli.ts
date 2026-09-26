@@ -132,7 +132,7 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedError<GitHubPul
 
 export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandError>()(
   "GitHubCliCommandError",
-  gitHubCliFailureFields,
+  { ...gitHubCliFailureFields, httpStatus: Schema.optional(Schema.Int) },
 ) {
   get detail(): string {
     return "GitHub CLI command failed.";
@@ -291,6 +291,7 @@ export class GitHubCli extends Context.Service<
       readonly maxOutputBytes?: number;
       readonly rateLimitHost?: string;
       readonly allowReserve?: boolean;
+      readonly acceptNotModified?: boolean;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -423,18 +424,51 @@ export const make = Effect.gen(function* () {
               GITHUB_ENTERPRISE_TOKEN: token,
               GH_DEBUG: "",
             };
-      return yield* process
+      const result = yield* process
         .run({
           operation: "GitHubCli.execute",
           command: "gh",
           args: input.args,
           cwd: input.cwd,
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.acceptNotModified ? { allowNonZeroExit: true } : {}),
           ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
           ...(env !== undefined ? { env } : {}),
           ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
         })
         .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
+      if (result.exitCode !== 0 && input.acceptNotModified) {
+        const status = /^HTTP\/\S+ (\d+)/.exec(result.stdout)?.[1];
+        if (status !== "304" || !input.args.includes("--include")) {
+          const context = { command: "gh" as const, cwd: input.cwd, cause: undefined };
+          const headers = result.stdout.split(/\r?\n\r?\n/, 1)[0] ?? "";
+          const header = (name: string) =>
+            new RegExp(`^${name}:\\s*(.*)$`, "im").exec(headers)?.[1]?.trim();
+          if (
+            status === "429" ||
+            (status === "403" &&
+              (header("x-ratelimit-remaining") === "0" ||
+                header("retry-after") !== undefined ||
+                /rate limit/i.test(result.stderr)))
+          ) {
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            const reset = Number(header("x-ratelimit-reset")) * 1_000;
+            const retryAt =
+              SourceControlRateLimit.retryAtFromHeader(header("retry-after"), now) ??
+              (Number.isFinite(reset) && reset > now ? reset : undefined);
+            return yield* new GitHubCliRateLimitError({
+              ...context,
+              ...(retryAt === undefined ? {} : { retryAt }),
+            });
+          }
+          if (status === "401") return yield* new GitHubCliAuthenticationError(context);
+          return yield* new GitHubCliCommandError({
+            ...context,
+            ...(status === undefined ? {} : { httpStatus: Number(status) }),
+          });
+        }
+      }
+      return result;
     },
   );
 

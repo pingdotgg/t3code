@@ -15,10 +15,13 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { GrokDriver } from "./GrokDriver.ts";
 
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-grok-driver-update-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({

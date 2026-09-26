@@ -235,6 +235,19 @@ export const make = Effect.gen(function* () {
       },
     ),
     getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
+    getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
+      function* (input) {
+        const pr = yield* getPull(input);
+        const statuses = yield* page(
+          {
+            ...input,
+            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
+          },
+          ForgejoStatus,
+        );
+        return { state: forgejoChangeRequest(pr).state, checks: forgejoChecks(statuses.items) };
+      },
+    ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
       const [pr, repo, viewer] = yield* Effect.all(
         [getPull(input), getRepo(input), getViewer(input)],

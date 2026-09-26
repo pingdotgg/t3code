@@ -2,12 +2,12 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { Alert } from "react-native";
 
 import { useConnectionController } from "../features/connection/useConnectionController";
 import { environmentPresentations } from "./presentation";
-import { useWorkspaceState } from "../state/workspace";
+import { useWorkspaceConnectionState, useWorkspaceEnvironments } from "./workspace";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
@@ -45,9 +45,9 @@ const EMPTY_RUNTIME_STATE_ATOM = Atom.make<EnvironmentRuntimeState | null>(null)
 );
 
 const savedConnectionsByIdAtom = Atom.make((get) => {
-  const presentationById = get(environmentPresentations.presentationsAtom);
+  const catalog = get(environmentCatalog.catalogValueAtom);
   return Object.fromEntries(
-    [...presentationById.keys()].flatMap((environmentId) => {
+    [...catalog.entries.keys()].flatMap((environmentId) => {
       const connection = get(remoteEnvironmentProjections.savedConnectionAtom(environmentId));
       return connection === null ? [] : [[environmentId, connection]];
     }),
@@ -85,27 +85,15 @@ export function useRemoteEnvironmentRuntime(
 }
 
 export function useRemoteConnectionStatus() {
-  const workspace = useWorkspaceState();
+  const state = useWorkspaceConnectionState();
+  const connectedEnvironments: ReadonlyArray<ConnectedEnvironmentSummary> =
+    useWorkspaceEnvironments();
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
-  const connectedEnvironments = useMemo<ReadonlyArray<ConnectedEnvironmentSummary>>(
-    () =>
-      workspace.environments.map((environment) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-        displayUrl: environment.displayUrl,
-        isRelayManaged: environment.isRelayManaged,
-        isEnabled: environment.isEnabled,
-        connectionState: environment.connectionState,
-        connectionError: environment.connectionError,
-        connectionErrorTraceId: environment.connectionErrorTraceId,
-      })),
-    [workspace.environments],
-  );
 
   return {
     connectedEnvironments,
-    connectionState: workspace.state.connectionState,
-    connectionError: pendingConnectionError ?? workspace.state.connectionError,
+    connectionState: state.connectionState,
+    connectionError: pendingConnectionError ?? state.connectionError,
   };
 }
 

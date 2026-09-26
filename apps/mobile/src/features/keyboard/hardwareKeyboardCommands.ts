@@ -67,8 +67,10 @@ export function subscribeToHardwareKeyboardCommandRegistrations(listener: () => 
 export function dispatchHardwareKeyboardCommand(command: HardwareKeyboardCommand): boolean {
   const commandHandlers = handlers.get(command);
   if (!commandHandlers) return false;
-  // `.reverse()` on a copy, not `.toReversed()`: Hermes has no ES2023 array methods.
-  for (const handler of [...commandHandlers].reverse()) {
+  const handlersInRegistrationOrder = Array.from(commandHandlers);
+  for (let index = handlersInRegistrationOrder.length - 1; index >= 0; index -= 1) {
+    const handler = handlersInRegistrationOrder[index];
+    if (!handler) continue;
     if (handler(command) !== false) return true;
   }
   return false;

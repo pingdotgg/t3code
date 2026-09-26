@@ -76,6 +76,8 @@ metadata:
 }
 ```
 
+For packages containing separately licensed code, use `generatedNotices` with an array of templates instead of `generatedNotice`. The generator includes every notice in the package row.
+
 `version`, `license`, and `sourceUrl` are optional. Omitting `version` applies the override to every
 installed version of that package. An override can use `repositoryUrl` instead of `name` when
 several packages from one monorepo share the same notice:
