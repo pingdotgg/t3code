@@ -1351,6 +1351,97 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }),
   );
 
+  it.effect("keeps open questions and approvals in the command read model it starts from", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        )
+        VALUES (
+          'project-questions', 'Questions', '/tmp/questions', NULL, '[]',
+          '2026-04-01T00:00:00.000Z', '2026-04-01T00:00:01.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          branch, worktree_path, latest_turn_id, latest_user_message_at,
+          pending_approval_count, pending_user_input_count, has_actionable_proposed_plan,
+          created_at, updated_at, deleted_at
+        )
+        VALUES
+          (
+            'thread-asking', 'project-questions', 'Asking',
+            '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+            NULL, NULL, NULL, NULL, 0, 1, 0,
+            '2026-04-01T00:00:02.000Z', '2026-04-01T00:00:03.000Z', NULL
+          ),
+          (
+            'thread-answered', 'project-questions', 'Answered',
+            '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+            NULL, NULL, NULL, NULL, 0, 0, 0,
+            '2026-04-01T00:00:02.000Z', '2026-04-01T00:00:03.000Z', NULL
+          )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        VALUES
+          (
+            'question-open', 'thread-asking', NULL, 'info', 'user-input.requested', 'Question',
+            '{"requestId":"request-open","responseMode":"message","questions":[]}', 1,
+            '2026-04-01T00:00:04.000Z'
+          ),
+          (
+            'note', 'thread-asking', NULL, 'info', 'runtime.note', 'Note', '{}', 2,
+            '2026-04-01T00:00:05.000Z'
+          ),
+          (
+            'question-answered', 'thread-answered', NULL, 'info', 'user-input.requested',
+            'Question', '{"requestId":"request-answered","questions":[]}', 1,
+            '2026-04-01T00:00:04.000Z'
+          ),
+          (
+            'answer', 'thread-answered', NULL, 'info', 'user-input.resolved', 'Answered',
+            '{"requestId":"request-answered"}', 2, '2026-04-01T00:00:05.000Z'
+          ),
+          (
+            'approval-open', 'thread-asking', NULL, 'approval', 'approval.requested', 'Approve',
+            '{"requestId":"approval-open"}', 3, '2026-04-01T00:00:06.000Z'
+          )
+      `;
+      yield* sql`DELETE FROM projection_pending_approvals`;
+      yield* sql`
+        INSERT INTO projection_pending_approvals (
+          request_id, thread_id, turn_id, status, decision, created_at, resolved_at
+        )
+        VALUES (
+          'approval-open', 'thread-asking', NULL, 'pending', NULL,
+          '2026-04-01T00:00:06.000Z', NULL
+        )
+      `;
+
+      const readModel = yield* snapshotQuery.getCommandReadModel();
+      const activityIds = (threadId: string) =>
+        readModel.threads
+          .find((thread) => thread.id === ThreadId.make(threadId))
+          ?.activities.map((activity) => activity.id);
+      assert.deepEqual(activityIds("thread-asking"), [
+        asEventId("question-open"),
+        asEventId("approval-open"),
+      ]);
+      assert.deepEqual(activityIds("thread-answered"), []);
+    }),
+  );
+
   it.effect("measures replay payload bytes without decoding event bodies", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
