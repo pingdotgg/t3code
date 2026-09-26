@@ -406,18 +406,10 @@ export function ThreadSwipeable(props: {
       {/* visibility:hidden (set imperatively) keeps the closed layers out of
           both the focus order and the accessibility tree; the layers must not
           carry aria-hidden, which would hide them while open. */}
-      <div
-        ref={startLayerRef}
-        className="absolute inset-y-0 left-0 flex"
-        style={{ visibility: "hidden" }}
-      >
+      <div ref={startLayerRef} className="invisible absolute inset-y-0 left-0 flex">
         {props.start ? renderAction(props.start) : null}
       </div>
-      <div
-        ref={endLayerRef}
-        className="absolute inset-y-0 right-0 flex"
-        style={{ visibility: "hidden" }}
-      >
+      <div ref={endLayerRef} className="invisible absolute inset-y-0 right-0 flex">
         {props.end.map(renderAction)}
       </div>
       <div
