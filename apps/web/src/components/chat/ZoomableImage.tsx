@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from "react";
 
@@ -14,16 +15,24 @@ export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
 }
 
-/** Zooms around the pointer and keeps the whole image accessible by dragging or scrolling. */
+/**
+ * Zooms around the pointer and keeps the whole image accessible by dragging or scrolling.
+ * While `selecting`, pointers belong to `overlay`, which covers the image and scales with it;
+ * scrolling and keys still zoom.
+ */
 export function ZoomableImage({
   src,
   name,
   onError,
+  selecting = false,
+  overlay,
   ref,
 }: {
   src: string;
   name: string;
   onError: () => void;
+  selecting?: boolean;
+  overlay?: ReactNode;
   ref?: Ref<ZoomableImageHandle>;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -148,18 +157,22 @@ export function ZoomableImage({
         ref={viewportRef}
         role="region"
         aria-label={`${name}, zoomable image`}
-        aria-description="Click to zoom in or return to fit. Scroll to zoom, drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
+        aria-description={
+          selecting
+            ? "Drag over the image to select a region. Scroll to zoom. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
+            : "Click to zoom in or return to fit. Scroll to zoom, drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit."
+        }
         tabIndex={0}
         className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         style={{
           width: width || undefined,
           height: height || undefined,
           maxHeight,
-          cursor: zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
+          cursor: selecting ? "crosshair" : zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
         }}
         onClick={(event) => {
           // Pointer capture also produces a click after dragging; leave the image zoomed.
-          if (suppressClickRef.current || event.detail > 1) return;
+          if (selecting || suppressClickRef.current || event.detail > 1) return;
           changeZoom(zoomRef.current > 1 ? 1 : 2, { x: event.clientX, y: event.clientY });
         }}
         onKeyDown={(event) => {
@@ -179,7 +192,7 @@ export function ZoomableImage({
           }
         }}
         onPointerDown={(event) => {
-          if (dragRef.current) return;
+          if (selecting || dragRef.current) return;
           suppressClickRef.current = false;
           if (event.pointerType !== "mouse" || event.button !== 0 || zoomRef.current <= 1) return;
           const viewport = event.currentTarget;
@@ -222,22 +235,25 @@ export function ZoomableImage({
           setDragging(false);
         }}
       >
-        <img
-          src={src}
-          alt={name}
-          draggable={false}
-          className="block max-w-none select-none"
-          style={
-            naturalSize.width ? { width, height } : { maxWidth: "var(--media-width)", maxHeight }
-          }
-          onLoad={(event) => {
-            setNaturalSize({
-              width: event.currentTarget.naturalWidth,
-              height: event.currentTarget.naturalHeight,
-            });
-          }}
-          onError={onError}
-        />
+        <div className="relative w-fit">
+          <img
+            src={src}
+            alt={name}
+            draggable={false}
+            className="block max-w-none select-none"
+            style={
+              naturalSize.width ? { width, height } : { maxWidth: "var(--media-width)", maxHeight }
+            }
+            onLoad={(event) => {
+              setNaturalSize({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              });
+            }}
+            onError={onError}
+          />
+          {naturalSize.width ? overlay : null}
+        </div>
       </div>
       <span className="sr-only" aria-live="polite">
         {Math.round(zoom * 100)}% zoom

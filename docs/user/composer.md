@@ -89,6 +89,17 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Cite part of an image
+
+On web and desktop, open an image and choose **Cite**, or press `C`. Drag over the part you mean,
+add an optional comment, and press `Enter`. The composer gets a crop of that part with some of its
+surroundings, outlined as you drew it, followed by your comment as ordinary text. Each region you
+cite becomes its own image chip.
+
+Scroll to zoom in before selecting small details. `Escape` clears the selection first, then stops
+selecting, then closes the image. Images from sites that block browser access can't be cited; save
+the image and attach it instead. Mobile does not create image citations.
+
 ## Recall a sent prompt
 
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press

@@ -33,12 +33,12 @@ function mediaFileName(source: MediaActionSource): string {
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */
-function useMediaActions(source: MediaActionSource) {
+export function useMediaActionUrl(source: MediaActionSource): () => Promise<string> {
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
   });
-  const actionUrl = useCallback(async () => {
+  return useCallback(async () => {
     if (!source.asset) {
       if (!source.src) throw new Error("This media is unavailable. Try reopening the preview.");
       return source.src;
@@ -52,6 +52,10 @@ function useMediaActions(source: MediaActionSource) {
     if (!url) throw new Error("The environment returned an invalid media URL.");
     return url;
   }, [source, createAssetUrl]);
+}
+
+function useMediaActions(source: MediaActionSource) {
+  const actionUrl = useMediaActionUrl(source);
   const save = useCallback(async () => {
     await downloadMedia(await actionUrl(), mediaFileName(source));
   }, [actionUrl, source]);
