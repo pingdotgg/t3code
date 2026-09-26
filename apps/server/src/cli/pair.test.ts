@@ -11,9 +11,10 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
-import { Command } from "effect/unstable/cli";
+import { CliError, Command } from "effect/unstable/cli";
 
 import { cli } from "../bin.ts";
+import { renderTerminalQrCode } from "../startupAccess.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -144,6 +145,108 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
   );
 
 describe("t3 pair", () => {
+  for (const { baseUrl, publicOrigin, loopback, variant } of [
+    {
+      baseUrl: "https://proxy.invalid",
+      publicOrigin: "https://proxy.invalid",
+      loopback: false,
+      variant: "userdata",
+    },
+    {
+      baseUrl: "http://proxy.invalid:8080",
+      publicOrigin: "http://proxy.invalid:8080",
+      loopback: false,
+      variant: "userdata",
+    },
+    {
+      baseUrl: "http://[::1]:5733",
+      publicOrigin: "http://[::1]:5733",
+      loopback: true,
+      variant: "userdata",
+    },
+    {
+      baseUrl: "https://dev.invalid/prefix",
+      publicOrigin: "https://dev.invalid",
+      loopback: false,
+      variant: "dev",
+    },
+    {
+      baseUrl: "http://[::ffff:127.0.0.1]:3773",
+      publicOrigin: "http://[::ffff:7f00:1]:3773",
+      loopback: true,
+      variant: "userdata",
+    },
+    {
+      baseUrl: "http://[::ffff:192.168.1.42]:3773",
+      publicOrigin: "http://[::ffff:c0a8:12a]:3773",
+      loopback: false,
+      variant: "userdata",
+    },
+  ] as const) {
+    it.effect(`advertises ${baseUrl} while minting against the local ${variant} server`, () =>
+      withDescriptorServer((origin) =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-override-"));
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, variant, "server-runtime.json"),
+            state: yield* makePersistedServerRuntimeState({
+              config: { host: "127.0.0.1", devUrl: undefined },
+              port: Number(new URL(origin).port),
+            }),
+          });
+          // The public address deliberately has no responder. Only local discovery should probe.
+          const output = yield* captureStdout(
+            runCli(["pair", "--base-dir", baseDir, "--base-url", baseUrl]),
+          );
+          const pairingUrl = /Pairing URL: (\S+)/.exec(output)?.[1];
+          if (pairingUrl === undefined) return yield* Effect.die("Missing pairing URL");
+          assert.include(pairingUrl, `${publicOrigin}/pair#token=`);
+          assert.include(output, renderTerminalQrCode(pairingUrl));
+          assert.include(output, `Pairing with pair-test (${origin})`);
+          assert.equal(output.includes("only reachable from this machine"), loopback);
+          assert.notInclude(output, "did not record its web URL");
+          assert.notInclude(output, "Tailscale Serve now maps");
+          if (variant === "userdata") {
+            const listed = yield* captureStdout(
+              runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
+            );
+            assert.include(listed, '"label": "t3 pair"');
+          }
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+  }
+
+  for (const baseUrl of ["not-a-url", "/relative", "ftp://proxy.invalid", "file:///tmp/t3"]) {
+    it.effect(`rejects invalid pairing base URL ${baseUrl}`, () =>
+      Effect.gen(function* () {
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-url", baseUrl]).pipe(Effect.flip),
+        );
+        if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
+          return yield* Effect.die("Expected CLI validation help");
+        }
+        assert.isTrue(error.errors.some((entry) => entry._tag === "InvalidValue"));
+        const rendered = error.errors.map(String).join("\n");
+        assert.include(rendered, "base-url");
+        assert.notInclude(rendered, "No running T3 Code server");
+        assert.notInclude(rendered, "TypeError");
+      }),
+    );
+  }
+
+  it.effect("rejects --base-url with --tailscale before discovering or publishing a server", () =>
+    Effect.gen(function* () {
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-url", "https://proxy.invalid", "--tailscale"]).pipe(Effect.flip),
+      );
+      const rendered = String(
+        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+      );
+      assert.include(rendered, "--base-url cannot be combined with --tailscale");
+    }),
+  );
+
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
