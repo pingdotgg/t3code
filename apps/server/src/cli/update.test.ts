@@ -11,10 +11,10 @@ import {
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 
-import { repointLauncher, resolveLauncherPath } from "./update.ts";
+import { posixLauncherScript, repointLauncher, resolveLauncherPath } from "./update.ts";
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
-  it.effect("repoints a symlink that lives in a runtime versions tree", () =>
+  it.effect("replaces an old launcher symlink with a script for the new version", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -36,7 +36,43 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       });
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
-      assert.equal(yield* fs.readLink(launcher), newExe);
+      assert.isTrue(Option.isNone(yield* fs.readLink(launcher).pipe(Effect.option)));
+      assert.equal(yield* fs.readFileString(launcher), posixLauncherScript(newExe));
+      // The rename replaced the link. It did not write into the old executable.
+      assert.equal(yield* fs.readFileString(oldExe), "");
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect("repoints the launcher script that runs this executable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const versionsDir = path.join(root, "it's home/runtime/versions");
+      const oldExe = path.join(versionsDir, "1.0.0/t3");
+      const newExe = path.join(versionsDir, "2.0.0/t3");
+      const bin = path.join(root, "bin");
+      const launcher = path.join(bin, "t3");
+      for (const file of [oldExe, newExe]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(launcher, posixLauncherScript(oldExe));
+
+      // The script execs the executable by absolute path, so argv0 is the executable.
+      const repointed = yield* repointLauncher({
+        launchedAs: oldExe,
+        versionsDir,
+        targetEntryPath: newExe,
+      }).pipe(
+        Effect.provideService(HostProcessEnvironment, {
+          PATH: `${path.join(root, "missing")}:${bin}`,
+        }),
+      );
+
+      assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
+      assert.equal(yield* fs.readFileString(launcher), posixLauncherScript(newExe));
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
 

@@ -111,11 +111,27 @@ export function launcherOwnsVersionsDir(
 }
 
 /**
- * The launcher the install scripts leave behind: a symlink at `<bin>/t3` on
- * POSIX, a `t3.cmd` shim on Windows. `t3 update` repoints it so the next `t3`
- * invocation is the new version. Only a launcher that already points into
- * this home's `runtime/versions` tree is touched; a plain copy of the
- * executable, or a launcher for some other install, is left alone.
+ * The `<bin>/t3` launcher install.sh writes on POSIX. It runs the executable
+ * by absolute path, so the executable's argv[1] is absolute. Through a PATH
+ * symlink, argv[1] was the bare name `t3`, and code that trusts argv[1] (the
+ * Cursor SDK's helper lookup) searched the current folder instead.
+ */
+export function posixLauncherScript(executablePath: string): string {
+  return `#!/bin/sh\nexec '${executablePath.replaceAll("'", "'\\''")}' "$@"\n`;
+}
+
+/** The executable a `posixLauncherScript` runs, or undefined for any other file. */
+function posixLauncherTarget(contents: string): string | undefined {
+  return /^exec '((?:[^']|'\\'')*)' "\$@"$/m.exec(contents)?.[1]?.replaceAll("'\\''", "'");
+}
+
+/**
+ * The launcher the install scripts leave behind: a `t3` script on POSIX (a
+ * symlink before that), a `t3.cmd` shim on Windows. `t3 update` repoints it
+ * so the next `t3` invocation is the new version. Only a launcher that
+ * already points into this home's `runtime/versions` tree is touched; a
+ * plain copy of the executable, or a launcher for some other install, is
+ * left alone.
  */
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
   /** Path the current process was started through, if known. */
@@ -151,19 +167,35 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     return Option.some(shimPath);
   }
 
+  // Rename a new script over the old launcher, so a symlink is replaced, not
+  // written through.
+  const writeLauncher = (launcherPath: string) => {
+    const tempPath = `${launcherPath}.${process.pid}.tmp`;
+    return fs
+      .writeFileString(tempPath, posixLauncherScript(input.targetEntryPath), { mode: 0o755 })
+      .pipe(
+        Effect.andThen(fs.rename(tempPath, launcherPath)),
+        Effect.mapError(
+          () =>
+            new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${launcherPath}.` }),
+        ),
+        Effect.as(Option.some(launcherPath)),
+      );
+  };
+
+  // Older installs linked the executable. Replace that link with the script.
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return Option.none<string>();
-  const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  if (!ownsTarget(resolvedTarget)) return Option.none<string>();
-  const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
-  yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
-    Effect.andThen(fs.rename(tempLink, input.launchedAs)),
-    Effect.mapError(
-      () =>
-        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
-    ),
-  );
-  return Option.some(input.launchedAs);
+  if (Option.isSome(linkTarget)) {
+    const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
+    return ownsTarget(resolvedTarget)
+      ? yield* writeLauncher(input.launchedAs)
+      : Option.none<string>();
+  }
+  // The script runs the executable by absolute path, so the executable sees
+  // only itself. Find the script on PATH, as with the Windows shim.
+  if (!ownsTarget(input.launchedAs)) return Option.none<string>();
+  const launcherPath = yield* findPosixLauncher(input.launchedAs);
+  return launcherPath === undefined ? Option.none<string>() : yield* writeLauncher(launcherPath);
 });
 
 /**
@@ -218,6 +250,38 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
       path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
     ) {
       return shimPath;
+    }
+  }
+  return undefined;
+});
+
+/**
+ * On POSIX the `t3` script execs the executable by absolute path, so the
+ * executable only ever sees its own path. Walk PATH for a `t3` script whose
+ * target is the running executable; that is the launcher the install script
+ * wrote.
+ */
+export const findPosixLauncher = Effect.fn("cli.update.find_posix_launcher")(function* (
+  executablePath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  const candidates = [
+    ...(environment["T3CODE_INSTALL_BIN_DIR"] ? [environment["T3CODE_INSTALL_BIN_DIR"]] : []),
+    ...(environment["PATH"] ?? "").split(":"),
+  ].filter((entry) => entry.trim().length > 0);
+  for (const directory of candidates) {
+    const launcherPath = path.join(directory, "t3");
+    // A symlink here links an executable, and any other large file is not our
+    // script. Do not read either.
+    if (Option.isSome(yield* fs.readLink(launcherPath).pipe(Effect.option))) continue;
+    const info = yield* fs.stat(launcherPath).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File" || info.value.size > 4096n) continue;
+    const contents = yield* fs.readFileString(launcherPath).pipe(Effect.option);
+    const target = Option.isSome(contents) ? posixLauncherTarget(contents.value) : undefined;
+    if (target !== undefined && path.resolve(target) === path.resolve(executablePath)) {
+      return launcherPath;
     }
   }
   return undefined;
