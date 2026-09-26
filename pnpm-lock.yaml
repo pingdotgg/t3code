@@ -1019,6 +1019,31 @@ importers:
         specifier: 19.2.6
         version: 19.2.6(react@19.2.6)
 
+  packages/first-party-extensions/browser:
+    dependencies:
+      '@t3tools/extension-sdk':
+        specifier: workspace:*
+        version: link:../../extension-sdk
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.2.16
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/shared:
     dependencies:
       '@noble/curves':
