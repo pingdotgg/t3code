@@ -62,6 +62,35 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("keeps a failed probe marked when a sparse update lands on it", () => {
+    // A `rate_limit_event` names one window. Merged onto a failed probe it
+    // must not read as the full set, or a later failed probe keeps it as last-good.
+    const failed = {
+      checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed" as const, message: "usage timed out" },
+    };
+    const next = applyUsageLimitsUpdate({
+      previous: failed,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [weekly] },
+    });
+    expect(next).toEqual({
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [weekly],
+      unavailable: failed.unavailable,
+    });
+    expect(
+      applyUsageLimitsUpdate({ previous: next, checkedAt, update: { windows: [weekly] } }),
+    ).toBe(next);
+  });
+
+  it("marks a sparse update with no previous snapshot as probeFailed", () => {
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
+    ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
@@ -85,5 +114,15 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+
+  it("does not keep a probeFailed merge as last-good through a later failed probe", () => {
+    const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
+    const partial = applyUsageLimitsUpdate({
+      previous: failed,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [weekly] },
+    });
+    expect(resolveUsageLimitsAfterProbe({ published: partial, probed: failed })).toBe(failed);
   });
 });

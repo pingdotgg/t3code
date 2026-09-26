@@ -56,6 +56,11 @@ export function makeUnavailableUsageLimits(input: {
  *
  * An `unsupported` snapshot stays unsupported: an account that cannot have
  * subscription windows will not start reporting them mid-turn.
+ *
+ * A `probeFailed` snapshot, or no snapshot at all, stays marked. The update
+ * is sparse by contract, so the windows it adds are not the full read; without
+ * the marker a lone weekly window would look complete and survive later failed
+ * probes as the last good set.
  */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
@@ -88,12 +93,15 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+  if (!changed && previous !== undefined) {
     return previous;
   }
+  const unavailable =
+    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
 
@@ -112,7 +120,8 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
  * Choose what to publish after a status probe finishes. A probe that failed
  * this time must not wipe bars a previous probe or a turn already
  * established, so the last good snapshot stays; `unsupported` is
- * authoritative and replaces them.
+ * authoritative and replaces them. A snapshot still marked `probeFailed` by a
+ * sparse merge is not last good and gives way to the probe's own result.
  *
  * A successful probe replaces the published windows outright, including any
  * runtime update that landed while it was running. That is a deliberate
