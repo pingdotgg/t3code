@@ -15,6 +15,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -161,6 +162,91 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
       "nested\n",
     );
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect.skipIf(!symlinksSupported)(
+  "checkpoint capture writes its index into the real git dir when cwd is a symlinked subdirectory",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveRunner = yield* ProcessRunner.ProcessRunner;
+      const indexFiles: string[] = [];
+      const captureProcess = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            const indexFile = input.env?.GIT_INDEX_FILE;
+            if (indexFile !== undefined) indexFiles.push(indexFile);
+            return liveRunner.run(input);
+          },
+        }),
+      );
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, captureProcess),
+      );
+      const sandbox = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-symlink-",
+      });
+      const repo = path.join(sandbox, "repo");
+      const subdir = path.join(repo, "sub", "dir");
+      const link = path.join(sandbox, "nest", "link");
+      yield* fileSystem.makeDirectory(subdir, { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(link), { recursive: true });
+      yield* fileSystem.symlink(subdir, link);
+      /** Runs git in `cwd` through the checkpoint driver under test. */
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        driver.execute({ operation: "checkpoint-test", cwd, args });
+      yield* git(repo, ["init"]);
+      yield* git(repo, ["config", "user.name", "Test"]);
+      yield* git(repo, ["config", "user.email", "test@test.com"]);
+      yield* fileSystem.writeFileString(path.join(repo, "file.txt"), "initial\n");
+      yield* git(repo, ["add", "."]);
+      yield* git(repo, ["commit", "-m", "initial"]);
+      yield* fileSystem.writeFileString(path.join(subdir, "nested.txt"), "from-link\n");
+
+      const realCommonDir = yield* fileSystem.realPath(
+        (yield* git(repo, [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir",
+        ])).stdout.trim(),
+      );
+      /**
+       * Checkpoint Git commands must keep the private index in the repository
+       * that owns `cwd`, including when a different repository sits where a
+       * lexical `path.resolve` of the relative common dir would land.
+       */
+      const assertIndexesStayInRealCommonDir = Effect.gen(function* () {
+        assert.isTrue(indexFiles.length > 0);
+        for (const indexFile of indexFiles) {
+          assert.strictEqual(yield* fileSystem.realPath(path.dirname(indexFile)), realCommonDir);
+        }
+      });
+
+      const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/symlink");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: link, checkpointRef });
+      yield* assertIndexesStayInRealCommonDir;
+      assert.strictEqual(
+        (yield* git(repo, ["show", `${checkpointRef}:sub/dir/nested.txt`])).stdout,
+        "from-link\n",
+      );
+
+      indexFiles.length = 0;
+      yield* git(sandbox, ["init", "-b", "decoy-only"]);
+      yield* git(sandbox, ["config", "user.name", "Test"]);
+      yield* git(sandbox, ["config", "user.email", "test@test.com"]);
+      yield* git(sandbox, ["commit", "--allow-empty", "-m", "decoy"]);
+      yield* fileSystem.writeFileString(path.join(subdir, "nested.txt"), "again\n");
+      const decoyRef = CheckpointRef.make("refs/t3/checkpoints/symlink-decoy");
+      yield* driver.checkpoints.captureCheckpoint({ cwd: link, checkpointRef: decoyRef });
+      yield* assertIndexesStayInRealCommonDir;
+      const decoyEntries = yield* fileSystem.readDirectory(path.join(sandbox, ".git"));
+      assert.isFalse(decoyEntries.some((entry) => entry.startsWith("t3-checkpoint-index")));
+      assert.strictEqual(
+        (yield* git(repo, ["show", `${decoyRef}:sub/dir/nested.txt`])).stdout,
+        "again\n",
+      );
+    }).pipe(Effect.scoped, Effect.provide(GitCaptureContractLayer)),
 );
 
 it.effect("checkpoint recovery discovers nested HEAD independently of inherited GIT_DIR", () =>

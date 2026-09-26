@@ -1143,13 +1143,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.asVoid);
   };
 
+  /**
+   * Resolves the common git directory, worktree root, and current branch.
+   *
+   * `--git-common-dir` is requested with `--path-format=absolute` because a
+   * relative answer is computed from Git's physical working directory.
+   * `path.resolve` would apply `..` to a symlinked project path and climb out
+   * of a symlink that points at a repository subdirectory. `realPath` still
+   * runs afterward so Windows 8.3 short names collapse to one directory.
+   */
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
+    const gitCommonDirArgs = ["rev-parse", "--path-format=absolute", "--git-common-dir"] as const;
     const commonDirResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.resolveRepositoryPaths.commonDir",
       cwd,
-      ["rev-parse", "--git-common-dir"],
+      gitCommonDirArgs,
       {
         timeoutMs: 5_000,
         allowNonZeroExit: true,
@@ -1164,7 +1174,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...gitCommandContext({
           operation: "GitVcsDriver.resolveRepositoryPaths.commonDir",
           cwd,
-          args: ["rev-parse", "--git-common-dir"],
+          args: gitCommonDirArgs,
         }),
         detail: "Failed to resolve the Git common directory.",
         exitCode: commonDirResult.exitCode,

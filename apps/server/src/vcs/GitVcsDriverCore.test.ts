@@ -28,6 +28,7 @@ import {
   type ReviewDiffFileContentsInput,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { ServerConfig } from "../config.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
@@ -334,7 +335,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
       { args: ["rev-parse", "--git-path", "index"], lcAll: "C" },
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
-      { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
+      { args: ["rev-parse", "--path-format=absolute", "--git-common-dir"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -1771,6 +1772,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("repository status", () => {
+    it.effect.skipIf(!symlinksSupported)(
+      "resolves the common dir through a symlink into a repository subdirectory",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const sandbox = yield* makeTmpDir("git-symlink-subdir-");
+          const repo = pathService.join(sandbox, "repo");
+          const link = pathService.join(sandbox, "nest", "link");
+          yield* fileSystem.makeDirectory(pathService.join(repo, "sub", "dir"), {
+            recursive: true,
+          });
+          yield* fileSystem.makeDirectory(pathService.dirname(link), { recursive: true });
+          yield* fileSystem.symlink(pathService.join(repo, "sub", "dir"), link);
+          yield* initRepoWithCommit(repo);
+          yield* git(repo, ["checkout", "-b", "real-only"]);
+
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const refsBeforeDecoy = yield* driver.listRefs({ cwd: link, refresh: true });
+          assert.isTrue(refsBeforeDecoy.isRepo);
+          assert.isTrue(refsBeforeDecoy.refs.some((ref) => ref.name === "real-only"));
+
+          // The lexical join of the symlink with ../../.git is sandbox/.git.
+          // That directory must not be treated as this repository.
+          yield* git(sandbox, ["init", "-b", "decoy-only"]);
+          yield* git(sandbox, ["config", "user.email", "test@test.com"]);
+          yield* git(sandbox, ["config", "user.name", "Test"]);
+          yield* git(sandbox, ["commit", "--allow-empty", "-m", "decoy"]);
+
+          const refsAfterDecoy = yield* driver.listRefs({ cwd: link, refresh: true });
+          assert.isTrue(refsAfterDecoy.refs.some((ref) => ref.name === "real-only"));
+          assert.isFalse(refsAfterDecoy.refs.some((ref) => ref.name === "decoy-only"));
+        }),
+    );
+
     it.effect("reports non-repository directories without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
