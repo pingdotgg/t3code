@@ -499,7 +499,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
 // True when the given IPv4 belongs to a Windows-side network
 // interface. In WSL2 mirrored mode the distro's eth0 IP equals the
 // host's, which is the signature we use to detect that mode and
-// switch the renderer URL to loopback.
+// skip the distro-IP fallback URL.
 const isLocalHostIpv4 = (ip: string): boolean => {
   const interfaces = NodeOS.networkInterfaces();
   for (const list of Object.values(interfaces)) {
@@ -508,8 +508,8 @@ const isLocalHostIpv4 = (ip: string): boolean => {
       // os.networkInterfaces() reports IPv4 `family` as the string "IPv4" on
       // the Node build Electron ships (41 / Node 22, verified), but some Node
       // builds report the numeric 4. Normalize to a string so a future runtime
-      // bump can't silently break mirrored-mode detection and leave the
-      // renderer pointed at the distro IP instead of loopback.
+      // bump can't silently break mirrored-mode detection and offer a
+      // host-interface address as the WSL fallback URL.
       const family = String(entry.family);
       if ((family === "IPv4" || family === "4") && entry.address === ip) return true;
     }
@@ -616,8 +616,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // Windows. wslhost forwarding is unreliable on some Windows hosts:
   // the desktop's readiness probe and the renderer's saved-env-style
   // fetch both saw "Failed to fetch" when the backend only bound to
-  // 127.0.0.1 inside WSL. Binding to 0.0.0.0 plus advertising the
-  // WSL IP as the renderer-visible URL avoids that dependency.
+  // 127.0.0.1 inside WSL. Binding to 0.0.0.0 keeps the WSL IP available
+  // as the readiness fallback when forwarding fails.
   // Security-wise this is acceptable for the local-only WSL backend:
   // the network it exposes on is the WSL-vEthernet network, not the
   // LAN; the primary owns LAN exposure when the user opts in.
@@ -700,18 +700,17 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  // Resolve the selected distro's IPv4 address. In mirrored mode the distro
-  // reports a host interface, so use loopback instead; a failed probe also
-  // falls back to loopback and preserves the previous behavior.
+  // Dial loopback first: endpoint security on some hosts drops HTTP to the
+  // NAT subnet. The NAT distro IP is the fallback when loopback does not
+  // answer; in mirrored mode the distro reports a host interface, so
+  // loopback is the only route.
   const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
-  const usesSharedNetworkStack = Option.match(distroIp, {
-    onNone: () => false,
-    onSome: (ip) => isLocalHostIpv4(ip),
-  });
-  const rendererHost = usesSharedNetworkStack
-    ? "127.0.0.1"
-    : Option.getOrElse(distroIp, () => "127.0.0.1");
-  const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  const httpBaseUrl = new URL(`http://127.0.0.1:${input.port}`);
+  const fallbackHttpBaseUrl = distroIp.pipe(
+    Option.filter((ip) => !isLocalHostIpv4(ip)),
+    Option.map((ip) => new URL(`http://${ip}:${input.port}`)),
+    Option.getOrUndefined,
+  );
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = {};
@@ -753,6 +752,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     bootstrap,
     bootstrapDelivery: "stdin" as const,
     httpBaseUrl,
+    ...(fallbackHttpBaseUrl !== undefined ? { fallbackHttpBaseUrl } : {}),
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
   };
