@@ -11,6 +11,7 @@ import {
   type LimitAccount,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
+  providerUsageLimitRecovery,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -1054,5 +1055,139 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("Provider usage-limit recovery", () => {
+  const error =
+    "Codex usage limit reached. The weekly limit resets in 4d 23h. Send the message again once the limit resets.";
+  const selected = provider({
+    usageLimits: {
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      windows: [window],
+      resetCredits: { availableCount: 2 },
+    },
+  });
+
+  it("preserves the original message around the live balance and supplies the composer report", () => {
+    const recovery = providerUsageLimitRecovery(error, selected.instanceId, [selected], []);
+    expect(recovery?.message).toBe(
+      "Codex usage limit reached. The weekly limit resets in 4d 23h. You have 2 reset credits available. Send the message again once the limit resets.",
+    );
+    expect(recovery?.report.accounts[0]?.resetCreditInput).toEqual({
+      instanceId: selected.instanceId,
+    });
+  });
+
+  it.each([1, 2])("offers Claude recovery with %i reset credits", (availableCount) => {
+    const claude = provider({
+      instanceId: ProviderInstanceId.make("claude"),
+      driver: ProviderDriverKind.make("claude"),
+      usageLimits: {
+        ...selected.usageLimits!,
+        resetCredits: { availableCount, nextCreditId: "grant_a" },
+      },
+    });
+    const claudeError = "Claude usage limit reached. Send the message again once the limit resets.";
+    const recovery = providerUsageLimitRecovery(claudeError, claude.instanceId, [claude], []);
+    expect(recovery?.message).toBe(
+      `Claude usage limit reached. You have ${availableCount} reset ${availableCount === 1 ? "credit" : "credits"} available. Send the message again once the limit resets.`,
+    );
+    expect(recovery?.report.accounts[0]?.resetCreditInput).toEqual({
+      instanceId: claude.instanceId,
+    });
+    expect(providerUsageLimitRecovery(error, claude.instanceId, [claude], [])).toBeNull();
+    const redeemed = {
+      ...claude,
+      usageLimits: { ...claude.usageLimits!, resetCredits: { availableCount: 0 } },
+    };
+    expect(providerUsageLimitRecovery(claudeError, redeemed.instanceId, [redeemed], [])).toBeNull();
+  });
+
+  it("handles a single credit and an error without a known reset time", () => {
+    const single = provider({
+      usageLimits: { ...selected.usageLimits!, resetCredits: { availableCount: 1 } },
+    });
+    expect(
+      providerUsageLimitRecovery(
+        "Codex usage limit reached. Send the message again once the limit resets.",
+        single.instanceId,
+        [single],
+        [],
+      )?.message,
+    ).toBe(
+      "Codex usage limit reached. You have 1 reset credit available. Send the message again once the limit resets.",
+    );
+  });
+
+  it("stops offering recovery once the last credit is redeemed", () => {
+    const redeemed = provider({
+      usageLimits: { ...selected.usageLimits!, resetCredits: { availableCount: 0 } },
+    });
+    expect(providerUsageLimitRecovery(error, redeemed.instanceId, [redeemed], [])).toBeNull();
+  });
+
+  it.each([null, "Connection failed", "Claude usage limit reached."])(
+    "does not offer Codex recovery for %s",
+    (otherError) => {
+      expect(
+        providerUsageLimitRecovery(otherError, selected.instanceId, [selected], []),
+      ).toBeNull();
+    },
+  );
+
+  it("does not borrow another native account's credits", () => {
+    const empty = provider({
+      usageLimits: { ...selected.usageLimits!, resetCredits: { availableCount: 0 } },
+    });
+    const other = provider({ ...selected, instanceId: ProviderInstanceId.make("other") });
+    expect(providerUsageLimitRecovery(error, empty.instanceId, [empty, other], [])).toBeNull();
+  });
+
+  it("does not offer recovery after switching providers or while providers are unavailable", () => {
+    const claude = provider({ driver: ProviderDriverKind.make("claude") });
+    expect(providerUsageLimitRecovery(error, claude.instanceId, [claude], [])).toBeNull();
+    expect(providerUsageLimitRecovery(error, selected.instanceId, [], [])).toBeNull();
+    expect(providerUsageLimitRecovery(error, null, [selected], [])).toBeNull();
+  });
+
+  it("uses a matching hub's fresher balance and redemption path", () => {
+    const native = provider({
+      ...selected,
+      auth: { status: "authenticated", email: "same@example.com" },
+    });
+    const sources = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt: "2026-09-03T12:00:00.001Z",
+        accounts: [
+          {
+            id: "account",
+            driver: native.driver,
+            email: "SAME@example.com",
+            usageLimits: {
+              ...selected.usageLimits!,
+              checkedAt: "2026-09-03T12:00:00.001Z",
+              resetCredits: { availableCount: 3, nextCreditId: "credit" },
+            },
+          },
+        ],
+      },
+    ];
+    const recovery = providerUsageLimitRecovery(error, native.instanceId, [native], sources);
+    expect(recovery?.message).toContain("3 reset credits available");
+    expect(recovery?.report.accounts[0]?.resetCreditInput).toEqual({
+      sourceId: "hub",
+      accountId: "account",
+      creditId: "credit",
+    });
+    const proxy = provider({});
+    expect(
+      providerUsageLimitRecovery(error, proxy.instanceId, [proxy], sources)?.message,
+    ).toContain("3 reset credits available");
+    sources[0]!.accounts[0]!.usageLimits.resetCredits.availableCount = 0;
+    expect(providerUsageLimitRecovery(error, native.instanceId, [native], sources)).toBeNull();
   });
 });

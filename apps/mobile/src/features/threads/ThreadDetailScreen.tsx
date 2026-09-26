@@ -66,7 +66,10 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import {
+  collectProviderUsageLimits,
+  providerUsageLimitRecovery,
+} from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
@@ -462,6 +465,27 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // Drop the snapshot as soon as the key changes so it cannot resurface stale.
   if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
     setUsageLimitsPanel(null);
+  }
+  const usageLimitError = props.selectedThread.session?.lastError;
+  const usageLimitRecovery = useMemo(
+    () =>
+      providerUsageLimitRecovery(
+        usageLimitError,
+        props.selectedThread.modelSelection.instanceId,
+        props.serverConfig?.providers ?? [],
+        props.serverConfig?.usageLimitSources ?? [],
+      ),
+    [usageLimitError, props.selectedThread.modelSelection.instanceId, props.serverConfig],
+  );
+  const [autoOpenedUsageLimitError, setAutoOpenedUsageLimitError] = useState<string | null>(null);
+  const usageLimitErrorKey = `${usageLimitsKey}:${usageLimitError}`;
+  if (usageLimitRecovery !== null && autoOpenedUsageLimitError !== usageLimitErrorKey) {
+    setAutoOpenedUsageLimitError(usageLimitErrorKey);
+    setUsageLimitsPanel({
+      key: usageLimitsKey,
+      threadKey: selectedThreadKey,
+      now: Date.parse(usageLimitRecovery.report.createdAt),
+    });
   }
   const usageLimitsReport = useMemo(
     () =>
