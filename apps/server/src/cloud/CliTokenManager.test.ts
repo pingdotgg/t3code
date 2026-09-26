@@ -9,12 +9,15 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Terminal from "effect/Terminal";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ExternalLauncher from "../process/externalLauncher.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 
 // pk_test_<base64 of "clerk.example.test$">
@@ -323,5 +326,69 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
 
       assert.isTrue(isAuthorizationError(result));
     }),
+  );
+});
+
+it.layer(NodeServices.layer)("CliTokenManager.getExisting", (it) => {
+  it.effect(
+    "fails fast without a network call when the stored credential has no refresh token",
+    () =>
+      Effect.gen(function* () {
+        const httpCalls = yield* Ref.make(0);
+        const secrets = new Map<string, Uint8Array>();
+        const secretsLayer = Layer.succeed(ServerSecretStore.ServerSecretStore, {
+          get: (name: string) => Effect.succeed(Option.fromUndefinedOr(secrets.get(name))),
+          set: (name: string, value: Uint8Array) =>
+            Effect.sync(() => {
+              secrets.set(name, value);
+            }),
+          create: (name: string, value: Uint8Array) =>
+            Effect.sync(() => {
+              secrets.set(name, value);
+            }),
+          getOrCreateRandom: (_name: string, bytes: number) =>
+            Effect.succeed(new Uint8Array(bytes)),
+          remove: (name: string) =>
+            Effect.sync(() => {
+              secrets.delete(name);
+            }),
+        });
+        const httpLayer = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Ref.update(httpCalls, (count) => count + 1).pipe(
+              Effect.map(() =>
+                HttpClientResponse.fromWeb(request, new Response("{}", { status: 500 })),
+              ),
+            ),
+          ),
+        );
+        const launcherLayer = Layer.succeed(ExternalLauncher.ExternalLauncher, {
+          resolveAvailableEditors: () => Effect.succeed([]),
+          resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+          launchBrowser: () => Effect.void,
+          launchEditor: () => Effect.void,
+        });
+        const managerLayer = CliTokenManager.layer.pipe(
+          Layer.provide(secretsLayer),
+          Layer.provide(httpLayer),
+          Layer.provide(launcherLayer),
+        );
+
+        const manager = yield* CliTokenManager.CloudCliTokenManager.pipe(
+          Effect.provide(managerLayer),
+        );
+        // Expired long ago, and the grant carried no refresh token to keep.
+        yield* manager.store({
+          accessToken: "access-token-1",
+          refreshToken: "",
+          expiresAtEpochMs: 0,
+        });
+        const result = yield* Effect.flip(manager.getExisting);
+
+        assert.instanceOf(result, CliTokenManager.CloudCliMissingRefreshToken);
+        assert.equal(result._tag, "CloudCliMissingRefreshToken");
+        assert.equal(yield* Ref.get(httpCalls), 0);
+      }).pipe(provideTestEnv),
   );
 });
