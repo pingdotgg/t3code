@@ -1009,6 +1009,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   /**
+   * Embedder zoom, not display scale. Guest `innerWidth` is in CSS pixels of
+   * the webview; a `<webview>` sized in host CSS pixels occupies
+   * `hostCss × windowZoom` device pixels. Setting the guest to the preview
+   * factor alone then reports that product, so a 1280 CSS request never matches.
+   * Stored `tab.zoomFactor` stays preview-only; the guest gets the product.
+   */
+  const readMainWindowZoomFactor = (): number => {
+    const mainWindow = currentMainWindow;
+    if (mainWindow === undefined || mainWindow.isDestroyed()) return DEFAULT_ZOOM_FACTOR;
+    try {
+      const factor = mainWindow.webContents.getZoomFactor();
+      return Number.isFinite(factor) && factor > 0 ? factor : DEFAULT_ZOOM_FACTOR;
+    } catch {
+      return DEFAULT_ZOOM_FACTOR;
+    }
+  };
+
+  const guestZoomFactor = (tabZoomFactor: number): number =>
+    tabZoomFactor * readMainWindowZoomFactor();
+
+  /**
    * Pushes a tab's zoom factor onto whichever guest it currently owns, reading
    * both at call time. Anything that applies zoom after an await goes through
    * here: a snapshot taken before the await can be older than a zoom action that
@@ -1020,7 +1041,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = webContents.fromId(tab.webContentsId);
     if (!wc || wc.isDestroyed()) return;
     yield* attempt({ operation: "assertTabZoom", tabId, webContentsId: wc.id }, () =>
-      wc.setZoomFactor(tab.zoomFactor),
+      wc.setZoomFactor(guestZoomFactor(tab.zoomFactor)),
     ).pipe(Effect.ignore);
   });
 
@@ -2282,12 +2303,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
-    // Always assert the tab's own zoom rather than reading the guest's: a guest
-    // attaching while the app UI is zoomed starts at the embedder's inherited
-    // zoom level, which is not the preview's zoom. Done before the guest is
-    // published so it never paints a frame at the inherited zoom.
+    // Always assert the tab's own zoom (times the window zoom) rather than
+    // reading the guest's: a guest attaching while the app UI is zoomed starts
+    // at the embedder's inherited zoom level, which is not the preview's zoom.
+    // Done before the guest is published so it never paints a frame at the
+    // inherited zoom.
     yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
-      wc.setZoomFactor(currentTab.zoomFactor),
+      wc.setZoomFactor(guestZoomFactor(currentTab.zoomFactor)),
     );
     // A replacement guest attaches unmuted, so reassert the tab's mute before it
     // is published rather than letting it emit audio the user already silenced.
@@ -2704,10 +2726,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   /**
-   * Chromium hands every guest `<webview>` the embedder's zoom level, so zooming
-   * the app UI drags the previewed page along with it. The preview browser owns
-   * its own zoom factor, so re-assert it on each attached guest whenever the main
-   * window's zoom changes (see DesktopWindow.zoomMain).
+   * Chromium hands every guest `<webview>` the embedder's zoom level. Re-assert
+   * `previewZoom × windowZoom` on each attached guest whenever the main window
+   * zooms (see DesktopWindow.zoomMain) so declared CSS viewports stay put.
    */
   const reapplyZoom = Effect.fn("PreviewManager.reapplyZoom")(function* () {
     const tabIds = Array.from((yield* SynchronizedRef.get(tabsRef)).keys());
@@ -2726,7 +2747,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const wc = webContents.fromId(tab.webContentsId);
       if (wc && !wc.isDestroyed()) {
         yield* attempt({ operation: "applyZoom", tabId, webContentsId: wc.id }, () =>
-          wc.setZoomFactor(next),
+          wc.setZoomFactor(guestZoomFactor(next)),
         );
       }
     }

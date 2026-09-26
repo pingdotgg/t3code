@@ -1543,6 +1543,87 @@ describe("PreviewManager", () => {
     ),
   );
 
+  // Guest innerWidth is CSS pixels of the webview. A frame declared in host CSS
+  // occupies hostCss × windowZoom device pixels; the guest must zoom by that
+  // same window factor (times the preview-only factor) or preview_resize waits
+  // forever for 1280 and sees 2019.
+  effectIt.effect("applies preview zoom times the main window zoom onto the guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const windowZoom = 1.2 ** 2.5;
+        const setZoomFactor = vi.fn();
+        const hostWebContents = Object.assign(makeTestHostWebContents(), {
+          getZoomFactor: () => windowZoom,
+        });
+        const wc = Object.assign(
+          makeTestPreviewWebContents(
+            async () => ({
+              toJPEG: () => Buffer.from("png"),
+              getSize: () => ({ width: 1280, height: 720 }),
+            }),
+            42,
+            hostWebContents,
+          ),
+          { setZoomFactor },
+        );
+        fromId.mockReturnValue(wc);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_window_zoom");
+        yield* manager.registerWebview("tab_window_zoom", 42);
+
+        expect(setZoomFactor).toHaveBeenCalledWith(windowZoom);
+
+        yield* manager.zoomIn("tab_window_zoom");
+        expect(setZoomFactor).toHaveBeenLastCalledWith(1.1 * windowZoom);
+
+        setZoomFactor.mockClear();
+        yield* manager.reapplyZoom();
+        expect(setZoomFactor).toHaveBeenCalledTimes(1);
+        expect(setZoomFactor).toHaveBeenCalledWith(1.1 * windowZoom);
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "keeps a 1.25 preview zoom at the declared CSS size when the window is zoomed",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const windowZoom = 1.2 ** 2.5;
+          const tabZoom = 1.25;
+          const setZoomFactor = vi.fn();
+          const hostWebContents = Object.assign(makeTestHostWebContents(), {
+            getZoomFactor: () => windowZoom,
+          });
+          const wc = Object.assign(
+            makeTestPreviewWebContents(
+              async () => ({
+                toJPEG: () => Buffer.from("png"),
+                getSize: () => ({ width: 1280, height: 720 }),
+              }),
+              42,
+              hostWebContents,
+            ),
+            { setZoomFactor },
+          );
+          fromId.mockReturnValue(wc);
+          yield* manager.setMainWindow({
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: hostWebContents,
+          } as never);
+          yield* manager.createTab("tab_product_zoom", { zoomFactor: tabZoom });
+          yield* manager.registerWebview("tab_product_zoom", 42);
+
+          expect(setZoomFactor).toHaveBeenCalledWith(tabZoom * windowZoom);
+        }),
+      ),
+  );
+
   // did-attach and dom-ready both re-register the guest that is already
   // attached, and a guest that just inherited the app window's zoom needs its
   // own back — without that round trip republishing tab state.

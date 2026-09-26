@@ -1016,9 +1016,9 @@ export const make = Effect.gen(function* () {
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );
       if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
-      // Chromium pushes the new level down to embedded guests, which would zoom
-      // the previewed page along with the app UI. The preview browser keeps its
-      // own zoom, so put each guest back where the preview left it.
+      // Chromium pushes the new level down to embedded guests. Re-assert each
+      // guest at previewZoom × windowZoom so declared CSS viewports stay put
+      // while the visible frame still tracks the app UI zoom.
       yield* previewManager.reapplyZoom();
     }),
     syncAppearance: Effect.gen(function* () {
