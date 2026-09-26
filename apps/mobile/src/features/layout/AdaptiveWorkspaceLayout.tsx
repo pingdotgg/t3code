@@ -472,7 +472,9 @@ function AdaptiveWorkspaceLayoutContent(
     renderedSidebarWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING);
   }, [layout.listPaneWidth, panes.primarySidebarVisible, renderedSidebarWidth]);
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: Math.min(1, renderedSidebarWidth.value / 80),
+    // Fading a UIKit glass ancestor can leave remounted header effects missing.
+    // The clipped width already reveals and hides the iOS sidebar.
+    opacity: Platform.OS === "ios" ? 1 : Math.min(1, renderedSidebarWidth.value / 80),
     width: renderedSidebarWidth.value,
   }));
 
