@@ -549,7 +549,9 @@ function trace2ChildKey(record: Record<string, unknown>): string | null {
 const Trace2Record = Schema.Record(Schema.String, Schema.Unknown);
 const decodeTrace2Record = decodeJsonResult(Trace2Record);
 
-const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
+// Untraced because it runs on every git spawn and returns at once without hook
+// callbacks. Its errors fail the runGitCommand span.
+const createTrace2Monitor = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   progress: GitVcsDriver.ExecuteGitProgress | undefined,
 ): Effect.fn.Return<

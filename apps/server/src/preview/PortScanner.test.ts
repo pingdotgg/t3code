@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
 
@@ -439,6 +440,26 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
   }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("writes no poll span while no client retains the scanner", () => {
+  let pollSpans = 0;
+  const tracer = Tracer.make({
+    span: (options) => {
+      if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
+      return new Tracer.NativeSpan(options);
+    },
+  });
+  const layer = makeProbeFailureLayer(processProbeFailure);
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* TestClock.adjust(Duration.seconds(15));
+    expect(pollSpans).toBe(0);
+
+    yield* scanner.retain;
+    expect(pollSpans).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
 });
 
 effectIt.effect("uses the current configured fragment when readiness comes from cache", () => {

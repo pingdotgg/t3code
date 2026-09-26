@@ -681,7 +681,8 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
-export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(function* (
+// Untraced because it runs before most spawns and returns at once off Windows.
+export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   options: CommandAvailabilityOptions = {},
