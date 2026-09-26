@@ -1,6 +1,16 @@
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import { describe, expect, it } from "vite-plus/test";
 
-import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "../providerUsageLimits.ts";
+import {
+  claudeAccountReportsSubscriptionUsage,
+  claudeProbeUsageLimits,
+  claudeRateLimitEventToUpdate,
+  claudeUsageResponseToLimits,
+  makeClaudeScopedLimitNames,
+  recordClaudeUsageResponse,
+} from "./claudeUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -95,6 +105,15 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
   });
 
+  it("treats a null rate-limit body as a failed probe", () => {
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: { rate_limits_available: true, rate_limits: null },
+      }).limits,
+    ).toEqual({ checkedAt, windows: [], unavailable: { reason: "probeFailed" } });
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
@@ -116,6 +135,231 @@ describe("claudeUsageResponseToLimits", () => {
         windowDurationMins: 10080,
       },
     ]);
+  });
+});
+
+const noAccount = {
+  subscriptionType: undefined,
+  tokenSource: undefined,
+  apiProvider: undefined,
+} as const;
+
+describe("claudeAccountReportsSubscriptionUsage", () => {
+  it("treats a named subscription or known OAuth source as subscription usage", () => {
+    expect(
+      claudeAccountReportsSubscriptionUsage({
+        ...noAccount,
+        subscriptionType: "max",
+      }),
+    ).toBe(true);
+    expect(claudeAccountReportsSubscriptionUsage({ ...noAccount, tokenSource: "oauth" })).toBe(
+      true,
+    );
+    expect(claudeAccountReportsSubscriptionUsage({ ...noAccount, tokenSource: "claude.ai" })).toBe(
+      true,
+    );
+    expect(
+      claudeAccountReportsSubscriptionUsage({
+        ...noAccount,
+        tokenSource: "CLAUDE_CODE_OAUTH_TOKEN",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects API-key, cloud, and unknown token sources", () => {
+    expect(
+      claudeAccountReportsSubscriptionUsage({ ...noAccount, tokenSource: "ANTHROPIC_AUTH_TOKEN" }),
+    ).toBe(false);
+    expect(claudeAccountReportsSubscriptionUsage({ ...noAccount, apiProvider: "vertex" })).toBe(
+      false,
+    );
+    expect(
+      claudeAccountReportsSubscriptionUsage({ ...noAccount, tokenSource: "some-other-key" }),
+    ).toBe(false);
+    expect(claudeAccountReportsSubscriptionUsage(noAccount)).toBe(false);
+  });
+});
+
+describe("claudeProbeUsageLimits", () => {
+  it("keeps API key and Bedrock logins unsupported", () => {
+    const unavailable = { rate_limits_available: false, rate_limits: null } as const;
+    expect(
+      claudeProbeUsageLimits({
+        checkedAt,
+        usage: unavailable,
+        account: { ...noAccount, tokenSource: "ANTHROPIC_AUTH_TOKEN" },
+      }).limits.unavailable?.reason,
+    ).toBe("unsupported");
+    expect(
+      claudeProbeUsageLimits({
+        checkedAt,
+        usage: unavailable,
+        account: { ...noAccount, apiProvider: "bedrock" },
+      }).limits.unavailable?.reason,
+    ).toBe("unsupported");
+    expect(
+      claudeProbeUsageLimits({
+        checkedAt,
+        usage: unavailable,
+        account: { ...noAccount, tokenSource: "some-other-key" },
+      }).limits.unavailable?.reason,
+    ).toBe("unsupported");
+  });
+
+  it("does not lock a subscription instance that returned no windows", () => {
+    const account = { subscriptionType: "max", tokenSource: "oauth", apiProvider: undefined };
+    const oauthOnly = { ...noAccount, tokenSource: "claude.ai" };
+    for (const usage of [
+      { rate_limits_available: false, rate_limits: null },
+      { rate_limits_available: true, rate_limits: null },
+    ] as const) {
+      expect(claudeProbeUsageLimits({ checkedAt, usage, account }).limits.unavailable?.reason).toBe(
+        "probeFailed",
+      );
+    }
+    expect(
+      claudeProbeUsageLimits({
+        checkedAt,
+        usage: { rate_limits_available: false, rate_limits: null },
+        account: oauthOnly,
+      }).limits.unavailable?.reason,
+    ).toBe("probeFailed");
+    expect(
+      claudeProbeUsageLimits({
+        checkedAt,
+        usage: undefined,
+        account,
+      }).limits.unavailable?.reason,
+    ).toBe("probeFailed");
+  });
+
+  it("publishes a second instance's turn windows and keeps them across the next bad probe", () => {
+    const account = { subscriptionType: "max", tokenSource: "oauth", apiProvider: undefined };
+    const probed = claudeProbeUsageLimits({
+      checkedAt,
+      account,
+      usage: { rate_limits_available: false, rate_limits: null },
+    });
+    const update = claudeRateLimitEventToUpdate(
+      {
+        status: "rejected",
+        rateLimitType: "five_hour",
+        utilization: 1.09,
+        resetsAt: 1_789_938_600,
+      },
+      probed.names,
+    );
+    const recovered = applyUsageLimitsUpdate({
+      previous: probed.limits,
+      checkedAt: "2026-09-20T18:58:27.751Z",
+      update: update!,
+    });
+    expect(recovered?.windows).toEqual([
+      {
+        id: "five_hour",
+        kind: "session",
+        label: "Session",
+        usedPercent: 100,
+        windowDurationMins: 300,
+        resetsAt: "2026-09-20T21:10:00.000Z",
+      },
+    ]);
+    expect(recovered?.unavailable?.reason).toBe("probeFailed");
+    const again = claudeProbeUsageLimits({
+      checkedAt: "2026-09-20T19:00:00.000Z",
+      account,
+      usage: { rate_limits_available: true, rate_limits: null },
+    });
+    expect(resolveUsageLimitsAfterProbe({ published: recovered, probed: again.limits })).toBe(
+      recovered,
+    );
+  });
+});
+
+const subscriptionAccount = {
+  subscriptionType: "max",
+  tokenSource: "oauth",
+  apiProvider: undefined,
+} as const;
+
+/** A `get_usage` body that names one overage-included weekly bucket. */
+function usageWithScopedBucket(displayName: string) {
+  return {
+    rate_limits_available: true as const,
+    rate_limits: {
+      five_hour: { utilization: 10, resets_at: null },
+      ...({
+        model_scoped: [{ display_name: displayName, utilization: 20, resets_at: null }],
+      } as object),
+    },
+  };
+}
+
+describe("recordClaudeUsageResponse", () => {
+  it("keeps the learned overage name when a later probe fails with a body", () => {
+    const namesRef = Effect.runSync(makeClaudeScopedLimitNames);
+    Effect.runSync(
+      recordClaudeUsageResponse(namesRef, {
+        checkedAt,
+        account: subscriptionAccount,
+        usage: usageWithScopedBucket("Fable"),
+      }),
+    );
+    expect(Effect.runSync(Ref.get(namesRef))).toEqual({ overageIncluded: "Fable" });
+
+    for (const usage of [
+      { rate_limits_available: false, rate_limits: null },
+      { rate_limits_available: true, rate_limits: null },
+      undefined,
+    ] as const) {
+      const failed = Effect.runSync(
+        recordClaudeUsageResponse(namesRef, {
+          checkedAt,
+          account: subscriptionAccount,
+          usage,
+        }),
+      );
+      expect(failed.unavailable?.reason).toBe("probeFailed");
+      expect(Effect.runSync(Ref.get(namesRef))).toEqual({ overageIncluded: "Fable" });
+    }
+
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "seven_day_overage_included" as never,
+          utilization: 0.4,
+        },
+        Effect.runSync(Ref.get(namesRef)),
+      )?.windows[0]?.id,
+    ).toBe("seven_day_fable");
+  });
+
+  it("replaces the overage name when a later probe succeeds", () => {
+    const namesRef = Effect.runSync(makeClaudeScopedLimitNames);
+    Effect.runSync(Ref.set(namesRef, { overageIncluded: "Fable" }));
+    Effect.runSync(
+      recordClaudeUsageResponse(namesRef, {
+        checkedAt,
+        account: subscriptionAccount,
+        usage: usageWithScopedBucket("Opus"),
+      }),
+    );
+    expect(Effect.runSync(Ref.get(namesRef))).toEqual({ overageIncluded: "Opus" });
+  });
+
+  it("clears the overage name for an account that cannot report subscription windows", () => {
+    const namesRef = Effect.runSync(makeClaudeScopedLimitNames);
+    Effect.runSync(Ref.set(namesRef, { overageIncluded: "Fable" }));
+    const limits = Effect.runSync(
+      recordClaudeUsageResponse(namesRef, {
+        checkedAt,
+        account: { ...noAccount, tokenSource: "ANTHROPIC_AUTH_TOKEN" },
+        usage: { rate_limits_available: false, rate_limits: null },
+      }),
+    );
+    expect(limits.unavailable?.reason).toBe("unsupported");
+    expect(Effect.runSync(Ref.get(namesRef))).toEqual({ overageIncluded: undefined });
   });
 });
 

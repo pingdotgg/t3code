@@ -429,8 +429,13 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
 }
 
-/** The one-line status under a provider heading when there are no bars to draw. */
+/**
+ * The one-line status under a provider heading when there are no bars to draw.
+ * Windows already in hand are drawn even when the last full probe failed, so
+ * a second Claude account is not omitted after a turn reports its quota.
+ */
 export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
+  if (limits.windows.length > 0) return null;
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? "This account has no subscription limits.";
   }

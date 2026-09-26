@@ -11,10 +11,12 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   other: 3,
 };
 
+/** Clamp a reported utilization into the 0–100 range bars can draw. */
 export function clampPercent(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
 }
 
+/** Session, then weekly, then monthly, with id as the tie-break. */
 function sortWindows(
   windows: Iterable<ServerProviderUsageWindow>,
 ): ReadonlyArray<ServerProviderUsageWindow> {
@@ -25,6 +27,7 @@ function sortWindows(
   );
 }
 
+/** A complete probe snapshot: windows in kind order, no unavailable marker. */
 export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
@@ -32,6 +35,7 @@ export function makeUsageLimits(input: {
   return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
 }
 
+/** Empty windows plus why this account has nothing to draw. */
 export function makeUnavailableUsageLimits(input: {
   readonly checkedAt: string;
   readonly reason: "unsupported" | "probeFailed";
@@ -48,14 +52,31 @@ export function makeUnavailableUsageLimits(input: {
 }
 
 /**
+ * A sparse update is not a full read. Keep `probeFailed` when there was no
+ * snapshot, or the previous one was a failed probe or a mistaken
+ * `unsupported`, so the windows do not become the last good full read. A
+ * snapshot that already has no `unavailable` stays unmarked.
+ */
+function incompleteAfterSparseUpdate(
+  previous: ServerProviderUsageLimits | undefined,
+): ServerProviderUsageLimits["unavailable"] | undefined {
+  if (previous !== undefined && previous.unavailable === undefined) return undefined;
+  if (previous?.unavailable?.reason === "probeFailed") return previous.unavailable;
+  return { reason: "probeFailed" };
+}
+
+/**
  * Fold a sparse runtime update into the limits a provider currently
  * publishes. Windows upsert by `id`; a window the update omits keeps its
  * previous values, and a window that arrives without `resetsAt` or
  * `windowDurationMins` keeps whatever the last probe resolved for it. An
  * update with no windows leaves `previous` untouched.
  *
- * An `unsupported` snapshot stays unsupported: an account that cannot have
- * subscription windows will not start reporting them mid-turn.
+ * An `unsupported` snapshot is not a permanent lock. A turn that reports a
+ * real window clears it: a second Claude account can be mislabeled at boot
+ * and still emit `rate_limit_event` utilization. The result stays
+ * `probeFailed` until a full probe succeeds, so one window does not look
+ * like the complete set.
  */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
@@ -63,7 +84,7 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (update.windows.length === 0) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
@@ -88,15 +109,18 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+  if (!changed && previous !== undefined) {
     return previous;
   }
+  const unavailable = incompleteAfterSparseUpdate(previous);
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
 
+/** True when a sparse update did not move any field the snapshot already has. */
 function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageWindow): boolean {
   return (
     a.id === b.id &&
@@ -111,8 +135,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
 /**
  * Choose what to publish after a status probe finishes. A probe that failed
  * this time must not wipe bars a previous probe or a turn already
- * established, so the last good snapshot stays; `unsupported` is
- * authoritative and replaces them.
+ * established, so any snapshot that has windows stays. `unsupported`
+ * replaces a clean snapshot (an account that truly cannot report). It does
+ * not replace windows that only exist because a turn recovered a mistaken
+ * `unsupported` lock — those stay marked `probeFailed`.
  *
  * A successful probe replaces the published windows outright, including any
  * runtime update that landed while it was running. That is a deliberate
@@ -127,7 +153,16 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
-  if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
+  if (!probed?.unavailable || !published || published.windows.length === 0) {
+    return probed;
+  }
+  if (probed.unavailable.reason === "probeFailed") {
+    return published;
+  }
+  if (
+    probed.unavailable.reason === "unsupported" &&
+    published.unavailable?.reason === "probeFailed"
+  ) {
     return published;
   }
   return probed;

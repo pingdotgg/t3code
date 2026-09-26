@@ -52,14 +52,48 @@ describe("applyUsageLimitsUpdate", () => {
     });
   });
 
-  it("leaves an unsupported account and an empty update alone", () => {
+  it("leaves an empty update alone and recovers windows from a mistaken unsupported lock", () => {
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
-    expect(
-      applyUsageLimitsUpdate({ previous: unsupported, checkedAt, update: { windows: [session] } }),
-    ).toBe(unsupported);
     expect(
       applyUsageLimitsUpdate({ previous: published, checkedAt, update: { windows: [] } }),
     ).toBe(published);
+    const next = applyUsageLimitsUpdate({
+      previous: unsupported,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [session] },
+    });
+    expect(next).toEqual({
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [session],
+      unavailable: { reason: "probeFailed" },
+    });
+  });
+
+  it("keeps a failed probe marked when a sparse update lands on it", () => {
+    const failed = {
+      checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed" as const, message: "usage timed out" },
+    };
+    const next = applyUsageLimitsUpdate({
+      previous: failed,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [weekly] },
+    });
+    expect(next).toEqual({
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [weekly],
+      unavailable: failed.unavailable,
+    });
+    expect(
+      applyUsageLimitsUpdate({ previous: next, checkedAt, update: { windows: [weekly] } }),
+    ).toBe(next);
+  });
+
+  it("marks a sparse update with no previous snapshot as probeFailed", () => {
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
+    ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
   });
 
   it("preserves reset credits when a streamed window update changes usage", () => {
@@ -85,5 +119,21 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+
+  it("keeps turn-reported windows through a later failed or unsupported probe", () => {
+    const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
+    const partial = applyUsageLimitsUpdate({
+      previous: failed,
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [weekly] },
+    });
+    expect(resolveUsageLimitsAfterProbe({ published: partial, probed: failed })).toBe(partial);
+    expect(
+      resolveUsageLimitsAfterProbe({
+        published: partial,
+        probed: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+      }),
+    ).toBe(partial);
   });
 });

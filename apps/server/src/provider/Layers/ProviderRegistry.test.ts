@@ -151,8 +151,16 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly usage?: {
+    readonly rate_limits_available: boolean;
+    readonly rate_limits: null;
+  };
 };
 
+/**
+ * Stub Claude capabilities for status probes, including an optional empty
+ * `get_usage` body used to reproduce a second subscription instance.
+ */
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
@@ -198,6 +206,40 @@ function mockSpawnerLayer(
       return Effect.succeed(mockHandle(handler(cmd.args)));
     }),
   );
+}
+
+/** Satisfy the version probe without answering `claude auth status`. */
+function claudeVersionOnlySpawnResult(args: ReadonlyArray<string>) {
+  const joined = args.join(" ");
+  if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+  throw new Error(`Unexpected args: ${joined}`);
+}
+
+/**
+ * A second Claude subscription whose `get_usage` body has no windows is a
+ * failed read, not an unsupported account.
+ */
+function secondClaudeSubscriptionEmptyUsageIsProbeFailed() {
+  return Effect.gen(
+    /**
+     * Probe the second instance and assert probeFailed with no windows.
+     */
+    function* secondClaudeSubscriptionEmptyUsageIsProbeFailedGen() {
+      const status = yield* checkClaudeProviderStatus(
+        defaultClaudeSettings,
+        claudeCapabilities({
+          email: "other@example.com",
+          subscriptionType: "max",
+          tokenSource: "oauth",
+          usage: { rate_limits_available: false, rate_limits: null },
+        }),
+      );
+      assert.strictEqual(status.auth.status, "authenticated");
+      assert.strictEqual(status.auth.email, "other@example.com");
+      assert.strictEqual(status.usageLimits?.unavailable?.reason, "probeFailed");
+      assert.deepStrictEqual(status.usageLimits?.windows, []);
+    },
+  ).pipe(Effect.provide(mockSpawnerLayer(claudeVersionOnlySpawnResult)));
 }
 
 function recordingMockSpawnerLayer(
@@ -2970,6 +3012,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             }),
           ),
         ),
+      );
+
+      it.effect(
+        "does not mark a second subscription Claude instance unsupported when usage is empty",
+        secondClaudeSubscriptionEmptyUsageIsProbeFailed,
       );
 
       it.effect("returns an api key label for claude api key auth", () =>

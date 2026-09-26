@@ -82,6 +82,13 @@ describe("limitsNotice", () => {
   it("explains empty bars and passes provider messages through", () => {
     const checkedAt = "2026-09-03T11:00:00.000Z";
     expect(limitsNotice({ checkedAt, windows: [window] })).toBeNull();
+    expect(
+      limitsNotice({
+        checkedAt,
+        windows: [window],
+        unavailable: { reason: "probeFailed" },
+      }),
+    ).toBeNull();
     expect(limitsNotice({ checkedAt, windows: [] })).toBe("No limits reported.");
     expect(limitsNotice({ checkedAt, windows: [], unavailable: { reason: "unsupported" } })).toBe(
       "This account has no subscription limits.",
@@ -787,6 +794,74 @@ describe("collectLimitNotices", () => {
       serverConfig: { providers: [], usageLimitSources: [] },
     });
     expect(collectLimitNotices(one)[0]).toBe("Laptop · Claude Max: Could not read limits.");
+  });
+
+  it("draws a second Claude instance once a turn has reported its windows", () => {
+    const checkedAt = "2026-09-03T11:00:00.000Z";
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const first = provider({
+      instanceId: ProviderInstanceId.make("claude-a"),
+      driver: claude,
+      displayName: "Claude",
+      auth: { status: "authenticated", email: "one@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const second = provider({
+      instanceId: ProviderInstanceId.make("claude-b"),
+      driver: claude,
+      displayName: "Other Claude",
+      auth: { status: "authenticated", email: "two@example.com" },
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, usedPercent: 80 }],
+        unavailable: { reason: "probeFailed" },
+      },
+    });
+    const hidden = provider({
+      instanceId: ProviderInstanceId.make("claude-api"),
+      driver: claude,
+      displayName: "API",
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: { providers: [first, second, hidden] },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.email)).toEqual([
+      "one@example.com",
+      "two@example.com",
+    ]);
+    expect(collectLimitNotices(input)).toEqual([]);
+  });
+
+  it("names a second Claude instance whose probe failed and has no windows yet", () => {
+    const checkedAt = "2026-09-03T11:00:00.000Z";
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: {
+            providers: [
+              provider({
+                instanceId: ProviderInstanceId.make("claude-b"),
+                driver: claude,
+                displayName: "Other Claude",
+                usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)).toEqual([]);
+    expect(collectLimitNotices(input)).toEqual(["Other Claude: Could not read limits."]);
   });
 });
 
