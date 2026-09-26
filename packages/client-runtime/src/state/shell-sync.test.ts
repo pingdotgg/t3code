@@ -6,23 +6,18 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
-  type SupervisorConnectionState,
 } from "../connection/model.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -64,115 +59,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   };
 }
 
-// Runs a shell state in its own scope. Each cache save records the saved
-// snapshot sequence.
-const makePersistenceHarness = Effect.fn(function* () {
-  const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
-  const savedSequences = yield* Queue.unbounded<number>();
-  const client = {
-    [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
-  } as unknown as WsRpcProtocolClient;
-  const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
-  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: TARGET,
-    state: supervisorState,
-    session: yield* SubscriptionRef.make(Option.some(session(client))),
-    prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
-    connect: Effect.void,
-    disconnect: Effect.void,
-    retryNow: Effect.void,
-  } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-  const cache = Persistence.EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeedNone,
-    saveShell: (_environmentId, snapshot) => Queue.offer(savedSequences, snapshot.snapshotSequence),
-    loadThread: () => Effect.succeedNone,
-    saveThread: () => Effect.void,
-    removeThread: () => Effect.void,
-    loadServerConfig: () => Effect.succeedNone,
-    saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeedNone,
-    saveVcsRefs: () => Effect.void,
-    removeVcsRefs: () => Effect.void,
-    clearVcsRefs: () => Effect.void,
-    clear: () => Effect.void,
-  });
-  const entries = yield* SubscriptionRef.make(new Map([[TARGET.environmentId, {} as never]]));
-  const removeEnvironment = SubscriptionRef.set(entries, new Map<EnvironmentId, never>());
-  const scope = yield* Scope.make();
-  const shellState = yield* makeEnvironmentShellState().pipe(
-    Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-    Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-    Effect.provideService(
-      ShellSnapshotLoader,
-      ShellSnapshotLoader.of({ load: () => Effect.succeedNone }),
-    ),
-    Effect.provideService(EnvironmentRegistry, {
-      entries,
-    } as unknown as EnvironmentRegistry["Service"]),
-    Effect.provideService(Scope.Scope, scope),
-  );
-  const sendSnapshot = Effect.fn(function* (snapshotSequence: number) {
-    yield* Queue.offer(events, {
-      kind: "snapshot",
-      snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence },
-    });
-    yield* SubscriptionRef.changes(shellState).pipe(
-      Stream.filter(
-        (state) =>
-          Option.isSome(state.snapshot) &&
-          state.snapshot.value.snapshotSequence === snapshotSequence,
-      ),
-      Stream.runHead,
-    );
-  });
-  return { savedSequences, supervisorState, removeEnvironment, scope, sendSnapshot };
-});
-
 describe("environment shell synchronization", () => {
-  it.effect("saves the shell cache at most every 10 seconds and flushes when it stops", () =>
-    Effect.gen(function* () {
-      const harness = yield* makePersistenceHarness();
-
-      yield* harness.sendSnapshot(1);
-      yield* TestClock.adjust("500 millis");
-      expect(yield* Queue.take(harness.savedSequences)).toBe(1);
-
-      for (let sequence = 2; sequence <= 10; sequence += 1) {
-        yield* harness.sendSnapshot(sequence);
-        yield* TestClock.adjust("1 second");
-      }
-      expect(yield* Queue.size(harness.savedSequences)).toBe(0);
-      yield* TestClock.adjust("1500 millis");
-      expect(yield* Queue.take(harness.savedSequences)).toBe(10);
-
-      // Losing the connection saves at once instead of waiting out the interval.
-      yield* harness.sendSnapshot(11);
-      const offline: SupervisorConnectionState = {
-        ...AVAILABLE_CONNECTION_STATE,
-        network: "offline",
-        phase: "offline",
-      };
-      yield* SubscriptionRef.set(harness.supervisorState, offline);
-      expect(yield* Queue.take(harness.savedSequences)).toBe(11);
-
-      yield* harness.sendSnapshot(12);
-      yield* Scope.close(harness.scope, Exit.void);
-      expect(yield* Queue.take(harness.savedSequences)).toBe(12);
-      expect(yield* Queue.size(harness.savedSequences)).toBe(0);
-    }),
-  );
-
-  it.effect("does not write the shell cache back after its environment is removed", () =>
-    Effect.gen(function* () {
-      const harness = yield* makePersistenceHarness();
-
-      yield* harness.sendSnapshot(1);
-      yield* harness.removeEnvironment;
-      yield* Scope.close(harness.scope, Exit.void);
-      expect(yield* Queue.size(harness.savedSequences)).toBe(0);
-    }),
-  );
-
   it.effect("publishes live state before persistence and preserves it when ready", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
@@ -194,7 +81,7 @@ describe("environment shell synchronization", () => {
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
         loadShell: () => Effect.succeedNone,
-        saveShell: () => Effect.void,
+        saveShell: () => Effect.never,
         loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,

@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -50,10 +49,6 @@ function shellStatusForSnapshot(
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
-// Minimum time between shell cache saves. Each save serializes the full
-// snapshot, which is megabytes once an environment has thousands of threads.
-const SHELL_CACHE_SAVE_INTERVAL = "10 seconds";
-
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
@@ -79,25 +74,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const awaitingCompletion = yield* Ref.make(false);
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
-  // Always present in production (followStreamInEnvironment). Optional so
-  // tests that do not provide a registry still run.
-  const registry = yield* Effect.serviceOption(EnvironmentRegistry);
-  const persistenceRequests = yield* Queue.sliding<void>(1);
-  const persistenceLock = yield* Semaphore.make(1);
-  let persistedSnapshot = Option.getOrUndefined(cachedSnapshot);
+  const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
 
-  // Saves the current snapshot unless it is already on disk. The throttled
-  // worker and the disconnect and teardown flushes share one permit, so
-  // saves never overlap.
-  const persist = Effect.fn("EnvironmentShellState.persist")(function* () {
-    const { snapshot } = yield* SubscriptionRef.get(state);
-    if (Option.isNone(snapshot) || snapshot.value === persistedSnapshot) return;
-    yield* cache.saveShell(environmentId, snapshot.value).pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          persistedSnapshot = snapshot.value;
-        }),
-      ),
+  const persist = Effect.fn("EnvironmentShellState.persist")(function* (
+    snapshot: OrchestrationShellSnapshot,
+  ) {
+    yield* cache.saveShell(environmentId, snapshot).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not persist environment shell cache.").pipe(
           Effect.annotateLogs({
@@ -107,34 +89,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         ),
       ),
     );
-  }, persistenceLock.withPermit);
+  });
 
-  // Registered before the fibers below, so scope close interrupts them first
-  // and this saves the final snapshot. Removing an environment clears its
-  // cache, so a removed environment must not write it back.
-  yield* Effect.addFinalizer(() =>
-    Effect.gen(function* () {
-      if (Option.isSome(registry)) {
-        const entries = yield* SubscriptionRef.get(registry.value.entries);
-        if (!entries.has(environmentId)) return;
-      }
-      yield* persist();
-    }),
+  yield* Stream.fromQueue(persistence).pipe(
+    Stream.debounce("500 millis"),
+    Stream.runForEach(persist),
+    Effect.forkScoped,
   );
-
-  // Saves 500 ms after a change, then waits at least SHELL_CACHE_SAVE_INTERVAL
-  // before the next save. Streaming agents change the shell many times a
-  // second.
-  yield* Effect.gen(function* () {
-    while (true) {
-      yield* Queue.take(persistenceRequests);
-      yield* Effect.sleep("500 millis");
-      // The save reads the latest state, so it covers requests queued meanwhile.
-      yield* Queue.poll(persistenceRequests);
-      yield* persist();
-      yield* Effect.sleep(SHELL_CACHE_SAVE_INTERVAL);
-    }
-  }).pipe(Effect.forkScoped);
 
   const setDisconnected = Ref.set(awaitingCompletion, false).pipe(
     Effect.andThen(
@@ -143,9 +104,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         status: shellStatusForSnapshot(current.snapshot),
       })),
     ),
-    // Save without waiting for the throttle. Forked so a slow save does not
-    // delay connection state updates.
-    Effect.andThen(Effect.forkScoped(persist())),
   );
   const setSynchronizing = SubscriptionRef.update(state, (current) => ({
     ...current,
@@ -223,7 +181,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       }
     }
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
-      yield* Queue.offer(persistenceRequests, undefined);
+      yield* Queue.offer(persistence, next.snapshot.value);
     }
   });
 

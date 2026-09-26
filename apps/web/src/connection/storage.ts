@@ -187,7 +187,9 @@ function writeDatabaseValue(
 ) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     const transaction = database.transaction(storeName, "readwrite");
-    transaction.addEventListener("error", () => {
+    // Every failed write fires "abort". A failed commit, such as
+    // QuotaExceededError, fires only "abort" and no "error".
+    transaction.addEventListener("abort", () => {
       resume(
         Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
       );
