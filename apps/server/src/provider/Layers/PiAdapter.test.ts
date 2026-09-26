@@ -166,7 +166,17 @@ const makeHarness = Effect.fnUntraced(function* (sessionFile = SESSION_FILE) {
         if (event.type === type) return event as RuntimeEventOf<T>;
       }
     });
-  return { fake, adapter, takeEvent };
+  /** Every event up to and including the next one of this type. */
+  const takeEventsThrough = (type: ProviderRuntimeEvent["type"]) =>
+    Effect.gen(function* () {
+      const seen: Array<ProviderRuntimeEvent> = [];
+      while (true) {
+        const event = yield* Queue.take(events);
+        seen.push(event);
+        if (event.type === type) return seen;
+      }
+    });
+  return { fake, adapter, takeEvent, takeEventsThrough };
 });
 
 describe("PiAdapter", () => {
@@ -319,6 +329,31 @@ describe("PiAdapter", () => {
         sessionFile: SESSION_FILE,
         turnEntryIds: [],
       });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("starts fresh without a warning when Pi never wrote the session file", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEventsThrough } = yield* makeHarness();
+      // Pi writes a session file only once it holds a user or assistant
+      // message. A first prompt Pi rejected leaves the cursor naming a file
+      // that never existed, and there is no earlier context to lose.
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        resumeCursor: {
+          schemaVersion: 1,
+          sessionFile: "/fake/never-written.jsonl",
+          turnEntryIds: [""],
+        },
+      });
+      assert.notInclude(fake.lastSpawn().args, "--session");
+      const started = yield* takeEventsThrough("thread.started");
+      assert.notInclude(
+        started.map((event) => event.type),
+        "runtime.warning",
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

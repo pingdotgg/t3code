@@ -1584,7 +1584,14 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
 
           yield* updateSession(ctx, { status: "ready" });
           yield* emit(ctx, { type: "session.started", payload: {} });
-          if (requestedCursor !== undefined && resumeCursor === undefined) {
+          // Pi writes the file only once it holds a message, so a missing
+          // file loses context only if a turn recorded a user entry (or could
+          // not tell).
+          if (
+            requestedCursor !== undefined &&
+            resumeCursor === undefined &&
+            requestedCursor.turnEntryIds.some((entryId) => entryId !== "")
+          ) {
             yield* emit(ctx, {
               type: "runtime.warning",
               payload: {
