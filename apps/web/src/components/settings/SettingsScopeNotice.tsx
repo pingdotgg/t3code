@@ -66,7 +66,7 @@ export function SettingsScopeNotice({
       <Alert role="status">
         <AlertDescription>
           <p>{children}</p>
-          <AlertAction className="flex-wrap gap-2">
+          <AlertAction className="flex-wrap">
             {choices.map((choice) => (
               <Button
                 key={JSON.stringify(choice.search)}

@@ -56,12 +56,12 @@ function useNowWhile(active: boolean): number {
 }
 
 function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
-  const className = "size-4 shrink-0 stroke-[1.8]";
+  const className = "size-4 shrink-0 stroke-2";
   switch (status) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;
     case "running":
-      return <Spinner className={className} />;
+      return <Spinner size="md" className="shrink-0" />;
     case "failed":
       return <XIcon aria-hidden className={className} />;
     case "warning":
@@ -240,7 +240,7 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   return (
     <pre
       className={cn(
-        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-relaxed select-text",
+        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
         failed
           ? "border-destructive/20 bg-error-surface text-destructive-foreground"
           : "border-border bg-code text-muted-foreground",

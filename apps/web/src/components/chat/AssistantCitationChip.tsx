@@ -13,30 +13,17 @@ import {
   findAssistantCitationSourceAnchor,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
-import { cn } from "~/lib/utils";
 import {
   assistantCitationHash,
   assistantCitationNavigation,
 } from "../../lib/assistantCitationNavigation";
-import {
-  CHAT_INLINE_CHIP_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
-  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
-} from "../composerInlineChip";
+import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
-
-const CITATION_ACTION_BUTTON_CLASS_NAME = cn(
-  COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME,
-  "text-current hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] hover:text-current",
-);
 
 export function AssistantCitationChip({
   citation,
@@ -52,10 +39,13 @@ export function AssistantCitationChip({
     onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
+    /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
+    onRestoreFocus?: () => void;
   };
 }) {
   const navigate = useNavigate();
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
@@ -123,29 +113,26 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
       aria-label={`View cited assistant text: ${label}`}
     >
-      <QuoteIcon aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
-      <span className={cn(COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME, "max-w-[16em]")}>{label}</span>
+      <QuoteIcon aria-hidden="true" />
+      <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
     </Link>
   );
   const chatSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-(--context-chip-accent)/17 focus-visible:outline-2 focus-visible:outline-foreground"
       aria-label={`View cited assistant text: ${label}`}
     >
-      <QuoteIcon aria-hidden="true" className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
-      <span className={cn(COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME, "max-w-[16em]")}>{label}</span>
+      <QuoteIcon aria-hidden="true" />
+      <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
     </Link>
   );
   return (
-    <span
-      className={cn(
-        composer ? COMPOSER_INLINE_CHIP_CLASS_NAME : CHAT_INLINE_CHIP_CLASS_NAME,
-        CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.citation,
-      )}
+    <ContextChip
+      kind="citation"
       contentEditable={false}
       data-assistant-citation-chip="true"
       data-markdown-copy={serializeAssistantCitation(citation)}
@@ -171,9 +158,10 @@ export function AssistantCitationChip({
         >
           <PopoverTrigger
             aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
-            className={CITATION_ACTION_BUTTON_CLASS_NAME}
+            data-citation-comment-trigger="true"
+            render={<ContextChipAction />}
           >
-            <PencilIcon aria-hidden="true" className="size-[0.85em]" />
+            <PencilIcon aria-hidden="true" />
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
@@ -185,9 +173,25 @@ export function AssistantCitationChip({
                 commentInputRef.current?.focus({ preventScroll: true });
                 return false;
               }}
+              finalFocus={
+                commentEditor.onRestoreFocus
+                  ? () => {
+                      // Leave focus alone when the user closed the popover by moving to another control.
+                      const activeElement = document.activeElement;
+                      if (
+                        activeElement === document.body ||
+                        (activeElement !== null && commentPopupRef.current?.contains(activeElement))
+                      ) {
+                        commentEditor.onRestoreFocus?.();
+                      }
+                      return false;
+                    }
+                  : undefined
+              }
+              ref={commentPopupRef}
               aria-label="Edit citation comment"
-              className="w-72 max-w-[calc(100vw-1rem)]"
-              viewportClassName="p-3"
+              width="md"
+              padding="compact"
               onPointerDown={(event) => event.stopPropagation()}
             >
               <AssistantCitationCommentEditor
@@ -223,6 +227,6 @@ export function AssistantCitationChip({
           ) : null}
         </Popover>
       ) : null}
-    </span>
+    </ContextChip>
   );
 }

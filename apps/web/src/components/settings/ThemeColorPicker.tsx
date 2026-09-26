@@ -171,7 +171,7 @@ function ThemeColorPickerPanel({
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-foreground">{label}</p>
-          <p className="text-[11px] text-muted-foreground">Choose a color</p>
+          <p className="text-2xs text-muted-foreground">Choose a color</p>
         </div>
         <span
           className="size-7 shrink-0 rounded-full shadow-sm"
@@ -193,7 +193,7 @@ function ThemeColorPickerPanel({
         />
         <div className="grid grid-cols-[1fr_1.2fr] gap-2">
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
               HEX
             </span>
             <span className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2 focus-within:border-ring">
@@ -219,7 +219,7 @@ function ThemeColorPickerPanel({
             </span>
           </label>
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
               RGB
             </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
@@ -284,7 +284,7 @@ function ThemeColorPicker({
       </Tooltip>
       <PopoverPopup
         align="end"
-        className="overflow-hidden rounded-2xl border border-border/70 p-0 shadow-2xl [--viewport-inline-padding:0px] [&_[data-slot=popover-viewport]]:p-0"
+        padding="none"
         data-theme-editor-panel=""
         side="bottom"
         sideOffset={10}
@@ -323,7 +323,7 @@ export const ThemeColorField = memo(function ThemeColorField({
     <div
       className={cn(
         "flex min-h-11 min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 transition-[background-color,box-shadow]",
-        selected && "bg-accent/60 shadow-[inset_0_0_0_1px_var(--ring)]",
+        selected && "bg-accent/60 inset-ring inset-ring-ring",
       )}
       data-theme-color-role={role}
     >
@@ -353,14 +353,14 @@ export const ThemeColorField = memo(function ThemeColorField({
         <Input
           aria-invalid={!isColorValue}
           aria-label={`${label} hex value`}
-          className="w-28 shrink-0 rounded-md border-0 bg-black/10 font-mono text-xs text-foreground shadow-none focus-within:bg-black/15 focus-within:ring-0 dark:bg-black/20 dark:focus-within:bg-black/25 [&_[data-slot=input]]:text-right"
+          className="w-28 shrink-0"
+          font="mono"
           id={`${role}-hex`}
           nativeInput
           onChange={(event) => onChange(role, event.currentTarget.value)}
           onFocus={() => onSelect?.(role)}
           onPointerDown={() => onSelect?.(role)}
-          size="sm"
-          unstyled
+          size="compact"
           value={editorValue}
         />
       </div>

@@ -51,6 +51,7 @@
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",
+    "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",
     "knip": "6.34.0",
     "typescript": "catalog:",

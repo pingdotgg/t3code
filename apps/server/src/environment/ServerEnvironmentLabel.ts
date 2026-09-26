@@ -128,7 +128,7 @@ const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
             cause,
           }),
       ),
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
         ServerEnvironmentLabelCommandError: (error) =>
           Effect.logDebug(error.message).pipe(

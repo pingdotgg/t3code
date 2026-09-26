@@ -3,21 +3,9 @@ import Animated, { Easing, LinearTransition, ReduceMotion } from "react-native-r
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
 import { MaterialSegmentedControl } from "./MaterialSegmentedControl";
+import type { SegmentedControlProps } from "./SegmentedControl.types";
 
-export interface SegmentedControlProps<Value extends number | string> {
-  readonly options: readonly {
-    readonly value: Value;
-    readonly label: string;
-    readonly accessibilityLabel?: string;
-  }[];
-  readonly selected: Value;
-  readonly onSelect: (value: Value) => void;
-  /** Compact sizing applies to the non-Material control. */
-  readonly size?: "default" | "compact";
-  /** "tab" for the view switcher; filters stay plain buttons. */
-  readonly role?: "tab" | "button";
-  readonly className?: string;
-}
+export type { SegmentedControlProps } from "./SegmentedControl.types";
 
 export function SegmentedControl<Value extends number | string>(
   props: SegmentedControlProps<Value>,

@@ -220,7 +220,7 @@ export function ReviewThreadCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {thread.isResolved ? (
-          <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-500" />
+          <CheckCircle2Icon className="size-3.5 text-success-foreground" />
         ) : (
           <CircleIcon className="size-3.5" />
         )}
@@ -265,7 +265,7 @@ export function ReviewThreadCard({
             {comments.map((comment) => (
               <article key={comment.id} className="group min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <PullRequestActorLabel actor={comment.author} className="text-foreground" />
+                  <PullRequestActorLabel actor={comment.author} />
                   <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
                   <PullRequestReactionBar
                     className="ml-auto justify-end"
@@ -312,7 +312,6 @@ export function ReviewThreadCard({
               <Button
                 size="xs"
                 variant="ghost"
-                className="px-1"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
@@ -352,12 +351,7 @@ export function ReviewThreadCard({
                 </div>
               </div>
             ) : (
-              <Button
-                size="xs"
-                variant="ghost"
-                className="mt-2 px-1"
-                onClick={() => setReplying(true)}
-              >
+              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 Reply
               </Button>
             )

@@ -5,7 +5,6 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
-  HistoryIcon,
   ScaleIcon,
 } from "lucide-react";
 import {
@@ -29,7 +28,6 @@ import {
   resolveContextStripLabelsCompact,
   resolveCurrentWorkspaceLabel,
   resolveEnvModeLabel,
-  resolveEffectiveEnvMode,
   resolveLockedWorkspaceLabel,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
@@ -41,7 +39,8 @@ import {
 } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
-import { Button } from "./ui/button";
+import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
+import { ComposerControl } from "./chat/ComposerControl";
 import {
   Menu,
   MenuGroup,
@@ -74,7 +73,8 @@ interface BranchToolbarProps {
   showGitControls: boolean;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
-  effectiveEnvModeOverride?: EnvMode;
+  /** The thread's env mode as ChatView resolves it. */
+  envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   startFromOrigin: boolean;
@@ -105,6 +105,7 @@ interface MobileRunContextSelectorProps {
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel: string | null;
+  previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
 }
 
@@ -123,6 +124,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   activeWorktreePath,
   onEnvModeChange,
   previousWorktreeLabel,
+  previousWorktreeBranch,
   onUsePreviousWorktree,
 }: MobileRunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -139,7 +141,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   const workspaceLabel = forceNewWorktree
     ? resolveEnvModeLabel("worktree")
     : envModeLocked
-      ? resolveLockedWorkspaceLabel(activeWorktreePath)
+      ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
       : effectiveEnvMode === "worktree"
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
@@ -183,7 +185,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       >
         <span
           data-composer-label-motion
-          className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+          className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
         >
           {autoEnvironmentLabel ??
             (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
@@ -195,7 +197,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   if (isLocked) {
     return (
       <span
-        className="inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
+        className="inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
         data-composer-context-control
       >
         {triggerContent}
@@ -206,8 +208,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className="min-w-0 max-w-[48%] flex-initial justify-start font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80"
+        render={<ComposerControl size="xs" />}
+        className="min-w-0 max-w-[48%] flex-initial justify-start"
         data-composer-context-control
         data-composer-shortcut={[
           showEnvironmentPicker && !envLocked ? "composer.host" : "",
@@ -217,7 +219,12 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         {triggerContent}
         <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </MenuTrigger>
-      <MenuPopup align="start" side="top" className="w-64" {...composerFloatingLayerProps}>
+      <MenuPopup
+        align="start"
+        side="top"
+        className={previousWorktreeLabel ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
+        {...composerFloatingLayerProps}
+      >
         {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
@@ -295,10 +302,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             </MenuRadioItem>
             {previousWorktreeLabel ? (
               <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <HistoryIcon className="size-3" />
-                  <MiddleTruncate value={previousWorktreeLabel} />
-                </span>
+                <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
               </MenuRadioItem>
             ) : null}
           </MenuRadioGroup>
@@ -308,6 +312,34 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   );
 });
 
+const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
+const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
+
+/**
+ * The width a label takes when shown, clipped parts included.
+ *
+ * Text keeps its full width when its box clips it, so each text run measures
+ * whole. A label can hold more than one run (MiddleTruncate splits a branch
+ * into a head and a tail), so the runs are added. Reading one element's
+ * scrollWidth drops the tail when the label is hidden or squeezed, and the
+ * strip then flips between labels and icons on every measure.
+ *
+ * A shown label never grows past its motion span's max width, so longer text
+ * reserves only that much.
+ */
+function labelTextWidth(label: HTMLElement, range: Range): number {
+  const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+  let width = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    range.selectNodeContents(node);
+    width += range.getBoundingClientRect().width;
+  }
+  const motion = label.querySelector<HTMLElement>("[data-composer-label-motion]");
+  const maxWidth = motion ? Number.parseFloat(getComputedStyle(motion).maxWidth) : Number.NaN;
+  return Number.isFinite(maxWidth) ? Math.min(width, maxWidth) : width;
+}
+
 /**
  * Collapse the strip's labels to icons only when the text no longer fits.
  *
@@ -316,10 +348,6 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
  * the expanded width without remembered values that could go stale or latch
  * the strip compact. A small hysteresis keeps the boundary from flapping.
  */
-const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
-const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
-const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
-
 function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   const [overflows, setOverflows] = useState(false);
   const pendingLabelRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
@@ -380,17 +408,11 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       needed += width;
     }
     needed += stripGap * Math.max(0, groups - 1);
+    const range = document.createRange();
     for (const label of current.querySelectorAll<HTMLElement>("[data-composer-label]")) {
-      // The clipping can happen below the marker (SelectValue truncates
-      // internally), where the outer span's scrollWidth matches its clipped
-      // box. The text's real width is the largest scrollWidth in the subtree.
-      let textWidth = label.scrollWidth;
-      for (const inner of label.querySelectorAll<HTMLElement>("*")) {
-        textWidth = Math.max(textWidth, inner.scrollWidth);
-      }
       // Subtract the visible width even during an animation. The content
       // sum already includes it; only the hidden text needs reserving.
-      needed += Math.max(0, textWidth - label.getBoundingClientRect().width);
+      needed += Math.max(0, labelTextWidth(label, range) - label.getBoundingClientRect().width);
     }
     const nextOverflows = resolveContextStripLabelsCompact({
       compact,
@@ -489,7 +511,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   showGitControls,
   draftId,
   onEnvModeChange,
-  effectiveEnvModeOverride,
+  envMode,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
@@ -524,13 +546,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeWorktreePath = forceNewWorktree
     ? null
     : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
-  const effectiveEnvMode =
-    (forceNewWorktree ? "worktree" : effectiveEnvModeOverride) ??
-    resolveEffectiveEnvMode({
-      activeWorktreePath,
-      hasServerThread: serverThread !== null,
-      draftThreadEnvMode: draftThread?.envMode,
-    });
+  const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (serverThread !== null && activeWorktreePath !== null);
 
   // "Previous worktree" hops a draft into the most recently active worktree
@@ -630,6 +646,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
+            previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
           />
         </div>
@@ -669,6 +686,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               activeWorktreePath={activeWorktreePath}
               onEnvModeChange={onEnvModeChange}
               previousWorktreeLabel={previousWorktreeLabel}
+              previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
             />
           ) : null}
@@ -696,11 +714,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           threadId={threadId}
           {...(draftId ? { draftId } : {})}
           envLocked={envLocked}
-          {...(forceNewWorktree
-            ? { effectiveEnvModeOverride: "worktree" }
-            : effectiveEnvModeOverride
-              ? { effectiveEnvModeOverride }
-              : {})}
+          effectiveEnvModeOverride={effectiveEnvMode}
           {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
           {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
           startFromOrigin={startFromOrigin}
