@@ -73,6 +73,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
+  public initializationError: unknown | undefined;
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -107,6 +108,13 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
       waiter.resolve({ done: true, value: undefined });
     }
   }
+
+  readonly initializationResult = async (): Promise<unknown> => {
+    if (this.initializationError !== undefined) {
+      throw this.initializationError;
+    }
+    return {};
+  };
 
   readonly setModel = async (model?: string): Promise<void> => {
     this.setModelCalls.push(model);
@@ -367,6 +375,52 @@ const sendCompletedClaudeTurn = (
     assert.equal(completed._tag, "Some");
     return turn;
   });
+
+const MISSING_CLAUDE_SESSION_ID = "9ff67172-10bd-4c35-8422-fd459ca18bd0";
+
+/** Fails a query the way the SDK does when `--resume` names a session with no transcript. */
+function failAsMissingClaudeSession(query: FakeClaudeQuery, sessionId: string): void {
+  const cliError = `No conversation found with session ID: ${sessionId}`;
+  const sdkError = new Error(`Claude Code returned an error result: ${cliError}`);
+  query.initializationError = sdkError;
+  query.emit({
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    num_turns: 0,
+    errors: [cliError],
+    session_id: sessionId,
+    uuid: "missing-session-result",
+  } as unknown as SDKMessage);
+  query.fail(sdkError);
+}
+
+/** A harness that hands out a new query per start, configured before the adapter sees it. */
+function makeQueryPerStartHarness(configure: (query: FakeClaudeQuery, index: number) => void) {
+  const queries: Array<FakeClaudeQuery> = [];
+  const inputs: Array<{
+    readonly prompt: AsyncIterable<SDKUserMessage>;
+    readonly options: ClaudeQueryOptions;
+  }> = [];
+  const layer = Layer.effect(
+    ClaudeAdapter,
+    makeClaudeAdapter(decodeClaudeSettings({}), {
+      modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+      createQuery: (input) => {
+        const query = new FakeClaudeQuery();
+        configure(query, queries.length);
+        queries.push(query);
+        inputs.push(input);
+        return query;
+      },
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return { layer, queries, inputs };
+}
 
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
@@ -6470,6 +6524,213 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("starts a fresh Claude session once when the resumed session no longer exists", () => {
+    const harness = makeQueryPerStartHarness((query, index) => {
+      if (index === 0) failAsMissingClaudeSession(query, MISSING_CLAUDE_SESSION_ID);
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: MISSING_CLAUDE_SESSION_ID,
+          turnCount: 1,
+          turnStartMessageIds: ["turn-before-restart"],
+        },
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: RESUME_THREAD_ID,
+        input: "are you still there?",
+        attachments: [],
+        interactionMode: "default",
+      });
+
+      assert.equal(harness.queries.length, 2);
+      assert.equal(harness.queries[0]?.closeCalls, 1);
+      const [resumed, fresh] = harness.inputs;
+      assert.equal(resumed?.options.resume, MISSING_CLAUDE_SESSION_ID);
+      assert.equal(fresh?.options.resume, undefined);
+      const freshSessionId = fresh?.options.sessionId;
+      assert.match(
+        freshSessionId ?? "",
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      assert.notEqual(freshSessionId, MISSING_CLAUDE_SESSION_ID);
+      assert.equal(fresh?.options.permissionMode, resumed?.options.permissionMode);
+      assert.equal(fresh?.options.cwd, resumed?.options.cwd);
+      assert.deepEqual(harness.queries[1]?.setPermissionModeCalls, ["bypassPermissions"]);
+      assert.equal(yield* Effect.promise(() => readFirstPromptText(fresh)), "are you still there?");
+
+      assert.deepEqual(session.resumeCursor, {
+        threadId: RESUME_THREAD_ID,
+        resume: freshSessionId,
+        turnCount: 0,
+      });
+      assert.deepEqual(turn.resumeCursor, {
+        threadId: RESUME_THREAD_ID,
+        resume: freshSessionId,
+        turnCount: 1,
+        turnStartMessageIds: [turn.turnId],
+      });
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+      const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
+      assert.equal(warnings.length, 1);
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "runtime.error"),
+        false,
+      );
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("surfaces a failed fresh start after a missing Claude session without retrying", () => {
+    const harness = makeQueryPerStartHarness((query, index) => {
+      if (index === 0) failAsMissingClaudeSession(query, MISSING_CLAUDE_SESSION_ID);
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: { threadId: RESUME_THREAD_ID, resume: MISSING_CLAUDE_SESSION_ID },
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: RESUME_THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+      harness.queries[1]?.fail(new Error("Claude Code process exited with code 1"));
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      assert.equal(harness.queries.length, 2);
+      assert.equal(runtimeEvents.filter((event) => event.type === "runtime.warning").length, 1);
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      if (runtimeError?.type === "runtime.error") {
+        assert.equal(runtimeError.payload.message, "Claude runtime stream failed.");
+      }
+      assert.equal(runtimeEvents.at(-1)?.type, "session.exited");
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps the resumed Claude session when it fails for another reason", () => {
+    const harness = makeQueryPerStartHarness((query) => {
+      const failure = new Error("Claude Code process exited with code 1. stderr: Invalid API key");
+      query.initializationError = failure;
+      query.fail(failure);
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: { threadId: RESUME_THREAD_ID, resume: MISSING_CLAUDE_SESSION_ID },
+        runtimeMode: "full-access",
+      });
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      runtimeEventsFiber.interruptUnsafe();
+
+      assert.equal(harness.queries.length, 1);
+      assert.equal(harness.inputs[0]?.options.resume, MISSING_CLAUDE_SESSION_ID);
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        [
+          "session.started",
+          "session.configured",
+          "session.state.changed",
+          "runtime.error",
+          "session.exited",
+        ],
+      );
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails a resumed Claude start whose initialization never finishes", () => {
+    let markInitializationRequested = () => {};
+    const initializationRequested = new Promise<void>((resolve) => {
+      markInitializationRequested = resolve;
+    });
+    const harness = makeQueryPerStartHarness((query) => {
+      (query as { initializationResult: () => Promise<unknown> }).initializationResult = () => {
+        markInitializationRequested();
+        return new Promise(() => {});
+      };
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const startFiber = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: MISSING_CLAUDE_SESSION_ID },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Effect.promise(() => initializationRequested);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("60 seconds");
+
+      const error = yield* Fiber.join(startFiber);
+      assert.instanceOf(error, ProviderAdapterProcessError);
+      assert.equal(
+        error.detail,
+        "Claude did not finish initializing the resumed session within 60 seconds.",
+      );
+      assert.equal(harness.queries.length, 1);
+      assert.equal(harness.queries[0]?.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("rewinds a steered Claude turn after recovery and preserves fork boundaries", () => {
     const forkCalls: Array<Parameters<NonNullable<ClaudeAdapterLiveOptions["forkSession"]>>> = [];
     let firstTurnId = "";
@@ -7707,6 +7968,20 @@ describe("ClaudeAdapterLive", () => {
 
   it.effect("routes Claude resume compaction through the shared user-input UI", () => {
     const harness = makeHarness();
+    let dialogPromise: Promise<unknown> | undefined;
+    // The SDK dispatches a dialog the CLI raised while loading the resumed
+    // session with the initialize response, before startSession has a context.
+    (harness.query as { initializationResult: () => Promise<unknown> }).initializationResult =
+      async () => {
+        dialogPromise = harness.getLastCreateQueryInput()?.options.onUserDialog?.(
+          {
+            dialogKind: "resume_return",
+            payload: { sessionAgeMinutes: 145, estimatedTokens: 275123 },
+          },
+          { signal: new AbortController().signal, requestId: "request-dialog" },
+        );
+        return {};
+      };
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       const session = yield* adapter.startSession({
@@ -7715,24 +7990,12 @@ describe("ClaudeAdapterLive", () => {
         resumeCursor: { resume: "550e8400-e29b-41d4-a716-446655440000" },
         runtimeMode: "full-access",
       });
-      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
-
-      const onUserDialog = harness.getLastCreateQueryInput()?.options.onUserDialog;
-      assert.equal(typeof onUserDialog, "function");
-      if (!onUserDialog) return;
-
-      const dialogPromise = onUserDialog(
-        {
-          dialogKind: "resume_return",
-          payload: { sessionAgeMinutes: 145, estimatedTokens: 275123 },
-        },
-        { signal: new AbortController().signal, requestId: "request-dialog" },
-      );
-
-      const requested = yield* Stream.runHead(adapter.streamEvents);
-      assert.equal(requested._tag, "Some");
-      if (requested._tag !== "Some" || requested.value.type !== "user-input.requested") return;
-      const question = requested.value.payload.questions[0];
+      // The held dialog is shown once the session's startup events are out.
+      const startupEvents = yield* Stream.take(adapter.streamEvents, 4).pipe(Stream.runCollect);
+      const requested = Array.from(startupEvents).at(-1);
+      assert.equal(requested?.type, "user-input.requested");
+      if (requested?.type !== "user-input.requested") return;
+      const question = requested.payload.questions[0];
       assert.equal(question?.header, "Resume session");
       assert.match(question?.question ?? "", /2h 25m/);
       assert.match(question?.question ?? "", /275,123 tokens/);
@@ -7740,18 +8003,18 @@ describe("ClaudeAdapterLive", () => {
         question?.options.map((option) => option.label),
         ["Compact and continue", "Keep full history", "Don't ask again"],
       );
-      if (!question || !requested.value.requestId) return;
+      if (!question || !requested.requestId) return;
 
       yield* adapter.respondToUserInput(
         session.threadId,
-        ApprovalRequestId.make(requested.value.requestId),
+        ApprovalRequestId.make(requested.requestId),
         { [question.id]: "Compact and continue" },
       );
 
       const resolved = yield* Stream.runHead(adapter.streamEvents);
       assert.equal(resolved._tag, "Some");
       if (resolved._tag === "Some") assert.equal(resolved.value.type, "user-input.resolved");
-      assert.deepEqual(yield* Effect.promise(() => dialogPromise), {
+      assert.deepEqual(yield* Effect.promise(() => dialogPromise ?? Promise.resolve()), {
         behavior: "completed",
         result: "compact",
       });

@@ -457,6 +457,7 @@ interface ClaudeSessionContext {
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
+  readonly initializationResult: () => Promise<unknown>;
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
@@ -496,6 +497,21 @@ function hasDurableClaudeSessionId(message: SDKMessage): boolean {
     message.subtype !== "hook_started" &&
     message.subtype !== "hook_progress" &&
     message.subtype !== "hook_response"
+  );
+}
+
+/** How long a resumed session may take to initialize; mirrors the SDK's `startup()` default. */
+const CLAUDE_RESUME_INITIALIZE_TIMEOUT = "60 seconds";
+
+/**
+ * Whether the CLI refused `--resume <sessionId>` because it has no transcript
+ * for it. The SDK rejects the query with the CLI's error result, e.g.
+ * "Claude Code returned an error result: No conversation found with session ID: <id>".
+ */
+function isMissingClaudeSessionError(cause: unknown, sessionId: string): boolean {
+  return (
+    cause instanceof Error &&
+    cause.message.includes(`No conversation found with session ID: ${sessionId}`)
   );
 }
 
@@ -4403,25 +4419,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const startedAt = yield* nowIso;
-      const resumeState = readClaudeResumeState(input.resumeCursor);
+      let resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
-      const sessionId = existingResumeSessionId ?? newSessionId;
+      let sessionId = existingResumeSessionId ?? newSessionId;
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
       const runPromise = Effect.runPromiseWith(runtimeContext);
-
-      const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
-      const prompt = Stream.fromQueue(promptQueue).pipe(
-        Stream.filter((item) => item.type === "message"),
-        Stream.map((item) => item.message),
-        Stream.catchCause((cause) =>
-          Cause.hasInterruptsOnly(cause) ? Stream.empty : Stream.failCause(cause),
-        ),
-        Stream.toAsyncIterable,
-      );
 
       const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
       const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
@@ -4579,15 +4585,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       const handleResumeDialog = Effect.fn("handleResumeDialog")(function* (
+        context: ClaudeSessionContext,
         request: Parameters<NonNullable<ClaudeQueryOptions["onUserDialog"]>>[0],
         callbackOptions: Parameters<NonNullable<ClaudeQueryOptions["onUserDialog"]>>[1],
       ) {
         if (request.dialogKind !== "resume_return") {
-          return { behavior: "cancelled" as const };
-        }
-
-        const context = yield* Ref.get(contextRef);
-        if (!context) {
           return { behavior: "cancelled" as const };
         }
 
@@ -4813,10 +4815,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
         runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
-      const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
-        request,
-        callbackOptions,
-      ) => runPromise(handleResumeDialog(request, callbackOptions));
 
       const claudeBinaryPath = claudeSdkExecutablePath;
       const {
@@ -4933,7 +4931,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        onUserDialog,
         supportedDialogKinds: ["resume_return"],
         env: McpProviderSession.withAgentDeviceEnvironment(claudeEnvironment, mcpSession),
         additionalDirectories,
@@ -4978,20 +4975,102 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
-      const queryRuntime = yield* Effect.try({
-        try: () =>
-          createQuery({
-            prompt,
-            options: queryOptions,
-          }),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId,
-            detail: "Failed to start Claude runtime session.",
-            cause,
-          }),
+      // Each query gets its own prompt queue: the SDK starts pulling prompts
+      // as soon as the query exists, so a query that is replaced must not keep
+      // a consumer on the queue its successor reads from. Dialogs are held
+      // until the session context is published: the SDK dispatches ones the CLI
+      // raised while loading a resumed session together with the initialize
+      // response, before startSession has a context to show them in.
+      const openQuery = Effect.fn("openClaudeQuery")(function* (options: ClaudeQueryOptions) {
+        const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
+        const prompt = Stream.fromQueue(promptQueue).pipe(
+          Stream.filter((item) => item.type === "message"),
+          Stream.map((item) => item.message),
+          Stream.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause) ? Stream.empty : Stream.failCause(cause),
+          ),
+          Stream.toAsyncIterable,
+        );
+        const dialogContext = yield* Deferred.make<ClaudeSessionContext | undefined>();
+        const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
+          request,
+          callbackOptions,
+        ) =>
+          runPromise(
+            Effect.gen(function* () {
+              const context = yield* Deferred.await(dialogContext);
+              if (context === undefined || callbackOptions.signal.aborted) {
+                return { behavior: "cancelled" as const };
+              }
+              return yield* handleResumeDialog(context, request, callbackOptions);
+            }),
+          );
+        const query = yield* Effect.try({
+          try: () => createQuery({ prompt, options: { ...options, onUserDialog } }),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId,
+              detail: "Failed to start Claude runtime session.",
+              cause,
+            }),
+        });
+        return { promptQueue, query, dialogContext };
       });
+
+      const first = yield* openQuery(queryOptions);
+      const dropFirstQuery = Effect.try(() => first.query.close()).pipe(
+        Effect.ignore,
+        Effect.andThen(Queue.shutdown(first.promptQueue)),
+        Effect.andThen(Deferred.succeed(first.dialogContext, undefined)),
+      );
+      // A persisted resume id can name a session the CLI never wrote to disk.
+      // The CLI then exits before taking a turn, and because the cursor keeps
+      // that id, every later turn would fail the same way. So a resumed query
+      // waits for the CLI to initialize (the first turn's control requests
+      // wait for that anyway) and starts fresh once if the session is missing.
+      // Any other failure still surfaces through the stream. The SDK's own
+      // `startup()` bounds initialization the same way; `query()` does not.
+      const resumeSessionMissing =
+        existingResumeSessionId !== undefined &&
+        (yield* Effect.promise(() =>
+          first.query.initializationResult().then(
+            () => false,
+            (cause: unknown) => isMissingClaudeSessionError(cause, existingResumeSessionId),
+          ),
+        ).pipe(
+          Effect.onInterrupt(() => dropFirstQuery),
+          Effect.timeoutOrElse({
+            duration: CLAUDE_RESUME_INITIALIZE_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId,
+                  detail: `Claude did not finish initializing the resumed session within ${CLAUDE_RESUME_INITIALIZE_TIMEOUT}.`,
+                }),
+              ),
+          }),
+        ));
+      let started = first;
+      if (resumeSessionMissing) {
+        sessionId = yield* randomUUIDv4;
+        yield* Effect.logWarning("claude session resume fell back to fresh start", {
+          threadId,
+          resumeSessionId: existingResumeSessionId,
+          sessionId,
+        });
+        yield* Effect.annotateCurrentSpan({
+          "claude.resume.fallback": "missing-session",
+          "claude.query.session_id": sessionId,
+        });
+        yield* dropFirstQuery;
+        const { resume: _missingSessionId, ...freshQueryOptions } = queryOptions;
+        started = yield* openQuery({ ...freshQueryOptions, sessionId });
+        resumeState = undefined;
+      }
+      const queryRuntime = started.query;
+      const promptQueue = started.promptQueue;
 
       const session: ProviderSession = {
         threadId,
@@ -5092,6 +5171,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         },
         providerRefs: {},
       });
+
+      if (resumeSessionMissing) {
+        yield* emitRuntimeWarning(
+          context,
+          "Claude's previous session no longer exists, so a new one was started without its earlier context.",
+          { missingSessionId: existingResumeSessionId },
+        );
+      }
+      yield* Deferred.succeed(started.dialogContext, context);
 
       let streamFiber: Fiber.Fiber<void, never>;
       streamFiber = runFork(
