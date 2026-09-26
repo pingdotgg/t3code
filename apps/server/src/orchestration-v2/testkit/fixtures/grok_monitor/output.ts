@@ -75,6 +75,21 @@ export function assertGrokMonitorOutput(
   );
   assert.include(rootTexts, "ROOT_DONE");
 
+  // Full access approves the monitor prompt for T3. It must answer with
+  // Grok's allow-once: Grok saves `always-allow` for the whole project.
+  const permissionAnswer = transcript.entries.find(
+    (entry) =>
+      entry.type === "expect_outbound" &&
+      (entry.frame as { kind?: unknown; method?: unknown }).kind === "response" &&
+      (entry.frame as { method?: unknown }).method === "session/request_permission",
+  );
+  assert.deepEqual(
+    permissionAnswer?.type === "expect_outbound"
+      ? (permissionAnswer.frame as { result?: unknown }).result
+      : undefined,
+    { outcome: { outcome: "selected", optionId: "allow-once" } },
+  );
+
   // Grok's own wake reply is a provider continuation, not more of run 1.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);
   assert.equal(`${wakeMessage?.createdBy}:${wakeMessage?.creationSource}`, "agent:provider");
