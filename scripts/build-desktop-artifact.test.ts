@@ -1759,6 +1759,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       appId: "com.t3tools.t3code",
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
+      webAuthnKeychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn",
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
     });
   });
@@ -1780,6 +1781,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.include(
+      entitlements,
+      "<key>keychain-access-groups</key>\n    <array>\n      <string>ABC1234567.com.t3tools.t3code.webauthn</string>\n    </array>",
+    );
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {
