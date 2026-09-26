@@ -21,6 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+  DEFAULT_SIDEBAR_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type DiffLayout,
@@ -570,6 +571,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.sidebarAutoArchiveAfterDays !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarAutoArchiveAfterDays
+        ? ["Auto-archive settled threads"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
@@ -683,6 +688,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
+      settings.sidebarAutoArchiveAfterDays,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -783,6 +789,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      sidebarAutoArchiveAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoArchiveAfterDays,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -2010,9 +2017,11 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfter
 function AutoSettleDaysInput({
   value,
   onCommit,
+  "aria-label": ariaLabel,
 }: {
   value: number;
   onCommit: (days: number) => void;
+  "aria-label": string;
 }) {
   // Local draft so the field can be emptied mid-edit; the setting only moves
   // on valid input and snaps back to the persisted value on blur.
@@ -2044,7 +2053,7 @@ function AutoSettleDaysInput({
         }
       }}
       onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
+      aria-label={ariaLabel}
     />
   );
 }
@@ -2170,6 +2179,11 @@ export function GeneralSettingsPanel() {
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every(
       (target) => target.serverConfig?.environment.capabilities.threadAutoSettlement === true,
+    );
+  const supportsAutoArchive =
+    supportsAutoSettlement &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.threadAutoArchive === true,
     );
   const supportsRestartContinuation =
     connectedEnvironments.length > 0 &&
@@ -2343,6 +2357,61 @@ export function GeneralSettingsPanel() {
                   <AutoSettleDaysInput
                     value={settings.sidebarAutoSettleAfterDays}
                     onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                    aria-label="Days of inactivity before auto-settle"
+                  />
+                }
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        {supportsAutoArchive ? (
+          <>
+            <SettingsRow
+              serverScoped
+              settingKeys={["sidebarAutoArchiveAfterDays"]}
+              {...searchableSetting("auto-archive-settled-threads")}
+              description="Settled threads archive automatically after this long."
+              resetAction={
+                settings.sidebarAutoArchiveAfterDays !==
+                DEFAULT_UNIFIED_SETTINGS.sidebarAutoArchiveAfterDays ? (
+                  <SettingResetButton
+                    label="auto-archive"
+                    onClick={() =>
+                      updateSettings({
+                        sidebarAutoArchiveAfterDays:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoArchiveAfterDays,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoArchiveAfterDays"]}
+                  checked={settings.sidebarAutoArchiveAfterDays !== null}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      sidebarAutoArchiveAfterDays: checked
+                        ? DEFAULT_SIDEBAR_AUTO_ARCHIVE_AFTER_DAYS
+                        : null,
+                    })
+                  }
+                  aria-label="Auto-archive settled threads"
+                />
+              }
+            />
+            {settings.sidebarAutoArchiveAfterDays !== null ? (
+              <SettingsRow
+                serverScoped
+                settingKeys={["sidebarAutoArchiveAfterDays"]}
+                title={searchableSetting("days-before-auto-archive").title}
+                description="Archived threads stay available in Settings → Archive."
+                control={
+                  <AutoSettleDaysInput
+                    value={settings.sidebarAutoArchiveAfterDays}
+                    onCommit={(days) => updateSettings({ sidebarAutoArchiveAfterDays: days })}
+                    aria-label="Days settled before auto-archive"
                   />
                 }
               />

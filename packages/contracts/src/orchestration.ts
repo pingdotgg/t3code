@@ -1165,6 +1165,16 @@ const ThreadAutoSettleCommand = Schema.Struct({
   settledAt: IsoDateTime,
 });
 
+// Archives a thread that is still settled with this settledAt. Carrying the
+// value lets the decider reject a thread that was un-settled or re-settled
+// after the server read its snapshot.
+const ThreadAutoArchiveCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-archive"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  settledAt: IsoDateTime,
+});
+
 const ThreadUnsettleCommand = Schema.Struct({
   type: Schema.Literal("thread.unsettle"),
   commandId: CommandId,
@@ -1660,6 +1670,7 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
 
 const InternalOrchestrationCommand = Schema.Union([
   ThreadAutoSettleCommand,
+  ThreadAutoArchiveCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
   ThreadSessionSetCommand,
@@ -1789,6 +1800,9 @@ export const ThreadArchivedPayload = Schema.Struct({
 
 export const ThreadUnarchivedPayload = Schema.Struct({
   threadId: ThreadId,
+  // Present when a settled thread is restored: its settled clock restarts so
+  // auto-archive does not take it straight back. Absent from older servers.
+  settledAt: Schema.optional(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 

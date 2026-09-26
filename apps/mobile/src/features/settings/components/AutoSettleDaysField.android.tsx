@@ -28,21 +28,21 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
       />
       <MaterialIconButton
         icon="minus"
-        accessibilityLabel="Decrease days before auto-settle"
+        accessibilityLabel={`Decrease days before ${props.action}`}
         disabled={props.disabled || props.value <= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         onPress={() => adjust(-1)}
       />
       <AppText
         className="min-w-8 text-center text-base"
         style={{ fontVariant: ["tabular-nums"] }}
-        accessibilityLabel={`${props.value} ${props.value === 1 ? "day" : "days"} before auto-settle`}
+        accessibilityLabel={`${props.value} ${props.value === 1 ? "day" : "days"} before ${props.action}`}
         accessibilityLiveRegion="polite"
       >
         {props.value}
       </AppText>
       <MaterialIconButton
         icon="plus"
-        accessibilityLabel="Increase days before auto-settle"
+        accessibilityLabel={`Increase days before ${props.action}`}
         disabled={props.disabled || props.value >= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         onPress={() => adjust(1)}
       />

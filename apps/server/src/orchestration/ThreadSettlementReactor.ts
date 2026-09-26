@@ -25,6 +25,7 @@ import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
 import { pullRequestMatchesProject, readSweepSnapshot } from "./ThreadPullRequestReactor.ts";
 import {
+  isAutoArchiveDue,
   isAutoSettlementCandidate,
   resolveAutoSettlementAt,
   type SettlementPullRequest,
@@ -51,12 +52,25 @@ function autoSettlementConfigured(settings: ServerSettingsValue): boolean {
   );
 }
 
+/** Whether any environment default or project override can archive a settled thread. */
+function autoArchiveConfigured(settings: ServerSettingsValue): boolean {
+  return (
+    settings.sidebarAutoArchiveAfterDays !== null ||
+    Object.values(settings.projectSettingsOverrides).some(
+      (entry) =>
+        entry.sidebarAutoArchiveAfterDays !== undefined &&
+        entry.sidebarAutoArchiveAfterDays !== null,
+    )
+  );
+}
+
 /** Identity of every settlement input, so unrelated settings edits do not trigger a sweep. */
 /** @internal Exported for tests. */
 export function autoSettlementSettingsKey(settings: ServerSettingsValue): string {
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
+    settings.sidebarAutoArchiveAfterDays,
     // Only entries that touch settlement, in a stable order, so a project
     // override on an unrelated key does not queue a sweep. JSON drops
     // undefined, so inherit (absent) and never (null) need distinct marks.
@@ -64,7 +78,8 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined,
+          entry.sidebarAutoSettleAfterDays !== undefined ||
+          entry.sidebarAutoArchiveAfterDays !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -73,6 +88,9 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
         entry.sidebarAutoSettleAfterDays === undefined
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
+        entry.sidebarAutoArchiveAfterDays === undefined
+          ? "inherit"
+          : entry.sidebarAutoArchiveAfterDays,
       ]),
   ]);
 }
@@ -314,6 +332,52 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Settled threads archive after their own delay. The command carries the
+  // settledAt it saw so a thread un-settled since the snapshot stays put.
+  const archiveSettled = Effect.fn("ThreadSettlementReactor.archiveSettled")(function* (
+    threadId?: ThreadId,
+  ) {
+    const settings = yield* settingsService.getSettings;
+    if (!autoArchiveConfigured(settings)) {
+      return;
+    }
+    const snapshot = yield* snapshots.getShellSnapshot();
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const due = snapshot.threads.filter(
+      (thread) =>
+        (threadId === undefined || thread.id === threadId) &&
+        isAutoArchiveDue(
+          thread,
+          now,
+          resolveProjectSettings(settings, thread.projectId).settings.sidebarAutoArchiveAfterDays,
+        ),
+    );
+    yield* Effect.forEach(
+      due,
+      (thread) =>
+        Effect.gen(function* () {
+          if (thread.settledAt === null) return;
+          const uuid = yield* crypto.randomUUIDv4;
+          yield* engine.dispatch({
+            type: "thread.auto-archive",
+            commandId: CommandId.make(`server:auto-archive:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            settledAt: thread.settledAt,
+          });
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("automatic thread archive skipped", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+          ),
+        ),
+      { concurrency: 8, discard: true },
+    );
+  });
+
   const runSweep = (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
@@ -327,8 +391,18 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+  const runArchive = (threadId?: ThreadId) =>
+    archiveSettled(threadId).pipe(
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("automatic thread archive sweep failed", {
+            cause: Cause.pretty(cause),
+          }),
+      ),
+    );
   const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
-    runSweep(null, threadId),
+    runSweep(null, threadId).pipe(Effect.andThen(runArchive(threadId))),
   );
 
   const processEvent = (event: OrchestrationEvent) => {

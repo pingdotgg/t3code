@@ -505,6 +505,7 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             archivedAt: null,
+            ...(payload.settledAt !== undefined ? { settledAt: payload.settledAt } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),

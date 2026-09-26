@@ -201,6 +201,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
   const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
+  const archivedThreadIds = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
@@ -245,6 +246,11 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     });
 
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) => {
+    if (command.type === "thread.auto-archive") {
+      return Ref.update(archivedThreadIds, (ids) => [...ids, command.threadId]).pipe(
+        Effect.as({ sequence: 1 }),
+      );
+    }
     if (command.type !== "thread.auto-settle") {
       return Effect.die(new Error(`Unexpected command: ${command.type}`));
     }
@@ -324,6 +330,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReads,
     settingsReads,
     commands,
+    archivedThreadIds,
     branchCalls,
     summaryCalls,
     summaryRecovery,
@@ -676,6 +683,57 @@ describe("ThreadSettlementReactor", () => {
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
             [ThreadId.make("branch-thread"), ThreadId.make("linked-thread")],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("archives threads settled longer than the configured days", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const keptProject = ProjectId.make("kept-project");
+        const longSettled = {
+          settledOverride: "settled",
+          settledAt: "2026-07-01T00:00:00.000Z",
+        } as const;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("old-settled", longSettled),
+              makeThread("recently-settled", {
+                settledOverride: "settled",
+                settledAt: "2026-08-20T00:00:00.000Z",
+              }),
+              makeThread("old-active", { settledAt: "2026-07-01T00:00:00.000Z" }),
+              makeThread("kept-project-settled", { ...longSettled, projectId: keptProject }),
+            ],
+            [makeProject(), makeProject(keptProject, "/workspace/kept")],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: { [keptProject]: { sidebarAutoArchiveAfterDays: null } },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.settingsReads);
+          yield* reactor.drain;
+          // Off by default: nothing archives until the setting is turned on.
+          assert.deepStrictEqual(yield* Ref.get(fixture.archivedThreadIds), []);
+
+          yield* fixture.updateSettings({ sidebarAutoArchiveAfterDays: 30 });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.archivedThreadIds), [
+            ThreadId.make("old-settled"),
+          ]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

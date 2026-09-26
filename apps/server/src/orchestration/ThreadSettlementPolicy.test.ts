@@ -7,7 +7,11 @@ import {
   type OrchestrationThreadShell,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { type SettlementPullRequest, resolveAutoSettlementAt } from "./ThreadSettlementPolicy.ts";
+import {
+  type SettlementPullRequest,
+  isAutoArchiveDue,
+  resolveAutoSettlementAt,
+} from "./ThreadSettlementPolicy.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const makeThread = (
@@ -309,5 +313,32 @@ describe("linked request settlement", () => {
     expect(decide(makeThread({ pullRequests: [missing, merged] }), null, { days: null })).toBe(
       true,
     );
+  });
+});
+
+describe("isAutoArchiveDue", () => {
+  const settled = { settledOverride: "settled" as const, settledAt: "2026-07-28T12:00:00.000Z" };
+
+  it("archives once a thread has been settled for the configured days", () => {
+    expect(isAutoArchiveDue(makeThread(settled), NOW, 31)).toBe(true);
+    expect(isAutoArchiveDue(makeThread(settled), NOW, 32)).toBe(false);
+    expect(isAutoArchiveDue(makeThread(settled), NOW, null)).toBe(false);
+  });
+
+  it("leaves active, archived, and live threads alone", () => {
+    expect(isAutoArchiveDue(makeThread({ ...settled, settledOverride: "active" }), NOW, 1)).toBe(
+      false,
+    );
+    expect(isAutoArchiveDue(makeThread({ ...settled, archivedAt: NOW }), NOW, 1)).toBe(false);
+    const session = {
+      threadId: ThreadId.make("thread-1"),
+      status: "running",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: NOW,
+    } as const;
+    expect(isAutoArchiveDue(makeThread({ ...settled, session }), NOW, 1)).toBe(false);
   });
 });
