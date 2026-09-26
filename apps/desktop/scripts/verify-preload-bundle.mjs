@@ -87,11 +87,10 @@ const createSandboxModules = (exposedGlobals) => {
   ]);
 };
 
-const executeBundle = (source, sandboxModules) => {
+const executeBundle = (source, sandboxModules, platform) => {
   const sandboxProcess = {
     contextIsolated: true,
-    // oxlint-disable-next-line t3code/no-global-process-runtime -- This standalone CI verifier supplies the preload's host platform without loading Effect.
-    platform: process.platform,
+    platform,
     versions: { electron: electronVersion },
   };
   const requireSandboxModule = (moduleName) => {
@@ -108,6 +107,8 @@ const executeBundle = (source, sandboxModules) => {
     {
       process: sandboxProcess,
       require: requireSandboxModule,
+      // Renderer lifecycle events happen after preload initialization.
+      window: { addEventListener: () => undefined },
     },
     {
       filename: "desktop-preload.cjs",
@@ -116,7 +117,8 @@ const executeBundle = (source, sandboxModules) => {
   );
 };
 
-export const verifyPreloadBundle = (source) => {
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Default to the host while allowing tests to exercise other platforms.
+export const verifyPreloadBundle = (source, { platform = process.platform } = {}) => {
   const runtimeImports = inspectBundle(source);
   const exposedGlobals = new Map();
   const sandboxModules = createSandboxModules(exposedGlobals);
@@ -130,7 +132,7 @@ export const verifyPreloadBundle = (source) => {
     );
   }
 
-  executeBundle(source, sandboxModules);
+  executeBundle(source, sandboxModules, platform);
 
   const desktopBridge = exposedGlobals.get("desktopBridge");
   const missingApis = expectedDesktopBridgeApis.filter(
