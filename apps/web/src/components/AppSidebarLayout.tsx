@@ -79,6 +79,7 @@ function readInitialThreadSidebarWidth(): number {
 }
 
 function SidebarControl() {
+  const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
@@ -86,7 +87,9 @@ function SidebarControl() {
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
-  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
+    context: { usagePageOpen },
+  });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -106,7 +109,11 @@ function SidebarControl() {
         // available everywhere else, including the plain-text composer.
         return;
       }
-      if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
+      if (
+        resolveShortcutCommand(event, keybindings, { context: { usagePageOpen } }) !==
+        "sidebar.toggle"
+      )
+        return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -116,7 +123,7 @@ function SidebarControl() {
     // Capture before focused editors consume commands such as Mod+B for rich-text formatting.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [keybindings, toggleSidebar]);
+  }, [keybindings, toggleSidebar, usagePageOpen]);
 
   return (
     // The right-side layout controls carry mr-px (border compensation inside
