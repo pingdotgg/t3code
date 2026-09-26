@@ -13,6 +13,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, copy, nullable) NSString *text;
 @property (nonatomic, assign) BOOL contextChipInteractive;
+@property (nonatomic, strong, readonly, nullable) NSURL *linkURL;
 
 - (nullable UIMenu *)contextMenu;
 - (BOOL)hasContextMenu;

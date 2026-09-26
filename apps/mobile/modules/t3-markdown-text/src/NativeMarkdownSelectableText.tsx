@@ -376,6 +376,7 @@ export function NativeMarkdownSelectableText(props: {
                 : undefined
             }
             contextMenuConfig={contextMenu ? JSON.stringify(contextMenu) : undefined}
+            linkUrl={run.externalHost ? href : undefined}
             style={[
               runStyle(run, props.textStyle),
               chip ? { backgroundColor: "transparent" } : undefined,

@@ -16,6 +16,7 @@ using namespace facebook::react;
 @implementation T3MarkdownTextRun {
   NSString * _text;
   NSString * _contextMenuConfig;
+  NSURL * _linkURL;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -46,7 +47,18 @@ using namespace facebook::react;
     _contextMenuConfig = [NSString stringWithUTF8String:newViewProps.contextMenuConfig.c_str()];
   }
 
+  if (newViewProps.linkUrl != oldViewProps.linkUrl) {
+    _linkURL = newViewProps.linkUrl.empty()
+        ? nil
+        : [NSURL URLWithString:[NSString stringWithUTF8String:newViewProps.linkUrl.c_str()]];
+  }
+
   [super updateProps:props oldProps:oldProps];
+}
+
+- (NSURL *)linkURL
+{
+  return _linkURL;
 }
 
 - (BOOL)hasContextMenu

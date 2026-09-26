@@ -47,6 +47,7 @@ export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
   selectionHandleColor?: ColorValue;
   uiTextView?: boolean;
   contextMenuConfig?: string;
+  linkUrl?: string;
   contextClipboardConfig?: string;
   onContextMenuAction?: (event: ContextMenuActionEvent) => void;
   /**

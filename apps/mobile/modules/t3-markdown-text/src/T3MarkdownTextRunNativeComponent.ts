@@ -47,6 +47,7 @@ interface NativeProps extends ViewProps {
   textAlign?: WithDefault<TextAlign, "auto">;
   shadowRadius?: WithDefault<Float, 0>;
   contextMenuConfig?: string;
+  linkUrl?: string;
   onPress?: BubblingEventHandler<TargetedEvent>;
   onLongPress?: BubblingEventHandler<TargetedEvent>;
   onContextMenuAction?: BubblingEventHandler<ContextMenuActionEvent>;
