@@ -34,6 +34,96 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect("searches member projects and namespaces with an encoded query", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            '[{"path_with_namespace":"user/project","description":"Personal"},' +
+              '{"path_with_namespace":"group/subgroup/app","description":null},' +
+              '{"path_with_namespace":"group/other"}]',
+          ),
+        ),
+      );
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.searchRepositories({
+        cwd: "/repo",
+        query: "  group/subgroup &membership=false  ",
+      });
+      assert.deepStrictEqual(result, [
+        { nameWithOwner: "user/project", description: "Personal" },
+        { nameWithOwner: "group/subgroup/app", description: null },
+        { nameWithOwner: "group/other", description: null },
+      ]);
+      const call = mockedRun.mock.calls[0]?.[0];
+      assert.strictEqual(call?.command, "glab");
+      assert.strictEqual(call?.cwd, "/repo");
+      assert.strictEqual(call?.args.length, 2);
+      assert.strictEqual(call?.args[0], "api");
+      assert.ok(call?.args[1]);
+      const endpoint = new URL(call.args[1], "https://gitlab.example/api/v4/");
+      assert.strictEqual(endpoint.pathname, "/api/v4/projects");
+      assert.deepStrictEqual(Object.fromEntries(endpoint.searchParams), {
+        search: "group/subgroup &membership=false",
+        membership: "true",
+        search_namespaces: "true",
+        simple: "true",
+        per_page: "20",
+        order_by: "last_activity_at",
+      });
+    }),
+  );
+
+  it.effect("does not search short queries and returns empty results for no matches", () =>
+    Effect.gen(function* () {
+      const glab = yield* GitLabCli.GitLabCli;
+      for (const query of ["", " a ", "ab"])
+        assert.deepStrictEqual(yield* glab.searchRepositories({ cwd: "/repo", query }), []);
+      expect(mockedRun).not.toHaveBeenCalled();
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+      assert.deepStrictEqual(
+        yield* glab.searchRepositories({ cwd: "/repo", query: "missing" }),
+        [],
+      );
+    }),
+  );
+
+  it.effect("reports malformed project search responses as typed decode errors", () =>
+    Effect.gen(function* () {
+      const glab = yield* GitLabCli.GitLabCli;
+      for (const raw of ["not json", '[{"path_with_namespace":""}]']) {
+        mockedRun.mockReturnValueOnce(Effect.succeed(processOutput(raw)));
+        const error = yield* glab
+          .searchRepositories({ cwd: "/repo", query: "project" })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "GitLabRepositoryDecodeError");
+        assert.strictEqual(error.operation, "searchRepositories");
+      }
+    }),
+  );
+
+  it.effect("retains authentication failures when searching repositories", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "authentication required",
+            failureKind: "authentication",
+          }),
+        ),
+      );
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .searchRepositories({ cwd: "/repo", query: "project" })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "GitLabCliAuthenticationError");
+    }),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

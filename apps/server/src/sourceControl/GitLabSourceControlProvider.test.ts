@@ -307,3 +307,41 @@ for (const stage of ["read", "decode"] as const) {
     }),
   );
 }
+
+it.effect("exposes GitLab member search through the provider capability", () =>
+  Effect.gen(function* () {
+    const results = [{ nameWithOwner: "group/subgroup/app", description: null }];
+    const provider = yield* makeProvider({
+      searchRepositories: (input) => {
+        assert.deepStrictEqual(input, { cwd: "/repo", query: "subgroup" });
+        return Effect.succeed(results);
+      },
+    });
+    assert.ok(provider.searchRepositories);
+    assert.deepStrictEqual(
+      yield* provider.searchRepositories({ cwd: "/repo", query: "subgroup" }),
+      results,
+    );
+  }),
+);
+
+it.effect("maps search errors without exposing the search text in transport context", () =>
+  Effect.gen(function* () {
+    const cause = new GitLabCli.GitLabCliAuthenticationError({
+      operation: "execute",
+      command: "glab",
+      cwd: "/repo",
+      cause: "private upstream detail",
+    });
+    const provider = yield* makeProvider({ searchRepositories: () => Effect.fail(cause) });
+    assert.ok(provider.searchRepositories);
+    const error = yield* provider
+      .searchRepositories({ cwd: "/repo", query: "private project" })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.provider, "gitlab");
+    assert.strictEqual(error.operation, "searchRepositories");
+    assert.strictEqual(error.cause, cause);
+    assert.strictEqual(error.detail, cause.detail);
+    assert.strictEqual(error.repository, undefined);
+  }),
+);

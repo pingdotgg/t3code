@@ -516,6 +516,32 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("lists the account's own repository matches before global matches", () =>
+    Effect.gen(function* () {
+      const repository = (fullName: string) => ({ fullName, description: null });
+      mockRun.mockImplementation((input) =>
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify(
+              input.args.at(-1) === "sleepy user:@me"
+                ? [repository("octocat/sleepytime")]
+                : [repository("sleepy-project/sleepy"), repository("octocat/sleepytime")],
+            ),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.searchRepositories({ cwd: "/repo", query: "sleepy" });
+
+      assert.deepStrictEqual(result, [
+        { nameWithOwner: "octocat/sleepytime", description: null },
+        { nameWithOwner: "sleepy-project/sleepy", description: null },
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("creates repositories and parses clone URLs from create output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
