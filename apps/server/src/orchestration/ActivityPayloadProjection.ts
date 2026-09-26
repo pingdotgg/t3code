@@ -643,6 +643,28 @@ function dropSupersededToolUpdatedActivities(
   });
 }
 
+function dropEmptyCommandInteractionUpdates(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): ReadonlyArray<OrchestrationThreadActivity> {
+  return activities.filter((activity) => !isEmptyCommandInteractionUpdate(activity));
+}
+
+export function isEmptyCommandInteractionUpdate(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.updated" || activity.summary !== "Tool updated") {
+    return false;
+  }
+  const projected = projectActivityPayload(activity);
+  const payload = asRecord(projected.payload);
+  const data = asRecord(payload?.data);
+  return (
+    payload?.itemType === "command_execution" &&
+    asTrimmedString(payload.title) === null &&
+    asTrimmedString(payload.detail) === null &&
+    asTrimmedString(payload.status) === null &&
+    (data === null || Object.keys(data).length === 0)
+  );
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
   reasoningMessages = true,
@@ -657,7 +679,9 @@ export function projectThreadDetailSnapshot(
             message.role === "reasoning" ? { ...message, role: "system" as const } : message,
           ),
       activities: dropSupersededToolUpdatedActivities(
-        dropStaleContextWindowActivities(snapshot.thread.activities),
+        dropEmptyCommandInteractionUpdates(
+          dropStaleContextWindowActivities(snapshot.thread.activities),
+        ),
       ).map(projectActivityPayload),
     },
   };

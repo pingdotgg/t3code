@@ -1743,17 +1743,13 @@ function mapToRuntimeEvents(
     ];
   }
 
-  if (
-    event.method === "item/reasoning/summaryPartAdded" ||
-    event.method === "item/commandExecution/terminalInteraction"
-  ) {
+  if (event.method === "item/reasoning/summaryPartAdded") {
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
         type: "item.updated",
         payload: {
-          itemType:
-            event.method === "item/reasoning/summaryPartAdded" ? "reasoning" : "command_execution",
+          itemType: "reasoning",
           ...(event.payload !== undefined ? { data: event.payload } : {}),
         },
       },

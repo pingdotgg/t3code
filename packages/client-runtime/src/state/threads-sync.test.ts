@@ -7,6 +7,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
@@ -82,6 +83,19 @@ const BASE_THREAD: OrchestrationThread = {
   activities: [],
   checkpoints: [],
   session: null,
+};
+const EMPTY_COMMAND_INTERACTION: OrchestrationThreadActivity = {
+  id: EventId.make("empty-command-interaction"),
+  tone: "tool",
+  kind: "tool.updated",
+  summary: "Tool updated",
+  payload: {
+    itemType: "command_execution",
+    toolCallId: "command-1",
+    data: {},
+  },
+  turnId: TurnId.make("turn-1"),
+  createdAt: "2026-04-01T01:00:00.000Z",
 };
 const ACTIVE_THREAD: OrchestrationThread = {
   ...BASE_THREAD,
@@ -316,6 +330,26 @@ const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamIte
       threadId: THREAD_ID,
       title,
       updatedAt: "2026-04-01T01:00:00.000Z",
+    },
+  },
+});
+
+const emptyCommandInteraction = (sequence: number): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make(`event-empty-command-${sequence}`),
+    sequence,
+    occurredAt: "2026-04-01T01:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.activity-appended",
+    payload: {
+      threadId: THREAD_ID,
+      activity: EMPTY_COMMAND_INTERACTION,
     },
   },
 });
@@ -645,6 +679,31 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.getOrThrow(state.data)).toEqual(BASE_THREAD);
       expect(Option.isNone(state.error)).toBe(true);
+    }),
+  );
+
+  it.effect("removes empty command interactions from cached and streamed history", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: { ...BASE_THREAD, activities: [EMPTY_COMMAND_INTERACTION] },
+      });
+      const cached = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.data),
+      );
+      expect(Option.getOrThrow(cached.data).activities).toEqual([]);
+
+      yield* Queue.offer(harness.inputs, emptyCommandInteraction(CACHED_SNAPSHOT_SEQUENCE + 1));
+      yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 2));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.title === "Live title",
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+      expect(saved?.snapshotSequence).toBe(CACHED_SNAPSHOT_SEQUENCE + 2);
+      expect(saved?.thread.activities).toEqual([]);
     }),
   );
 

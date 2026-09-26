@@ -488,6 +488,48 @@ describe("superseded tool.updated snapshot dedup", () => {
     expect(projectedIds([anonymous, completed])).toEqual([anonymous.id, completed.id]);
   });
 
+  it("drops empty command interaction updates from historical snapshots", () => {
+    const emptyInteraction: OrchestrationThreadActivity = {
+      id: EventId.make("empty-command-interaction"),
+      tone: "tool",
+      kind: "tool.updated",
+      summary: "Tool updated",
+      payload: {
+        itemType: "command_execution",
+        toolCallId: "command-1",
+        data: {},
+      },
+      turnId: TurnId.make("synthetic-turn"),
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+    const meaningfulUpdates: OrchestrationThreadActivity[] = [
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-title"),
+        payload: { ...emptyInteraction.payload, title: "Command" },
+      },
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-detail"),
+        payload: { ...emptyInteraction.payload, detail: "Running" },
+      },
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-status"),
+        payload: { ...emptyInteraction.payload, status: "inProgress" },
+      },
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-data"),
+        payload: { itemType: "command_execution", data: { command: "pwd" } },
+      },
+    ];
+
+    expect(projectedIds([emptyInteraction, ...meaningfulUpdates])).toEqual(
+      meaningfulUpdates.map((activity) => activity.id),
+    );
+  });
+
   it("leaves the collapsed work log identical to the full history", () => {
     const activities = [
       makeToolLifecycleActivity("upd-1", "tool.updated", { detail: "writing" }),

@@ -91,6 +91,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import {
+  isEmptyCommandInteractionUpdate,
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
@@ -2258,22 +2259,6 @@ const makeWsRpcLayer = (
                   replayStats.eventCount <= THREAD_RESUME_MAX_EVENTS &&
                   replayStats.payloadBytes <= ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES
                 ) {
-                  const catchUpStream = orchestrationEngine
-                    .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
-                    .pipe(
-                      Stream.filter(isThisThreadDetailEvent),
-                      Stream.map((event) => ({
-                        kind: "event" as const,
-                        event: projectActivityEvent(event, input.reasoningMessages === true),
-                      })),
-                      Stream.mapError(
-                        (cause) =>
-                          new OrchestrationGetSnapshotError({
-                            message: `Failed to replay thread ${input.threadId} events`,
-                            cause,
-                          }),
-                      ),
-                    );
                   const afterCatchUp =
                     input.requestCompletionMarker === true
                       ? Stream.unwrap(
@@ -2282,11 +2267,65 @@ const makeWsRpcLayer = (
                             .pipe(Effect.as(bufferedLiveStream)),
                         )
                       : bufferedLiveStream;
-                  const replay = Stream.concat(catchUpStream, afterCatchUp);
-                  if (!replayStats.hasCreateEvent) {
-                    return replay;
+                  const replayEvents = (events: Iterable<OrchestrationEvent>) =>
+                    Stream.concat(
+                      Stream.fromIterable(events).pipe(
+                        Stream.map((event) => ({
+                          kind: "event" as const,
+                          event: projectActivityEvent(event, input.reasoningMessages === true),
+                        })),
+                      ),
+                      afterCatchUp,
+                    );
+                  if (replayStats.hasCreateEvent) {
+                    const catchUpStream = orchestrationEngine
+                      .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
+                      .pipe(
+                        Stream.filter(isThisThreadDetailEvent),
+                        Stream.map((event) => ({
+                          kind: "event" as const,
+                          event: projectActivityEvent(event, input.reasoningMessages === true),
+                        })),
+                        Stream.mapError(
+                          (cause) =>
+                            new OrchestrationGetSnapshotError({
+                              message: `Failed to replay thread ${input.threadId} events`,
+                              cause,
+                            }),
+                        ),
+                      );
+                    replayOnMissingSnapshot = Stream.concat(catchUpStream, afterCatchUp);
+                  } else {
+                    const catchUpEvents = yield* orchestrationEngine
+                      .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
+                      .pipe(
+                        Stream.runCollect,
+                        Effect.mapError(
+                          (cause) =>
+                            new OrchestrationGetSnapshotError({
+                              message: `Failed to replay thread ${input.threadId} events`,
+                              cause,
+                            }),
+                        ),
+                      );
+                    const detailCatchUpEvents = catchUpEvents.filter(isThisThreadDetailEvent);
+                    const isEmptyCommandInteractionEvent = (event: OrchestrationEvent) =>
+                      event.type === "thread.activity-appended" &&
+                      isEmptyCommandInteractionUpdate(event.payload.activity);
+                    const hasEmptyCommandInteractionUpdate = detailCatchUpEvents.some(
+                      isEmptyCommandInteractionEvent,
+                    );
+                    if (!hasEmptyCommandInteractionUpdate) {
+                      return replayEvents(detailCatchUpEvents);
+                    }
+                    if (catchUpEvents.some((event) => event.type === "thread.deleted")) {
+                      replayOnMissingSnapshot = replayEvents(
+                        detailCatchUpEvents.filter(
+                          (event) => !isEmptyCommandInteractionEvent(event),
+                        ),
+                      );
+                    }
                   }
-                  replayOnMissingSnapshot = replay;
                 }
                 // A recreated thread needs a fresh snapshot if it still exists.
                 // Oversized replays and invalid cursors also use the snapshot path.

@@ -10030,6 +10030,65 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeThread replaces historical empty terminal interactions with a snapshot", () =>
+    Effect.gen(function* () {
+      const baseEvent = makeLiveToolActivityEvent(99_999);
+      const activity: OrchestrationThreadActivity = {
+        ...baseEvent.payload.activity,
+        summary: "Tool updated",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "command-1",
+          data: {
+            itemId: "command-1",
+            processId: "process-1",
+            stdin: "",
+          },
+        },
+      };
+      const event: OrchestrationEvent = {
+        ...baseEvent,
+        payload: { ...baseEvent.payload, activity },
+      };
+      const thread = {
+        ...makeDefaultOrchestrationReadModel().threads[0]!,
+        activities: [activity],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({
+                eventCount: 1,
+                payloadBytes: Buffer.byteLength(jsonRequestBody(event.payload)),
+                hasCreateEvent: false,
+              }),
+            readThreadEvents: () => Stream.make(event),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 100_000, thread })),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const first = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 5,
+          }).pipe(Stream.runHead),
+        ),
+      );
+      const item = Option.getOrThrow(first);
+      assertTrue(item.kind === "snapshot");
+      assert.equal(item.snapshot.snapshotSequence, 100_000);
+      assert.deepEqual(item.snapshot.thread.activities, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeThread resets cached history when its ID is created again", () =>
     Effect.gen(function* () {
       const thread = {
@@ -10080,15 +10139,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const { createBeforeDelete, oversized } of [
-    { createBeforeDelete: false, oversized: false },
-    { createBeforeDelete: true, oversized: false },
-    { createBeforeDelete: true, oversized: true },
+  for (const { createBeforeDelete, oversized, phantomBeforeDelete } of [
+    { createBeforeDelete: false, oversized: false, phantomBeforeDelete: false },
+    { createBeforeDelete: false, oversized: false, phantomBeforeDelete: true },
+    { createBeforeDelete: true, oversized: false, phantomBeforeDelete: false },
+    { createBeforeDelete: true, oversized: true, phantomBeforeDelete: false },
   ]) {
     it.effect(
       oversized
         ? "keeps the missing-snapshot error when an absent thread exceeds the replay limit"
-        : `synchronizes an absent thread and removes its shell after ${createBeforeDelete ? "creation and deletion" : "deletion"}`,
+        : `synchronizes an absent thread and removes its shell after ${phantomBeforeDelete ? "an empty terminal interaction and deletion" : createBeforeDelete ? "creation and deletion" : "deletion"}`,
       () =>
         Effect.gen(function* () {
           const store = yield* OrchestrationEventStore;
@@ -10119,6 +10179,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               (sequence) => store.append(makeLiveToolActivityEvent(sequence, "tool.completed")),
               { discard: true },
             );
+          }
+          if (phantomBeforeDelete) {
+            yield* store.append({
+              ...base,
+              eventId: EventId.make("phantom-before-final-delete"),
+              type: "thread.activity-appended",
+              payload: {
+                threadId: defaultThreadId,
+                activity: {
+                  ...base.payload.activity,
+                  kind: "tool.updated",
+                  summary: "Tool updated",
+                  payload: {
+                    itemType: "command_execution",
+                    toolCallId: "command-1",
+                    data: {},
+                  },
+                },
+              },
+            });
           }
           const deleted = yield* store.append({
             ...base,

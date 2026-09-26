@@ -8,6 +8,7 @@ import {
   TurnId,
   type OrchestrationMessage,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
@@ -69,6 +70,19 @@ function message(id: string, turnId: string, createdAt: string): OrchestrationMe
 
 const OLDER_MESSAGE = message("message-old", "turn-1", "2026-04-01T00:00:00.000Z");
 const RECENT_MESSAGE = message("message-recent", "turn-2", "2026-04-01T01:00:00.000Z");
+const EMPTY_COMMAND_INTERACTION: OrchestrationThreadActivity = {
+  id: EventId.make("empty-command-interaction"),
+  tone: "tool",
+  kind: "tool.updated",
+  summary: "Tool updated",
+  payload: {
+    itemType: "command_execution",
+    toolCallId: "command-1",
+    data: {},
+  },
+  turnId: TurnId.make("turn-1"),
+  createdAt: "2026-04-01T00:00:00.000Z",
+};
 
 // Reverts retain turns via checkpoints with checkpointTurnCount <= the revert's
 // turnCount, so both fixture turns carry one: reverting to turnCount 1 keeps
@@ -369,6 +383,27 @@ describe("thread pagination state", () => {
         hasMore: false,
         loadingOlder: false,
       });
+    }),
+  );
+
+  it.effect("removes empty command interactions from an older page", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+
+      expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+      yield* harness.awaitState((value) =>
+        Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+      );
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          thread: { ...OLDER_PAGE.thread, activities: [EMPTY_COMMAND_INTERACTION] },
+        }),
+      );
+
+      const state = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      expect(Option.getOrThrow(state.data).activities).toEqual([]);
     }),
   );
 
