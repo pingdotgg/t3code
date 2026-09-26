@@ -181,6 +181,16 @@ function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Pr
   );
 }
 
+function AutocompleteListVirtualized({ className, ...props }: AutocompletePrimitive.List.Props) {
+  return (
+    <AutocompletePrimitive.List
+      className={cn("size-full min-w-0", className)}
+      data-slot="autocomplete-list"
+      {...props}
+    />
+  );
+}
+
 function AutocompleteClear({ className, ...props }: AutocompletePrimitive.Clear.Props) {
   return (
     <AutocompletePrimitive.Clear
@@ -226,6 +236,7 @@ export {
   AutocompleteGroupLabel,
   AutocompleteEmpty,
   AutocompleteList,
+  AutocompleteListVirtualized,
   AutocompleteClear,
   AutocompleteCollection,
 };

@@ -49,6 +49,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  MessagesSquareIcon,
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
@@ -57,6 +58,7 @@ import {
   SunIcon,
   TextSearchIcon,
 } from "lucide-react";
+import type { LegendListRef } from "@legendapp/list/react";
 import {
   useCallback,
   useDeferredValue,
@@ -196,6 +198,7 @@ import type { Project } from "../types";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 
+const ALL_THREADS_VIEW_VALUE = "all-threads";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
 const APPEARANCE_OPTIONS = [
@@ -823,7 +826,10 @@ function OpenCommandPaletteDialog(props: {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
+  const isAllThreadsView = currentView?.groups[0]?.value === ALL_THREADS_VIEW_VALUE;
+  const allThreadsListRef = useRef<LegendListRef | null>(null);
+  const threadSearchQuery =
+    (currentView === null || isAllThreadsView) && !isActionsOnly ? deferredQuery : "";
   const threadSearch = useThreadSearch(environmentIds, threadSearchQuery);
   const threadContentMatchByKey = useMemo(
     () =>
@@ -1058,9 +1064,15 @@ function OpenCommandPaletteDialog(props: {
       getFilesystemBrowsePath(
         query,
         browseEnvironmentPlatform,
-        browseEnvironmentId !== null && !isRemoteProjectRepositoryStep,
+        browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && !isAllThreadsView,
       ),
-    [browseEnvironmentId, browseEnvironmentPlatform, isRemoteProjectRepositoryStep, query],
+    [
+      browseEnvironmentId,
+      browseEnvironmentPlatform,
+      isAllThreadsView,
+      isRemoteProjectRepositoryStep,
+      query,
+    ],
   );
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
@@ -1376,7 +1388,7 @@ function OpenCommandPaletteDialog(props: {
             ? {
                 source: match.source,
                 snippet: match.snippet,
-                query: threadSearchQuery,
+                query: threadSearch.query,
               }
             : undefined;
         },
@@ -1396,7 +1408,7 @@ function OpenCommandPaletteDialog(props: {
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
-      threadSearchQuery,
+      threadSearch.query,
       threads,
     ],
   );
@@ -2089,6 +2101,20 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  const threadSearchItems =
+    linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
+      ? buildLinkedThreadActionItems({
+          ...linkedThreadSearch.linkedThreads,
+          query: linkedThreadSearch.query,
+          icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+          runThread: async (thread) => {
+            await navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+            });
+          },
+        })
+      : allThreadItems;
   const settingsSearchItems: CommandPaletteActionItem[] = searchSettings(
     deferredQuery,
     availableSettingsSearchItems,
@@ -2123,28 +2149,29 @@ function OpenCommandPaletteDialog(props: {
         ? changeThemeItem.groups
         : currentView?.groups[0]?.value === "appearance"
           ? changeAppearanceItem.groups
-          : (currentView?.groups ?? rootGroups);
+          : isAllThreadsView
+            ? [{ value: ALL_THREADS_VIEW_VALUE, label: "Threads", items: threadSearchItems }]
+            : (currentView?.groups ?? rootGroups);
 
+  const showAllThreadsIcon = <MessagesSquareIcon className={ITEM_ICON_CLASS} />;
+  const showAllThreadsAddonIcon = <MessagesSquareIcon className={ADDON_ICON_CLASS} />;
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
     query: deferredQuery,
     isInSubmenu: currentView !== null,
     projectSearchItems: projectSearchItems,
     settingsSearchItems,
-    threadSearchItems:
-      linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
-        ? buildLinkedThreadActionItems({
-            ...linkedThreadSearch.linkedThreads,
-            query: linkedThreadSearch.query,
-            icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-            runThread: async (thread) => {
-              await navigate({
-                to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-              });
-            },
-          })
-        : allThreadItems,
+    threadSearchItems,
+    threadSearchOverflowItem: (matchCount) => ({
+      kind: "submenu",
+      value: "threads:show-all",
+      searchTerms: [],
+      title: `Show all ${matchCount} threads`,
+      icon: showAllThreadsIcon,
+      addonIcon: showAllThreadsAddonIcon,
+      groups: [{ value: ALL_THREADS_VIEW_VALUE, label: "Threads", items: [] }],
+      initialQuery: deferredQuery,
+    }),
   });
 
   const handleAddProjectForEnvironment = useCallback(
@@ -2596,6 +2623,9 @@ function OpenCommandPaletteDialog(props: {
     displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
   }
 
+  const allThreadsItemValues = isAllThreadsView
+    ? displayedGroups.flatMap((group) => group.items.map((item) => item.value))
+    : undefined;
   const inputPlaceholder =
     remoteProjectInputPlaceholder(addProjectCloneFlow) ??
     getCommandPaletteInputPlaceholder(paletteMode);
@@ -2675,6 +2705,18 @@ function OpenCommandPaletteDialog(props: {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (isAllThreadsView && event.key === "Enter" && !event.nativeEvent.isComposing) {
+      const highlightedItem = displayedGroups
+        .flatMap((group) => group.items)
+        .find((item) => item.value === highlightedItemValue);
+      if (highlightedItem) {
+        (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
+        event.preventDefault();
+        event.stopPropagation();
+        executeItem(highlightedItem);
+        return;
+      }
+    }
     const command = resolveShortcutCommand(event, keybindings, {
       platform: navigator.platform,
       context: { modelPickerOpen: false },
@@ -2992,8 +3034,15 @@ function OpenCommandPaletteDialog(props: {
         onKeyDown: handleKeyDown,
       }}
       mode="none"
-      onItemHighlighted={(value) => {
+      {...(allThreadsItemValues ? { items: allThreadsItemValues, virtualized: true } : {})}
+      onItemHighlighted={(value, eventDetails) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);
+        if (isAllThreadsView && eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
+          void allThreadsListRef.current?.scrollIndexIntoView?.({
+            index: eventDetails.index,
+            animated: false,
+          });
+        }
       }}
       onValueChange={handleQueryChange}
       showBackHint={isSubmenu}
@@ -3019,6 +3068,8 @@ function OpenCommandPaletteDialog(props: {
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
         onExecuteItem={executeItem}
+        virtualized={isAllThreadsView}
+        ref={allThreadsListRef}
         {...(addProjectCloneFlow?.step === "repository"
           ? {
               emptyStateMessage:

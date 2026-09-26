@@ -12,6 +12,7 @@ import {
   AutocompleteInput,
   AutocompleteItem,
   AutocompleteList,
+  AutocompleteListVirtualized,
 } from "~/components/ui/autocomplete";
 import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
 import { Button } from "~/components/ui/button";
@@ -117,6 +118,19 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Autoco
   return (
     <AutocompleteList
       className={cn("not-empty:scroll-py-2 not-empty:p-2", className)}
+      data-slot="command-list"
+      {...props}
+    />
+  );
+}
+
+function CommandListVirtualized({
+  className,
+  ...props
+}: React.ComponentProps<typeof AutocompleteListVirtualized>) {
+  return (
+    <AutocompleteListVirtualized
+      className={cn("not-empty:p-2", className)}
       data-slot="command-list"
       {...props}
     />
@@ -229,6 +243,7 @@ export {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandListVirtualized,
   CommandPanel,
   CommandShortcut,
 };

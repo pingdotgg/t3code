@@ -1,5 +1,7 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
+import { type Ref } from "react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -12,6 +14,7 @@ import {
   CommandGroupLabel,
   CommandItem,
   CommandList,
+  CommandListVirtualized,
   CommandShortcut,
 } from "./ui/command";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
@@ -23,9 +26,11 @@ interface CommandPaletteResultsProps {
   isActionsOnly: boolean;
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+  virtualized?: boolean;
+  ref?: Ref<LegendListRef>;
 }
 
-export function CommandPaletteResults(props: CommandPaletteResultsProps) {
+export function CommandPaletteResults({ ref, ...props }: CommandPaletteResultsProps) {
   if (props.groups.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-muted-foreground">
@@ -34,6 +39,35 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
             ? "No matching actions."
             : "No matching commands, projects, or threads.")}
       </div>
+    );
+  }
+
+  const virtualGroup = props.virtualized ? props.groups[0] : undefined;
+  if (virtualGroup) {
+    return (
+      <CommandListVirtualized className="flex max-h-[inherit] flex-col">
+        <CommandGroup className="flex min-h-0 flex-col">
+          <CommandGroupLabel>{virtualGroup.label}</CommandGroupLabel>
+          <LegendList
+            ref={ref}
+            data={virtualGroup.items}
+            keyExtractor={(item) => item.value}
+            extraData={props.highlightedItemValue}
+            renderItem={({ item, index }) => (
+              <CommandPaletteResultRow
+                index={index}
+                item={item}
+                keybindings={props.keybindings}
+                isActive={props.highlightedItemValue === item.value}
+                onExecuteItem={props.onExecuteItem}
+              />
+            )}
+            estimatedItemSize={56}
+            drawDistance={560}
+            className="min-h-0 overscroll-y-contain"
+          />
+        </CommandGroup>
+      </CommandListVirtualized>
     );
   }
 
@@ -96,6 +130,7 @@ function DisabledCommandPaletteResultRow(props: {
 }
 
 function CommandPaletteResultRow(props: {
+  index?: number;
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
   isActive: boolean;
   keybindings: ResolvedKeybindingsConfig;
@@ -107,6 +142,7 @@ function CommandPaletteResultRow(props: {
 
   return (
     <CommandItem
+      {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
       active={props.isActive}
       onMouseDown={(event) => {

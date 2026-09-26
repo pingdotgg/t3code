@@ -17,6 +17,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
 export const RECENT_THREAD_LIMIT = 12;
+export const THREAD_SEARCH_RESULT_LIMIT = 8;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
@@ -386,6 +387,7 @@ export function filterCommandPaletteGroups(input: {
   projectSearchItems: ReadonlyArray<CommandPaletteActionItem>;
   settingsSearchItems?: ReadonlyArray<CommandPaletteActionItem>;
   threadSearchItems: ReadonlyArray<CommandPaletteActionItem>;
+  threadSearchOverflowItem?: (matchCount: number) => CommandPaletteSubmenuItem;
 }): CommandPaletteGroup[] {
   const isActionsFilter = input.query.startsWith(">");
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
@@ -455,6 +457,23 @@ export function filterCommandPaletteGroups(input: {
 
     if (items.length === 0) {
       return [];
+    }
+
+    if (
+      group.value === "threads-search" &&
+      input.threadSearchOverflowItem &&
+      items.length > THREAD_SEARCH_RESULT_LIMIT
+    ) {
+      return [
+        {
+          value: group.value,
+          label: group.label,
+          items: [
+            ...items.slice(0, THREAD_SEARCH_RESULT_LIMIT),
+            input.threadSearchOverflowItem(items.length),
+          ],
+        },
+      ];
     }
 
     return [{ value: group.value, label: group.label, items }];

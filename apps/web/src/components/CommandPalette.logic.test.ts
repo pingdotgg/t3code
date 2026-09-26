@@ -11,8 +11,10 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  THREAD_SEARCH_RESULT_LIMIT,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
+  type CommandPaletteSubmenuItem,
 } from "./CommandPalette.logic";
 
 describe("linked pull request thread navigation", () => {
@@ -849,5 +851,45 @@ describe("filterCommandPaletteGroups", () => {
       "setting:default-model",
       "setting:keybinding-modelPicker.toggle",
     ]);
+  });
+
+  it("caps root thread matches behind an overflow item that keeps the full count", () => {
+    const threads = Array.from(
+      { length: THREAD_SEARCH_RESULT_LIMIT + 5 },
+      (_, index) =>
+        ({
+          kind: "action",
+          value: `thread:${index}`,
+          title: `Link thread ${index}`,
+          searchTerms: [`Link thread ${index}`],
+          icon: null,
+          run: async () => undefined,
+        }) satisfies CommandPaletteActionItem,
+    );
+    const overflowItem = (matchCount: number) =>
+      ({
+        kind: "submenu",
+        value: `threads:show-all:${matchCount}`,
+        title: "Show all",
+        searchTerms: [],
+        icon: null,
+        addonIcon: null,
+        groups: [],
+      }) satisfies CommandPaletteSubmenuItem;
+    const filter = (threadSearchOverflowItem?: typeof overflowItem) =>
+      filterCommandPaletteGroups({
+        activeGroups: [],
+        query: "link",
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: threads,
+        ...(threadSearchOverflowItem ? { threadSearchOverflowItem } : {}),
+      })[0]?.items.map((entry) => entry.value);
+
+    expect(filter(overflowItem)).toEqual([
+      ...threads.slice(0, THREAD_SEARCH_RESULT_LIMIT).map((thread) => thread.value),
+      `threads:show-all:${threads.length}`,
+    ]);
+    expect(filter()).toHaveLength(threads.length);
   });
 });

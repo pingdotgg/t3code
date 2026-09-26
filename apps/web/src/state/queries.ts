@@ -81,6 +81,7 @@ export function useThreadSearch(
   query: string,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
+  readonly query: string;
   readonly isPending: boolean;
 } {
   const normalizedQuery = query.trim();
@@ -97,6 +98,7 @@ export function useThreadSearch(
   const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
   return {
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
+    query: settledQuery ?? "",
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
 }
