@@ -179,7 +179,9 @@ import {
   deriveMessagesTimelineRowsWithState,
   deriveUnsettledTurnId,
   type MessagesTimelineRowsProjection,
+  getFixedMessagesTimelineItemSize,
   liveWorkEntryLabel,
+  messagesTimelineListExtraData,
   workEntryIsActiveTurnActivity,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
@@ -473,7 +475,12 @@ interface MessagesTimelineProps {
 // MessagesTimeline — list owner
 // ---------------------------------------------------------------------------
 
-export const MessagesTimeline = memo(function MessagesTimeline({
+/**
+ * Virtualized chat transcript. Pins chrome row heights and remasures
+ * expanded live groups and agent-spawn members so streaming work does not
+ * overlap the next row.
+ */
+function MessagesTimelineView({
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -810,6 +817,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     queuedMessages,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
+  const listExtraData = useMemo(
+    /** extraData signature so LegendList remasures when expanded groups grow. */
+    function computeMessagesTimelineListExtraData() {
+      return messagesTimelineListExtraData(listIdentityKey, rows, paintedExpandedSpawnEntryIds);
+    },
+    [listIdentityKey, rows, paintedExpandedSpawnEntryIds],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
@@ -1292,11 +1306,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
-            extraData={`${listIdentityKey}:${rows.length}`}
+            extraData={listExtraData}
             keyExtractor={keyExtractor}
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
+            getFixedItemSize={getFixedMessagesTimelineItemSize}
             initialScrollAtEnd={citationRequest === null && rememberedPosition?.atEnd !== false}
             // Legend needs a data refresh to mount new pins without a scroll event.
             dataVersion={readyCitationRequest?.key ?? listIdentityKey}
@@ -1362,12 +1377,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
-});
+}
 
+export const MessagesTimeline = memo(MessagesTimelineView);
+MessagesTimeline.displayName = "MessagesTimeline";
+
+/** Stable list key for a virtualized timeline row. */
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
+/** Recycle-pool type: user/assistant messages vs chrome/work row kinds. */
 function getItemType(item: MessagesTimelineRow) {
   return item.kind === "message" ? `message:${item.message.role}` : item.kind;
 }
