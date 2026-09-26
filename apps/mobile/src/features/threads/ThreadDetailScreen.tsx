@@ -110,7 +110,10 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import {
+  resolveThreadFeedSubmissionAnchor,
+  shouldShowThreadFeedScrollToEnd,
+} from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -264,7 +267,23 @@ const USER_INPUT_TOGGLE_TIMING = {
   easing: Easing.out(Easing.cubic),
 };
 
-export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+/** Hide the scroll-to-end control until the feed is ready and away from the live edge. */
+function shouldShowThreadDetailScrollToEnd(input: {
+  readonly contentPresentationKind: ThreadContentPresentation["kind"];
+  readonly endFollowEnabled: boolean;
+  readonly isAtEnd: boolean;
+}) {
+  return (
+    input.contentPresentationKind === "ready" &&
+    shouldShowThreadFeedScrollToEnd({
+      endFollowEnabled: input.endFollowEnabled,
+      isAtEnd: input.isAtEnd,
+    })
+  );
+}
+
+/** Thread transcript and composer; hides scroll-to-end while the feed is already at the live edge. */
+function ThreadDetailScreenView(props: ThreadDetailScreenProps) {
   const navigation = useNavigation();
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
@@ -338,6 +357,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const [isAtEnd, setIsAtEnd] = useState(true);
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
   // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
@@ -708,6 +728,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setSubmittedMessageId(null);
     lastScrolledSubmittedMessageIdRef.current = null;
     setEndFollowEnabled(true);
+    setIsAtEnd(true);
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
 
@@ -847,7 +868,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     });
   }, [freeze, scrollMessageToEnd]);
 
-  const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
+  const showScrollToEndButton = shouldShowThreadDetailScrollToEnd({
+    contentPresentationKind,
+    endFollowEnabled,
+    isAtEnd,
+  });
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
@@ -939,6 +964,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
               onEndFollowEnabledChange={setEndFollowEnabled}
+              onIsAtEndChange={setIsAtEnd}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
               loadEarlier={props.loadEarlier ?? null}
@@ -1114,4 +1140,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ) : null}
     </View>
   );
-});
+}
+
+export const ThreadDetailScreen = memo(ThreadDetailScreenView);
+ThreadDetailScreen.displayName = "ThreadDetailScreen";

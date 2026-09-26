@@ -4,10 +4,21 @@ export type ThreadFeedLiveFollowEvent =
   | {
       readonly type: "user-scroll-end";
       readonly isAtEnd: boolean;
+      // LegendList's isWithinMaintainScrollAtEndThreshold. Re-arming accepts it
+      // because a swipe back to the live edge usually rests a few pixels short
+      // of the exact 1px end, in space the end inset covers. The tolerance only
+      // ever re-arms follow, never breaks it.
+      readonly nearEnd: boolean;
       readonly userScrollSessionActive: boolean;
     }
   | {
-      readonly type: "scroll" | "disclosure-settled";
+      readonly type: "scroll";
+      readonly isAtEnd: boolean;
+      readonly nearEnd: boolean;
+      readonly userScrollSessionActive: boolean;
+    }
+  | {
+      readonly type: "disclosure-settled";
       readonly isAtEnd: boolean;
       readonly userScrollSessionActive: boolean;
     };
@@ -65,6 +76,18 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
 }
 
+/** Hide the scroll-to-end control unless live-follow is paused and the feed is away from the end. */
+export function shouldShowThreadFeedScrollToEnd(input: {
+  readonly endFollowEnabled: boolean;
+  readonly isAtEnd: boolean;
+}) {
+  // A drag pauses live-follow before the list leaves the end, and streamed
+  // maintain-scroll can pin the viewport while isAtEnd briefly flickers false.
+  // Hide unless follow is paused *and* the feed is actually away from the end.
+  return !input.endFollowEnabled && !input.isAtEnd;
+}
+
+/** Pause follow during a user-scroll session; re-arm at the end or within the maintain-at-end tolerance. */
 export function resolveThreadFeedLiveFollow(
   current: boolean,
   event: ThreadFeedLiveFollowEvent,
@@ -75,14 +98,14 @@ export function resolveThreadFeedLiveFollow(
     case "user-scroll-begin":
       return false;
     case "user-scroll-end":
-      return event.userScrollSessionActive ? event.isAtEnd : current;
+      return event.userScrollSessionActive ? event.isAtEnd || event.nearEnd : current;
     case "disclosure-settled":
       return !event.userScrollSessionActive && event.isAtEnd;
     case "scroll":
       if (event.userScrollSessionActive) {
         return false;
       }
-      if (event.isAtEnd) {
+      if (event.isAtEnd || event.nearEnd) {
         return true;
       }
       return current;

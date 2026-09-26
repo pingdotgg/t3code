@@ -5,6 +5,7 @@ import {
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
   shouldFollowThreadWorkGroupAppend,
+  shouldShowThreadFeedScrollToEnd,
 } from "./thread-feed-live-follow";
 
 describe("tool-group scroll restoration", () => {
@@ -144,6 +145,69 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
   });
 });
 
+describe("scroll-to-end visibility", () => {
+  /** Hide the control while a drag starts at the live edge. */
+  function keepsButtonHiddenWhenDraggingAtBottom() {
+    let endFollowEnabled = resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" });
+    expect(endFollowEnabled).toBe(false);
+    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: true })).toBe(false);
+
+    endFollowEnabled = resolveThreadFeedLiveFollow(endFollowEnabled, {
+      type: "scroll",
+      isAtEnd: true,
+      nearEnd: true,
+      userScrollSessionActive: true,
+    });
+    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: true })).toBe(false);
+  }
+
+  it("keeps the button hidden when dragging further down at the bottom", keepsButtonHiddenWhenDraggingAtBottom);
+
+  /** Show after scrolling up; hide again once the viewport returns to the end. */
+  function showsButtonAfterScrollUpAndHidesOnReturn() {
+    let endFollowEnabled = resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" });
+    endFollowEnabled = resolveThreadFeedLiveFollow(endFollowEnabled, {
+      type: "scroll",
+      isAtEnd: false,
+      nearEnd: false,
+      userScrollSessionActive: true,
+    });
+    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: false })).toBe(true);
+
+    endFollowEnabled = resolveThreadFeedLiveFollow(endFollowEnabled, {
+      type: "scroll",
+      isAtEnd: true,
+      nearEnd: true,
+      userScrollSessionActive: true,
+    });
+    expect(endFollowEnabled).toBe(false);
+    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: true })).toBe(false);
+  }
+
+  it("shows the button after scrolling up and hides it on returning to the bottom", showsButtonAfterScrollUpAndHidesOnReturn);
+
+  /** Streaming maintain-scroll can flicker isAtEnd; keep the control hidden while following. */
+  function keepsButtonHiddenWhileFollowingStream() {
+    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled: true, isAtEnd: false })).toBe(false);
+  }
+
+  it("keeps the button hidden while following streaming content", keepsButtonHiddenWhileFollowingStream);
+
+  /** A swipe that rests a few pixels short of the exact end should re-arm and hide the control. */
+  function hidesButtonInsideMaintainAtEndTolerance() {
+    let endFollowEnabled = resolveThreadFeedLiveFollow(false, {
+      type: "user-scroll-end",
+      isAtEnd: false,
+      nearEnd: true,
+      userScrollSessionActive: true,
+    });
+    expect(endFollowEnabled).toBe(true);
+    expect(shouldShowThreadFeedScrollToEnd({ endFollowEnabled, isAtEnd: false })).toBe(false);
+  }
+
+  it("hides the button after a swipe that lands inside the maintain-at-end tolerance", hidesButtonInsideMaintainAtEndTolerance);
+});
+
 describe("resolveThreadFeedLiveFollow", () => {
   it("pauses immediately when the user starts scrolling", () => {
     expect(resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" })).toBe(false);
@@ -154,6 +218,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "scroll",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
@@ -164,6 +229,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(true, {
         type: "scroll",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: false,
       }),
     ).toBe(true);
@@ -174,10 +240,33 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "scroll",
         isAtEnd: true,
+        nearEnd: true,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
   });
+
+  /** Re-arm follow when the session ends inside LegendList's maintain-at-end tolerance. */
+  function reArmsWithinMaintainAtEndTolerance() {
+    expect(
+      resolveThreadFeedLiveFollow(false, {
+        type: "scroll",
+        isAtEnd: false,
+        nearEnd: true,
+        userScrollSessionActive: false,
+      }),
+    ).toBe(true);
+    expect(
+      resolveThreadFeedLiveFollow(false, {
+        type: "user-scroll-end",
+        isAtEnd: false,
+        nearEnd: true,
+        userScrollSessionActive: true,
+      }),
+    ).toBe(true);
+  }
+
+  it("re-arms within the maintain-at-end tolerance once the user scroll session ends", reArmsWithinMaintainAtEndTolerance);
 
   it.each([
     { isAtEnd: false, userScrollSessionActive: false, expected: false },
@@ -195,6 +284,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "user-scroll-end",
         isAtEnd: true,
+        nearEnd: true,
         userScrollSessionActive: true,
       }),
     ).toBe(true);
@@ -202,6 +292,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(false, {
         type: "user-scroll-end",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: true,
       }),
     ).toBe(false);
@@ -212,6 +303,7 @@ describe("resolveThreadFeedLiveFollow", () => {
       resolveThreadFeedLiveFollow(true, {
         type: "user-scroll-end",
         isAtEnd: false,
+        nearEnd: false,
         userScrollSessionActive: false,
       }),
     ).toBe(true);
