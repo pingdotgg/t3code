@@ -1,0 +1,47 @@
+{
+  "id": "t3.terminal/output",
+  "version": "1.0.0",
+  "methods": [
+    {
+      "name": "readSnapshot",
+      "effect": "read",
+      "requiredGrants": ["t3.terminal/read-output"],
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["terminalId"],
+        "properties": {
+          "terminalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "outputSchema": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "required": ["terminalId", "contents", "retainedByteLength", "truncated"],
+        "properties": {
+          "terminalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "contents": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "retainedByteLength": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "format": 3,
+  "manifest": {
+    "id": "example.stream-provider",
+    "apiVersion": 1,
+    "version": "1.0.0",
+    "surfaces": [
+      {
+        "id": "example.stream-provider/view",
+        "title": "Shared counter",
+        "scope": "project",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "serverEntry": "server.mjs",
+  "tools": [],
+  "dependencies": [],
+  "requires": [],
+  "provides": [
+    {
+      "id": "example.stream-provider/state",
+      "version": "1.0.0",
+      "methods": [
+        {
+          "name": "increment",
+          "effect": "write",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "epoch": {
+                "type": "string"
+              }
+            },
+            "required": ["count", "epoch"],
+            "additionalProperties": false
+          },
+          "requiredGrants": []
+        }
+      ],
+      "streams": [
+        {
+          "name": "changes",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "eventSchema": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "epoch": {
+                "type": "string"
+              }
+            },
+            "required": ["count", "epoch"],
+            "additionalProperties": false
+          },
+          "requiredGrants": []
+        }
+      ]
+    }
+  ]
+}

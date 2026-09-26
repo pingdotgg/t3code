@@ -1,7 +1,23 @@
+import {
+  ExtensionContentHash,
+  ExtensionClientInput,
+  ExtensionAssetInput,
+  ExtensionInstallInput,
+  ExtensionInstallation,
+  ExtensionInvokeInput,
+  ExtensionApiInvokeInput,
+  ExtensionApiDiscoverInput,
+  ExtensionApiDiscovery,
+  ExtensionApiSelection,
+  ExtensionApiCatalogue,
+  ExtensionManageInput,
+  ExtensionOperationError,
+} from "./extensions.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
@@ -57,6 +73,10 @@ import {
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
+  // Client runtime instance identity — the same id the client presents on
+  // its ws upgrade. Lets the server attribute a connectionless HTTP call to
+  // that client's live socket instead of a session-global "newest" one.
+  "x-t3-client-instance": Schema.optionalKey(Schema.String),
 });
 
 const OptionalDpopProofHeaders = Schema.Struct({
@@ -615,9 +635,140 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+class EnvironmentExtensionsHttpApi extends HttpApiGroup.make("extensions")
+  .add(
+    HttpApiEndpoint.post("invokeApi", "/api/extensions/api/invoke", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionApiInvokeInput,
+      success: Schema.Struct({ result: Schema.Json }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("discoverApis", "/api/extensions/api/discover", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionApiDiscoverInput,
+      success: Schema.Struct({ apis: Schema.Array(ExtensionApiDiscovery) }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("selectApi", "/api/extensions/api/select", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionApiSelection,
+      success: Schema.Struct({ ok: Schema.Boolean }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("list", "/api/extensions/list", {
+      headers: OptionalBearerHeaders,
+      payload: Schema.Struct({}),
+      success: Schema.Struct({
+        installations: Schema.Array(ExtensionInstallation),
+        supportsCatalogueChanges: Schema.optional(Schema.Boolean),
+        supportedPackageFormats: Schema.optional(Schema.Array(Schema.Int)),
+        supportsApiStreams: Schema.optional(Schema.Boolean),
+        apiSelections: Schema.optional(ExtensionApiCatalogue.fields.apiSelections),
+        apiResolution: Schema.optional(ExtensionApiCatalogue.fields.apiResolution),
+        pluginResolution: Schema.optional(ExtensionApiCatalogue.fields.pluginResolution),
+      }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("asset", "/api/extensions/asset", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionAssetInput,
+      success: HttpApiSchema.WithHeaders(Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()), {
+        "cache-control": Schema.Literal("no-store"),
+        "x-content-type-options": Schema.Literal("nosniff"),
+      }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("client", "/api/extensions/client", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionClientInput,
+      success: Schema.Struct({ code: Schema.String, contentHash: ExtensionContentHash }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("invoke", "/api/extensions/invoke", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionInvokeInput,
+      success: Schema.Struct({ result: Schema.Json }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("install", "/api/extensions/install", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionInstallInput,
+      success: ExtensionInstallation,
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("manage", "/api/extensions/manage", {
+      headers: OptionalBearerHeaders,
+      payload: ExtensionManageInput,
+      success: Schema.Struct({ installation: Schema.NullOr(ExtensionInstallation) }),
+      error: [
+        ExtensionOperationError,
+        EnvironmentAuthInvalidError,
+        EnvironmentScopeRequiredError,
+        EnvironmentInternalError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentExtensionsHttpApi) {}

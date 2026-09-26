@@ -624,6 +624,12 @@ export interface DesktopPreviewTabState {
   zoomFactor: number;
   /** Whether this tab is currently mirrored into a desktop picture-in-picture window. */
   pictureInPicture: boolean;
+  /**
+   * Whether this tab's pixels are being captured for remote frame viewers
+   * (`t3.browser/frames`). Remote viewers keep the guest compositing even
+   * when no local surface presents it.
+   */
+  remoteLive: boolean;
   colorScheme: DesktopPreviewColorScheme;
   /**
    * Whether the user has silenced this tab. Per tab rather than per origin, so
@@ -1322,6 +1328,16 @@ export interface DesktopPreviewBridge {
   pictureInPicture: {
     open: (tabId: string) => Promise<void>;
     close: (tabId: string) => Promise<void>;
+  };
+  frames: {
+    /**
+     * Loopback endpoint of the browser-frame hub this desktop serves
+     * (`t3.browser/frames`): canonical origin plus the shared secret that
+     * authorizes the proxy-to-hub hop. `null` when the hub is unavailable.
+     * The secret is forwarded to the server inside the automation-host
+     * registration; it is never exposed to viewers.
+     */
+    hubEndpoint: () => Promise<{ readonly origin: string; readonly secret: string } | null>;
   };
   recording: {
     onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;

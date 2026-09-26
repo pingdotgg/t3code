@@ -1,0 +1,103 @@
+{
+  "name": "@t3tools/extension-sdk",
+  "version": "0.1.0",
+  "bin": {
+    "t3-extension": "bin/t3-extension.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "examples/counter/counter.ts",
+    "examples/workspace-reader",
+    "examples/issue-context",
+    "examples/installable-workspace-reader",
+    "AUTHORING.md",
+    "examples/installable-files",
+    "examples/installable-files-consumer",
+    "examples/installable-stream-provider",
+    "examples/installable-stream-consumer",
+    "examples/installable-terminal-observer",
+    "examples/installable-terminal-output",
+    "examples/installable-package-assets",
+    "examples/authored-assets",
+    "examples/installable-terminal-live-output",
+    "src",
+    "test",
+    "bin",
+    "examples/start-here",
+    "examples/files",
+    "HOST.md",
+    "examples/api-provider",
+    "examples/api-consumer",
+    "examples/persisted-state",
+    "examples/browser-local-servers",
+    "!examples/*/proof.json"
+  ],
+  "type": "module",
+  "exports": {
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "default": "./dist/contracts.js"
+    },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "default": "./dist/host.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
+    },
+    "./context": {
+      "types": "./dist/context.d.ts",
+      "default": "./dist/context.js"
+    },
+    "./environment": {
+      "types": "./dist/environment.d.ts",
+      "default": "./dist/environment.js"
+    },
+    "./workspace": {
+      "types": "./dist/workspace.d.ts",
+      "default": "./dist/workspace.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./catalogue": {
+      "types": "./dist/catalogue.d.ts",
+      "default": "./dist/catalogue.js"
+    },
+    "./authoring": {
+      "types": "./dist/authoring.d.ts",
+      "default": "./dist/authoring.js"
+    },
+    "./clientProviders": {
+      "types": "./dist/clientProviders.d.ts",
+      "default": "./dist/clientProviders.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "acorn": "8.16.0",
+    "esbuild": "0.28.1",
+    "react": "19.2.6",
+    "typescript": "7.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "react": "19.2.6",
+    "react-test-renderer": "19.2.6"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}

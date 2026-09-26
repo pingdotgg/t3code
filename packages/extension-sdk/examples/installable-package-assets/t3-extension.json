@@ -1,0 +1,32 @@
+{
+  "format": 4,
+  "manifest": {
+    "id": "example.package-assets",
+    "version": "1.0.0",
+    "apiVersion": 1,
+    "surfaces": [
+      {
+        "id": "example.package-assets/view",
+        "title": "Package asset demo",
+        "scope": "thread",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "tools": [],
+  "requires": [],
+  "provides": [],
+  "dependencies": [],
+  "assets": [
+    {
+      "path": "assets/value.wasm",
+      "byteLength": 38,
+      "sha256": "d26a6127030593c8d022c04a6ac98987e7277ea57bc282c7c5e1cb1dd1792ab3",
+      "mediaType": "application/wasm"
+    }
+  ]
+}

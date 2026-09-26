@@ -112,9 +112,46 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal(".run"),
 ]);
 
+export const MAX_EXTENSION_COMMAND_ID_LENGTH = 80;
+/**
+ * Plugin-registered commands are namespaced `ext.<pluginId>.<command>` so they
+ * can never collide with the static/native command names above. The pluginId
+ * shape matches `assertId`'s `publisher.extension` requirement.
+ */
+export const EXTENSION_COMMAND_PATTERN = Schema.TemplateLiteral([
+  Schema.Literal("ext."),
+  Schema.NonEmptyString.check(
+    Schema.isMaxLength(160),
+    Schema.isPattern(/^[a-z][a-z0-9-]*\.[a-z0-9][a-z0-9.-]*$/),
+  ),
+  Schema.Literal("."),
+  Schema.NonEmptyString.check(
+    Schema.isMaxLength(MAX_EXTENSION_COMMAND_ID_LENGTH),
+    Schema.isPattern(/^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)*$/),
+  ),
+]);
+export type ExtensionCommandName = typeof EXTENSION_COMMAND_PATTERN.Type;
+
+export function extensionCommandName(pluginId: string, commandId: string): ExtensionCommandName {
+  return `ext.${pluginId}.${commandId}` as ExtensionCommandName;
+}
+
+/**
+ * `ext.<pluginId>.<command>` splits ambiguously by regex alone (pluginId itself
+ * contains dots), so callers match against a known installation id instead.
+ * Returns the plugin-local `commandId` when `command` belongs to `pluginId`.
+ */
+export function extensionCommandForPlugin(command: string, pluginId: string): string | null {
+  const prefix = `ext.${pluginId}.`;
+  if (!command.startsWith(prefix)) return null;
+  const commandId = command.slice(prefix.length);
+  return commandId.length > 0 ? commandId : null;
+}
+
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
+  EXTENSION_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 
