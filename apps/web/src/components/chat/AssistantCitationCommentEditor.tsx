@@ -10,15 +10,18 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend,
   onCancel,
   onDraftChange,
+  draft,
 }: {
   citation: AssistantCitation;
+  /** An unsaved comment from an earlier mount of this editor, shown instead of the saved one. */
+  draft?: string | null;
   inputRef?: Ref<HTMLTextAreaElement>;
   onSubmit: (comment: string) => boolean;
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
 }) {
-  const [comment, setComment] = useState(citation.comment ?? "");
+  const [comment, setComment] = useState(draft ?? citation.comment ?? "");
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submit = () => {
     if (!commentTooLong) onSubmit(comment);

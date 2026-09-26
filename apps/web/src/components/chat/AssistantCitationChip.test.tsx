@@ -56,13 +56,19 @@ const sourceAnchor = {
 
 let renderer: ReactTestRenderer;
 
-function mount(onSave = vi.fn(() => true)) {
+function mount(onSave = vi.fn(() => true), draftKey?: string) {
   function Composer() {
     const [open, setOpen] = useState(true);
     return (
       <AssistantCitationChip
         citation={citation}
-        commentEditor={{ open, sourceAnchor, onOpenChange: setOpen, onSave }}
+        commentEditor={{
+          open,
+          sourceAnchor,
+          onOpenChange: setOpen,
+          onSave,
+          ...(draftKey === undefined ? {} : { draftKey }),
+        }}
       />
     );
   }
@@ -99,6 +105,65 @@ beforeEach(() => {
 afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
+});
+
+describe("citation comment draft across a remount", () => {
+  it("resumes an unsaved comment when the chip is mounted again", () => {
+    // The composer editor replaces its document when a provider question
+    // borrows it, which unmounts the node view without any dismissal.
+    mount();
+    typeComment("still typing");
+    act(() => renderer.unmount());
+
+    const onSave = mount();
+    expect(renderer.root.findByType("textarea").props.value).toBe("still typing");
+    clickButton("Save");
+    expect(onSave).toHaveBeenCalledWith("still typing");
+  });
+
+  it("keeps the drafts of two identical citations apart by their node key", () => {
+    mount(
+      vi.fn(() => true),
+      "cite-1",
+    );
+    typeComment("for the first");
+    act(() => renderer.unmount());
+
+    mount(
+      vi.fn(() => true),
+      "cite-2",
+    );
+    expect(renderer.root.findByType("textarea").props.value).toBe("");
+    clickButton("Cancel");
+    act(() => renderer.unmount());
+
+    mount(
+      vi.fn(() => true),
+      "cite-1",
+    );
+    expect(renderer.root.findByType("textarea").props.value).toBe("for the first");
+    clickButton("Cancel");
+  });
+
+  it("forgets the draft once it was saved", () => {
+    mount();
+    typeComment("saved now");
+    clickButton("Save");
+    act(() => renderer.unmount());
+
+    mount();
+    expect(renderer.root.findByType("textarea").props.value).toBe("");
+  });
+
+  it("forgets the draft once it was cancelled", () => {
+    mount();
+    typeComment("never mind");
+    clickButton("Cancel");
+    act(() => renderer.unmount());
+
+    mount();
+    expect(renderer.root.findByType("textarea").props.value).toBe("");
+  });
 });
 
 describe("citation comment source disappearance", () => {
