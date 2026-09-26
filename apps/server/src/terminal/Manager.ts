@@ -661,8 +661,12 @@ interface TerminalProcessTableSnapshot {
 export function subprocessSnapshotPollDelayMs(
   pollIntervalMs: number,
   failureCount: number,
+  fallbackElapsedMs = 0,
 ): number {
-  return Math.min(pollIntervalMs * 2 ** failureCount, MAX_SUBPROCESS_POLL_INTERVAL_MS);
+  return Math.min(
+    Math.max(pollIntervalMs * 2 ** failureCount, Math.max(0, fallbackElapsedMs) * 4),
+    MAX_SUBPROCESS_POLL_INTERVAL_MS,
+  );
 }
 
 function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
@@ -804,7 +808,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
       .run({
         command: "powershell.exe",
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
-        timeout: "1500 millis",
+        timeout: "15 seconds",
         maxOutputBytes: 262_144,
         outputMode: "truncate",
         timeoutBehavior: "timedOutResult",
@@ -1495,6 +1499,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
        * a failure so polling backs off instead of hot-looping the fallback.
        */
       readonly snapshotSucceeded: boolean;
+      readonly fallbackElapsedMs: number;
     },
     TerminalSubprocessCheckError
   > = options.processTable
@@ -1502,38 +1507,61 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         Effect.map((entries) => ({
           snapshot: processTableSnapshotFromProcesses(entries),
           snapshotSucceeded: true,
+          fallbackElapsedMs: 0,
         })),
         Effect.catch(() =>
-          fallbackProcessTableSnapshot.pipe(
-            Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: false })),
-          ),
+          Effect.suspend(() => {
+            const startedAtMillis = performance.now();
+            return fallbackProcessTableSnapshot.pipe(
+              Effect.map((snapshot) => ({
+                snapshot,
+                snapshotSucceeded: false,
+                fallbackElapsedMs: performance.now() - startedAtMillis,
+              })),
+            );
+          }),
         ),
       )
-    : fallbackProcessTableSnapshot.pipe(
-        Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: true })),
-      );
+    : Effect.suspend(() => {
+        const startedAtMillis = performance.now();
+        return fallbackProcessTableSnapshot.pipe(
+          Effect.map((snapshot) => ({
+            snapshot,
+            snapshotSucceeded: true,
+            fallbackElapsedMs: performance.now() - startedAtMillis,
+          })),
+        );
+      });
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector: Effect.Effect<
     {
       readonly inspector: TerminalSubprocessInspector;
       readonly snapshotSucceeded: boolean;
+      readonly fallbackElapsedMs: number;
     },
     TerminalSubprocessCheckError
   > =
     customSubprocessInspector !== undefined
-      ? Effect.succeed({ inspector: customSubprocessInspector, snapshotSucceeded: true })
+      ? Effect.succeed({
+          inspector: customSubprocessInspector,
+          snapshotSucceeded: true,
+          fallbackElapsedMs: 0,
+        })
       : Effect.map(
           fetchProcessTableSnapshot,
           ({
             snapshot,
             snapshotSucceeded,
+            fallbackElapsedMs,
           }): {
             readonly inspector: TerminalSubprocessInspector;
             readonly snapshotSucceeded: boolean;
+            readonly fallbackElapsedMs: number;
           } => ({
             inspector: (terminalPid) =>
               Effect.succeed(deriveSubprocessInspectResult(snapshot, terminalPid, platform)),
             snapshotSucceeded,
+            fallbackElapsedMs,
           }),
         );
   const subprocessPollIntervalMs =
@@ -2377,7 +2405,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (runningSessions.length === 0) {
-      return true;
+      return { snapshotSucceeded: true, fallbackElapsedMs: 0 };
     }
 
     const inspectorOption = yield* acquireSubprocessInspector.pipe(
@@ -2390,6 +2418,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             Option.none<{
               readonly inspector: TerminalSubprocessInspector;
               readonly snapshotSucceeded: boolean;
+              readonly fallbackElapsedMs: number;
             }>(),
           ),
         ),
@@ -2397,10 +2426,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (Option.isNone(inspectorOption)) {
-      return false;
+      return { snapshotSucceeded: false, fallbackElapsedMs: 0 };
     }
 
-    const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
+    const {
+      inspector: subprocessInspector,
+      snapshotSucceeded,
+      fallbackElapsedMs,
+    } = inspectorOption.value;
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
@@ -2469,7 +2502,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       concurrency: "unbounded",
       discard: true,
     });
-    return snapshotSucceeded;
+    return { snapshotSucceeded, fallbackElapsedMs };
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2484,13 +2517,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.flatMap((active) =>
         active
           ? pollSubprocessActivity().pipe(
-              Effect.flatMap((snapshotSucceeded) => {
+              Effect.flatMap(({ snapshotSucceeded, fallbackElapsedMs }) => {
                 subprocessSnapshotFailureCount = snapshotSucceeded
                   ? 0
                   : Math.min(subprocessSnapshotFailureCount + 1, 30);
                 const delayMs = subprocessSnapshotPollDelayMs(
                   subprocessPollIntervalMs,
                   subprocessSnapshotFailureCount,
+                  fallbackElapsedMs,
                 );
                 return Effect.sleep(delayMs);
               }),
