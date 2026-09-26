@@ -151,6 +151,11 @@ function nextConfigBlobWithValue(
  * Custom rows come from current settings so name/descriptor edits show
  * instantly; a bare entry falls back to the live row's driver-default
  * capabilities (the server fills those in on its next probe).
+ *
+ * A custom entry whose slug is also a built-in is left out, as the server
+ * and the composer picker already do. Rows are keyed by slug; a second row
+ * with the same key let React leave a stale copy of the built-in row mounted
+ * after the next update, so the model was listed twice.
  */
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
@@ -162,13 +167,16 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map((entry) => ({
-    slug: entry.slug,
-    name: entry.name,
-    isCustom: true,
-    capabilities:
-      entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
-  }));
+  const builtInSlugs = new Set(serverModels.map((model) => model.slug));
+  const customModels = input.customModels
+    .filter((entry) => !builtInSlugs.has(entry.slug))
+    .map((entry) => ({
+      slug: entry.slug,
+      name: entry.name,
+      isCustom: true,
+      capabilities:
+        entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
+    }));
   return [...serverModels, ...customModels];
 }
 

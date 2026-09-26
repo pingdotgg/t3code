@@ -41,6 +41,28 @@ describe("deriveProviderModelsForDisplay", () => {
     ).toEqual(["server-model", "kept-custom"]);
   });
 
+  it("drops a custom entry that repeats a built-in slug, keeping the built-in row", () => {
+    const builtIn: ServerProviderModel = {
+      slug: "claude-fable-5-1",
+      name: "Claude Fable 5.1",
+      isCustom: false,
+      capabilities: { optionDescriptors: [] },
+    };
+
+    const display = deriveProviderModelsForDisplay({
+      liveModels: [builtIn],
+      customModels: [
+        { slug: "claude-fable-5-1", name: "claude-fable-5-1", capabilities: null },
+        { slug: "other-custom", name: "other-custom", capabilities: null },
+      ],
+    });
+
+    expect(display).toEqual([
+      builtIn,
+      { slug: "other-custom", name: "other-custom", isCustom: true, capabilities: null },
+    ]);
+  });
+
   it("prefers the entry's name and capabilities over the stale live custom row", () => {
     const liveCapabilities = { optionDescriptors: [] };
     const customCapabilities = {
