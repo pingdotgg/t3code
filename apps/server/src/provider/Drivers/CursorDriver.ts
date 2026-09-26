@@ -148,33 +148,37 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const adapter = yield* makeCursorAdapter({
         environment: processEnv,
         instanceId,
-        runner: {
-          ...sdkRunner,
-          open: (input) =>
-            auth.requireApiKey.pipe(
-              Effect.flatMap((apiKey) =>
-                Effect.acquireRelease(
-                  sdkRunner
-                    .open({ ...input, options: { ...input.options, apiKey } })
-                    .pipe(
-                      Effect.flatMap((session) =>
-                        Effect.cached(session.close).pipe(
-                          Effect.map((close) => ({ ...session, close })),
+      }).pipe(
+        Effect.provideService(
+          CursorAgentSdk.CursorAgentSdkRunner,
+          CursorAgentSdk.CursorAgentSdkRunner.of({
+            ...sdkRunner,
+            open: (input) =>
+              auth.requireApiKey.pipe(
+                Effect.flatMap((apiKey) =>
+                  Effect.acquireRelease(
+                    sdkRunner
+                      .open({ ...input, options: { ...input.options, apiKey } })
+                      .pipe(
+                        Effect.flatMap((session) =>
+                          Effect.cached(session.close).pipe(
+                            Effect.map((close) => ({ ...session, close })),
+                          ),
                         ),
                       ),
-                    ),
-                  (session) => session.close.pipe(Effect.ignore),
+                    (session) => session.close.pipe(Effect.ignore),
+                  ),
+                ),
+                auth.withAccess,
+                Effect.mapError((cause) =>
+                  isSdkRunnerError(cause)
+                    ? cause
+                    : new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "open", cause }),
                 ),
               ),
-              auth.withAccess,
-              Effect.mapError((cause) =>
-                isSdkRunnerError(cause)
-                  ? cause
-                  : new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "open", cause }),
-              ),
-            ),
-        },
-      });
+          }),
+        ),
+      );
       const textGeneration = yield* makeCursorTextGeneration(
         effectiveConfig,
         processEnv,

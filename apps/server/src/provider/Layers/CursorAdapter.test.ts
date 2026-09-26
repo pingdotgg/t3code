@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../../config.ts";
 import {
+  CursorAgentSdkRunner,
   CursorAgentSdkRunnerError,
   type CursorAgentSdkOpenInput,
   type CursorAgentSdkRunnerShape,
@@ -78,6 +79,10 @@ const makeFakeRunner = (scripts: Array<FakeRunScript>) => {
   };
   return { runner, opened, messages, cancelled };
 };
+
+/** Builds the adapter on a fake runner, as the driver does with the credential-bound one. */
+const makeAdapter = (runner: CursorAgentSdkRunnerShape) =>
+  makeCursorAdapter({ instanceId }).pipe(Effect.provideService(CursorAgentSdkRunner, runner));
 
 /** Collects runtime events until the given number of turns complete. */
 const collectEvents = Effect.fn("collectEvents")(function* (
@@ -159,7 +164,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
           ],
         },
       ]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const adapter = yield* makeAdapter(sdk.runner);
       const collected = yield* collectEvents(adapter, 1);
 
       const session = yield* adapter.startSession({
@@ -236,7 +241,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
   it.effect("resumes saved Cursor agents and starts fresh for Cursor CLI cursors", () =>
     Effect.gen(function* () {
       const sdk = makeFakeRunner([]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const adapter = yield* makeAdapter(sdk.runner);
 
       const resumed = yield* adapter.startSession({
         threadId: ThreadId.make("cursor-resume-sdk"),
@@ -270,7 +275,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
   it.effect("rejects sandboxed modes on Windows with a clear message", () =>
     Effect.gen(function* () {
       const sdk = makeFakeRunner([]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId }).pipe(
+      const adapter = yield* makeAdapter(sdk.runner).pipe(
         Effect.provideService(HostProcessPlatform, "win32"),
       );
 
@@ -314,7 +319,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
               )
             : sdk.runner.open(input),
       };
-      const adapter = yield* makeCursorAdapter({ runner, instanceId });
+      const adapter = yield* makeAdapter(runner);
 
       const session = yield* adapter.startSession({
         threadId: ThreadId.make("cursor-moved-thread"),
@@ -353,7 +358,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
         },
         { updates: [{ type: "text-delta", text: "Next reply." }] },
       ]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const adapter = yield* makeAdapter(sdk.runner);
       const collected = yield* collectEvents(adapter, 2);
 
       yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -384,7 +389,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("cursor-compress");
       const sdk = makeFakeRunner([]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const adapter = yield* makeAdapter(sdk.runner);
       const collected = yield* collectEvents(adapter, 1);
 
       yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -410,7 +415,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
           ],
         },
       ]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const adapter = yield* makeAdapter(sdk.runner);
       const collected = yield* collectEvents(adapter, 1);
 
       yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
@@ -445,7 +450,7 @@ it.layer(testLayer)("CursorAdapter", (it) => {
         },
         { updates: [{ type: "text-delta", text: "Switched" }] },
       ]);
-      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const adapter = yield* makeAdapter(sdk.runner);
       const collected = yield* collectEvents(adapter, 2);
 
       yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });

@@ -50,12 +50,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { CursorTransportFailure } from "../acp/CursorTransportFailure.ts";
-import {
-  CursorAgentSdkRunnerError,
-  type CursorAgentSdkRun,
-  type CursorAgentSdkRunnerShape,
-  type CursorAgentSdkSession,
-} from "../CursorAgentSdk.ts";
+import * as CursorAgentSdk from "../CursorAgentSdk.ts";
 import { cursorSdkModelSelection } from "../cursorSdkModel.ts";
 import {
   discoverCursorSkills,
@@ -94,8 +89,6 @@ const CURSOR_AGENT_SETTING_SOURCES = [
 ] as const satisfies ReadonlyArray<SettingSource>;
 
 export interface CursorAdapterLiveOptions {
-  /** Opens SDK agents. The driver binds it to the instance credential. */
-  readonly runner: CursorAgentSdkRunnerShape;
   readonly environment?: NodeJS.ProcessEnv;
   /**
    * Selections are honored when `modelSelection.instanceId` matches this value.
@@ -106,7 +99,7 @@ export interface CursorAdapterLiveOptions {
 
 interface CursorTurn {
   readonly turnId: TurnId;
-  run: CursorAgentSdkRun | undefined;
+  run: CursorAgentSdk.CursorAgentSdkRun | undefined;
   readonly completed: Deferred.Deferred<void>;
   /** Detects a reply that is only a Cursor transport error dump. */
   readonly assistantReply: CursorTransportFailure;
@@ -126,7 +119,7 @@ interface CursorSessionContext {
   session: ProviderSession;
   modelSelection: ModelSelection;
   readonly scope: Scope.Closeable;
-  readonly agent: CursorAgentSdkSession;
+  readonly agent: CursorAgentSdk.CursorAgentSdkSession;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeTurn: CursorTurn | undefined;
   cursorSkillNames: ReadonlySet<string> | undefined;
@@ -361,7 +354,7 @@ function cursorTodoPlan(toolCall: Extract<ToolCall, { readonly type: "updateTodo
   });
 }
 
-const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
+const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
 /** The SDK wraps its own errors. Prefer the inner message so users see the real reason. */
 function sdkFailureDetail(cause: unknown, fallback: string): string {
@@ -370,9 +363,11 @@ function sdkFailureDetail(cause: unknown, fallback: string): string {
   return message || fallback;
 }
 
+/** The driver provides a `CursorAgentSdkRunner` bound to the instance credential. */
 export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options.instanceId ?? ProviderInstanceId.make("cursor");
+    const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const serverConfig = yield* Effect.service(ServerConfig);
@@ -655,7 +650,7 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
     const awaitRun = Effect.fnUntraced(function* (
       ctx: CursorSessionContext,
       turn: CursorTurn,
-      run: CursorAgentSdkRun,
+      run: CursorAgentSdk.CursorAgentSdkRun,
     ) {
       const exit = yield* Effect.exit(run.wait);
       // A timed-out interrupt already ended this turn. A late final reply must
@@ -844,7 +839,7 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
 
           const sessionScope = yield* Scope.make("sequential");
           const openAgent = (agentId: string | undefined) =>
-            options.runner.open({
+            runner.open({
               operation: agentId === undefined ? "create" : "resume",
               ...(agentId === undefined ? {} : { agentId }),
               options: makeCursorAgentOptions({
