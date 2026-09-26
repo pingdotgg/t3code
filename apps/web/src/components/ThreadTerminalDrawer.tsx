@@ -732,6 +732,7 @@ export function TerminalViewport({
       const sendTerminalInput = async (data: string, fallbackError: string) => {
         const activeTerminal = terminalRef.current;
         if (!activeTerminal) return;
+        if (!activeTerminal.isAtBottom()) activeTerminal.scrollToBottom();
         const result = await writeTerminal(data);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
