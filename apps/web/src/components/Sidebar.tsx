@@ -1515,11 +1515,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
   // Stacks show their layer count; multiple unrelated links show their total count.
-  // Plain clicks open T3; individual PR links also support opening the host in a new tab.
+  // Either opens the thread's pull requests tab; a single PR link opens that PR and still
+  // supports opening the host in a new tab.
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
     : null;
-  const handlePrStackClick = useCallback(() => {
+  const handlePrListClick = useCallback(() => {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
@@ -1531,7 +1532,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
-        onOpenStack={handlePrStackClick}
+        onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
