@@ -61,12 +61,16 @@ const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
 export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
 
+/** Floating working-status pill and scroll-to-end control above the composer. */
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
   readonly status: FloatingWorkingStatus | null;
   readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
+  // When the overlay reserves FLOATING_WORKING_CONTROL_COVERAGE in flow, sit
+  // inside that slot. Otherwise hang above the overlay (scroll-to-end only).
+  readonly reserveInOverlay?: boolean;
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
@@ -172,7 +176,7 @@ export function FloatingWorkingControl(props: {
     <Animated.View
       pointerEvents="box-none"
       className="absolute left-0 right-0 z-20 items-center"
-      style={{ top: -CONTROL_OVERLAY_OFFSET }}
+      style={{ top: props.reserveInOverlay === true ? CONTROL_GAP : -CONTROL_OVERLAY_OFFSET }}
       onLayout={(event) => setOverlayWidth(event.nativeEvent.layout.width)}
       entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_ENTERING}
       exiting={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_EXITING}
@@ -257,6 +261,7 @@ export function FloatingWorkingControl(props: {
   );
 }
 
+/** Compact-status label row inside the floating working capsule. */
 function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) => void }) {
   return (
     <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5" onLayout={props.onLayout}>
@@ -271,6 +276,7 @@ function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) 
   );
 }
 
+/** Dispatch the floating capsule label for the current working-status kind. */
 function FloatingStatusLabel(props: {
   readonly status: FloatingWorkingStatus;
   readonly onLayout: (event: LayoutChangeEvent) => void;
@@ -350,7 +356,7 @@ function FloatingStatusLabel(props: {
   );
 }
 
-// Absolute rows cross-fade around the same center without affecting each other.
+/** Absolutely positioned status row that cross-fades around a shared center. */
 function StatusLabelRow(props: {
   readonly accessibilityLabel: string;
   readonly accessibilityRole?: "button";
@@ -385,6 +391,7 @@ function StatusLabelRow(props: {
   );
 }
 
+/** Live "Working for …" duration label for an in-flight turn. */
 function WorkingDuration(props: {
   readonly startedAt: string;
   readonly onLayout: (event: LayoutChangeEvent) => void;
@@ -413,6 +420,7 @@ function WorkingDuration(props: {
   );
 }
 
+/** Format elapsed working time as seconds, minutes, or a longer duration. */
 function formatWorkingDuration(startedAt: string, nowMs: number): string {
   const startedAtMs = Date.parse(startedAt);
   if (!Number.isFinite(startedAtMs) || nowMs <= startedAtMs) {
@@ -432,6 +440,7 @@ function formatWorkingDuration(startedAt: string, nowMs: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
+/** Circular control that jumps the thread feed to the latest content. */
 function ScrollToEndButton(props: { readonly disabled?: boolean; readonly onPress: () => void }) {
   return (
     <ControlPill

@@ -5,6 +5,7 @@ import {
   deriveCenteredContentHorizontalPadding,
   deriveFileInspectorPaneLayout,
   deriveLayout,
+  deriveThreadComposerOverlayHeight,
   deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
@@ -50,6 +51,26 @@ describe("thread work-log text sizing", () => {
   });
 });
 
+describe("deriveThreadComposerOverlayHeight", () => {
+  it("reserves only the composer while the working chrome is hidden", () => {
+    expect(
+      deriveThreadComposerOverlayHeight({
+        composerOverlapHeight: 94,
+        floatingControlCoverage: 0,
+      }),
+    ).toBe(94);
+  });
+
+  it("adds the working-pill coverage so the last transcript line can rest above it", () => {
+    expect(
+      deriveThreadComposerOverlayHeight({
+        composerOverlapHeight: 94,
+        floatingControlCoverage: 48.5,
+      }),
+    ).toBe(142.5);
+  });
+});
+
 describe("deriveThreadFeedInitialContentInset", () => {
   it("seeds Android scroll math with the composer overlay estimate", () => {
     expect(
@@ -59,6 +80,19 @@ describe("deriveThreadFeedInitialContentInset", () => {
         bottomContentInset: 174,
       }),
     ).toEqual({ bottom: 174 });
+  });
+
+  it("seeds Android with the running overlay so the first inset report keeps pill coverage", () => {
+    expect(
+      deriveThreadFeedInitialContentInset({
+        platform: "android",
+        usesNativeAutomaticInsets: false,
+        bottomContentInset: deriveThreadComposerOverlayHeight({
+          composerOverlapHeight: 94,
+          floatingControlCoverage: 48.5,
+        }),
+      }),
+    ).toEqual({ bottom: 142.5 });
   });
 
   it("does not double native iOS insets", () => {

@@ -57,7 +57,6 @@ import Animated, {
   Easing,
   FadeInDown,
   FadeOut,
-  ReduceMotion,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -71,7 +70,11 @@ import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
-import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
+import {
+  CHAT_CONTENT_MAX_WIDTH,
+  deriveThreadComposerOverlayHeight,
+  type LayoutVariant,
+} from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
@@ -189,6 +192,7 @@ export interface ThreadDetailScreenProps {
   readonly showContent?: boolean;
 }
 
+/** Return the newest streaming assistant message id and text length, if any. */
 function latestStreamingAssistantMessage(
   feed: ReadonlyArray<ThreadFeedEntry>,
 ): { readonly id: string; readonly textLength: number } | null {
@@ -209,6 +213,7 @@ function latestStreamingAssistantMessage(
   return null;
 }
 
+/** Fire selection haptics when a streaming assistant message starts or grows. */
 function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedEntry>) {
   const lastStreamingAssistantRef = useRef<{
     readonly id: string;
@@ -264,7 +269,8 @@ const USER_INPUT_TOGGLE_TIMING = {
   easing: Easing.out(Easing.cubic),
 };
 
-export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+/** Thread transcript with composer overlay chrome, including the running-turn working pill. */
+function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const navigation = useNavigation();
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
@@ -529,7 +535,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     // bottom inset still overlaps.
     composerOverlapHeight: composerBottomInset,
   });
-  const estimatedOverlayHeight = composerOverlapHeight;
+  const estimatedOverlayHeight = deriveThreadComposerOverlayHeight({
+    composerOverlapHeight,
+    floatingControlCoverage: showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
+  });
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
   // UIKit add the safe-area bottom to the content inset AGAIN — leaving a
@@ -558,15 +567,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const userInputCardProgress = useSharedValue(1);
   const userInputInsetProgress = useSharedValue(1);
   const userInputCardCoverage = useSharedValue(0);
-  const floatingControlCoverage = useSharedValue(
-    showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
-  );
-  useEffect(() => {
-    floatingControlCoverage.value = withTiming(
-      showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0,
-      { duration: 180, reduceMotion: ReduceMotion.System },
-    );
-  }, [floatingControlCoverage, showFloatingStatus]);
   // Android renders the expanded card in-flow (it cannot hit-test the iOS
   // overlay outside the bar's bounds), so its measured overlay height already
   // includes the card — the coverage extra is iOS-only.
@@ -577,7 +577,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   useAnimatedReaction(
     () =>
       contentInsetEndAdjustment.value +
-      floatingControlCoverage.value +
       (userInputCoverageApplies ? userInputInsetProgress.value * userInputCardCoverage.value : 0),
     (value) => {
       combinedContentInsetEndAdjustment.value = value;
@@ -930,10 +929,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               submittedMessageId={submittedMessageId}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
               contentTopInset={0}
-              contentBottomInset={
-                estimatedOverlayHeight +
-                (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
-              }
+              contentBottomInset={estimatedOverlayHeight}
               contentMaxWidth={contentMaxWidth}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
@@ -968,10 +964,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             pointerEvents="box-none"
             style={[{ position: "absolute", bottom: 0, left: 0 }, composerWidthStyle]}
           >
-            {/* No paddingTop here: the overlay's measured height becomes the
-                list's bottom inset, so any padding above the pill/composer
-                pushes the resting content floor up by the same amount. */}
+            {/* The working pill is absolutely positioned, so it would not
+                contribute to this overlay's measured height. Reserve its
+                coverage in flow while it is shown: onLayout then includes it
+                and Android's extraContentPadding can actually scroll the last
+                transcript line above the chrome. */}
             <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+              {showFloatingStatus ? (
+                <View pointerEvents="none" style={{ height: FLOATING_WORKING_CONTROL_COVERAGE }} />
+              ) : null}
               <FloatingWorkingControl
                 colorScheme={isDarkMode ? "dark" : "light"}
                 status={floatingStatus}
@@ -982,6 +983,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 }
                 showScrollToEnd={showScrollToEndButton}
                 onScrollToEnd={handleScrollToEnd}
+                reserveInOverlay={showFloatingStatus}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
                 {props.feedbackSubmissions.map((submission) => (
@@ -1114,4 +1116,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ) : null}
     </View>
   );
-});
+}
+
+const ThreadDetailScreenMemo = memo(ThreadDetailScreen);
+export { ThreadDetailScreenMemo as ThreadDetailScreen };
