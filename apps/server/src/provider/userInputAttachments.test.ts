@@ -6,7 +6,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
-import { appendUserInputAttachmentPaths } from "./userInputAttachments.ts";
+import {
+  appendUserInputAttachmentPaths,
+  normalizeUserInputAnswers,
+} from "./userInputAttachments.ts";
 
 const layer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-answer-paths-" }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -57,5 +60,44 @@ describe("question answer paths", () => {
       }).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
     }).pipe(Effect.provide(layer)),
+  );
+});
+
+describe("normalizeUserInputAnswers", () => {
+  it.effect("unwraps Codex-style answer objects and keeps strings and arrays", () =>
+    Effect.gen(function* () {
+      expect(yield* normalizeUserInputAnswers({ q: "Blue" })).toEqual({ q: "Blue" });
+      expect(yield* normalizeUserInputAnswers({ q: ["First", "Second"] })).toEqual({
+        q: ["First", "Second"],
+      });
+      expect(yield* normalizeUserInputAnswers({ q: { answers: ["Blue"] } })).toEqual({
+        q: "Blue",
+      });
+      expect(yield* normalizeUserInputAnswers({ q: { answers: ["First", "Second"] } })).toEqual({
+        q: ["First", "Second"],
+      });
+    }),
+  );
+
+  it.effect("fails unknown shapes before the request is consumed", () =>
+    Effect.gen(function* () {
+      for (const value of [
+        42,
+        null,
+        {},
+        ["kept", 5, null],
+        { answers: ["ok", 7] },
+        { answer: ["Blue"] },
+      ]) {
+        const error = yield* normalizeUserInputAnswers({ q: value }).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ProviderValidationError",
+          operation: "respondToUserInput",
+        });
+        expect(error.issue).toContain("index 0");
+      }
+      const second = yield* normalizeUserInputAnswers({ ok: "fine", bad: 42 }).pipe(Effect.flip);
+      expect(second.issue).toContain("index 1");
+    }),
   );
 });

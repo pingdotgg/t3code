@@ -53,7 +53,10 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
 
-import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
+import {
+  appendUserInputAttachmentPaths,
+  normalizeUserInputAnswers,
+} from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
@@ -2023,8 +2026,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.thread_id": input.threadId,
         "provider.request_id": input.requestId,
       });
+      const normalized = yield* normalizeUserInputAnswers(input.answers);
       const answers = yield* appendUserInputAttachmentPaths({
         ...input,
+        answers: normalized,
         attachmentsDir: serverConfig.attachmentsDir,
       }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
       yield* routed.adapter.respondToUserInput(routed.threadId, input.requestId, answers);
