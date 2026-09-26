@@ -425,7 +425,7 @@ export function isRichTextBoldShortcut(event: ShortcutEventLike): boolean {
     return false;
   }
   return (
-    event.key.toLowerCase() === "b" &&
+    resolveEventKeys(event).has("b") &&
     (event.metaKey || event.ctrlKey) &&
     !event.altKey &&
     !event.shiftKey
