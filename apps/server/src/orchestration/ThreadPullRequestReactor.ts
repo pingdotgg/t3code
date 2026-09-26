@@ -143,14 +143,13 @@ export const make = Effect.gen(function* () {
     }
     // A single-thread read only shows whether its own thread is gone.
     const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
-    const checkedIds = request.threadId === null ? [...pendingBackfill.keys()] : [request.threadId];
+    const checkedIds = request.threadId === null ? pendingBackfill.keys() : [request.threadId];
     for (const threadId of checkedIds) {
       if (!threadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
     const threads = snapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
-        (request.threadId === null || thread.id === request.threadId) &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
           pendingBackfill.has(thread.id)) &&

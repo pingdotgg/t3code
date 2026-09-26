@@ -182,8 +182,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make(options.snapshot);
   const snapshotReadCount = yield* Ref.make(0);
-  const snapshotReads = yield* Queue.unbounded<number>();
-  const threadReads = yield* Queue.unbounded<ThreadId>();
+  // Each shell read: a thread id for a one-thread read, null for a full read.
+  const snapshotReads = yield* Queue.unbounded<ThreadId | null>();
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
   const settingsReads = yield* Queue.unbounded<ServerSettings>();
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
@@ -257,8 +257,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
       getShellSnapshot: () =>
-        Ref.updateAndGet(snapshotReadCount, (count) => count + 1).pipe(
-          Effect.tap((count) => Queue.offer(snapshotReads, count)),
+        Ref.update(snapshotReadCount, (count) => count + 1).pipe(
+          Effect.andThen(Queue.offer(snapshotReads, null)),
           Effect.andThen(Ref.get(snapshots)),
         ),
       getSnapshotSequence: () =>
@@ -270,7 +270,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               threads.find((thread) => thread.id === threadId && thread.archivedAt === null),
             ),
           ),
-          Effect.tap(() => Queue.offer(threadReads, threadId)),
+          Effect.tap(() => Queue.offer(snapshotReads, threadId)),
         ),
       getProjectShells: (projectIds) =>
         Ref.get(snapshots).pipe(
@@ -311,7 +311,6 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshots,
     snapshotReadCount,
     snapshotReads,
-    threadReads,
     settingsReads,
     commands,
     branchCalls,
@@ -333,7 +332,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
 const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
   reactor: ThreadSettlementReactor.ThreadSettlementReactor["Service"],
   activation: Deferred.Deferred<void>,
-  snapshotReads: Queue.Queue<number>,
+  snapshotReads: Queue.Queue<ThreadId | null>,
 ) {
   yield* reactor.start();
   yield* Deferred.succeed(activation, undefined);
@@ -463,7 +462,7 @@ describe("ThreadSettlementReactor", () => {
                   updatedAt: NOW,
                 },
               });
-              yield* Queue.take(fixture.threadReads);
+              assert.strictEqual(yield* Queue.take(fixture.snapshotReads), thread.id);
               yield* reactor.drain;
             }
             assert.deepStrictEqual(
@@ -483,7 +482,7 @@ describe("ThreadSettlementReactor", () => {
               aggregateId: readySession.threadId,
               payload: { threadId: readySession.threadId, session: readySession },
             });
-            yield* Queue.take(fixture.threadReads);
+            assert.strictEqual(yield* Queue.take(fixture.snapshotReads), readySession.threadId);
             yield* reactor.drain;
             assert.deepStrictEqual(
               (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
@@ -491,8 +490,6 @@ describe("ThreadSettlementReactor", () => {
             );
             assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
             assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
-            // Thread events read one thread. Only the startup sweep read them all.
-            assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 1);
           }).pipe(Effect.provide(fixture.layer));
         }),
       ),
