@@ -1,4 +1,4 @@
-import type { InteractionUpdate, RunResult } from "@cursor/sdk";
+import { AgentNotFoundError, type InteractionUpdate, type RunResult } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -12,12 +12,14 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../../config.ts";
-import type {
-  CursorAgentSdkOpenInput,
-  CursorAgentSdkRunnerShape,
-  CursorAgentSdkSession,
+import {
+  CursorAgentSdkRunnerError,
+  type CursorAgentSdkOpenInput,
+  type CursorAgentSdkRunnerShape,
+  type CursorAgentSdkSession,
 } from "../CursorAgentSdk.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 
@@ -260,6 +262,89 @@ it.layer(testLayer)("CursorAdapter", (it) => {
         sandboxOptions: { enabled: true },
       });
       yield* adapter.stopAll();
+    }),
+  );
+
+  it.effect("starts a new agent when the saved agent is not found", () =>
+    Effect.gen(function* () {
+      const sdk = makeFakeRunner([]);
+      // Cursor scopes local agents to their cwd, so a thread that moved to a
+      // worktree cannot resume its agent.
+      const runner: CursorAgentSdkRunnerShape = {
+        ...sdk.runner,
+        open: (input) =>
+          input.operation === "resume"
+            ? Effect.fail(
+                new CursorAgentSdkRunnerError({
+                  method: "agent.resume",
+                  cause: new AgentNotFoundError(`Agent ${input.agentId} not found`),
+                }),
+              )
+            : sdk.runner.open(input),
+      };
+      const adapter = yield* makeCursorAdapter({ runner, instanceId });
+
+      const session = yield* adapter.startSession({
+        threadId: ThreadId.make("cursor-moved-thread"),
+        cwd: process.cwd(),
+        resumeCursor: { schemaVersion: 2, agentId: "agent-other-cwd" },
+        runtimeMode: "full-access",
+      });
+
+      assert.deepStrictEqual(session.resumeCursor, {
+        schemaVersion: 2,
+        agentId: "agent-created",
+      });
+      assert.deepStrictEqual(
+        sdk.opened.map((input) => input.operation),
+        ["create"],
+      );
+      yield* adapter.stopAll();
+    }),
+  );
+
+  it.effect("drops a final reply that arrives after an interrupt gave up", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("cursor-late-reply");
+      const releaseRun = yield* Deferred.make<void>();
+      const sdk = makeFakeRunner([
+        {
+          // Cancel does not stop this run. It ends after the interrupt timed out.
+          updates: [],
+          wait: Deferred.await(releaseRun).pipe(
+            Effect.as({
+              id: "run-1",
+              status: "finished",
+              result: "Late reply.",
+            } satisfies RunResult),
+          ),
+        },
+        { updates: [{ type: "text-delta", text: "Next reply." }] },
+      ]);
+      const adapter = yield* makeCursorAdapter({ runner: sdk.runner, instanceId });
+      const collected = yield* collectEvents(adapter, 2);
+
+      yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+      const first = yield* adapter.sendTurn({ threadId, input: "Start" });
+      const interrupt = yield* adapter.interruptTurn(threadId).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(interrupt);
+      yield* Deferred.succeed(releaseRun, undefined);
+      yield* adapter.sendTurn({ threadId, input: "Next" });
+      yield* collected.finished;
+
+      const firstCompleted = collected.events.findIndex(
+        (event) => event.type === "turn.completed" && event.turnId === first.turnId,
+      );
+      assert.isAbove(firstCompleted, -1);
+      assert.deepStrictEqual(
+        collected.events
+          .slice(firstCompleted + 1)
+          .filter((event) => event.turnId === first.turnId)
+          .map((event) => event.type),
+        [],
+      );
+      yield* adapter.stopSession(threadId);
     }),
   );
 

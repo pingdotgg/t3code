@@ -24,5 +24,6 @@ from the API keys in your Cursor dashboard.
 - Cursor does not send approval requests. See
   [permission modes](./permission-modes.md#provider-differences).
 - Threads from older versions of T3 Code used the Cursor CLI. They continue in a new Cursor agent
-  that does not see the earlier conversation.
+  that does not see the earlier conversation. The same happens when a thread moves to another
+  folder, such as a new worktree, because Cursor keeps its agents per folder.
 - The **Binary path** and **API endpoint** settings from the CLI integration no longer apply.

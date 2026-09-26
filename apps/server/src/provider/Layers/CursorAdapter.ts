@@ -655,6 +655,9 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
       run: CursorAgentSdkRun,
     ) {
       const exit = yield* Effect.exit(run.wait);
+      // A timed-out interrupt already ended this turn. A late final reply must
+      // not open an assistant message that nothing completes.
+      if (turn.finalized) return;
       if (Exit.isFailure(exit)) {
         if (turn.interrupted) {
           return yield* finalizeTurn(ctx, turn, { state: "interrupted" });
@@ -829,9 +832,8 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
           }
 
           const sessionScope = yield* Scope.make("sequential");
-          const agentId = parseCursorResume(input.resumeCursor);
-          const agent = yield* options.runner
-            .open({
+          const openAgent = (agentId: string | undefined) =>
+            options.runner.open({
               operation: agentId === undefined ? "create" : "resume",
               ...(agentId === undefined ? {} : { agentId }),
               options: makeCursorAgentOptions({
@@ -842,21 +844,36 @@ export function makeCursorAdapter(options: CursorAdapterLiveOptions) {
               }),
               threadId: input.threadId,
               providerSessionId: input.threadId,
-            })
-            .pipe(
-              Effect.provideService(Scope.Scope, sessionScope),
-              Effect.tap((agent) => Scope.addFinalizer(sessionScope, Effect.ignore(agent.close))),
-              Effect.onError(() => Scope.close(sessionScope, Exit.void)),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterProcessError({
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    detail: sdkFailureDetail(cause, "Could not open the Cursor agent."),
-                    cause,
-                  }),
-              ),
-            );
+            });
+          const resumeAgentId = parseCursorResume(input.resumeCursor);
+          const agent = yield* openAgent(resumeAgentId).pipe(
+            // Cursor stores local agents per cwd. A thread that moved to
+            // another cwd, or whose agent was deleted, cannot resume it and
+            // would fail every restart. Start a new agent, like an old ACP cursor.
+            Effect.catchIf(
+              (error) =>
+                resumeAgentId !== undefined &&
+                error.cause instanceof Error &&
+                error.cause.name === "AgentNotFoundError",
+              () =>
+                Effect.logWarning("Cursor agent not found. Starting a new agent.", {
+                  threadId: input.threadId,
+                  agentId: resumeAgentId,
+                }).pipe(Effect.andThen(openAgent(undefined))),
+            ),
+            Effect.provideService(Scope.Scope, sessionScope),
+            Effect.tap((agent) => Scope.addFinalizer(sessionScope, Effect.ignore(agent.close))),
+            Effect.onError(() => Scope.close(sessionScope, Exit.void)),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: sdkFailureDetail(cause, "Could not open the Cursor agent."),
+                  cause,
+                }),
+            ),
+          );
 
           const now = yield* nowIso;
           const session: ProviderSession = {
