@@ -97,7 +97,20 @@ const MODEL_IDS: Record<number, string> = {
   1018: "gemini-3-flash-preview",
   1084: "gemini-3-flash-preview",
   1047: "gemini-3-flash-preview",
+  342: "gpt-oss-120b-medium",
+  1298: "gemini-3.7-flash-high",
+  1299: "gemini-3.7-flash-medium",
+  1301: "gemini-3.7-flash-tiered",
+  1318: "gemini-3.8-flash-high",
+  1319: "gemini-3.8-flash-medium",
+  1320: "gemini-3.8-flash-low",
+  1322: "gemini-3.8-flash-tiered",
 };
+
+/** Prices effort and routing variants such as `gemini-3.8-flash-high` at their base model. */
+export function antigravityRateModel(model: string): string {
+  return model.replace(/-(?:extra-low|low|medium|high|tiered|control|thinking)$/, "");
+}
 
 function modelName(name: string, id: number): string {
   if (name) {
@@ -228,16 +241,18 @@ async function readDatabase(path: string, fallbackTimestamp: number): Promise<Us
             const id = textAt(usage, key);
             return id ? [`antigravity:${key}:${id}`] : [];
           });
+          const model =
+            MODEL_IDS[numberAt(usage, 1)] ||
+            entry.model ||
+            (source === "step" ? generationModels.get(idx) : "") ||
+            modelName("", numberAt(usage, 1)) ||
+            "antigravity-unknown";
           const record: UsageRecord = {
             provider: "antigravity",
             sessionId,
             timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
-            model:
-              MODEL_IDS[numberAt(usage, 1)] ||
-              entry.model ||
-              (source === "step" ? generationModels.get(idx) : "") ||
-              modelName("", numberAt(usage, 1)) ||
-              "antigravity-unknown",
+            model,
+            rateModel: antigravityRateModel(model),
             totals,
             reportedCostUsd: null,
             fast: false,

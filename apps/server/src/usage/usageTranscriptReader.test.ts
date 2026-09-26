@@ -599,6 +599,33 @@ describe("SQLite usage readers", () => {
     );
   });
 
+  it("prices Antigravity effort variants at their base model", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "variants.db"));
+    try {
+      db.exec(
+        "CREATE TABLE gen_metadata (idx INTEGER, data BLOB); CREATE TABLE steps (idx INTEGER, metadata BLOB)",
+      );
+      const generation = db.prepare("INSERT INTO gen_metadata VALUES (?, ?)");
+      const step = db.prepare("INSERT INTO steps VALUES (?, ?)");
+      generation.run(0, new Uint8Array(protoBytes(1, protoText(19, "Gemini 3.7 Flash Control"))));
+      step.run(0, new Uint8Array(protoBytes(9, protoNumber(2, 10))));
+      step.run(1, new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])));
+    } finally {
+      db.close();
+    }
+    const result = await readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(result.errors, []);
+    assert.deepStrictEqual(
+      result.files
+        .flatMap((file) => file.records)
+        .map((record) => [record.model, record.rateModel]),
+      [
+        ["gemini-3.7-flash-control", "gemini-3.7-flash"],
+        ["gemini-3.8-flash-medium", "gemini-3.8-flash"],
+      ],
+    );
+  });
+
   it("merges Antigravity aliases that bridge previously separate step records", async () => {
     const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "bridge.db"));
     try {
