@@ -1566,11 +1566,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const turnId =
+        command.turnId ??
+        thread.session?.activeTurnId ??
+        (thread.latestTurn?.state === "running" || thread.latestTurn?.state === "error"
+          ? thread.latestTurn.turnId
+          : undefined);
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1581,7 +1587,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.turn-interrupt-requested",
         payload: {
           threadId: command.threadId,
-          ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          ...(turnId !== undefined ? { turnId } : {}),
           createdAt: command.createdAt,
         },
       };
@@ -1866,6 +1872,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           });
         }
       }
+      const turnId = thread.session?.activeTurnId ?? thread.latestTurn?.turnId;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1876,6 +1883,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.session-stop-requested",
         payload: {
           threadId: command.threadId,
+          ...(turnId !== undefined ? { turnId } : {}),
           createdAt: command.createdAt,
         },
       };
@@ -1887,6 +1895,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const recovery = command.recoveryAdmission;
+      if (recovery !== undefined) {
+        // Reserve recovery in the serialized command stream. The global sequence
+        // also catches Stop requests, which need not change thread.updatedAt.
+        const latestTurn = thread.latestTurn;
+        const isRelease = recovery.reservationUpdatedAt !== undefined;
+        const matchesSession = isRelease
+          ? thread.session?.status === "starting" &&
+            thread.session.updatedAt === recovery.reservationUpdatedAt &&
+            (command.session.status === "error" || command.session.status === "interrupted")
+          : thread.session?.status === "error" && command.session.status === "starting";
+        if (
+          (!isRelease && readModel.snapshotSequence !== recovery.expectedSnapshotSequence) ||
+          latestTurn?.turnId !== recovery.interruptedTurnId ||
+          (!isRelease && latestTurn.state !== "error") ||
+          !matchesSession ||
+          thread.session?.activeTurnId !== null ||
+          (!isRelease &&
+            (thread.archivedAt !== null ||
+              thread.deletedAt !== null ||
+              thread.settledOverride === "settled" ||
+              openRequests(thread).size > 0 ||
+              thread.messages.some(
+                (message) =>
+                  message.role === "user" &&
+                  !isImportedAgentSessionMessageId(message.id) &&
+                  Date.parse(message.createdAt) > Date.parse(latestTurn.requestedAt),
+              ))) ||
+          command.session.activeTurnId !== null
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is no longer eligible for connection-loss recovery`,
+          });
+        }
+      }
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",

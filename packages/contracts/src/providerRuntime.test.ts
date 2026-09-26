@@ -6,6 +6,23 @@ import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.t
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("preserves connection failure evidence across runtime event decoding", () => {
+    const event = decodeRuntimeEvent({
+      type: "turn.completed",
+      eventId: "event-connection-loss",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: { state: "failed", failureKind: "connection" },
+    });
+
+    expect(event.type).toBe("turn.completed");
+    if (event.type === "turn.completed") {
+      expect(event.payload.failureKind).toBe("connection");
+    }
+  });
+
   it("requires input and output totals for complete turn usage", () => {
     const completeEvent = {
       type: "turn.completed",

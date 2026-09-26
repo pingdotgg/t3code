@@ -57,6 +57,24 @@ messages while disconnected. Uploads resume when you reconnect. Drafts and queue
 messages survive app restarts. Signing out of T3 Connect keeps that work on your
 device until you sign back into the same account.
 
+## Resume after connection loss
+
+Enable **Settings → General → Resume after connection loss** for the environment
+running your task. On mobile, use **Settings → Maintenance**. It is off by
+default and independent of **Continue threads after restarts**.
+
+If a supported provider confirms that a connection failure stopped its turn,
+T3 Code waits for the provider connection to return before continuing in the
+same conversation. Disconnecting your client does not start another turn when
+the agent is still working or has already finished. Stop, a newer message, a
+pending approval or question, or turning the setting off cancels recovery.
+
+Automatic recovery currently supports Codex using its built-in OpenAI connection.
+Custom endpoints, proxies, and other providers keep their existing reconnect and
+retry behavior. When T3 Code cannot safely recover a confirmed interruption,
+continue the task manually. Authentication, quota, and unrelated task errors
+do not trigger automatic recovery.
+
 ## Custom models
 
 On web and desktop, use Settings → Providers → **Models** to add an unlisted model with a custom

@@ -2601,6 +2601,32 @@ const make = Effect.gen(function* () {
         }
       }
 
+      // Publish recovery evidence only after the terminal lifecycle was reconciled.
+      // Provider retry warnings and transport reconnects never request another turn.
+      if (
+        event.type === "turn.completed" &&
+        event.payload.failureKind === "connection" &&
+        event.payload.state === "failed" &&
+        eventTurnId !== undefined &&
+        shouldApplyThreadLifecycle
+      ) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* providerCommandId(event, "connection-interrupted"),
+          threadId: thread.id,
+          activity: {
+            id: EventId.make(`connection-interrupted:${event.eventId}`),
+            kind: "connection.interrupted",
+            tone: "info",
+            summary: "Connection interrupted",
+            payload: {},
+            turnId: eventTurnId,
+            createdAt: now,
+          },
+          createdAt: now,
+        });
+      }
+
       const activities = runtimeEventToActivities(activityEvent, taskTitle);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(

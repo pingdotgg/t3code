@@ -1,3 +1,5 @@
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { makeConnectionLossRecovery } from "../ConnectionLossRecovery.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import {
   type ChatAttachment,
@@ -211,6 +213,9 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 }
 
 const make = Effect.gen(function* () {
+  const connectionLossRecovery = yield* makeConnectionLossRecovery((run) =>
+    worker.enqueue({ source: "recovery", run }),
+  );
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -1867,7 +1872,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const worker = yield* makeDrainableWorker(
+    (
+      input:
+        | ProviderIntentEvent
+        | { readonly source: "recovery"; readonly run: Effect.Effect<void> },
+    ) => ("source" in input ? input.run : processDomainEventSafely(input)),
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const pendingTitles = yield* findPendingThreadTitles().pipe(
@@ -1882,6 +1893,21 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      if (!(yield* connectionLossRecovery.handleDomainEvent(event))) {
+        if (event.type === "thread.turn-start-requested") {
+          yield* appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.start.failed",
+            summary: "Could not start the new task",
+            detail:
+              "The automatic continuation could not be stopped. Use Stop before sending another message.",
+            turnId: null,
+            requestId: event.payload.messageId,
+            createdAt: event.payload.createdAt,
+          });
+        }
+        return;
+      }
       if (
         (event.type === "thread.meta-updated" &&
           (event.payload.regenerateTitle === true ||
@@ -1902,6 +1928,13 @@ const make = Effect.gen(function* () {
     // Subscribe before returning, even while event handling waits for server activation.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+    yield* connectionLossRecovery
+      .start()
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("connection recovery startup failed", { cause }),
+        ),
+      );
 
     // Earlier events do not replay. Clear interrupted requests by their captured
     // IDs, then schedule persisted refinements after subscribing to their events.
@@ -1938,9 +1971,12 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* connectionLossRecovery.drain;
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+);

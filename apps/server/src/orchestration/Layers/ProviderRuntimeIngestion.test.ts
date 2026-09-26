@@ -482,6 +482,111 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("publishes connection recovery evidence only after settling the active failed turn", async () => {
+    const harness = await createHarness();
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("connection-turn"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    await harness.emitAndDrain([
+      { ...base, type: "turn.started", eventId: asEventId("connection-started"), payload: {} },
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("connection-failed"),
+        payload: { state: "failed", failureKind: "connection", errorMessage: "Connection lost" },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads[0];
+    expect(thread?.session).toMatchObject({ status: "error", activeTurnId: null });
+    expect(thread?.latestTurn).toMatchObject({ turnId: "connection-turn", state: "error" });
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "connection.interrupted"),
+    ).toMatchObject([{ turnId: "connection-turn", summary: "Connection interrupted" }]);
+  });
+
+  it.each([
+    { name: "a superseded turn", turnId: "old-turn", state: "failed", failureKind: "connection" },
+    { name: "an ordinary provider failure", turnId: "current-turn", state: "failed" },
+    {
+      name: "a completed turn",
+      turnId: "current-turn",
+      state: "completed",
+      failureKind: "connection",
+    },
+    {
+      name: "an interrupted turn",
+      turnId: "current-turn",
+      state: "interrupted",
+      failureKind: "connection",
+    },
+  ])("does not request recovery for $name", async (testCase) => {
+    const harness = await createHarness();
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.started",
+        turnId: asTurnId("current-turn"),
+        eventId: asEventId("current-started"),
+        payload: {},
+      },
+      {
+        ...base,
+        type: "turn.completed",
+        turnId: asTurnId(testCase.turnId),
+        eventId: asEventId("non-recoverable-terminal"),
+        payload: { state: testCase.state, failureKind: testCase.failureKind },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "connection.interrupted"),
+    ).toEqual([]);
+    if (testCase.turnId === "old-turn") {
+      expect(thread?.session).toMatchObject({ status: "running", activeTurnId: "current-turn" });
+    }
+  });
+
+  it("does not request recovery from an untargeted terminal event or a provider retry warning", async () => {
+    const harness = await createHarness();
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("untargeted-connection-failure"),
+        payload: { state: "failed", failureKind: "connection" },
+      },
+      {
+        ...base,
+        type: "runtime.warning",
+        turnId: asTurnId("retrying-turn"),
+        eventId: asEventId("retrying-connection"),
+        payload: { message: "Reconnecting... 2/5" },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads[0];
+    expect(
+      thread?.activities.filter((activity) => activity.kind === "connection.interrupted"),
+    ).toEqual([]);
+    expect(thread?.activities.some((activity) => activity.kind === "runtime.warning")).toBe(true);
+    expect(thread?.session?.status).toBe("ready");
+  });
+
   it.each([
     { delivery: "buffered", responseStreamingMode: "paragraph" as const },
     { delivery: "streamed", responseStreamingMode: "token" as const },

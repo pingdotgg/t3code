@@ -121,7 +121,10 @@ describe("mobile project settings scope", () => {
       },
     ]);
     expect(
-      planMobileScopedSettingsPatch(targets, true, { enableProviderUpdateChecks: false }),
+      planMobileScopedSettingsPatch(targets, true, {
+        enableProviderUpdateChecks: false,
+        resumeThreadsAfterConnectionLoss: true,
+      }),
     ).toEqual([]);
   });
 });

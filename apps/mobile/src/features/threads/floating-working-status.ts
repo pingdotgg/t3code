@@ -8,6 +8,7 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 export type FloatingWorkingStatus =
   | { readonly kind: "working"; readonly startedAt: string }
   | { readonly kind: "syncing"; readonly label: string }
+  | { readonly kind: "recovery"; readonly label: string; readonly onStop?: () => void }
   | { readonly kind: "compacting" }
   // A task whose thread the server has not created yet: the worktree may
   // still be checking out, so there is no turn to time.

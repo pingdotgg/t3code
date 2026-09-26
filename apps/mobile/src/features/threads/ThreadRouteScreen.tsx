@@ -630,20 +630,13 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (
-      !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
-    ) {
-      return;
-    }
+    if (!selectedThread) return;
+    const turnId = selectedThread.session?.activeTurnId ?? selectedThread.latestTurn?.turnId;
     return interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        ...(selectedThread.session.activeTurnId
-          ? { turnId: selectedThread.session.activeTurnId }
-          : {}),
+        ...(turnId ? { turnId } : {}),
       },
     });
   }, [interruptThreadTurn, selectedThread]);
@@ -959,6 +952,7 @@ function ThreadRouteContent(
       <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+          activities={selectedThreadDetail?.activities ?? []}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}
           connectionError={routeConnectionError}

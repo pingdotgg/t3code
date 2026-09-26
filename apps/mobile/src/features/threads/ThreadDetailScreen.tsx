@@ -1,3 +1,4 @@
+import { deriveConnectionRecoveryNotice } from "@t3tools/client-runtime/connection-recovery";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -20,6 +21,7 @@ import type {
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
+  OrchestrationThreadActivity,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
@@ -116,6 +118,7 @@ export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly selectedThread: OrchestrationThreadShell;
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
   readonly connectionError: string | null;
@@ -374,6 +377,35 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // One floating pill above the composer: it reads the connection phase while
   // disconnected, the sync state while messages load, then the working timer
   // once the feed is settled.
+  const [recoveryNoticeClock, refreshRecoveryNotice] = useState(() => Date.now());
+  const recoveryNotice = useMemo(
+    () =>
+      deriveConnectionRecoveryNotice({
+        activities: props.activities,
+        latestTurn: props.selectedThread.latestTurn,
+        enabled: props.serverConfig?.settings.resumeThreadsAfterConnectionLoss ?? false,
+        pendingRequest:
+          props.activePendingApproval !== null || props.activePendingUserInput !== null,
+        now: Math.max(recoveryNoticeClock, Date.now()),
+      }),
+    [
+      props.activities,
+      props.selectedThread.latestTurn,
+      props.serverConfig?.settings.resumeThreadsAfterConnectionLoss,
+      props.activePendingApproval,
+      props.activePendingUserInput,
+      recoveryNoticeClock,
+    ],
+  );
+  const recoveryNoticeExpiresAt = recoveryNotice?.expiresAt ?? null;
+  useEffect(() => {
+    if (recoveryNoticeExpiresAt === null) return;
+    const timer = setTimeout(
+      () => refreshRecoveryNotice(recoveryNoticeExpiresAt),
+      Math.max(0, recoveryNoticeExpiresAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [recoveryNoticeExpiresAt]);
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: props.connectionError,
@@ -382,10 +414,26 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       onReconnect: props.onReconnectEnvironment,
     });
     if (connectionStatus !== null) {
-      return connectionStatus;
+      return connectionStatus.kind === "connection" &&
+        props.connectionStateLabel !== "unsupported" &&
+        props.connectionStateLabel !== "available" &&
+        props.selectedThread.latestTurn?.state === "running" &&
+        props.activePendingApproval === null &&
+        props.activePendingUserInput === null
+        ? { ...connectionStatus, label: "Connection lost. Reconnecting…" }
+        : connectionStatus;
     }
     if (props.activePendingApproval !== null || props.activePendingUserInput !== null) {
       return null;
+    }
+    if (recoveryNotice) {
+      return {
+        kind: "recovery",
+        label: recoveryNotice.label,
+        ...(recoveryNotice.kind === "waiting" || recoveryNotice.kind === "stop-failed"
+          ? { onStop: props.onStopThread }
+          : {}),
+      };
     }
     if (props.creationState?.kind === "preparing") {
       // The setup header already reports progress in the feed.

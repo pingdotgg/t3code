@@ -1916,6 +1916,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const checkConnection: NonNullable<ProviderServiceMethod<"checkConnection">> = Effect.fn(
+    "checkConnection",
+  )(function* (threadId) {
+    const routed = yield* resolveRoutableSession({
+      threadId,
+      operation: "ProviderService.checkConnection",
+      allowRecovery: false,
+    });
+    if (!routed.isActive || !routed.adapter.checkConnection) return undefined;
+    return yield* routed.adapter.checkConnection(routed.threadId);
+  });
+
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
     function* (rawInput) {
       const input = yield* decodeInputOrValidationError({
@@ -2402,6 +2414,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     startSession,
     sendTurn,
     compactThread,
+    checkConnection,
     interruptTurn,
     respondToRequest,
     respondToUserInput,

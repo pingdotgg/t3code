@@ -601,6 +601,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
         : []),
+      ...(settings.resumeThreadsAfterConnectionLoss !==
+      DEFAULT_UNIFIED_SETTINGS.resumeThreadsAfterConnectionLoss
+        ? ["Resume after connection loss"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -672,6 +676,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.responseStreamingMode,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
+      settings.resumeThreadsAfterConnectionLoss,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
@@ -776,6 +781,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      resumeThreadsAfterConnectionLoss: DEFAULT_UNIFIED_SETTINGS.resumeThreadsAfterConnectionLoss,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2134,6 +2140,12 @@ export function GeneralSettingsPanel() {
     connectedEnvironments.every(
       (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
     );
+  const supportsConnectionLossContinuation =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every(
+      (target) =>
+        target.serverConfig?.environment.capabilities.threadConnectionLossContinuation === true,
+    );
 
   const textGenerationProviders = serverProviders.filter(
     (provider) => provider.supportsTextGeneration !== false,
@@ -2794,6 +2806,44 @@ export function GeneralSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("resume-after-connection-loss")}
+          serverScoped
+          settingKeys={["resumeThreadsAfterConnectionLoss"]}
+          description="Automatically resume tasks interrupted by a lost connection when connectivity returns."
+          status={
+            !supportsConnectionLossContinuation
+              ? "Update older servers to enable recovery after connection loss."
+              : "Automatic recovery supports Codex with the built-in OpenAI connection."
+          }
+          resetAction={
+            supportsConnectionLossContinuation &&
+            settings.resumeThreadsAfterConnectionLoss !==
+              DEFAULT_UNIFIED_SETTINGS.resumeThreadsAfterConnectionLoss ? (
+              <SettingResetButton
+                label="resume after connection loss"
+                onClick={() =>
+                  updateSettings({
+                    resumeThreadsAfterConnectionLoss:
+                      DEFAULT_UNIFIED_SETTINGS.resumeThreadsAfterConnectionLoss,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["resumeThreadsAfterConnectionLoss"]}
+              checked={settings.resumeThreadsAfterConnectionLoss}
+              disabled={!supportsConnectionLossContinuation}
+              onCheckedChange={(checked) =>
+                updateSettings({ resumeThreadsAfterConnectionLoss: Boolean(checked) })
+              }
+              aria-label="Resume after connection loss"
             />
           }
         />

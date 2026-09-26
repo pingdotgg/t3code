@@ -126,9 +126,11 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
-  // Only the connection label is a button (tap to reconnect); the others
-  // pass touches through to the feed like before.
-  const statusInteractive = props.status?.kind === "connection";
+  // Connection and pending recovery expose reconnect/stop; other labels
+  // pass touches through to the feed.
+  const statusInteractive =
+    props.status?.kind === "connection" ||
+    (props.status?.kind === "recovery" && props.status.onStop !== undefined);
   const capsuleInteractive = statusInteractive || props.devicePreview !== null;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
@@ -277,6 +279,28 @@ function FloatingStatusLabel(props: {
 }) {
   // Keyed by kind so a swap mounts a fresh row and the two cross-fade while
   // the capsule animates to the new row's measured width.
+  if (props.status.kind === "recovery") {
+    return (
+      <StatusLabelRow
+        accessibilityLabel={
+          props.status.onStop ? `${props.status.label} Stop automatic resume` : props.status.label
+        }
+        accessibilityLiveRegion="polite"
+        {...(props.status.onStop
+          ? { accessibilityRole: "button" as const, onPress: props.status.onStop }
+          : {})}
+        className="gap-2"
+        onLayout={props.onLayout}
+      >
+        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={2}>
+          {props.status.label}
+        </Text>
+        {props.status.onStop ? (
+          <Text className="font-t3-medium text-xs text-foreground">Stop</Text>
+        ) : null}
+      </StatusLabelRow>
+    );
+  }
   if (props.status.kind === "syncing") {
     return (
       <StatusLabelRow
@@ -354,6 +378,7 @@ function FloatingStatusLabel(props: {
 function StatusLabelRow(props: {
   readonly accessibilityLabel: string;
   readonly accessibilityRole?: "button";
+  readonly accessibilityLiveRegion?: "polite";
   readonly className?: string;
   readonly children: ReactNode;
   readonly onLayout: (event: LayoutChangeEvent) => void;
@@ -371,13 +396,19 @@ function StatusLabelRow(props: {
         <Pressable
           accessibilityLabel={props.accessibilityLabel}
           accessibilityRole={props.accessibilityRole}
+          accessibilityLiveRegion={props.accessibilityLiveRegion}
           className={`${rowClassName} active:opacity-70`}
           onPress={props.onPress}
         >
           {props.children}
         </Pressable>
       ) : (
-        <View accessible accessibilityLabel={props.accessibilityLabel} className={rowClassName}>
+        <View
+          accessible
+          accessibilityLabel={props.accessibilityLabel}
+          accessibilityLiveRegion={props.accessibilityLiveRegion}
+          className={rowClassName}
+        >
           {props.children}
         </View>
       )}

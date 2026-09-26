@@ -718,6 +718,59 @@ function codexTurnEvent(method: "turn/started" | "turn/completed", turnId: strin
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("identifies only terminal connection failures for automatic recovery", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const cases = [
+        { info: { httpConnectionFailed: {} }, recoverable: true },
+        { info: { responseStreamConnectionFailed: { httpStatusCode: null } }, recoverable: true },
+        { info: { responseStreamDisconnected: {} }, recoverable: true },
+        { info: { httpConnectionFailed: { httpStatusCode: 401 } }, recoverable: false },
+        { info: { responseStreamConnectionFailed: { httpStatusCode: 429 } }, recoverable: false },
+        { info: { responseStreamDisconnected: { httpStatusCode: 503 } }, recoverable: false },
+        { info: { responseTooManyFailedAttempts: {} }, recoverable: false },
+        { info: "unauthorized", recoverable: false },
+        { info: "usageLimitExceeded", recoverable: false },
+        { info: "other", recoverable: false },
+        { info: undefined, recoverable: false },
+        { info: { httpConnectionFailed: {} }, status: "interrupted", recoverable: false },
+        { info: { httpConnectionFailed: {} }, status: "completed", recoverable: false },
+      ];
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(cases.length),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      for (const [index, testCase] of cases.entries()) {
+        const turnId = `turn-connection-${index}`;
+        yield* runtime.emit({
+          ...codexTurnEvent("turn/completed", turnId),
+          payload: {
+            threadId: "thread-1",
+            turn: {
+              id: turnId,
+              items: [],
+              status: testCase.status ?? "failed",
+              // A network-looking message alone must never authorize a retry.
+              error: {
+                message: "Connection lost",
+                ...(testCase.info === undefined ? {} : { codexErrorInfo: testCase.info }),
+              },
+            },
+          },
+        });
+      }
+
+      const events = Array.from(yield* Fiber.join(completedFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.payload.failureKind),
+        cases.map((testCase) => (testCase.recoverable ? "connection" : undefined)),
+      );
+    }),
+  );
+
   it.effect("calculates one Codex turn total from cumulative counters", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -1810,6 +1863,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           turnId: "turn-1",
           error: {
             message: "Reconnecting... 2/5",
+            codexErrorInfo: { responseStreamDisconnected: {} },
           },
           willRetry: true,
         },
