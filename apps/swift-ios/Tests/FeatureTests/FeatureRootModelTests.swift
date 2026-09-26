@@ -4083,6 +4083,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         sentRuntimeModes.append(runtimeMode)
         sendMessageCallCount += 1
         try beforeSendMessage?()
+        try await beforeSendMessageReturn?()
         if let sendMessageError { throw sendMessageError }
         sentText = text
     }
