@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,7 +27,7 @@ import { TestClock } from "effect/testing";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
 
@@ -164,6 +165,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make(options.snapshot);
   const snapshotReads = yield* Queue.unbounded<void>();
+  const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
@@ -204,16 +206,28 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
     }),
-    Layer.mock(OrchestratorV2)({
-      getShellSnapshot: () =>
+    Layer.mock(ProjectionStoreV2)({
+      // Mirrors the store's filter: active threads that have at least one link.
+      getThreadsWithPullRequests: () =>
         Queue.offer(snapshotReads, undefined).pipe(
           Effect.andThen(Ref.get(snapshots)),
-          Effect.map((snapshot) => ({
-            schemaVersion: 2,
-            snapshotSequence: snapshot.snapshotSequence,
-            threads: snapshot.threads.map(v2PullRequestThread),
-            archivedThreads: [],
-          })),
+          Effect.map((snapshot) =>
+            snapshot.threads
+              .filter((thread) => thread.archivedAt === null && thread.pullRequests.length > 0)
+              .map((thread) => ({
+                id: thread.id,
+                projectId: thread.projectId,
+                settledOverride: thread.settledOverride,
+                settledAt: thread.settledAt === null ? null : DateTime.makeUnsafe(thread.settledAt),
+                pullRequests: thread.pullRequests,
+              })),
+          ),
+        ),
+    }),
+    Layer.mock(OrchestratorV2)({
+      getShellSnapshot: () =>
+        Ref.update(shellSnapshotReads, (count) => count + 1).pipe(
+          Effect.andThen(Effect.die(new Error("pull request sync must not read the shell"))),
         ),
       dispatch,
       streamDomainEvents: Stream.empty,
@@ -226,6 +240,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     activation,
     snapshots,
     snapshotReads,
+    shellSnapshotReads,
     syncCommands,
     linkCommands,
     summaryCalls,
@@ -386,6 +401,8 @@ describe("PullRequestSyncReactor", () => {
             ],
           );
           assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
+          // Reads only linked threads, never the full shell snapshot of every thread.
+          assert.strictEqual(yield* Ref.get(fixture.shellSnapshotReads), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

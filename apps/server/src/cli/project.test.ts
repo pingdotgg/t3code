@@ -68,7 +68,6 @@ const makeConfig = (baseDir: string) =>
       otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
       otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
       otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpServiceName: "t3-server",
       mode: "web",
       port: 0,
       host: "127.0.0.1",

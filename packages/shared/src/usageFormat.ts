@@ -43,7 +43,10 @@ function trim(value: number): string {
 }
 
 export function formatPercent(share: number, digits = 1): string {
-  return `${(share * 100).toFixed(digits)}%`;
+  const percent = share * 100;
+  const smallest = 10 ** -digits;
+  if (percent > 0 && percent < smallest) return `<${smallest.toFixed(digits)}%`;
+  return `${percent.toFixed(digits)}%`;
 }
 
 /** `2026-08-07` to `Aug 7`. */

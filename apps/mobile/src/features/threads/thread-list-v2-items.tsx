@@ -36,6 +36,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
+import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
@@ -298,8 +299,9 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           <ProjectFavicon
             environmentId={pendingTask.environmentId}
             faviconPath={props.project.faviconPath}
+            projectIcon={props.project.projectIcon}
             size={15}
-            projectTitle={projectTitle}
+            projectTitle={props.project.title}
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
@@ -523,6 +525,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMoveDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
+  /** List key checked against the Home swipe row activation. */
+  readonly activationKey?: string;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -550,6 +554,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
+  const dormant = useSwipeRowDormant(props.activationKey);
 
   const { providerDrivers, providerIconUrl } = useMemo(() => {
     const provider = props.providers?.find(
@@ -915,8 +920,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <ProjectFavicon
             environmentId={thread.environmentId}
             faviconPath={props.project.faviconPath}
+            projectIcon={props.project.projectIcon}
             size={15}
-            projectTitle={props.projectTitle ?? props.project.title}
+            projectTitle={props.project.title}
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
@@ -1162,8 +1168,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               <ProjectFavicon
                 environmentId={thread.environmentId}
                 faviconPath={props.project.faviconPath}
+                projectIcon={props.project.projectIcon}
                 size={15}
-                projectTitle={props.projectTitle ?? props.project.title}
+                projectTitle={props.project.title}
                 workspaceRoot={props.project.workspaceRoot}
               />
             </View>
@@ -1215,6 +1222,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
       <ThreadSwipeable
+        dormant={dormant}
         threadKey={`${thread.environmentId}:${thread.id}`}
         backgroundColor={rowAppearance.swipeBackgroundColor}
         compactActions={variant === "slim"}

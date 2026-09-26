@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BackHandler, Keyboard, Pressable, TextInput, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
 import { NativeStackScreenOptions } from "../native/StackHeader";
 import { AndroidWorkspaceSidebarButton } from "../features/layout/workspace-sidebar-toolbar";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -11,10 +11,12 @@ import { ControlPillMenu } from "./ControlPill";
 import { MaterialSearchField } from "./MaterialSearchField";
 import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
 import type { ScreenHeaderProps } from "./ScreenHeader.types";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
 export function ScreenHeader(props: ScreenHeaderProps) {
   const { search } = props;
-  const insets = useSafeAreaInsets();
+  const { paddingTop, paddingBottom } = useMaterialToolbarLayout();
+  const { scale, buttonSize, iconSize, smallIconSize } = useAndroidControlSizing();
   const { themeVariables } = useAppearancePreferences();
   const inputRef = useRef<TextInput>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -48,11 +50,12 @@ export function ScreenHeader(props: ScreenHeaderProps) {
         <Pressable
           accessibilityLabel={menu.title}
           accessibilityRole="button"
-          className="size-11 items-center justify-center rounded-full bg-subtle"
+          className="items-center justify-center rounded-full bg-subtle"
+          style={{ width: buttonSize, height: buttonSize }}
         >
           <SymbolView
             name={menu.icon}
-            size={16}
+            size={smallIconSize}
             tintColorClassName="accent-header-foreground"
             type="monochrome"
           />
@@ -80,30 +83,43 @@ export function ScreenHeader(props: ScreenHeaderProps) {
       <>
         {options}
         <View
-          className="border-b border-header-border bg-header px-3 pb-2.5"
-          style={{ paddingTop: Math.max(insets.top, 12), borderBottomWidth: 0 }}
+          className="border-b border-header-border bg-header px-3"
+          style={{
+            paddingTop,
+            paddingBottom: 8.75 * scale,
+            borderBottomWidth: 0,
+          }}
         >
-          <View className="min-h-12 flex-row items-center gap-2">
+          <View className="flex-row items-center gap-2" style={{ minHeight: buttonSize }}>
             {props.onBack ? (
               <Pressable
                 accessibilityLabel="Navigate up"
                 accessibilityRole="button"
                 hitSlop={8}
                 onPress={props.onBack}
-                className="size-11 items-center justify-center"
+                className="items-center justify-center"
+                style={{ width: buttonSize, height: buttonSize }}
               >
                 <SymbolView
                   name="chevron.left"
-                  size={24}
+                  size={iconSize}
                   tintColorClassName="accent-header-foreground"
                   type="monochrome"
                 />
               </Pressable>
             ) : null}
-            <View className="min-h-11 flex-1 flex-row items-center gap-2.5 rounded-2xl bg-input px-3.5">
+            <View
+              className="flex-1 flex-row items-center bg-input"
+              style={{
+                minHeight: Math.max(48, 38.5 * scale),
+                gap: 8.75 * scale,
+                borderRadius: 14 * scale,
+                paddingHorizontal: 12.25 * scale,
+              }}
+            >
               <SymbolView
                 name="magnifyingglass"
-                size={17}
+                size={Math.round(17 * scale)}
                 tintColorClassName="accent-header-foreground"
                 type="monochrome"
               />
@@ -112,9 +128,14 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                 autoCapitalize="none"
                 onChangeText={search.onChangeText}
                 value={search.value}
-                placeholder={search.placeholder}
+                placeholder={
+                  search.compactToolbar
+                    ? (search.compactPlaceholder ?? search.placeholder)
+                    : search.placeholder
+                }
                 placeholderTextColorClassName="accent-placeholder"
-                className="flex-1 py-2 text-base font-sans text-header-foreground"
+                className="flex-1 text-base font-sans text-header-foreground"
+                style={{ paddingVertical: 7 * scale }}
               />
             </View>
             {menuView}
@@ -173,11 +194,8 @@ export function ScreenHeader(props: ScreenHeaderProps) {
             {header}
           </View>
           {searching ? (
-            <View
-              className="absolute inset-0 bg-header px-2 pb-2"
-              style={{ paddingTop: Math.max(insets.top, 12) }}
-            >
-              <View className="min-h-14 flex-1 flex-row items-center gap-1">
+            <View className="absolute inset-0 bg-header px-2" style={{ paddingTop, paddingBottom }}>
+              <View className="flex-1 flex-row items-center gap-1">
                 <ScreenHeaderButton
                   accessibilityLabel={search.closeAccessibilityLabel ?? "Close search"}
                   icon="arrow.left"

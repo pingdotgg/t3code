@@ -9,6 +9,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
@@ -144,10 +145,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
           }),
       });
 
-    const prepareCache = yield* Cache.make({
+    const prepareCache = yield* Cache.makeWith(prepare, {
       capacity: options.prepareCacheSize ?? 200,
-      timeToLive: options.prepareCacheTTL ?? Duration.minutes(10),
-      lookup: prepare,
+      // A transient prepare failure must not outlive the lock or missing schema.
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) ? (options.prepareCacheTTL ?? Duration.minutes(10)) : Duration.zero,
     });
 
     const runStatement = (

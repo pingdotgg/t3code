@@ -213,10 +213,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               effectiveConfig.enabled &&
               snapshot.installed &&
               snapshot.auth.status === "authenticated"
-                ? readCursorUsageLimits(effectiveConfig, {
-                    ...processEnv,
-                    CURSOR_API_KEY: apiKey,
-                  }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits })))
+                ? serverSettings.getSettings.pipe(
+                    Effect.flatMap((settings) =>
+                      readCursorUsageLimits(
+                        effectiveConfig,
+                        { ...processEnv, CURSOR_API_KEY: apiKey },
+                        settings.cursorKeychainUsageEnabled,
+                      ),
+                    ),
+                    Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+                  )
                 : Effect.succeed(snapshot),
             ),
           ),
