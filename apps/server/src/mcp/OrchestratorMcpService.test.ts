@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   RunId,
   ScheduledTaskId,
+  ScheduledTaskError,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type ScheduledTask,
@@ -693,6 +694,33 @@ describe("OrchestratorMcpService", () => {
           });
           assert.equal(updated.scheduledTaskId, scheduledTaskId);
           assert.equal(yield* Ref.get(writes), 1);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("preserves the update failure cause behind a stable caller message", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "default", [liveRun]);
+        const cause = new ScheduledTaskError({
+          message: "internal storage failure",
+          taskId: scheduledTaskId,
+        });
+        const dependencies = Layer.merge(
+          scheduleDeps(projection, writes),
+          Layer.mock(ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks: [privilegedTask] }),
+            update: () => Effect.fail(cause),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "orchestration_error");
+          assert.equal(error.message, "Could not update scheduled task.");
+          assert.strictEqual(error.cause, cause);
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
       }),
     );

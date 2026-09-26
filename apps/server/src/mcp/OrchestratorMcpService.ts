@@ -1437,10 +1437,7 @@ const make = Effect.gen(function* () {
             Effect.catchTags({
               ScheduledTaskError: (error) =>
                 Effect.fail(
-                  failure(
-                    "orchestration_error",
-                    `Could not update scheduled task: ${error.message}`,
-                  ),
+                  failure("orchestration_error", "Could not update scheduled task.", error),
                 ),
             }),
           );
