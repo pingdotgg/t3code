@@ -4,7 +4,7 @@ export function ComposerPromptLengthValidation({ message }: { message: string | 
   return (
     <p
       role="alert"
-      className="px-3 pb-2 text-xs text-destructive sm:px-4"
+      className="px-3 pb-2 text-xs text-destructive"
       data-chat-composer-validation="prompt-length"
     >
       {message}

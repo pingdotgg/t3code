@@ -60,12 +60,13 @@ export function shouldUseRestingComposerLayout(input: {
 }
 
 /**
- * How much taller the empty expanded composer is than its resting row on
- * desktop widths, from the layout classes in ChatComposer: the body loses
- * 8px of top padding, the prompt clamps from min-h-17.5 (70px) to 32px, and
- * the 48px footer leaves flow.
+ * How much taller the empty expanded composer is than its resting row, from
+ * the layout classes in ChatComposer and ComposerPromptEditorTiptap: the body
+ * loses 4px of top padding, the prompt clamps from min-h-12 (40px in flow
+ * after its -m-1) to 32px, and the 40px footer (32px row + pb-2) leaves flow.
+ * Update this with those classes, or expanding shifts the timeline.
  */
-export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
+export const COMPOSER_RESTING_EXPANSION_MIN_PX = 52;
 
 /**
  * The space the timeline reserves at its end for the composer overlay.
