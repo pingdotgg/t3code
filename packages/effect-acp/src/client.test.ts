@@ -794,6 +794,34 @@ const decodeWireError = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ code: Schema.Finite }) })),
 );
 
+// Real agents send bare JSON-RPC errors, not Effect's encoded causes.
+it.effect(
+  "fails a core request with a typed error when the agent sends a bare JSON-RPC error",
+  () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const createFiber = yield* acp.agent
+        .createSession({ cwd: "/tmp/project", mcpServers: [] })
+        .pipe(Effect.forkScoped);
+      const request = yield* decodeWireResponse(yield* Queue.take(output));
+      const id = (request as { readonly id: number }).id;
+      yield* Queue.offer(
+        input,
+        new TextEncoder().encode(
+          `{"jsonrpc":"2.0","id":${id},"error":{"code":-32000,"message":"Authentication required"}}\n`,
+        ),
+      );
+      const error = yield* Fiber.join(createFiber).pipe(Effect.flip);
+      assert.instanceOf(error, AcpError.AcpRequestError);
+      assert.deepInclude(error, {
+        code: -32000,
+        errorMessage: "Authentication required",
+        method: "session/new",
+      });
+    }).pipe(Effect.scoped),
+);
+
 it.effect.each(["accept", "decline", "cancel"] as const)(
   "returns a flat %s action to the SDK and preserves the legacy response",
   (action) =>

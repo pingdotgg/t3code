@@ -376,9 +376,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     return Queue.offer(serverQueue, message).pipe(Effect.asVoid);
   };
 
-  const handleExitEncoded = (message: RpcMessage.ResponseExitEncoded) =>
+  const handleExitEncoded = (encoded: RpcMessage.ResponseExitEncoded) =>
     Ref.get(extPending).pipe(
       Effect.flatMap((pending) => {
+        const message = failBareProtocolError(encoded);
         const pendingRequest = pending.get(String(message.requestId));
         if (!pendingRequest) {
           return Queue.offer(clientQueue, message).pipe(Effect.asVoid);
@@ -617,6 +618,20 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     notify: sendNotification,
   } satisfies AcpPatchedProtocol;
 });
+
+/**
+ * Effect's JSON-RPC codec decodes a bare `error` member as a defect, and real ACP agents only
+ * send bare errors. Move them to the typed failure channel so callers get `AcpRequestError`.
+ */
+function failBareProtocolError(
+  message: RpcMessage.ResponseExitEncoded,
+): RpcMessage.ResponseExitEncoded {
+  if (message.exit._tag !== "Failure" || message.exit.cause.length !== 1) return message;
+  const [reason] = message.exit.cause;
+  return reason?._tag === "Die" && isProtocolError(reason.defect)
+    ? { ...message, exit: { _tag: "Failure", cause: [{ _tag: "Fail", error: reason.defect }] } }
+    : message;
+}
 
 function isProtocolError(
   value: unknown,
