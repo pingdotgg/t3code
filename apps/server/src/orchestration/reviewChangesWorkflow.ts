@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type { GitCore } from "../git/Services/GitCore.ts";
+import { repositoryFromPullRequestUrl } from "../pullRequestMonitor/canonicalKey.ts";
 import type { ServerSettingsService } from "../serverSettings.ts";
 import type { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -48,7 +49,13 @@ const skipped = (
 export const runReviewChangesWorkflow = (
   dependencies: ReviewChangesWorkflowDependencies,
   input: WorkflowRunInput,
-  options?: { readonly expectedHeadSha?: string },
+  options?: {
+    readonly expectedHeadSha?: string;
+    readonly expectedPullRequest?: {
+      readonly repository?: string | undefined;
+      readonly number?: number | undefined;
+    };
+  },
 ): Effect.Effect<WorkflowRunResult, WorkflowRunError> =>
   Effect.gen(function* () {
     const runId = WorkflowRunId.make(input.idempotencyKey);
@@ -109,7 +116,13 @@ export const runReviewChangesWorkflow = (
       typeof input.input?.pullRequestNumber === "number" &&
       Number.isSafeInteger(input.input.pullRequestNumber) &&
       input.input.pullRequestNumber > 0
-        ? { pullRequestNumber: input.input.pullRequestNumber }
+        ? {
+            pullRequestNumber: input.input.pullRequestNumber,
+            ...(options?.expectedPullRequest?.repository !== undefined &&
+            options.expectedPullRequest.repository.trim().length > 0
+              ? { pullRequestRepository: options.expectedPullRequest.repository.trim() }
+              : {}),
+          }
         : {}),
     });
     if (!reviewContext.hasReviewableChanges) {
@@ -137,6 +150,28 @@ export const runReviewChangesWorkflow = (
       return yield* new WorkflowRunError({
         message: "Pull request head changed before the review workflow was dispatched.",
       });
+    }
+    if (reviewContext.scope === "pull-request") {
+      if (reviewContext.pullRequest.state !== "open") {
+        return skipped(input, "no-reviewable-changes", "This pull request is no longer open.");
+      }
+      const expectedRepository = options?.expectedPullRequest?.repository?.toLowerCase();
+      if (expectedRepository !== undefined && expectedRepository.length > 0) {
+        const capturedRepository = repositoryFromPullRequestUrl(
+          reviewContext.pullRequest.url,
+        )?.toLowerCase();
+        if (capturedRepository !== expectedRepository) {
+          return yield* new WorkflowRunError({
+            message: "Pull request repository changed before the review workflow was dispatched.",
+          });
+        }
+      }
+      const expectedNumber = options?.expectedPullRequest?.number;
+      if (expectedNumber !== undefined && reviewContext.pullRequest.number !== expectedNumber) {
+        return yield* new WorkflowRunError({
+          message: "Pull request number changed before the review workflow was dispatched.",
+        });
+      }
     }
 
     const title =

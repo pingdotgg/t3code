@@ -164,6 +164,12 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
     readonly idempotencyKey: string;
   };
   readonly pullRequestNumber: number;
+  readonly pullRequest?: {
+    readonly repository: string;
+    readonly number: number;
+    readonly url?: string | undefined;
+  };
+  readonly observationState?: "open" | "closed" | "merged";
   readonly readCurrentThread: () => Effect.Effect<OrchestrationThread | null>;
   readonly cancelLegacySelfReview: (
     thread: OrchestrationThread,
@@ -172,6 +178,8 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
   readonly runWorkflow: (input: {
     readonly thread: OrchestrationThread;
     readonly pullRequestNumber: number;
+    readonly pullRequestRepository?: string | undefined;
+    readonly pullRequestUrl?: string | undefined;
     readonly headSha: string;
     readonly idempotencyKey: string;
   }) => Effect.Effect<unknown, WorkflowError>;
@@ -182,8 +190,18 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
         new Error(`Unsupported automatic review workflow '${input.request.workflowId}'.`),
       );
     }
+    if (input.observationState !== undefined && input.observationState !== "open") return;
+    const expectedNumber = input.pullRequest?.number ?? input.pullRequestNumber;
+    const expectedRepository = input.pullRequest?.repository.toLowerCase() ?? null;
     const refreshedThread = yield* input.readCurrentThread();
     if (refreshedThread === null || !creatorIsInactive(refreshedThread)) return;
+    const stillLinked = createdPullRequestLinks(refreshedThread).some((link) => {
+      if (link.pullRequest.number !== expectedNumber) return false;
+      if (expectedRepository === null) return true;
+      const linkRepository = repositoryFromPullRequestUrl(link.pullRequest.url);
+      return linkRepository !== null && linkRepository.toLowerCase() === expectedRepository;
+    });
+    if (!stillLinked) return;
     yield* Effect.forEach(
       (refreshedThread.collaborationRequests ?? []).filter(
         (candidate) =>
@@ -199,7 +217,9 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
     );
     yield* input.runWorkflow({
       thread: refreshedThread,
-      pullRequestNumber: input.pullRequestNumber,
+      pullRequestNumber: expectedNumber,
+      ...(expectedRepository === null ? {} : { pullRequestRepository: expectedRepository }),
+      ...(input.pullRequest?.url === undefined ? {} : { pullRequestUrl: input.pullRequest.url }),
       headSha: input.request.headSha,
       idempotencyKey: input.request.idempotencyKey,
     });
@@ -263,7 +283,7 @@ const makeReactor = Effect.gen(function* () {
           });
         },
         readCurrentThread: () => currentThread(thread.id),
-        submit: ({ thread: latestThread, observation }) =>
+        submit: ({ thread: latestThread, link: submittedLink, observation }) =>
           Effect.gen(function* () {
             const reconciled = yield* acceptance.reconcileAutomaticCandidate({
               parentThreadId: latestThread.id,
@@ -280,9 +300,22 @@ const makeReactor = Effect.gen(function* () {
             yield* dispatchAutomaticReviewWorkflow({
               request,
               pullRequestNumber: observation.number,
+              pullRequest: {
+                repository: observation.repository,
+                number: observation.number,
+                url: submittedLink.pullRequest.url,
+              },
+              observationState: observation.state,
               readCurrentThread: () => currentThread(latestThread.id),
               cancelLegacySelfReview,
-              runWorkflow: ({ thread, pullRequestNumber, headSha, idempotencyKey }) =>
+              runWorkflow: ({
+                thread,
+                pullRequestNumber,
+                pullRequestRepository,
+                pullRequestUrl,
+                headSha,
+                idempotencyKey,
+              }) =>
                 runReviewChangesWorkflow(
                   {
                     git,
@@ -303,7 +336,13 @@ const makeReactor = Effect.gen(function* () {
                     trigger: "after-assistant-turn-completes",
                     idempotencyKey,
                   },
-                  { expectedHeadSha: headSha },
+                  {
+                    expectedHeadSha: headSha,
+                    expectedPullRequest: {
+                      repository: observation.repository,
+                      number: observation.number,
+                    },
+                  },
                 ),
             });
           }),
