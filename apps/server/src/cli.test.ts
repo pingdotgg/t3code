@@ -15,19 +15,35 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  DelegationAuditError,
+  EnvironmentRpcAuthorization,
+  OrchestrationDispatchCommandError,
+  OrchestrationGetSnapshotError,
+  ORCHESTRATION_WS_METHODS,
+  WsOrchestrationAppendDelegationAuditEventRpc,
+  WsOrchestrationBeginDelegationAuditRpc,
+  WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationGetDelegationAuditPageRpc,
+  WsOrchestrationGetShellSnapshotRpc,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Command } from "effect/unstable/cli";
+import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as RpcServer from "effect/unstable/rpc/RpcServer";
 
 import { cli, __testing } from "./cli.ts";
+import { withLiveRpcClient } from "./cli/client.ts";
 import { CliRuntimeLayerLive } from "./cliRuntime.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
@@ -49,9 +65,16 @@ import {
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { authWebSocketTokenRouteLayer, respondToAuthError } from "./auth/http.ts";
+import { rpcAuthorizationLayer } from "./auth/RpcAuthorization.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { DelegationAuditRepository } from "./persistence/Services/DelegationAudit.ts";
+import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import { dispatchThroughStartupGate } from "./orchestration/gatedDispatch.ts";
+import { deriveDelegationCleanupIntents } from "./orchestration/delegationAuditCleanup.ts";
 
 const makeGitWorkspace = (prefix: string) => {
   const workspace = mkdtempSync(join(tmpdir(), prefix));
@@ -68,6 +91,19 @@ import { issueCrossThreadDispatchCapability } from "./orchestration/CrossThreadD
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>
   runCli(args).pipe(Effect.provide(CliRuntimeLayerLive));
+const withCliTestRpcClient = <A, E, R>(
+  baseDir: string,
+  run: Parameters<typeof withLiveRpcClient<A, E, R>>[1],
+) =>
+  withLiveRpcClient(
+    {
+      url: Option.none(),
+      token: Option.none(),
+      baseDir: Option.some(baseDir),
+      environment: Option.none(),
+    },
+    run,
+  ).pipe(Effect.provide(CliRuntimeLayerLive));
 
 const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
@@ -146,10 +182,225 @@ const reviewChangesContext = {
   hasReviewableChanges: true,
 };
 
-const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
+const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isDelegationAuditError = Schema.is(DelegationAuditError);
+const mapDelegationAuditError = (cause: unknown): DelegationAuditError =>
+  isDelegationAuditError(cause)
+    ? cause
+    : new DelegationAuditError({
+        code: "audit-persistence-unavailable",
+        message: "Delegation audit persistence is unavailable.",
+        cause,
+      });
+
+const CliTestRpcGroup = RpcGroup.make(
+  WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationGetShellSnapshotRpc,
+  WsOrchestrationBeginDelegationAuditRpc,
+  WsOrchestrationAppendDelegationAuditEventRpc,
+  WsOrchestrationGetDelegationAuditPageRpc,
+).middleware(EnvironmentRpcAuthorization);
+
+const cliTestRpcHandlersLayer = (options: { readonly loseTurnStartReply?: boolean } = {}) =>
+  CliTestRpcGroup.toLayer(
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const audit = yield* DelegationAuditRepository;
+      const startup = yield* ServerRuntimeStartup;
+
+      return CliTestRpcGroup.of({
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
+          normalizeDispatchCommand(command).pipe(
+            Effect.flatMap((normalized) =>
+              dispatchThroughStartupGate(normalized, engine, startup).pipe(
+                Effect.flatMap((result) =>
+                  options.loseTurnStartReply && normalized.type === "thread.turn.start"
+                    ? Effect.fail(
+                        new OrchestrationDispatchCommandError({
+                          message: "Dispatch response was lost after command commit.",
+                          cause: new Error("simulated response loss after commit"),
+                        }),
+                      )
+                    : Effect.succeed(result),
+                ),
+              ),
+            ),
+            Effect.mapError((cause) =>
+              isOrchestrationDispatchCommandError(cause)
+                ? cause
+                : new OrchestrationDispatchCommandError({
+                    message: "Failed to dispatch orchestration command.",
+                    cause,
+                  }),
+            ),
+          ),
+        [ORCHESTRATION_WS_METHODS.getShellSnapshot]: () =>
+          snapshots.getShellSnapshot().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationGetSnapshotError({
+                  message: "Failed to load orchestration shell snapshot.",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_WS_METHODS.beginDelegationAudit]: (input) =>
+          Effect.gen(function* () {
+            const readModel = yield* engine.getReadModel();
+            const thread = readModel.threads.find(
+              (candidate) => candidate.id === input.sourceThreadId && candidate.deletedAt === null,
+            );
+            if (thread === undefined) {
+              return yield* new DelegationAuditError({
+                code: "source-thread-not-found",
+                message: "The source thread is not available for delegation audit.",
+              });
+            }
+            const sourceTurnId = thread.session?.activeTurnId ?? thread.latestTurn?.turnId ?? null;
+            const sourceMessageId = thread.session?.activeMessageId ?? null;
+            const initiatingMessageId =
+              sourceMessageId ??
+              thread.messages
+                .toReversed()
+                .find(
+                  (message) =>
+                    message.role === "user" &&
+                    sourceTurnId !== null &&
+                    message.turnId === sourceTurnId,
+                )?.id ??
+              null;
+            const project = yield* snapshots.getProjectShellById(thread.projectId);
+            return yield* audit.begin({
+              ...input,
+              sourceTurnId,
+              sourceMessageId,
+              initiatingMessageId,
+              providerInstanceId: thread.modelSelection.instanceId,
+              model: thread.modelSelection.model,
+              workspaceRoot:
+                thread.worktreePath ??
+                (Option.isSome(project) ? project.value.workspaceRoot : null),
+              buildRevision: "cli-test-server",
+              occurredAt: new Date().toISOString(),
+            });
+          }).pipe(Effect.mapError(mapDelegationAuditError)),
+        [ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]: (input) =>
+          Effect.gen(function* () {
+            const source = yield* snapshots.getThreadShellById(input.sourceThreadId);
+            if (Option.isNone(source)) {
+              return yield* new DelegationAuditError({
+                code: "source-thread-not-found",
+                message: "The source thread is not available for delegation audit.",
+              });
+            }
+            const operationSource = yield* audit.getOperationSource(input.operationId);
+            if (Option.isNone(operationSource) || operationSource.value !== input.sourceThreadId) {
+              return yield* new DelegationAuditError({
+                code: "operation-not-found",
+                message: "The delegation audit operation was not found for this source thread.",
+              });
+            }
+            yield* audit.append({ ...input, occurredAt: new Date().toISOString() });
+          }).pipe(Effect.mapError(mapDelegationAuditError)),
+        [ORCHESTRATION_WS_METHODS.getDelegationAuditPage]: (input) =>
+          Effect.gen(function* () {
+            const operationSource =
+              input.operationId === undefined
+                ? Option.none()
+                : yield* audit.getOperationSource(input.operationId);
+            const sourceThreadId = input.sourceThreadId ?? Option.getOrNull(operationSource);
+            if (sourceThreadId === null) {
+              return yield* new DelegationAuditError({
+                code: "operation-not-found",
+                message: "The delegation audit operation was not found.",
+              });
+            }
+            const source = yield* snapshots.getThreadShellById(sourceThreadId);
+            if (Option.isNone(source)) {
+              return yield* new DelegationAuditError({
+                code: "source-thread-not-found",
+                message: "The source thread is not available for delegation audit.",
+              });
+            }
+            if (Option.isSome(operationSource) && operationSource.value !== sourceThreadId) {
+              return yield* new DelegationAuditError({
+                code: "operation-not-found",
+                message: "The delegation audit operation was not found for this source thread.",
+              });
+            }
+            const page = yield* audit.page({ ...input, sourceThreadId });
+            const cleanupStates = deriveDelegationCleanupIntents(page.events)
+              .filter((attempt) => attempt.cleanupRequested !== null)
+              .map((attempt) => ({
+                ...attempt,
+                jobId: null,
+                status: attempt.cleanupRequested
+                  ? ("pending-enqueue" as const)
+                  : ("not-required" as const),
+                attemptCount: null,
+                nextAttemptAt: null,
+                reason: null,
+                error: null,
+              }));
+            const warnings = [
+              ...page.warnings,
+              ...cleanupStates
+                .filter((state) => state.status === "pending-enqueue")
+                .map(
+                  (state) =>
+                    `Cleanup state for attempt ${state.attemptId} is unresolved; reconciliation is required.`,
+                ),
+            ];
+            return { ...page, cleanupStates, warnings };
+          }).pipe(
+            Effect.mapError((cause) =>
+              isDelegationAuditError(cause)
+                ? cause
+                : new DelegationAuditError({
+                    code: "audit-persistence-unavailable",
+                    message: "Unable to load the delegation audit page.",
+                    cause,
+                  }),
+            ),
+          ),
+      });
+    }),
+  );
+
+type CliTestRpcHandlersLayer = ReturnType<typeof cliTestRpcHandlersLayer>;
+
+const cliTestWebSocketRouteLayer = (handlersLayer: CliTestRpcHandlersLayer) =>
+  HttpRouter.add(
+    "GET",
+    "/ws",
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const serverAuth = yield* ServerAuth;
+      const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
+      const rpcHttpEffect = yield* RpcServer.toHttpEffectWebsocket(CliTestRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            handlersLayer,
+            RpcSerialization.layerJson,
+            rpcAuthorizationLayer(new Set(session.scopes), session.role),
+          ),
+        ),
+      );
+      return yield* rpcHttpEffect;
+    }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+  );
+
+const withLiveProjectCliServer = <A, E, R>(
+  baseDir: string,
+  run: () => Effect.Effect<A, E, R>,
+  options: { readonly loseTurnStartReply?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
     const routesLayer = Layer.mergeAll(
+      authWebSocketTokenRouteLayer,
+      cliTestWebSocketRouteLayer(cliTestRpcHandlersLayer(options)),
       orchestrationSnapshotRouteLayer,
       orchestrationShellSnapshotRouteLayer,
       orchestrationThreadSnapshotRouteLayer,
@@ -1241,7 +1492,22 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
 
           yield* engine.dispatch({
             type: "thread.session.set",
-            commandId: CommandId.make("source-session-clear-active-message"),
+            commandId: CommandId.make("source-session-end-active-turn"),
+            threadId: sourceThreadId,
+            createdAt: new Date().toISOString(),
+            session: {
+              threadId: sourceThreadId,
+              status: "stopped",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+          yield* engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("source-session-start-without-message"),
             threadId: sourceThreadId,
             createdAt: new Date().toISOString(),
             session: {
@@ -1265,7 +1531,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
               "--cross-thread-source",
               sourceThreadId,
               "--cross-thread-capability",
-              capability,
+              issueCrossThreadDispatchCapability(sourceThreadId),
               "--title",
               "Missing Active Message Child",
               "rejected-first-turn",
@@ -1280,7 +1546,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             readonly errorCode: string | null;
             readonly cleanupPerformed: boolean;
           };
-          assert.equal(rejectedOutcome.status, "failed");
+          assert.equal(rejectedOutcome.status, "failed", rejectedCreation.output);
           assert.equal(rejectedOutcome.errorCode, "TURN_START_REJECTED");
           assert.isTrue(rejectedOutcome.cleanupPerformed);
           const rejectedThreadId = rejectedOutcome.threadId;
@@ -1410,6 +1676,629 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
       });
     }),
   );
+
+  it.effect("preserves a child after its committed first-turn RPC reply is lost", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-lost-turn-reply-test-"));
+      const workspaceRoot = makeGitWorkspace("t3-cli-lost-turn-reply-workspace-");
+
+      yield* withLiveProjectCliServer(
+        baseDir,
+        () =>
+          Effect.gen(function* () {
+            yield* runCliWithRuntime([
+              "project",
+              "add",
+              workspaceRoot,
+              "--title",
+              "Lost Reply Project",
+              "--base-dir",
+              baseDir,
+            ]);
+            const parentOutput = yield* captureStdout(
+              runCli([
+                "chat",
+                "create",
+                "--project",
+                workspaceRoot,
+                "--title",
+                "Lost Reply Parent",
+                "--base-dir",
+                baseDir,
+              ]),
+            );
+            const parent = JSON.parse(parentOutput.output) as { readonly threadId: string };
+            const childAttempt = yield* captureExitAndStdout(
+              runCli([
+                "chat",
+                "new",
+                "--project",
+                workspaceRoot,
+                "--parent",
+                parent.threadId,
+                "--title",
+                "Committed Turn Child",
+                "first turn committed before reply loss",
+                "--base-dir",
+                baseDir,
+              ]),
+            );
+
+            assert.equal(childAttempt.exit._tag, "Failure");
+            const outcome = JSON.parse(childAttempt.output) as {
+              readonly status: string;
+              readonly threadId: string | null;
+              readonly cleanupPerformed: boolean;
+              readonly errorCode: string | null;
+            };
+            assert.deepStrictEqual(
+              {
+                status: outcome.status,
+                cleanupPerformed: outcome.cleanupPerformed,
+                errorCode: outcome.errorCode,
+              },
+              {
+                status: "ambiguous",
+                cleanupPerformed: false,
+                errorCode: "TURN_START_AMBIGUOUS",
+              },
+            );
+            const childThreadIdValue = outcome.threadId;
+            if (childThreadIdValue === null) {
+              throw new Error("Expected the committed child id to remain in the outcome.");
+            }
+            const childThreadId = ThreadId.make(childThreadIdValue);
+            const engine = yield* OrchestrationEngineService;
+            const child = (yield* engine.getReadModel()).threads.find(
+              (thread) => thread.id === childThreadId,
+            );
+            assert.isDefined(child);
+            assert.isNull(child.deletedAt);
+            assert.isTrue(
+              child.messages.some(
+                (message) => message.text === "first turn committed before reply loss",
+              ),
+            );
+          }),
+        { loseTurnStartReply: true },
+      );
+    }),
+  );
+
+  it.effect("reconstructs five rejected delegation attempts after a CLI server restart", () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-audit-restart-test-"));
+    const workspaceRoot = makeGitWorkspace("t3-cli-audit-restart-workspace-");
+    return Effect.gen(function* () {
+      const scenario = yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          yield* runCliWithRuntime([
+            "project",
+            "add",
+            workspaceRoot,
+            "--title",
+            "Audit Acceptance Project",
+            "--base-dir",
+            baseDir,
+          ]);
+          yield* runCliWithRuntime([
+            "project",
+            "set-default-model",
+            workspaceRoot,
+            "--payload",
+            '{"instanceId":"codex","model":"gpt-5.4"}',
+            "--base-dir",
+            baseDir,
+          ]);
+          const parentOutput = yield* captureStdout(
+            runCli([
+              "chat",
+              "create",
+              "--project",
+              workspaceRoot,
+              "--title",
+              "Five Rejection Source",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const sourceThreadId = ThreadId.make(
+            (JSON.parse(parentOutput.output) as { readonly threadId: string }).threadId,
+          );
+          yield* runCliWithRuntime([
+            "chat",
+            "send",
+            sourceThreadId,
+            "Request five delegated children.",
+            "--base-dir",
+            baseDir,
+          ]);
+
+          const engine = yield* OrchestrationEngineService;
+          const source = (yield* engine.getReadModel()).threads.find(
+            (thread) => thread.id === sourceThreadId,
+          );
+          const sourceMessage = source?.messages.findLast((message) => message.role === "user");
+          if (!sourceMessage) {
+            throw new Error("Expected a persisted source message.");
+          }
+          const sourceTurnId = TurnId.make(`audit-source-turn:${crypto.randomUUID()}`);
+
+          yield* engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(`audit-source-active-message:${crypto.randomUUID()}`),
+            threadId: sourceThreadId,
+            createdAt: new Date().toISOString(),
+            session: {
+              threadId: sourceThreadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: sourceTurnId,
+              activeMessageId: sourceMessage.id,
+              lastError: null,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+          const activeSource = (yield* engine.getReadModel()).threads.find(
+            (thread) => thread.id === sourceThreadId,
+          );
+          assert.equal(activeSource?.session?.activeTurnId, sourceTurnId);
+          assert.equal(activeSource?.session?.activeMessageId, sourceMessage.id);
+
+          const operationId = `audit-five-rejections-${crypto.randomUUID()}`;
+          const toolCallId = `provider-call-${crypto.randomUUID()}`;
+          const attemptIds = Array.from({ length: 5 }, () => crypto.randomUUID());
+          const requests = attemptIds.map((attemptId, index) => ({
+            attemptId,
+            arguments: {
+              title: `Rejected child ${String(index + 1)}`,
+              prompt:
+                `Use config {"password":"synthetic-password-value-${String(index + 1)}"} ` +
+                `and run curl -H "Cookie: session=synthetic-cookie-value-${String(index + 1)}" example.invalid`,
+            },
+          }));
+          const begin = yield* withCliTestRpcClient(baseDir, (rpc) =>
+            rpc[ORCHESTRATION_WS_METHODS.beginDelegationAudit]({
+              operationId,
+              sourceThreadId,
+              toolCallId,
+              toolName: "delegate_work",
+              toolVersion: "acceptance-fixture/1",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+              workspaceRoot,
+              gitRevision: null,
+              buildRevision: "acceptance-fixture",
+              requests,
+              occurredAt: new Date().toISOString(),
+            }),
+          );
+          if (begin.initiatingMessageId === null) {
+            throw new Error(
+              `Expected the audit request to retain its initiating message id: ${JSON.stringify({
+                begin,
+                activeSession: activeSource?.session,
+              })}`,
+            );
+          }
+          assert.equal(begin.sourceTurnId, sourceTurnId);
+          assert.equal(begin.initiatingMessageId, sourceMessage.id);
+
+          yield* Effect.gen(function* () {
+            yield* engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`audit-source-stop:${crypto.randomUUID()}`),
+              threadId: sourceThreadId,
+              createdAt: new Date().toISOString(),
+              session: {
+                threadId: sourceThreadId,
+                status: "stopped",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: new Date().toISOString(),
+              },
+            });
+            yield* engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make(`audit-source-clear-message:${crypto.randomUUID()}`),
+              threadId: sourceThreadId,
+              createdAt: new Date().toISOString(),
+              session: {
+                threadId: sourceThreadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: sourceTurnId,
+                lastError: null,
+                updatedAt: new Date().toISOString(),
+              },
+            });
+          });
+
+          const children: Array<{ readonly attemptId: string; readonly threadId: ThreadId }> = [];
+          for (const [index, attemptId] of attemptIds.entries()) {
+            const creation = yield* captureExitAndStdout(
+              runCli([
+                "chat",
+                "new",
+                "--project",
+                workspaceRoot,
+                "--parent",
+                sourceThreadId,
+                "--cross-thread-source",
+                sourceThreadId,
+                "--cross-thread-capability",
+                issueCrossThreadDispatchCapability(sourceThreadId),
+                "--audit-operation-id",
+                operationId,
+                "--audit-attempt-id",
+                attemptId,
+                "--audit-initiating-message-id",
+                begin.initiatingMessageId,
+                "--thread-id",
+                crypto.randomUUID(),
+                "--assignment-id",
+                crypto.randomUUID(),
+                "--title",
+                `Rejected child ${String(index + 1)}`,
+                `Child prompt ${String(index + 1)}`,
+                "--base-dir",
+                baseDir,
+              ]),
+            );
+            assert.equal(creation.exit._tag, "Failure", creation.output);
+            const outcome = JSON.parse(creation.output) as {
+              readonly status: string;
+              readonly threadId: string | null;
+              readonly errorCode: string | null;
+              readonly cleanupPerformed: boolean;
+            };
+            assert.deepStrictEqual(
+              {
+                status: outcome.status,
+                errorCode: outcome.errorCode,
+                cleanupPerformed: outcome.cleanupPerformed,
+              },
+              {
+                status: "failed",
+                errorCode: "TURN_START_REJECTED",
+                cleanupPerformed: true,
+              },
+            );
+            if (outcome.threadId === null) {
+              throw new Error(`Attempt ${attemptId} did not retain its child thread id.`);
+            }
+            const childThreadId = ThreadId.make(outcome.threadId);
+            const child = (yield* engine.getReadModel()).threads.find(
+              (thread) => thread.id === childThreadId,
+            );
+            assert.isNotNull(child?.deletedAt);
+            children.push({ attemptId, threadId: childThreadId });
+
+            yield* withCliTestRpcClient(baseDir, (rpc) =>
+              rpc[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]({
+                eventId: EventId.make(`acceptance-attempt-completed:${crypto.randomUUID()}`),
+                operationId,
+                sourceThreadId,
+                attemptId,
+                eventType: "attempt.completed",
+                childThreadId,
+                payload: {
+                  toolTransport: "completed",
+                  operationStatus: outcome.status,
+                  retryable: true,
+                  errorCode: outcome.errorCode,
+                  workspaceCreated: false,
+                },
+                occurredAt: new Date().toISOString(),
+              }),
+            );
+          }
+
+          yield* withCliTestRpcClient(baseDir, (rpc) =>
+            rpc[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]({
+              eventId: EventId.make(`acceptance-operation-failed:${crypto.randomUUID()}`),
+              operationId,
+              sourceThreadId,
+              attemptId: null,
+              eventType: "operation.failed",
+              childThreadId: null,
+              payload: {
+                toolTransport: "completed",
+                operationStatus: "failed",
+                attemptCount: 5,
+                completedAttemptCount: 0,
+                failedAttemptCount: 5,
+                unresolvedAttemptIds: [],
+              },
+              occurredAt: new Date().toISOString(),
+            }),
+          );
+
+          const sourceState = (yield* engine.getReadModel()).threads.find(
+            (thread) => thread.id === sourceThreadId,
+          )?.session;
+          assert.equal(sourceState?.activeTurnId, sourceTurnId);
+          assert.isUndefined(sourceState?.activeMessageId);
+          return {
+            sourceThreadId,
+            sourceTurnId,
+            initiatingMessageId: begin.initiatingMessageId,
+            operationId,
+            toolCallId,
+            children,
+          };
+        }),
+      );
+
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          const pages: Array<{
+            readonly events: ReadonlyArray<{
+              readonly eventId: string;
+              readonly sequence: number;
+              readonly attemptId: string | null;
+              readonly childThreadId: ThreadId | null;
+              readonly eventType: string;
+              readonly evidenceStatus: string;
+              readonly redacted: boolean;
+              readonly context: {
+                readonly authorization: {
+                  readonly sourceThreadId: ThreadId;
+                  readonly sourceTurnId: TurnId | null;
+                  readonly initiatingMessageId: MessageId | null;
+                  readonly scope: string;
+                };
+                readonly toolCallId: string;
+                readonly buildRevision: string;
+                readonly gitRevision: string | null;
+              };
+              readonly payload: unknown;
+            }>;
+            readonly cleanupStates: ReadonlyArray<{
+              readonly attemptId: string;
+              readonly childThreadId: ThreadId;
+              readonly status: string;
+            }>;
+            readonly hasMore: boolean;
+            readonly nextBeforeSequence: number | null;
+            readonly warnings: ReadonlyArray<string>;
+          }> = [];
+          let beforeSequence: number | null = null;
+          do {
+            const pageArgs = [
+              "chat",
+              "audit",
+              scenario.sourceThreadId,
+              "--turn",
+              scenario.sourceTurnId,
+              "--tool-call",
+              scenario.toolCallId,
+              "--limit",
+              "4",
+              ...(beforeSequence === null ? [] : ["--before-sequence", String(beforeSequence)]),
+              "--base-dir",
+              baseDir,
+            ];
+            const pageOutput = yield* captureStdout(runCli(pageArgs));
+            const page = JSON.parse(pageOutput.output) as (typeof pages)[number];
+            pages.push(page);
+            beforeSequence = page.nextBeforeSequence;
+          } while (pages.at(-1)?.hasMore);
+
+          assert.isAbove(pages.length, 1);
+          const listedEvents = pages.flatMap((page) => page.events);
+          const listedIds = listedEvents.map((event) => event.eventId);
+          assert.equal(new Set(listedIds).size, listedIds.length);
+          assert.isTrue(
+            pages.every((page) =>
+              page.events.every(
+                (event) =>
+                  event.context.authorization.sourceThreadId === scenario.sourceThreadId &&
+                  event.context.authorization.sourceTurnId === scenario.sourceTurnId &&
+                  event.context.authorization.initiatingMessageId !== null &&
+                  event.context.authorization.scope === "orchestration:operate" &&
+                  event.context.toolCallId === scenario.toolCallId &&
+                  event.context.buildRevision === "cli-test-server" &&
+                  event.context.gitRevision === null,
+              ),
+            ),
+          );
+
+          const operationEvents = listedEvents.filter(
+            (event) => event.context.toolCallId === scenario.toolCallId,
+          );
+          const countType = (eventType: string) =>
+            operationEvents.filter((event) => event.eventType === eventType).length;
+          assert.equal(countType("attempt.requested"), 5);
+          assert.equal(countType("turn.start.rejected"), 5);
+          assert.equal(countType("thread.deletion.accepted"), 5);
+          assert.equal(countType("attempt.completed"), 5);
+          assert.equal(countType("operation.failed"), 1);
+
+          const rejectionEvents = operationEvents.filter(
+            (event) => event.eventType === "turn.start.rejected",
+          );
+          for (const rejection of rejectionEvents) {
+            const payload = rejection.payload as {
+              readonly code: string;
+              readonly expectedInitiatingMessageId: string;
+              readonly actualActiveTurnId: string;
+              readonly actualActiveMessageId: string | null;
+              readonly evidenceState: string;
+              readonly orchestrationSequence: number;
+              readonly precedingSessionTransition: unknown;
+              readonly messagePreviouslyPresentTransition: unknown;
+            };
+            assert.equal(payload.code, "MISSING_ACTIVE_MESSAGE");
+            assert.equal(payload.expectedInitiatingMessageId, scenario.initiatingMessageId);
+            assert.equal(payload.actualActiveTurnId, scenario.sourceTurnId);
+            assert.isNull(payload.actualActiveMessageId);
+            assert.equal(payload.evidenceState, "cleared-by-later-update");
+            assert.isAbove(payload.orchestrationSequence, 0);
+            assert.isNotNull(payload.precedingSessionTransition);
+            assert.isNotNull(payload.messagePreviouslyPresentTransition);
+            assert.isNotNull(rejection.childThreadId);
+          }
+
+          const requestedEvents = operationEvents.filter(
+            (event) => event.eventType === "attempt.requested",
+          );
+          assert.isTrue(
+            requestedEvents.every(
+              (event) =>
+                event.redacted &&
+                event.evidenceStatus === "redacted" &&
+                !JSON.stringify(event.payload).includes("synthetic-password-value") &&
+                !JSON.stringify(event.payload).includes("synthetic-cookie-value"),
+            ),
+          );
+
+          const listedCleanup = pages.flatMap((page) => page.cleanupStates);
+          const cleanupByAttempt = new Map<string, (typeof listedCleanup)[number]>();
+          for (const cleanup of listedCleanup) {
+            const previous = cleanupByAttempt.get(cleanup.attemptId);
+            if (previous !== undefined) {
+              assert.deepStrictEqual(previous, cleanup);
+            }
+            cleanupByAttempt.set(cleanup.attemptId, cleanup);
+          }
+          assert.equal(cleanupByAttempt.size, 5);
+          assert.isTrue(
+            [...cleanupByAttempt.values()].every(
+              (cleanup) =>
+                cleanup.status === "not-required" &&
+                scenario.children.some(
+                  (child) =>
+                    child.attemptId === cleanup.attemptId &&
+                    child.threadId === cleanup.childThreadId,
+                ),
+            ),
+          );
+          const pageWarnings = pages.flatMap((page) => page.warnings);
+          assert.isTrue(
+            pageWarnings.some((warning) =>
+              warning.includes("missing execution context: Git revision"),
+            ),
+          );
+          assert.isTrue(
+            pageWarnings.every(
+              (warning) =>
+                !warning.includes("require reconciliation") && !warning.includes("unresolved"),
+            ),
+          );
+
+          const showOutput = yield* captureStdout(
+            runCli(["audit", "show", scenario.operationId, "--limit", "4", "--base-dir", baseDir]),
+          );
+          const showPage = JSON.parse(showOutput.output) as (typeof pages)[number];
+          assert.isTrue(showPage.hasMore);
+          assert.isNotNull(showPage.nextBeforeSequence);
+          const nextShowOutput = yield* captureStdout(
+            runCli([
+              "audit",
+              "show",
+              scenario.operationId,
+              "--limit",
+              "4",
+              "--before-sequence",
+              String(showPage.nextBeforeSequence),
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const nextShowPage = JSON.parse(nextShowOutput.output) as (typeof pages)[number];
+          assert.isTrue(
+            showPage.events.every(
+              (event) => !nextShowPage.events.some((next) => next.eventId === event.eventId),
+            ),
+          );
+
+          const exportOutput = yield* captureStdout(
+            runCli(["audit", "export", scenario.sourceThreadId, "--base-dir", baseDir]),
+          );
+          const exported = JSON.parse(exportOutput.output) as {
+            readonly sourceThreadId: ThreadId;
+            readonly buildContext: ReadonlyArray<{
+              readonly buildRevision: string;
+              readonly gitRevision: string | null;
+            }>;
+            readonly events: ReadonlyArray<{
+              readonly eventId: string;
+              readonly childThreadId: ThreadId | null;
+              readonly payload: unknown;
+            }>;
+            readonly cleanupStates: ReadonlyArray<{
+              readonly attemptId: string;
+              readonly childThreadId: ThreadId;
+              readonly status: string;
+            }>;
+            readonly warnings: ReadonlyArray<string>;
+          };
+          assert.equal(exported.sourceThreadId, scenario.sourceThreadId);
+          assert.equal(exported.events.length, listedEvents.length);
+          assert.deepStrictEqual(
+            exported.events.map((event) => event.eventId).toSorted(),
+            listedIds.toSorted(),
+          );
+          assert.isTrue(
+            exported.buildContext.some(
+              (context) =>
+                context.buildRevision === "cli-test-server" && context.gitRevision === null,
+            ),
+          );
+          assert.equal(exported.cleanupStates.length, 5);
+          assert.isTrue(
+            exported.cleanupStates.every((cleanup) => cleanup.status === "not-required"),
+          );
+          assert.isTrue(
+            exported.warnings.some((warning) =>
+              warning.includes("missing execution context: Git revision"),
+            ),
+          );
+          assert.isTrue(
+            !JSON.stringify(exported).includes("synthetic-password-value") &&
+              !JSON.stringify(exported).includes("synthetic-cookie-value"),
+          );
+          assert.isTrue(
+            scenario.children.every((child) =>
+              exported.events.some((event) => event.childThreadId === child.threadId),
+            ),
+          );
+
+          const sourceAuthorizedPage = yield* withCliTestRpcClient(baseDir, (rpc) =>
+            rpc[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+              operationId: scenario.operationId,
+              sourceThreadId: scenario.sourceThreadId,
+              beforeSequence: null,
+              limit: 4,
+            }),
+          );
+          assert.isTrue(sourceAuthorizedPage.events.length > 0);
+          const childAccess = yield* withCliTestRpcClient(baseDir, (rpc) =>
+            Effect.exit(
+              rpc[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+                operationId: scenario.operationId,
+                sourceThreadId: scenario.children[0]!.threadId,
+                beforeSequence: null,
+                limit: 4,
+              }),
+            ),
+          );
+          assert.equal(childAccess._tag, "Failure");
+        }),
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(baseDir, { recursive: true, force: true });
+          rmSync(workspaceRoot, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
   it.effect("resolves workspace paths through the production CLI entrypoint", () =>
     Effect.gen(function* () {

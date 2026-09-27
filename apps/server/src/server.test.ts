@@ -128,6 +128,8 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { DelegationAuditRepositoryLive } from "./persistence/Layers/DelegationAudit.ts";
+import { ProjectionThreadActivityRepositoryLive } from "./persistence/Layers/ProjectionThreadActivities.ts";
 import { WorktreeCleanupJobRepositoryLive } from "./persistence/Layers/WorktreeCleanupJobs.ts";
 import {
   ProviderRegistry,
@@ -684,7 +686,11 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provideMerge(
-        WorktreeCleanupJobRepositoryLive.pipe(Layer.provide(SqlitePersistenceMemory)),
+        Layer.mergeAll(
+          WorktreeCleanupJobRepositoryLive,
+          DelegationAuditRepositoryLive,
+          ProjectionThreadActivityRepositoryLive,
+        ).pipe(Layer.provide(SqlitePersistenceMemory)),
       ),
       Layer.provide(
         Layer.mock(CheckpointDiffQuery)({
