@@ -55,6 +55,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const ignoreModelConfigOption = process.env.T3_ACP_IGNORE_MODEL_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
@@ -570,7 +571,11 @@ const program = Effect.gen(function* () {
       if (request.configId === "mode" && typeof request.value === "string") {
         currentModeId = request.value;
       }
-      if (request.configId === "model" && typeof request.value === "string") {
+      if (
+        request.configId === "model" &&
+        typeof request.value === "string" &&
+        !ignoreModelConfigOption
+      ) {
         currentModelId = request.value;
       }
       if (request.configId === "reasoning" && typeof request.value === "string") {

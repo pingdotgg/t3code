@@ -1447,6 +1447,59 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not prompt when Cursor keeps a different model after the switch", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-model-switch-ignored");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath, {
+          T3_ACP_IGNORE_MODEL_CONFIG_OPTION: "1",
+        }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "should run on gpt-5.4",
+          attachments: [],
+          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
+            { id: "fastMode", value: true },
+          ]),
+        })
+        .pipe(Effect.flip);
+      assert.include(error.message, '"gpt-5.4"');
+      assert.include(error.message, '"default"');
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isTrue(
+        requests.some(
+          (entry) =>
+            entry.method === "session/set_config_option" &&
+            (entry.params as Record<string, unknown> | undefined)?.value === "gpt-5.4",
+        ),
+      );
+      assert.isFalse(requests.some((entry) => entry.method === "session/prompt"));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("clears prior fast mode in-session when the next turn sets fastMode: false", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

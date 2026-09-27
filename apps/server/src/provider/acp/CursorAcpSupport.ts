@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
@@ -110,7 +110,8 @@ export function applyCursorAcpModelSelection<E>(input: {
   readonly mapError: (context: CursorAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
-    yield* input.runtime.setModel(resolveCursorAcpBaseModelId(input.model)).pipe(
+    const requestedModel = resolveCursorAcpBaseModelId(input.model);
+    yield* input.runtime.setModel(requestedModel).pipe(
       Effect.mapError((cause) =>
         input.mapError({
           cause,
@@ -119,10 +120,28 @@ export function applyCursorAcpModelSelection<E>(input: {
       ),
     );
 
-    const configUpdates = resolveCursorAcpConfigUpdates(
-      yield* input.runtime.getConfigOptions,
-      input.selections,
-    );
+    const configOptions = yield* input.runtime.getConfigOptions;
+    // cursor-agent can accept the model change and still keep the previous
+    // model. Refuse to continue so the prompt never runs on a model the user
+    // did not pick.
+    const currentModel = configOptions.find((option) => option.category === "model")?.currentValue;
+    if (
+      typeof currentModel === "string" &&
+      resolveCursorAcpBaseModelId(currentModel) !== requestedModel
+    ) {
+      return yield* Effect.fail(
+        input.mapError({
+          cause: new EffectAcpErrors.AcpRequestError({
+            code: -32603,
+            errorMessage: `Cursor stayed on model "${currentModel}" instead of "${requestedModel}"; the prompt was not sent.`,
+            method: "session/set_config_option",
+          }),
+          step: "set-model",
+        }),
+      );
+    }
+
+    const configUpdates = resolveCursorAcpConfigUpdates(configOptions, input.selections);
     for (const update of configUpdates) {
       yield* input.runtime.setConfigOption(update.configId, update.value).pipe(
         Effect.mapError((cause) =>
