@@ -6909,6 +6909,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
                       isComposerApprovalState && "min-h-10",
+                      // Where the placeholder wraps to two lines, keep a line of
+                      // space between it and the actions, as the taller composer had.
+                      !isComposerResting &&
+                        !isComposerApprovalState &&
+                        "@max-md/composer-surface:min-h-16",
                     )}
                     placeholderClassName={cn(
                       isComposerResting &&
