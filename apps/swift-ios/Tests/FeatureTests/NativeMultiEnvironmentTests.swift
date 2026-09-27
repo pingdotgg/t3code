@@ -1979,6 +1979,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var detailData: [String: [String: Data]] = [:]
     private var reachableHosts: Set<String>
     private var shellReadsEnabledHosts: Set<String>
+    private var rejectedShellHosts: Set<String> = []
     private var shellReadCounts: [String: Int] = [:]
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
@@ -2001,6 +2002,11 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         } else {
             reachableHosts.remove(host)
         }
+    }
+
+    /// Answers this host's shell reads with 401, as after a revoked credential.
+    func rejectShellReads(host: String) {
+        rejectedShellHosts.insert(host)
     }
 
     func setShellReadsEnabled(_ enabled: Bool, host: String) {
@@ -2058,6 +2064,15 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         }
         if path == "/api/orchestration/shell" {
             shellReadCounts[host, default: 0] += 1
+            if rejectedShellHosts.contains(host) {
+                return (
+                    Data(#"{"error":"Unauthorized"}"#.utf8),
+                    HTTPURLResponse(
+                        url: request.url!, statusCode: 401, httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                )
+            }
             if let gate = nextShellGates.removeValue(forKey: host), let data = shellData[host] {
                 await gate.enter()
                 return (data, multiEnvironmentResponse(request))
@@ -2650,6 +2665,50 @@ private actor GatedPassiveCatalogueConnection: WebSocketConnection {
 @Suite("Native passive live shells")
 @MainActor
 struct NativePassiveLiveShellTests {
+    @Test("A live peer whose credential is rejected stops quiet reconciliation", .timeLimit(.minutes(1)))
+    func livePeerRejectedCredentialStopsReconciling() async throws {
+        let server = PassiveLiveServer()
+        let receipts = PassiveLiveReceipts()
+        let clock = SilentShellClock()
+        let (peerSleeps, peerSleepRecorder) = AsyncStream<Duration>.makeStream()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            webSocketConnector: server,
+            fallbackPollingInitialDelay: .zero,
+            fallbackPollingInterval: .milliseconds(1),
+            shellReconciliationSleep: { id, interval in
+                if id == "two" { try await clock.sleep(interval) }
+                else { try await Task.sleep(for: interval) }
+            },
+            aggregatePeerRefreshSleep: { id, interval in
+                if id == "two" { peerSleepRecorder.yield(interval) }
+                try await Task.sleep(for: interval)
+            },
+            aggregatePublishSleep: {},
+            aggregateRefreshReceipt: { receipts.record($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let seed = try await fixture.client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: fixture.client.events())
+        try await receipts.waitForHTTP("two", count: 1)
+        await server.waitForSubscriptions(host: "two.example", count: 1)
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Live seed", snapshotSequence: 10
+        ), host: "two.example")
+        _ = try await recorder.wait { $0.threads.contains { $0.title == "Live seed" } }
+        try await clock.waitForRequest()
+        await fixture.transport.rejectShellReads(host: "two.example")
+        await clock.advance()
+        // The socket is still open, but the credential is gone: show it and back off.
+        _ = try await recorder.wait {
+            $0.environments.first { $0.id == "two" }?.connectionState == .needsPairing
+        }
+        // The next wait is the long rejected-credential back-off, not another quiet read.
+        var sleeps = peerSleeps.makeAsyncIterator()
+        while let next = await sleeps.next(), next != .seconds(24 * 60 * 60) {}
+        #expect(await clock.intervals.count == 1)
+        await fixture.client.disconnect()
+    }
+
     @Test("Silent connected shells reconcile through bounded HTTP", arguments: ["one", "two"], [false, true])
     func silentConnectedShellReconciles(environmentID: String, disconnect: Bool) async throws {
         let server = PassiveLiveServer()

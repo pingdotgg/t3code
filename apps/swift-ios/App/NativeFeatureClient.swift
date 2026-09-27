@@ -4429,14 +4429,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         func refreshShell(_ environment: Environment, state: PassiveShellState) async {
             var interval = fastInterval
+            // A rejected credential outlives the open socket; stop the quiet cadence.
+            var credentialRejected = false
             while owns(environment) {
                 do {
                     let wasLive = state.isLive
                     if wasLive || !state.needsHTTP {
                         let delay = interval
+                        let reconciles = wasLive && !credentialRejected
                         await withTaskGroup(of: Void.self) { group in
                             group.addTask {
-                                if wasLive {
+                                if reconciles {
                                     try? await self.reconciliationSleep(environment.id, NativeFeatureClient.shellReconciliationInterval)
                                 } else {
                                     try? await self.peerSleep(environment.id, delay)
@@ -4468,9 +4471,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     guard let environments = try await currentEnvironments(for: environment) else { return }
                     guard owns(environment), epoch == state.epoch,
                           authority == state.authorityRevision, connectionID == currentConnection else { continue }
-                    // HTTP failure alone says nothing about the connected stream.
-                    if shell == nil && state.isLive { continue }
+                    // A rejected credential applies even while the old socket stays open.
                     if let error = hydrationError, error.isRejectedAuthorization {
+                        credentialRejected = true
                         owner?.applyEnvironmentLoad(EnvironmentShellLoad(
                             environment: environment, client: client, shell: nil, config: nil,
                             credentialRejected: true, failureDetail: error.localizedDescription
@@ -4479,6 +4482,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         interval = .seconds(24 * 60 * 60)
                         continue
                     }
+                    // Other HTTP failures say nothing about the connected stream.
+                    if shell == nil && state.isLive { continue }
                     // A validated HTTP snapshot remains in this socket's cache
                     // epoch without claiming that the live stream is complete.
                     if shell != nil { owner?.shellConnectionIDsByEnvironmentID[environment.id] = connectionID }
