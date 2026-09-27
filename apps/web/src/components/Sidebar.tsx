@@ -10,7 +10,6 @@ import {
   Globe2Icon,
   MoreHorizontalIcon,
   PinIcon,
-  SettingsIcon,
   SquarePenIcon,
   TriangleAlertIcon,
   XIcon,
@@ -155,7 +154,6 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
@@ -192,7 +190,7 @@ import {
   useThreadJumpHintVisibility,
   ThreadStatusPill,
 } from "./Sidebar.logic";
-import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
+import { SidebarFooterActions } from "./sidebar/SidebarFooterActions";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { SidebarTopActions } from "./SidebarTopActions";
 import { readEnvironmentApi } from "../environmentApi";
@@ -3148,32 +3146,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 });
 
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
-  const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const handleSettingsClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/settings" });
-  }, [isMobile, navigate, setOpenMobile]);
-
-  return (
-    <SidebarFooter className="p-2">
-      <SidebarUpdatePill />
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="gap-2 px-2 py-1.5 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-            onClick={handleSettingsClick}
-          >
-            <SettingsIcon className="size-3.5" />
-            <span>Settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    </SidebarFooter>
-  );
+  return <SidebarFooterActions />;
 });
 
 interface SidebarProjectsContentProps {

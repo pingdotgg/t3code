@@ -2,9 +2,229 @@ import * as ChildProcess from "node:child_process";
 import * as FS from "node:fs";
 import * as Path from "node:path";
 
-import type { DesktopLocalRebuildResult, DesktopLocalRebuildState } from "@t3tools/contracts";
+import type {
+  DesktopLocalRebuildResult,
+  DesktopLocalRebuildStaleness,
+  DesktopLocalRebuildState,
+} from "@t3tools/contracts";
 
 const INSTALL_SCRIPT_RELATIVE_PATH = Path.join("scripts", "install-t3-dev.sh");
+
+/** Per-command cap for the staleness check so an offline origin cannot hang it. */
+const STALENESS_GIT_TIMEOUT_MS = 30_000;
+const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+export interface GitRunResult {
+  readonly stdout: string;
+  readonly exitCode: number;
+}
+
+export type GitRunner = (args: readonly string[], cwd: string) => Promise<GitRunResult>;
+
+function defaultGitRunner(args: readonly string[], cwd: string): Promise<GitRunResult> {
+  return new Promise((resolve, reject) => {
+    ChildProcess.execFile(
+      "git",
+      [...args],
+      {
+        cwd,
+        timeout: STALENESS_GIT_TIMEOUT_MS,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      },
+      (error, stdout) => {
+        // Numeric codes are process exit statuses (1 for "not ancestor",
+        // 128 for "not a repo"); anything else means git never ran.
+        const code = (error as { code?: unknown } | null)?.code;
+        if (error && typeof code !== "number") {
+          reject(error);
+          return;
+        }
+        resolve({ stdout: String(stdout ?? ""), exitCode: typeof code === "number" ? code : 0 });
+      },
+    );
+  });
+}
+
+function normalizeSha(value: string): string | null {
+  const trimmed = value.trim();
+  return FULL_SHA_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
+/**
+ * Parse `git ls-remote --symref origin HEAD`. The symref line names the
+ * remote default branch; without it only the tip SHA is known.
+ */
+export function parseLsRemoteSymrefHead(stdout: string): {
+  sha: string;
+  branch: string | null;
+} | null {
+  let branch: string | null = null;
+  let sha: string | null = null;
+  for (const line of stdout.split("\n")) {
+    const symref = line.match(/^ref: refs\/heads\/(\S+)\s+HEAD\s*$/);
+    if (symref?.[1]) {
+      branch = symref[1];
+      continue;
+    }
+    const tip = line.match(/^([0-9a-f]{40})\s+HEAD\s*$/i);
+    if (tip?.[1]) {
+      sha = tip[1].toLowerCase();
+    }
+  }
+  return sha ? { sha, branch } : null;
+}
+
+export function decideRebuildStaleness(input: {
+  readonly baseSha: string;
+  readonly remoteSha: string;
+  /** Null when the ancestry comparison itself could not run. */
+  readonly mergeBaseIsAncestor: boolean | null;
+  readonly behindBy: number | null;
+}): { behind: boolean; error: string | null } {
+  if (input.remoteSha === input.baseSha) {
+    return { behind: false, error: null };
+  }
+  if (input.mergeBaseIsAncestor === null) {
+    return { behind: false, error: "Could not compare the running build with the remote tip." };
+  }
+  // Ahead or diverged: rebuilding the current checkout would not bring the
+  // remote branch in, so the refresh icon stays off.
+  if (!input.mergeBaseIsAncestor) {
+    return { behind: false, error: null };
+  }
+  return { behind: true, error: null };
+}
+
+function unavailableStaleness(reason: string): DesktopLocalRebuildStaleness {
+  return {
+    available: false,
+    behind: false,
+    behindBy: null,
+    localBranch: null,
+    localSha: null,
+    remoteBranch: null,
+    remoteSha: null,
+    buildSha: null,
+    checkedAt: null,
+    error: reason,
+  };
+}
+
+/**
+ * Check whether the remote default branch moved past the running build.
+ * Read-only: `ls-remote` never fetches and no local ref is mutated.
+ */
+export async function checkLocalDevRebuildStaleness(input: {
+  readonly enabled: boolean;
+  readonly sourceRoot: string | null;
+  readonly buildSha: string | null;
+  readonly runGit?: GitRunner;
+}): Promise<DesktopLocalRebuildStaleness> {
+  if (!input.enabled || !input.sourceRoot) {
+    return unavailableStaleness("Local rebuilds are unavailable.");
+  }
+  const runGit = input.runGit ?? defaultGitRunner;
+  const cwd = input.sourceRoot;
+  const failed = (
+    message: string,
+    partial?: Partial<DesktopLocalRebuildStaleness>,
+  ): DesktopLocalRebuildStaleness => ({
+    available: true,
+    behind: false,
+    behindBy: null,
+    localBranch: null,
+    localSha: null,
+    remoteBranch: null,
+    remoteSha: null,
+    buildSha: input.buildSha,
+    checkedAt: new Date().toISOString(),
+    error: message,
+    ...partial,
+  });
+
+  let head: GitRunResult;
+  let branch: GitRunResult;
+  let lsRemote: GitRunResult;
+  try {
+    [head, branch, lsRemote] = await Promise.all([
+      runGit(["rev-parse", "HEAD"], cwd),
+      runGit(["branch", "--show-current"], cwd),
+      runGit(["ls-remote", "--symref", "origin", "HEAD"], cwd),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return failed(`Could not reach the remote: ${message}`);
+  }
+
+  const localSha = head.exitCode === 0 ? normalizeSha(head.stdout) : null;
+  if (!localSha) {
+    return failed("The source checkout is not a git repository.");
+  }
+  const parsed = lsRemote.exitCode === 0 ? parseLsRemoteSymrefHead(lsRemote.stdout) : null;
+  if (!parsed) {
+    return failed("Could not read the remote default branch.", {
+      localBranch: branch.exitCode === 0 ? branch.stdout.trim() || null : null,
+      localSha,
+    });
+  }
+
+  // The running build's commit is the honest base; without embedded metadata
+  // the checkout HEAD is the closest observable proxy.
+  const baseSha = input.buildSha ?? localSha;
+  const localBranch = branch.exitCode === 0 ? branch.stdout.trim() || null : null;
+  const complete = (
+    extra: Partial<DesktopLocalRebuildStaleness>,
+  ): DesktopLocalRebuildStaleness => ({
+    available: true,
+    behind: false,
+    behindBy: null,
+    localBranch,
+    localSha,
+    remoteBranch: parsed.branch,
+    remoteSha: parsed.sha,
+    buildSha: input.buildSha,
+    checkedAt: new Date().toISOString(),
+    error: null,
+    ...extra,
+  });
+
+  if (parsed.sha === baseSha) {
+    return complete({});
+  }
+
+  let mergeBase: GitRunResult;
+  try {
+    mergeBase = await runGit(["merge-base", "--is-ancestor", baseSha, parsed.sha], cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return complete({ error: `Could not compare commits: ${message}` });
+  }
+  // Exit 0 means ancestor (behind); 1 means not. Anything else (e.g. 128 for
+  // objects missing from a shallow clone) leaves the answer unknown.
+  const mergeBaseIsAncestor =
+    mergeBase.exitCode === 0 ? true : mergeBase.exitCode === 1 ? false : null;
+  const decision = decideRebuildStaleness({
+    baseSha,
+    remoteSha: parsed.sha,
+    mergeBaseIsAncestor,
+    behindBy: null,
+  });
+  if (!decision.behind) {
+    return complete({ error: decision.error });
+  }
+
+  let behindBy: number | null = null;
+  try {
+    const count = await runGit(["rev-list", "--count", `${baseSha}..${parsed.sha}`], cwd);
+    if (count.exitCode === 0) {
+      const parsed_count = Number.parseInt(count.stdout.trim(), 10);
+      behindBy = Number.isFinite(parsed_count) && parsed_count > 0 ? parsed_count : null;
+    }
+  } catch {
+    behindBy = null;
+  }
+  return complete({ behind: true, behindBy });
+}
 
 export function readEmbeddedDevSourceRoot(appRoot: string): string | null {
   try {
