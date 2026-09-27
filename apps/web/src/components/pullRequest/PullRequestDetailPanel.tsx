@@ -907,7 +907,7 @@ export function PullRequestDetailPanel({
 
   return (
     <section
-      className="flex h-full min-h-0 flex-col bg-background"
+      className="flex h-full min-h-0 flex-col bg-chat-background"
       onClickCapture={(event) => {
         if (event.button !== 0 || !(event.target instanceof Element)) return;
         if (event.target instanceof HTMLImageElement || event.target instanceof HTMLVideoElement) {
@@ -927,7 +927,7 @@ export function PullRequestDetailPanel({
         });
       }}
     >
-      <header className="shrink-0 border-b border-border/60 bg-background">
+      <header className="shrink-0 border-b border-border/60 bg-chat-background">
         <div className="flex h-8 items-center gap-2 border-b border-border/60 px-4 text-xs text-muted-foreground">
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <span className="min-w-0 truncate font-medium">{detail.repository}</span>
@@ -1242,8 +1242,6 @@ export function PullRequestDetailPanel({
             activityError={activityQuery.error ? errorMessage(activityQuery.error) : null}
             activityPending={activityQuery.isPending}
             detail={detail}
-            environmentId={environmentId}
-            reference={reference}
             onOpenUrl={(url) => {
               void openLink(url).catch((error: unknown) => {
                 toastManager.add({
@@ -1346,7 +1344,7 @@ export function PullRequestDetailPanel({
               <p className="py-4 text-sm text-muted-foreground">No conversation yet.</p>
             ) : null}
             {detail.capabilities.comment && detail.viewerPermissions.comment ? (
-              <div className="sticky bottom-0 -mx-4 mt-4 border-t border-border bg-background px-4 pt-3 pb-1">
+              <div className="sticky bottom-0 -mx-4 mt-4 border-t border-border bg-chat-background px-4 pt-3 pb-1">
                 <CommentComposer
                   value={comment}
                   disabled={postComment.isPending}
