@@ -729,6 +729,7 @@ async function withNestedThreadAudit(
   const operationSucceeded =
     outcomes.length === audit.attempts.length &&
     outcomes.every(({ outcome }) => outcome.status === "created" || outcome.status === "dry-run");
+  const completedAttemptCount = successes.filter(Boolean).length;
   await appendNestedThreadOperationAudit(
     options,
     audit.operationId,
@@ -737,8 +738,8 @@ async function withNestedThreadAudit(
       toolTransport: "completed",
       operationStatus: operationSucceeded ? "succeeded" : "failed",
       attemptCount: audit.attempts.length,
-      completedAttemptCount: successes.length,
-      failedAttemptCount: successes.filter((success) => !success).length,
+      completedAttemptCount,
+      failedAttemptCount: successes.length - completedAttemptCount,
     },
   );
   return text;

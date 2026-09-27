@@ -2384,6 +2384,75 @@ describe("create_nested_threads MCP tool", () => {
     }
   });
 
+  it("records completed and failed counts from mixed batch outcomes", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-nested-batch-audit-counts-"));
+    const cliPath = path.join(root, "t3-audit-fixture.mjs");
+    const auditPath = path.join(root, "audit-events.jsonl");
+    const cliScript = `
+      import fs from "node:fs";
+      const args = process.argv.slice(2);
+      if (args.includes("begin-internal")) {
+        fs.writeFileSync(${JSON.stringify(auditPath)}, "");
+        fs.readFileSync(0, "utf8");
+        console.log(JSON.stringify({ initiatingMessageId: "source-message" }));
+      } else if (args.includes("append-internal")) {
+        const input = JSON.parse(fs.readFileSync(0, "utf8"));
+        fs.appendFileSync(${JSON.stringify(auditPath)}, JSON.stringify(input) + "\\n");
+      }
+    `;
+    const rejectedOutcome = {
+      status: "failed",
+      threadId: null,
+      threadUrl: null,
+      retryable: true,
+      workspaceCreated: false,
+      cleanupPerformed: false,
+      errorCode: "THREAD_CREATE_REJECTED",
+      message: "Thread creation was rejected before it committed.",
+    };
+    try {
+      await writeFile(cliPath, cliScript);
+      const batchArgs = {
+        children: [child("Created"), child("Rejected", "Reject child.")],
+      };
+      const result = await __testing.withNestedThreadAudit(
+        {
+          ...options(root, process.execPath),
+          cliArgsPrefix: [cliPath],
+        },
+        "create_nested_threads",
+        "tool-call",
+        batchArgs,
+        async () =>
+          JSON.stringify({
+            results: [
+              { index: 0, outcome: createdOutcome },
+              { index: 1, outcome: rejectedOutcome },
+            ],
+          }),
+      );
+
+      expect(JSON.parse(result).results).toHaveLength(2);
+      const auditEvents = (await readFile(auditPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { eventType: string; payload: Record<string, unknown> });
+      const operationResult = auditEvents.at(-1);
+      expect(operationResult).toMatchObject({
+        eventType: "operation.failed",
+        payload: {
+          toolTransport: "completed",
+          operationStatus: "failed",
+          attemptCount: 2,
+          completedAttemptCount: 1,
+          failedAttemptCount: 1,
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves per-item validation failures while creating valid siblings", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-nested-batch-validation-"));
     const cliPath = path.join(root, "t3-test");
