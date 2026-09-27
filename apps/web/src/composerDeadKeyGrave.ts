@@ -18,7 +18,8 @@ export function insertComposerPaste<
     insertContent(value: unknown): { run(): boolean };
   },
 >(editor: { chain: () => Chain }, content: unknown): void {
-  editor.chain().setMeta("paste", true).setMeta("uiEvent", "paste").insertContent(content).run();
+  // `paste` skips the dead-key plugin; do not set `uiEvent: "paste"` or TipTap runs paste rules on prepared JSON.
+  editor.chain().setMeta("paste", true).insertContent(content).run();
 }
 
 export function rememberPlainDeadKey(
@@ -82,9 +83,16 @@ export function createComposerDeadKeyGravePlugin(): Plugin {
 }
 
 export function isPlainDeadKeyDown(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "isComposing">,
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "isComposing">,
 ): boolean {
-  return event.key === "Dead" && !event.metaKey && !event.ctrlKey && !event.isComposing;
+  return (
+    event.key === "Dead" &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !event.isComposing
+  );
 }
 
 export function deadKeyGraveTextEdit(

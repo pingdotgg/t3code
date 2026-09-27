@@ -166,6 +166,38 @@ describe("composer dead-key graves", () => {
     expect(typed.getText()).toBe("`");
   });
 
+  it("does not run TipTap paste rules on composer paste inserts", async () => {
+    const { Editor } = await import("@tiptap/core");
+    const { default: StarterKit } = await import("@tiptap/starter-kit");
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const editor = new Editor({
+      element: parent,
+      extensions: [
+        StarterKit.configure({
+          blockquote: false,
+          bulletList: false,
+          codeBlock: false,
+          heading: false,
+          horizontalRule: false,
+          listItem: false,
+          link: false,
+          orderedList: false,
+          underline: false,
+          dropcursor: false,
+          gapcursor: false,
+          trailingNode: false,
+          code: false,
+        }),
+      ],
+      content: "<p></p>",
+    });
+    views.push(editor);
+    insertComposerPaste(editor, [{ type: "text", text: "*literal*" }]);
+    expect(editor.getText()).toBe("*literal*");
+    expect(editor.isActive("italic")).toBe(false);
+  });
+
   it("stores each grave look-alike as an ASCII backtick", async () => {
     for (const lookalike of ["\u2035", "\uFF40"]) {
       const { view } = await mount("hello");
@@ -193,14 +225,28 @@ describe("composer dead-key graves", () => {
   });
 
   it("treats only an unmodified Dead key as the trigger", () => {
+    const plain = {
+      key: "Dead",
+      metaKey: false,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      isComposing: false,
+    };
+    expect(isPlainDeadKeyDown(plain)).toBe(true);
+    expect(isPlainDeadKeyDown({ ...plain, metaKey: true })).toBe(false);
+    expect(isPlainDeadKeyDown({ ...plain, ctrlKey: true })).toBe(false);
+    expect(isPlainDeadKeyDown({ ...plain, altKey: true })).toBe(false);
+    expect(isPlainDeadKeyDown({ ...plain, shiftKey: true })).toBe(false);
     expect(
-      isPlainDeadKeyDown({ key: "Dead", metaKey: false, ctrlKey: false, isComposing: false }),
-    ).toBe(true);
-    expect(
-      isPlainDeadKeyDown({ key: "Dead", metaKey: true, ctrlKey: false, isComposing: false }),
-    ).toBe(false);
-    expect(
-      isPlainDeadKeyDown({ key: "`", metaKey: false, ctrlKey: false, isComposing: false }),
+      isPlainDeadKeyDown({
+        key: "`",
+        metaKey: false,
+        ctrlKey: false,
+        altKey: false,
+        shiftKey: false,
+        isComposing: false,
+      }),
     ).toBe(false);
   });
 });
