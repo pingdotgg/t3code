@@ -203,6 +203,50 @@ const runImport = (input: {
   );
 
 it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
+  it.effect.each([false, true])(
+    "only offers unfinished imports in their owning project (foreign=%s)",
+    (foreign) =>
+      Effect.gen(function* () {
+        const sourceThread = makeThread("codex");
+        const thread = makeProjectedThread({
+          source: "codex",
+          ...(foreign ? { projectId: ProjectId.make("another-project") } : {}),
+        });
+        const session = {
+          provider: sourceThread.source,
+          providerInstanceId: sourceThread.providerInstanceId,
+          sessionId: sourceThread.providerSessionId,
+          title: sourceThread.title,
+          cwd: WORKSPACE_ROOT,
+          branch: null,
+          updatedAt: sourceThread.updatedAt,
+        };
+        const result = yield* listAgentSessions({ projectId: PROJECT_ID }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              makeSnapshotsLayer({ project: makeProject(), getThread: () => Option.some(thread) }),
+              Layer.mock(AgentSessionScanner.AgentSessionScanner)({
+                listSessions: () => Effect.succeed({ sessions: [session], truncated: false }),
+              }),
+              Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
+                listBindings: () =>
+                  Effect.succeed([
+                    {
+                      threadId: thread.id,
+                      provider: ProviderDriverKind.make("codex"),
+                      providerInstanceId: sourceThread.providerInstanceId,
+                      resumeCursor: { threadId: sourceThread.providerSessionId },
+                      lastSeenAt: sourceThread.updatedAt,
+                    },
+                  ]),
+              }),
+            ),
+          ),
+        );
+        expect(result.sessions).toEqual(foreign ? [] : [session]);
+      }),
+  );
+
   describe("importRecentAgentThreads", () => {
     it.effect("uses the project root and stores provider-specific resume cursors", () =>
       Effect.gen(function* () {
@@ -631,7 +675,11 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             ...integrationScanner,
             listSessions: (_root, excluded) =>
               Effect.succeed({
-                sessions: excluded?.has(`${source}:${thread.providerSessionId}`) ? [] : [session],
+                sessions: excluded?.has(
+                  `${source}:${thread.providerInstanceId}:${thread.providerSessionId}`,
+                )
+                  ? []
+                  : [session],
                 truncated: false,
               }),
             readSession: () =>
@@ -650,6 +698,32 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             defaultModelSelection: null,
             createdAt: "2026-08-24T09:00:00.000Z",
           });
+          // A copied CLI home may contain the same native ID under another account.
+          const otherInstance = ProviderInstanceId.make(`${source}-other-account`);
+          const otherThreadId = ThreadId.make(`other-account-${source}`);
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create-${otherThreadId}`),
+            threadId: otherThreadId,
+            projectId,
+            title: "Another account",
+            modelSelection: { instanceId: otherInstance, model: "default" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-08-24T09:00:00.000Z",
+          });
+          yield* directory.upsert({
+            threadId: otherThreadId,
+            provider: ProviderDriverKind.make(source),
+            providerInstanceId: otherInstance,
+            status: "stopped",
+            resumeCursor:
+              source === "codex"
+                ? { threadId: thread.providerSessionId }
+                : { resume: thread.providerSessionId },
+          });
           const input = {
             projectId,
             providerInstanceId: thread.providerInstanceId,
@@ -666,6 +740,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             Effect.provideService(AgentSessionScanner.AgentSessionScanner, scanner),
           );
           expect(second).toEqual(first);
+          expect(first.threadId).not.toBe(otherThreadId);
           const imported = Option.getOrThrow(yield* snapshots.getThreadDetailById(first.threadId));
           expect(imported.worktreePath).toBe(cwd);
           expect((yield* list).sessions).toEqual([]);

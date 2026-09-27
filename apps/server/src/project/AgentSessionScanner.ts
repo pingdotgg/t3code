@@ -1538,6 +1538,7 @@ export const make = Effect.gen(function* () {
           .readFileString(path.join(gitDir, "HEAD"))
           .pipe(Effect.orElseSucceed(() => ""));
         return {
+          root,
           common: yield* directoryIdentity(commonDir),
           branch: /^ref: refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null,
         };
@@ -1557,7 +1558,19 @@ export const make = Effect.gen(function* () {
     if ((yield* directoryIdentity(cwd)) === (yield* directoryIdentity(workspaceRoot))) return true;
     const project = yield* checkoutIdentity(workspaceRoot);
     const candidate = yield* checkoutIdentity(cwd);
-    return project !== null && candidate !== null && project.common === candidate.common;
+    if (project === null || candidate === null || project.common !== candidate.common) return false;
+    // A project rooted in a subdirectory does not own its siblings or the whole
+    // repository's worktrees. Only checkout-root projects span linked worktrees.
+    if ((yield* directoryIdentity(project.root)) === (yield* directoryIdentity(workspaceRoot)))
+      return true;
+    const projectPath = yield* fileSystem
+      .realPath(workspaceRoot)
+      .pipe(Effect.orElseSucceed(() => path.resolve(workspaceRoot)));
+    const candidatePath = yield* fileSystem
+      .realPath(cwd)
+      .pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+    const relative = path.relative(projectPath, candidatePath);
+    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   });
 
   const discoverSessions = Effect.fn("AgentSessionScanner.discoverSessions")(function* (
@@ -1589,7 +1602,13 @@ export const make = Effect.gen(function* () {
           /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(
             transcript.filePath,
           )?.[1];
-        if (fileSessionId && excludedSessions.has(`${candidate.source}:${fileSessionId}`)) continue;
+        if (
+          fileSessionId &&
+          excludedSessions.has(
+            `${candidate.source}:${candidate.providerInstanceId}:${fileSessionId}`,
+          )
+        )
+          continue;
         eligible.push({ candidate, transcript, branch: checkout?.branch ?? null });
       }
     }
@@ -1603,12 +1622,17 @@ export const make = Effect.gen(function* () {
     // The picker reads only prefixes, never complete histories. Full history is
     // read once a session is selected. Keep the aggregate read budget bounded.
     const limit = 200;
-    for (const { candidate, transcript, branch } of eligible.slice(0, limit)) {
+    let remainingBytes = limit * 256 * 1024;
+    let inspected = 0;
+    for (const { candidate, transcript, branch } of eligible) {
+      if (sessions.length >= limit || remainingBytes <= 0) break;
+      inspected += 1;
       const prefix = yield* Effect.scoped(
         Effect.gen(function* () {
           const file = yield* fileSystem.open(transcript.filePath, { flag: "r" });
-          const bytes = yield* file.readAlloc(256 * 1024);
+          const bytes = yield* file.readAlloc(Math.min(256 * 1024, remainingBytes));
           if (Option.isNone(bytes)) return "";
+          remainingBytes -= bytes.value.byteLength;
           const text = new TextDecoder().decode(bytes.value);
           const size = Number((yield* file.stat).size);
           return bytes.value.byteLength >= size ? text : text.slice(0, text.lastIndexOf("\n") + 1);
@@ -1628,7 +1652,12 @@ export const make = Effect.gen(function* () {
       );
       if (parsed === null) continue;
       if (!transcript.filePath.endsWith(`${parsed.providerSessionId}.jsonl`)) continue;
-      if (excludedSessions.has(`${parsed.source}:${parsed.providerSessionId}`)) continue;
+      if (
+        excludedSessions.has(
+          `${parsed.source}:${parsed.providerInstanceId}:${parsed.providerSessionId}`,
+        )
+      )
+        continue;
       if (
         parsed.source === "claudeAgent" &&
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -1669,7 +1698,10 @@ export const make = Effect.gen(function* () {
         },
       });
     }
-    return { sessions, truncated: collected.truncated || eligible.length > limit };
+    return {
+      sessions,
+      truncated: collected.truncated || inspected < eligible.length || remainingBytes <= 0,
+    };
   });
 
   const listSessions: AgentSessionScanner["Service"]["listSessions"] = (

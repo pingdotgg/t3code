@@ -264,7 +264,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           expect(
             (yield* scanner.listSessions(
               repo,
-              new Set([`claudeAgent:${claudeId}`, "codex:root-session"]),
+              new Set([`claudeAgent:claudeAgent:${claudeId}`, "codex:codex:root-session"]),
             )).sessions,
           ).toEqual([]);
           expect((yield* scanner.listSessions(worktree)).sessions).toEqual(result.sessions);
@@ -348,8 +348,69 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   );
 
   it.effect(
-    "can select an external session older than the picker's budget of T3-native sessions",
+    "does not expose sibling projects or other worktrees through a subdirectory project",
     () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* makeTempDir("t3code-resume-subproject-");
+        const repo = path.join(base, "repo");
+        const project = path.join(repo, "apps", "one");
+        const child = path.join(project, "src");
+        const sibling = path.join(repo, "apps", "two");
+        const worktree = path.join(base, "worktree");
+        const linkedGit = path.join(repo, ".git", "worktrees", "other");
+        for (const dir of [child, sibling, worktree, linkedGit])
+          yield* fs.makeDirectory(dir, { recursive: true });
+        yield* fs.writeFileString(path.join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+        yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${linkedGit}\n`);
+        yield* fs.writeFileString(path.join(linkedGit, "commondir"), "../..\n");
+        const codexHomePath = path.join(base, "codex");
+        const claudeHomePath = path.join(base, "claude");
+        for (const [id, cwd] of [
+          ["child", child],
+          ["sibling", sibling],
+          ["worktree", worktree],
+        ]) {
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "09",
+              "27",
+              `rollout-${id}.jsonl`,
+            ),
+            contents: [
+              encodeTranscriptRecord({ type: "session_meta", payload: { id, cwd } }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: `Task ${id}` },
+              }),
+            ].join("\n"),
+            mtimeMs: Date.parse("2026-09-27T12:00:00Z"),
+          });
+        }
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          expect((yield* scanner.listSessions(project)).sessions.map((s) => s.sessionId)).toEqual([
+            "child",
+          ]);
+          expect(
+            (yield* scanner.listSessions(repo)).sessions.map((s) => s.sessionId).sort(),
+          ).toEqual(["child", "sibling", "worktree"]);
+          expect(
+            (yield* scanner
+              .readSession(project, ProviderInstanceId.make("codex"), "sibling")
+              .pipe(Effect.result))._tag,
+          ).toBe("Failure");
+        }).pipe(Effect.provide(makeScannerTestLayer({ codexHomePath, claudeHomePath })));
+      }),
+  );
+
+  it.effect.each(["uuid", "named"] as const)(
+    "can select an external session older than the picker's budget of T3-native %s sessions",
+    (idStyle) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fs = yield* FileSystem.FileSystem;
@@ -362,8 +423,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const externalId = "01a0d940-6480-7831-b253-569ae0ea6be1";
         for (let index = 0; index <= 200; index++) {
           const id =
-            index === 0 ? externalId : `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
-          if (index > 0) excluded.add(`codex:${id}`);
+            index === 0
+              ? externalId
+              : idStyle === "named"
+                ? `native-session-${index}`
+                : `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+          if (index > 0) excluded.add(`codex:codex:${id}`);
           yield* writeTranscript({
             filePath: path.join(
               codexHomePath,

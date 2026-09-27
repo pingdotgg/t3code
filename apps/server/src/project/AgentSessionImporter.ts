@@ -356,7 +356,9 @@ export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
     );
   for (const { source } of importedSources)
-    excludedSessions.add(`${source.provider}:${source.providerSessionId}`);
+    excludedSessions.add(
+      `${source.provider}:${source.providerInstanceId}:${source.providerSessionId}`,
+    );
   const unfinishedImports = new Map<string, ThreadId>();
   for (const binding of bindings) {
     if (!Predicate.isObject(binding.resumeCursor)) continue;
@@ -365,7 +367,7 @@ export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
         ? binding.resumeCursor.resume
         : binding.resumeCursor.threadId;
     if (typeof id !== "string") continue;
-    const key = `${binding.provider}:${id}`;
+    const key = `${binding.provider}:${binding.providerInstanceId}:${id}`;
     if (excludedSessions.has(key)) continue;
     if (binding.threadId.startsWith("import:")) {
       unfinishedImports.set(key, binding.threadId);
@@ -376,7 +378,9 @@ export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
   const result = yield* scanner.listSessions(project.workspaceRoot, excludedSessions);
   const sessions: Array<(typeof result.sessions)[number]> = [];
   for (const session of result.sessions) {
-    const importedThreadId = unfinishedImports.get(`${session.provider}:${session.sessionId}`);
+    const importedThreadId = unfinishedImports.get(
+      `${session.provider}:${session.providerInstanceId}:${session.sessionId}`,
+    );
     if (importedThreadId) {
       // A failed import can leave its cursor before publishing the history.
       // Completed imports normally have a recorded source. Inspect history only
@@ -388,7 +392,11 @@ export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
             (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
           ),
         );
-      if (Option.isSome(thread) && hasImportedHistory(thread.value)) continue;
+      if (
+        Option.isSome(thread) &&
+        (thread.value.projectId !== input.projectId || hasImportedHistory(thread.value))
+      )
+        continue;
     }
     sessions.push(session);
   }
@@ -418,7 +426,11 @@ export const attachAgentSession = Effect.fn("attachAgentSession")(function* (
   );
   // Native T3 threads and imported threads share the provider's session identity.
   for (const binding of bindings) {
-    if (binding.provider !== selected.thread.source || !Predicate.isObject(binding.resumeCursor))
+    if (
+      binding.provider !== selected.thread.source ||
+      binding.providerInstanceId !== input.providerInstanceId ||
+      !Predicate.isObject(binding.resumeCursor)
+    )
       continue;
     const nativeId =
       binding.provider === "claudeAgent"

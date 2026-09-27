@@ -6227,6 +6227,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
             ].join("\n"),
           );
+        const otherHome = path.join(base, "codex-other");
+        yield* fs.copy(codexHome, otherHome);
         const projectId = ProjectId.make("resume-rpc-project");
         yield* buildAppUnderTest({
           layers: {
@@ -6237,6 +6239,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   [ProviderInstanceId.make("codex")]: {
                     driver: ProviderDriverKind.make("codex"),
                     config: { homePath: codexHome },
+                  },
+                  [ProviderInstanceId.make("codex-other")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: { homePath: otherHome },
                   },
                   [ProviderInstanceId.make("claudeAgent")]: {
                     driver: ProviderDriverKind.make("claudeAgent"),
@@ -6294,12 +6300,68 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const result = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) => client[WS_METHODS.agentSessionsList]({ projectId })),
         );
-        assert.deepEqual(result.sessions.map((session) => session.sessionId).sort(), [
-          ids[2],
-          ids[3],
-        ]);
+        assert.deepEqual(
+          result.sessions
+            .map((session) => `${session.providerInstanceId}:${session.sessionId}`)
+            .sort(),
+          [...ids.map((id) => `codex-other:${id}`), `codex:${ids[2]}`, `codex:${ids[3]}`].sort(),
+        );
         assert.equal(result.sessions[0]?.cwd, workspaceRoot);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serializes session imports across separate websocket connections", () =>
+    Effect.gen(function* () {
+      const firstEntered = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const firstProject = ProjectId.make("first-import");
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getProjectShellById: (projectId) =>
+              Effect.gen(function* () {
+                if (projectId === firstProject) {
+                  yield* Deferred.succeed(firstEntered, undefined);
+                  yield* Deferred.await(releaseFirst);
+                } else {
+                  yield* Deferred.succeed(secondEntered, undefined);
+                }
+                return Option.none();
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const input = {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        sessionId: "shared-session",
+      };
+      yield* withWsRpcClient(wsUrl, (firstClient) =>
+        withWsRpcClient(wsUrl, (secondClient) =>
+          Effect.gen(function* () {
+            const first = yield* firstClient[WS_METHODS.agentSessionsAttach]({
+              ...input,
+              projectId: firstProject,
+            }).pipe(Effect.result, Effect.forkChild);
+            yield* Deferred.await(firstEntered);
+            const second = yield* secondClient[WS_METHODS.agentSessionsAttach]({
+              ...input,
+              projectId: ProjectId.make("second-import"),
+            }).pipe(Effect.result, Effect.forkChild);
+            // A response on the second connection proves its earlier attach request
+            // reached the server while the first connection still holds the import.
+            yield* secondClient[WS_METHODS.serverGetConfig]({});
+            const overlapped = yield* Deferred.isDone(secondEntered);
+            yield* Deferred.succeed(releaseFirst, undefined);
+            yield* Fiber.join(first);
+            yield* Fiber.join(second);
+            assert.isFalse(overlapped);
+            assert.isTrue(yield* Deferred.isDone(secondEntered));
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseFirst, undefined))),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("returns scanner skip counts over websocket rpc", () =>

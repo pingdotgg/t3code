@@ -507,6 +507,7 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  agentSessionImportLock: Semaphore.Semaphore,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -636,7 +637,6 @@ const makeWsRpcLayer = (
         | WorkspacePaths.WorkspacePaths
       >();
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
-      const agentSessionImportLock = yield* Semaphore.make(1);
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -4068,6 +4068,7 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const agentSessionImportLock = yield* Semaphore.make(1);
     const baseServerSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const config = yield* ServerConfig.ServerConfig;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -4134,6 +4135,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              agentSessionImportLock,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
