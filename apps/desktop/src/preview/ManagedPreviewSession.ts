@@ -338,7 +338,7 @@ export const bootstrapManagedPreviewSession = (
   } catch {
     return Promise.resolve({ _tag: "not-managed" });
   }
-  const key = `${input.environmentId}\u0000${targetUrl.origin}`;
+  const key = `${input.environmentId}\u0000${targetUrl.origin}\u0000${input.managedTargetAuth.attestation ?? ""}`;
   let inFlight = inFlightBySession.get(browserSession);
   if (!inFlight) {
     inFlight = new Map();

@@ -29,6 +29,7 @@ const authDescriptor = {
 };
 
 const makeManagedTargetAuth = (input: {
+  readonly challenge?: string;
   readonly origin?: string;
   readonly expectedOrigins?: ReadonlyArray<string>;
   readonly signingPublicKey?: string;
@@ -37,7 +38,7 @@ const makeManagedTargetAuth = (input: {
 }): PreviewAutomationManagedTargetAuth => ({
   environmentId,
   expectedOrigins: input.expectedOrigins ?? [input.origin ?? defaultOrigin],
-  attestation,
+  attestation: input.challenge ?? attestation,
   ...(input.signingPublicKey === undefined ? {} : { attestationPublicKey: input.signingPublicKey }),
   ...(input.encryptionPublicKey === undefined
     ? {}
@@ -68,6 +69,9 @@ const makeHarness = (options?: {
   readonly currentSigningKey?: KeyObject;
   readonly currentEncryptionKey?: ReturnType<typeof createPreviewBootstrapKeyPair>;
   readonly managedTargetAuth?: PreviewAutomationManagedTargetAuth;
+  readonly holdAttestationUntilTwoChallenges?: boolean;
+  readonly expectedCredentialsByChallenge?: ReadonlyMap<string, string>;
+  readonly holdBootstrapUntilTwoRequests?: boolean;
 }) => {
   const signingKeyPair = options?.currentSigningKey ? undefined : generateKeyPairSync("ed25519");
   const encryptionKeyPair = options?.currentEncryptionKey ?? createPreviewBootstrapKeyPair();
@@ -89,6 +93,17 @@ const makeHarness = (options?: {
     });
   let authenticated = options?.initialState === "authenticated";
   const bootstrapRequests: AuthPreviewBootstrapInput[] = [];
+  const attestationChallenges: string[] = [];
+  let releaseAttestationGate = () => {};
+  let attestationGateTimeout: ReturnType<typeof setTimeout> | undefined;
+  const attestationGate = new Promise<void>((resolve) => {
+    releaseAttestationGate = resolve;
+  });
+  let releaseBootstrapGate = () => {};
+  let bootstrapGateTimeout: ReturnType<typeof setTimeout> | undefined;
+  const bootstrapGate = new Promise<void>((resolve) => {
+    releaseBootstrapGate = resolve;
+  });
   const stages: string[] = [];
   const cookieSet = vi.fn(async (_details: Parameters<Session["cookies"]["set"]>[0]) => {
     stages.push("cookie-set");
@@ -112,10 +127,21 @@ const makeHarness = (options?: {
     }
     if (url.pathname === "/api/auth/preview-attestation") {
       stages.push("attestation");
+      const payload = JSON.parse(String(init?.body)) as { challenge: string };
+      attestationChallenges.push(payload.challenge);
+      if (options?.holdAttestationUntilTwoChallenges) {
+        if (attestationChallenges.length === 1) {
+          attestationGateTimeout = setTimeout(releaseAttestationGate, 1_000);
+          await attestationGate;
+        } else {
+          if (attestationGateTimeout) clearTimeout(attestationGateTimeout);
+          releaseAttestationGate();
+        }
+      }
       const signature = signMessage(
         null,
         Buffer.from(
-          `${environmentId}\u0000${url.origin}\u0000${attestation}\u0000${encryptionKeyPair.publicKey}`,
+          `${environmentId}\u0000${url.origin}\u0000${payload.challenge}\u0000${encryptionKeyPair.publicKey}`,
         ),
         signingPrivateKey,
       ).toString("base64url");
@@ -165,8 +191,19 @@ const makeHarness = (options?: {
         encrypted: payload.encryptedCredential,
       });
       stages.push("bootstrap-decrypted");
-      if (openedCredential !== credential) {
+      const expectedCredential =
+        options?.expectedCredentialsByChallenge?.get(payload.challenge) ?? credential;
+      if (openedCredential !== expectedCredential) {
         return new Response(null, { status: 401 });
+      }
+      if (options?.holdBootstrapUntilTwoRequests) {
+        if (bootstrapRequests.length === 1) {
+          bootstrapGateTimeout = setTimeout(releaseBootstrapGate, 1_000);
+          await bootstrapGate;
+        } else {
+          if (bootstrapGateTimeout) clearTimeout(bootstrapGateTimeout);
+          releaseBootstrapGate();
+        }
       }
       const encrypted = sealPreviewBootstrapPayload({
         privateKey: encryptionKeyPair.privateKey,
@@ -198,6 +235,7 @@ const makeHarness = (options?: {
     managedTargetAuth,
     browserSession: { fetch, cookies: { set: cookieSet } },
     bootstrapRequests,
+    attestationChallenges,
     cookieSet,
     stages,
   };
@@ -277,6 +315,56 @@ describe("bootstrapManagedPreviewSession", () => {
     expect(harness.bootstrapRequests).toHaveLength(1);
     expect(results).toEqual([{ _tag: "authenticated" }, { _tag: "authenticated" }]);
     expect(harness.cookieSet).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps concurrent bootstraps with distinct provider challenges independent", async () => {
+    const signingKeyPair = generateKeyPairSync("ed25519");
+    const encryptionKeyPair = createPreviewBootstrapKeyPair();
+    const signingPublicKey = signingKeyPair.publicKey
+      .export({ type: "spki", format: "der" })
+      .toString("base64url");
+    const firstChallenge = "challenge-for-first-provider-session";
+    const secondChallenge = "challenge-for-another-provider-session";
+    const firstCredential = "first-preview-credential";
+    const secondCredential = "second-preview-credential";
+    const firstAuth = makeManagedTargetAuth({
+      challenge: firstChallenge,
+      signingPublicKey,
+      encryptionPublicKey: encryptionKeyPair.publicKey,
+      credentials: [{ origin: defaultOrigin, credential: firstCredential }],
+    });
+    const secondAuth = makeManagedTargetAuth({
+      challenge: secondChallenge,
+      signingPublicKey,
+      encryptionPublicKey: encryptionKeyPair.publicKey,
+      credentials: [{ origin: defaultOrigin, credential: secondCredential }],
+    });
+    const harness = makeHarness({
+      initialState: "missing",
+      holdAttestationUntilTwoChallenges: true,
+      currentSigningKey: signingKeyPair.privateKey,
+      currentEncryptionKey: encryptionKeyPair,
+      managedTargetAuth: firstAuth,
+      expectedCredentialsByChallenge: new Map([
+        [firstChallenge, firstCredential],
+        [secondChallenge, secondCredential],
+      ]),
+      holdBootstrapUntilTwoRequests: true,
+    });
+    const results = await Promise.all([
+      bootstrapManagedPreviewSession(harness.browserSession, makeInput(firstAuth)),
+      bootstrapManagedPreviewSession(harness.browserSession, makeInput(secondAuth)),
+    ]);
+
+    expect(harness.attestationChallenges).toEqual(
+      expect.arrayContaining([firstChallenge, secondChallenge]),
+    );
+    expect(harness.attestationChallenges).toHaveLength(2);
+    expect(harness.bootstrapRequests.map((request) => request.challenge)).toEqual(
+      expect.arrayContaining([firstChallenge, secondChallenge]),
+    );
+    expect(harness.bootstrapRequests).toHaveLength(2);
+    expect(results).toEqual([{ _tag: "authenticated" }, { _tag: "authenticated" }]);
   });
 
   it("accepts an explicitly authorized loopback host alias", async () => {

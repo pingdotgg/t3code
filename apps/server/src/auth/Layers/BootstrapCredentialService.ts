@@ -33,6 +33,7 @@ type ConsumeResult =
     };
 
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
+const MAX_REVOKED_TRANSIENT_SUBJECTS = 4_096;
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 
@@ -255,7 +256,17 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
 
   const revokeTransientOneTimeTokensForSubject: BootstrapCredentialServiceShape["revokeTransientOneTimeTokensForSubject"] =
     (subject) =>
-      Ref.update(revokedTransientSubjectsRef, (current) => new Set(current).add(subject)).pipe(
+      Ref.update(revokedTransientSubjectsRef, (current) => {
+        const next = new Set(current);
+        next.delete(subject);
+        next.add(subject);
+        while (next.size > MAX_REVOKED_TRANSIENT_SUBJECTS) {
+          const oldest = next.values().next().value;
+          if (oldest === undefined) break;
+          next.delete(oldest);
+        }
+        return next;
+      }).pipe(
         Effect.andThen(
           Ref.modify(seededGrantsRef, (current) => {
             let revokedCount = 0;
