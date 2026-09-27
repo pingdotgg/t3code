@@ -108,6 +108,7 @@ import {
 import { startPreviewRuntime, type PreviewRuntimeHandle } from "./preview/Runtime.ts";
 import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
+  checkLocalDevRebuildStaleness,
   launchLocalDevRebuild,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
@@ -156,6 +157,7 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const LOCAL_REBUILD_GET_STATE_CHANNEL = "desktop:local-rebuild-get-state";
 const LOCAL_REBUILD_START_CHANNEL = "desktop:local-rebuild-start";
+const LOCAL_REBUILD_CHECK_STALENESS_CHANNEL = "desktop:local-rebuild-check-staleness";
 const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
@@ -2084,6 +2086,16 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(LOCAL_REBUILD_GET_STATE_CHANNEL);
   ipcMain.handle(LOCAL_REBUILD_GET_STATE_CHANNEL, async () => getLocalDevRebuildState());
+
+  ipcMain.removeHandler(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL);
+  ipcMain.handle(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL, async () => {
+    const state = getLocalDevRebuildState();
+    return checkLocalDevRebuildStaleness({
+      enabled: state.enabled,
+      sourceRoot: state.sourceRoot,
+      buildSha: resolveAboutCommitHash(),
+    });
+  });
 
   ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
   ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async () => {

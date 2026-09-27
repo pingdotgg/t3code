@@ -6,9 +6,13 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  checkLocalDevRebuildStaleness,
+  decideRebuildStaleness,
   launchLocalDevRebuild,
+  parseLsRemoteSymrefHead,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
+  type GitRunner,
 } from "./localDevRebuild.ts";
 
 function makeCheckout(): string {
@@ -141,5 +145,225 @@ describe("local Dev rebuild", () => {
     });
     child.emit("exit", 1, null);
     expect(onExit).toHaveBeenCalledOnce();
+  });
+});
+
+const BUILD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const LOCAL_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const REMOTE_SHA = "cccccccccccccccccccccccccccccccccccccccc";
+
+describe("local Dev rebuild staleness", () => {
+  it("parses ls-remote symref output for the default branch tip", () => {
+    expect(parseLsRemoteSymrefHead(`ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`)).toEqual({
+      sha: REMOTE_SHA,
+      branch: "main",
+    });
+    expect(parseLsRemoteSymrefHead(`${REMOTE_SHA}\tHEAD\n`)).toEqual({
+      sha: REMOTE_SHA,
+      branch: null,
+    });
+    expect(parseLsRemoteSymrefHead("")).toBeNull();
+    expect(parseLsRemoteSymrefHead("not-a-sha\tHEAD\n")).toBeNull();
+  });
+
+  it("decides behind only when the base is a strict ancestor of the remote tip", () => {
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: BUILD_SHA,
+        mergeBaseIsAncestor: true,
+        behindBy: 0,
+      }).behind,
+    ).toBe(false);
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: REMOTE_SHA,
+        mergeBaseIsAncestor: true,
+        behindBy: 3,
+      }),
+    ).toEqual({ behind: true, error: null });
+    // Local ahead or diverged: rebuilding the checkout would not bring main in.
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: REMOTE_SHA,
+        mergeBaseIsAncestor: false,
+        behindBy: null,
+      }).behind,
+    ).toBe(false);
+    // Comparison impossible (e.g. unknown objects): never claim behind.
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: REMOTE_SHA,
+        mergeBaseIsAncestor: null,
+        behindBy: null,
+      }),
+    ).toEqual({ behind: false, error: expect.any(String) });
+  });
+
+  function stubRunner(scenarios: Record<string, { stdout: string; exitCode: number }>): {
+    runner: GitRunner;
+    calls: Array<readonly string[]>;
+  } {
+    const calls: Array<readonly string[]> = [];
+    const runner: GitRunner = async (args) => {
+      calls.push(args);
+      const key = args.join(" ");
+      const hit = scenarios[key];
+      if (!hit) throw new Error(`unexpected git invocation: ${key}`);
+      return hit;
+    };
+    return { runner, calls };
+  }
+
+  const behindScenario = (): Record<string, { stdout: string; exitCode: number }> => ({
+    "rev-parse HEAD": { stdout: `${LOCAL_SHA}\n`, exitCode: 0 },
+    "branch --show-current": { stdout: "main\n", exitCode: 0 },
+    "ls-remote --symref origin HEAD": {
+      stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+      exitCode: 0,
+    },
+    [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 0 },
+    [`rev-list --count ${BUILD_SHA}..${REMOTE_SHA}`]: { stdout: "7\n", exitCode: 0 },
+  });
+
+  it("reports behind with a count when main moved past the running build", async () => {
+    const { runner, calls } = stubRunner(behindScenario());
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      behind: true,
+      behindBy: 7,
+      localBranch: "main",
+      localSha: LOCAL_SHA,
+      remoteBranch: "main",
+      remoteSha: REMOTE_SHA,
+      buildSha: BUILD_SHA,
+      error: null,
+    });
+    expect(result.checkedAt).toEqual(expect.any(String));
+    expect(calls[0]?.[0]).toBe("rev-parse");
+  });
+
+  it("falls back to the checkout HEAD when the build carries no commit", async () => {
+    const scenario = behindScenario();
+    scenario[`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`] = {
+      stdout: "",
+      exitCode: 0,
+    };
+    const { runner } = stubRunner({
+      ...scenario,
+      [`merge-base --is-ancestor ${LOCAL_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 0 },
+      [`rev-list --count ${LOCAL_SHA}..${REMOTE_SHA}`]: { stdout: "2\n", exitCode: 0 },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: null,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ available: true, behind: true, behindBy: 2, buildSha: null });
+  });
+
+  it("reports up to date when the remote tip matches the running build", async () => {
+    const { runner } = stubRunner({
+      "rev-parse HEAD": { stdout: `${BUILD_SHA}\n`, exitCode: 0 },
+      "branch --show-current": { stdout: "main\n", exitCode: 0 },
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${BUILD_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ available: true, behind: false, error: null });
+  });
+
+  it("never claims behind for ahead or diverged checkouts", async () => {
+    const { runner } = stubRunner({
+      "rev-parse HEAD": { stdout: `${LOCAL_SHA}\n`, exitCode: 0 },
+      "branch --show-current": { stdout: "feature\n", exitCode: 0 },
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+      [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 1 },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ available: true, behind: false, error: null });
+  });
+
+  it("skips git entirely when rebuilds are unavailable", async () => {
+    const runner = vi.fn();
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: false,
+      sourceRoot: null,
+      buildSha: null,
+      runGit: runner as unknown as GitRunner,
+    });
+
+    expect(result).toMatchObject({ available: false, behind: false });
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("reports errors instead of behind when git or the network fails", async () => {
+    const offline: GitRunner = async (args) => {
+      if (args[0] === "ls-remote") throw new Error("Could not resolve host");
+      return { stdout: `${LOCAL_SHA}\n`, exitCode: 0 };
+    };
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: offline,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.behind).toBe(false);
+    expect(result.error).toEqual(expect.any(String));
+  });
+
+  it("reports an error when the checkout is not a git repository", async () => {
+    const { runner } = stubRunner({
+      "rev-parse HEAD": { stdout: "", exitCode: 128 },
+      "branch --show-current": { stdout: "", exitCode: 128 },
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result.behind).toBe(false);
+    expect(result.error).toEqual(expect.any(String));
   });
 });
