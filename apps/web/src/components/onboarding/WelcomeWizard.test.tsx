@@ -155,6 +155,7 @@ it("enters the workspace after a partial import and warns after navigation finis
 it.each([
   [0, 0, null],
   [29, 0, null],
+  [1, 0, null],
   [0, 1, "1 thread could not be imported."],
   [0, 2, "2 threads could not be imported."],
 ] as const)(
@@ -170,7 +171,12 @@ it.each([
     await click("Continue");
     await click("Import 1 project");
     expect(onDone).toHaveBeenCalledOnce();
-    if (warning === null) {
+    if (warning === null && importedCount > 0) {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        type: "success",
+        title: `Imported ${importedCount} ${importedCount === 1 ? "thread" : "threads"}`,
+      });
+    } else if (warning === null) {
       expect(mocks.toast).not.toHaveBeenCalled();
     } else {
       expect(mocks.toast).toHaveBeenCalledWith(
