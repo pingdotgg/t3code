@@ -25,7 +25,16 @@ it.effect("reads, writes, and resets guided Git repository configuration", () =>
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-config-" });
     yield* runGit(root, ["init", "--initial-branch=main"]);
     const configuration = yield* VcsConfigurationService.VcsConfigurationService;
-    assert.equal((yield* configuration.read({ cwd: root })).largeFile.effective, "512m");
+    const inheritedThreshold = yield* Effect.sync(() =>
+      NodeChildProcess.spawnSync("git", ["config", "--get", "core.bigFileThreshold"], {
+        cwd: root,
+        encoding: "utf8",
+      }),
+    );
+    assert.ok(inheritedThreshold.status === 0 || inheritedThreshold.status === 1);
+    const expectedThreshold =
+      inheritedThreshold.status === 0 ? inheritedThreshold.stdout.trim() : "512m";
+    assert.equal((yield* configuration.read({ cwd: root })).largeFile.effective, expectedThreshold);
 
     yield* configuration.write({ cwd: root, setting: "userName", value: "Repository Author" });
     yield* configuration.write({ cwd: root, setting: "largeFile", value: "4 MiB" });
@@ -42,7 +51,7 @@ it.effect("reads, writes, and resets guided Git repository configuration", () =>
     yield* configuration.write({ cwd: root, setting: "largeFile", value: null });
     const reset = yield* configuration.read({ cwd: root });
     assert.equal(reset.largeFile.repository, null);
-    assert.equal(reset.largeFile.effective, "512m");
+    assert.equal(reset.largeFile.effective, expectedThreshold);
     const failure = yield* configuration
       .write({ cwd: root, setting: "largeFile", value: "5000" })
       .pipe(Effect.flip);
