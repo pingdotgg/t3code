@@ -89,6 +89,75 @@ export function resolveComposerTimelineInset(input: {
     : input.overlayHeight;
 }
 
+/**
+ * Timing for a resting-transition height tween that may interrupt one in
+ * flight. A retarget toward the same destination (the body re-reporting its
+ * size mid-tween) keeps the original start height and clock: restarting would
+ * leave each new animation pending on its first keyframe, so the card would
+ * freeze and then snap. A genuinely new destination (say, a multiline paste)
+ * restarts from the height currently on screen for the remaining time, started
+ * immediately rather than pending. A reversed state change gets a fresh tween.
+ */
+export function resolveComposerRestingTweenTiming(input: {
+  stateChanged: boolean;
+  defaultDurationMs: number;
+  nextHeight: number;
+  /** Height at rest before this change, used when nothing was in flight. */
+  settledHeight: number | null;
+  interrupted: {
+    renderedHeight: number;
+    startTime: number | null;
+    currentTime: number | null;
+    durationMs: number | null;
+    fromHeight: number | null;
+    targetHeight: number | null;
+  } | null;
+}): {
+  fromHeight: number | null;
+  durationMs: number;
+  remainingMs: number;
+  /** A time to start on, "now" to skip the pending frame, or null for the default. */
+  startTime: number | "now" | null;
+} {
+  const { interrupted } = input;
+  if (!interrupted) {
+    return {
+      fromHeight: input.settledHeight,
+      durationMs: input.defaultDurationMs,
+      remainingMs: input.defaultDurationMs,
+      startTime: null,
+    };
+  }
+  const midFlight =
+    !input.stateChanged && interrupted.durationMs !== null && interrupted.currentTime !== null;
+  if (!midFlight || interrupted.durationMs === null || interrupted.currentTime === null) {
+    return {
+      fromHeight: interrupted.renderedHeight,
+      durationMs: input.defaultDurationMs,
+      remainingMs: input.defaultDurationMs,
+      startTime: null,
+    };
+  }
+  const remainingMs = Math.max(1, interrupted.durationMs - interrupted.currentTime);
+  const sameDestination =
+    interrupted.targetHeight !== null &&
+    Math.abs(interrupted.targetHeight - input.nextHeight) < 0.5;
+  if (sameDestination && interrupted.startTime !== null && interrupted.fromHeight !== null) {
+    return {
+      fromHeight: interrupted.fromHeight,
+      durationMs: interrupted.durationMs,
+      remainingMs,
+      startTime: interrupted.startTime,
+    };
+  }
+  return {
+    fromHeight: interrupted.renderedHeight,
+    durationMs: remainingMs,
+    remainingMs,
+    startTime: "now",
+  };
+}
+
 export function shouldAnimateComposerRestingTransition(input: {
   hasCompletedInitialLayout: boolean;
   stateChanged: boolean;
