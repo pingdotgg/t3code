@@ -112,9 +112,14 @@ for per-match decisions and the absorption PR record.
 {
   "id": "child-threads",
   "purpose": "Spawn child threads, hide them from sidebars and open them from their parent.",
-  "issues": ["https://github.com/toolboxmd/t3code/issues/8"],
+  "issues": [
+    "https://github.com/toolboxmd/t3code/issues/8",
+    "https://github.com/toolboxmd/t3code/issues/48"
+  ],
   "prs": ["https://github.com/toolboxmd/t3code/pull/10"],
   "newFiles": [
+    "apps/server/src/mcp/toolkits/threads/childReportState.test.ts",
+    "apps/server/src/mcp/toolkits/threads/childReportState.ts",
     "apps/server/src/mcp/toolkits/threads/childThreads.test.ts",
     "apps/server/src/mcp/toolkits/threads/handlers.ts",
     "apps/server/src/mcp/toolkits/threads/subagentThreadId.test.ts",
