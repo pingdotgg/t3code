@@ -38,6 +38,7 @@ function run(
 const turnFor = (source: OrchestrationV2Run) => ({
   runAttemptId: source.activeAttemptId,
   providerThreadId: source.providerThreadId!,
+  status: "completed" as const,
 });
 
 it("keeps the note for the provider thread that lost the work across a provider switch", () => {

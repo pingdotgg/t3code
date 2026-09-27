@@ -139,6 +139,67 @@ it("recovers an admitted continuation after another crash before provider start"
   assert.equal(restartContinuationRun(starting)?.id, runId);
 });
 
+it("continues a settled root run only when the restart cancelled its background work", () => {
+  const projection = makeProjection();
+  const settled = {
+    ...projection,
+    runs: [{ ...projection.runs[0]!, status: "completed" as const }],
+    providerThreads: [{ ...projection.providerThreads[0]!, status: "idle" as const }],
+    providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" as const }],
+    providerTurns: [],
+  };
+  assert.isUndefined(restartContinuationRun(settled));
+  assert.equal(restartContinuationRun(settled, true)?.id, runId);
+  for (const invalid of [
+    { ...settled, thread: { ...settled.thread, archivedAt: {} } },
+    { ...settled, thread: { ...settled.thread, deletedAt: {} } },
+    { ...settled, runs: [{ ...settled.runs[0]!, status: "failed" as const }] },
+    {
+      ...settled,
+      providerThreads: [{ ...settled.providerThreads[0]!, nativeThreadRef: null }],
+    },
+  ])
+    assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection, true));
+});
+
+it.effect("prompts a settled thread's continuation with the note of its lost work", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const work = [{ kind: "shell" as const, label: "sleep 25 && echo DONE" }];
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "completed", restartCancelledBackgroundWork: work }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.lengthOf(commands, 1);
+    const command = commands[0]!;
+    assert.equal(
+      command.type === "message.dispatch" ? command.restartContinuationOfRunId : null,
+      runId,
+    );
+    assert.include(
+      command.type === "message.dispatch" ? command.text : "",
+      "sleep 25 && echo DONE",
+    );
+    assert.notInclude(command.type === "message.dispatch" ? command.text : "", "Continue where");
+  }),
+);
+
 for (const [enabled, projectOverride] of [
   [false, undefined],
   [true, undefined],

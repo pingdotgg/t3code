@@ -11,12 +11,22 @@ import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
+import {
+  isRestartNoteSource,
+  restartCancelledBackgroundWorkNote,
+} from "./RestartBackgroundNote.ts";
 
+/**
+ * The run a restart continuation resumes, if any: an unfinished root run, or a
+ * settled one whose background work the restart cancelled (`cancelledWork`,
+ * which recovery is about to record on the latest run).
+ */
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
     "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
+  cancelledWork = false,
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -26,7 +36,11 @@ export function restartContinuationRun(
   if (!run) return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
-  if (run.status !== "running" && !preparedContinuation) return;
+  // Background work outlived this settled turn; the provider has no live turn.
+  const settledWithCancelledWork =
+    cancelledWork && (run.status === "completed" || run.status === "waiting");
+  if (run.status !== "running" && !preparedContinuation && !settledWithCancelledWork) return;
+  const liveTurnRequired = !preparedContinuation && !settledWithCancelledWork;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === run.providerThreadId,
@@ -39,7 +53,7 @@ export function restartContinuationRun(
     providerThread.nativeThreadRef?.nativeId == null ||
     providerThread.nativeThreadRef.strength !== "strong" ||
     providerThread.nativeThreadRef.driver !== providerThread.driver ||
-    (!preparedContinuation && providerThread.status !== "active") ||
+    (liveTurnRequired && providerThread.status !== "active") ||
     providerThread.status === "closed" ||
     providerThread.status === "archived"
   )
@@ -47,15 +61,18 @@ export function restartContinuationRun(
   const session = projection.providerSessions.find(
     (candidate) => candidate.id === providerThread.providerSessionId,
   );
+  // A settled thread's session may already be stopped and out of the recovery
+  // read; the continuation reopens it from the provider thread's native ref.
   if (
-    !session ||
-    session.providerInstanceId !== run.providerInstanceId ||
-    session.driver !== providerThread.driver ||
-    (!preparedContinuation && session.status !== "running")
+    session === undefined
+      ? !settledWithCancelledWork
+      : session.providerInstanceId !== run.providerInstanceId ||
+        session.driver !== providerThread.driver ||
+        (liveTurnRequired && session.status !== "running")
   )
     return;
   if (
-    !preparedContinuation &&
+    liveTurnRequired &&
     !projection.providerTurns.some(
       (turn) =>
         turn.providerThreadId === providerThread.id &&
@@ -74,9 +91,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     if (!enabled) return;
     const threads = yield* ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
-    const projection = yield* threads.getThreadRecords(input.threadId, ["messages", "runs"], {
-      messageIds: [messageId],
-    });
+    const projection = yield* threads.getThreadRecords(
+      input.threadId,
+      ["messages", "runs", "providerTurns"],
+      { messageIds: [messageId] },
+    );
     if (
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
         .continueThreadsAfterServerUpdate
@@ -86,7 +105,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
 
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
-    if (!source || source.status !== "cancelled") return;
+    // A settled source prompts with the note of the background work it lost.
+    const noteSource =
+      source !== undefined && isRestartNoteSource(source, projection.providerTurns);
+    if (!source || (source.status !== "cancelled" && !noteSource)) return;
     // A user submission after reconciliation takes precedence over an automatic prompt.
     if (projection.runs.some((run) => run.ordinal > source.ordinal)) return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
@@ -95,7 +117,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
       threadId: input.threadId,
       messageId,
-      text: "Continue where you left off.",
+      text: noteSource
+        ? restartCancelledBackgroundWorkNote(source.restartCancelledBackgroundWork ?? [])
+        : "Continue where you left off.",
       attachments: [],
       modelSelection: source.modelSelection,
       dispatchMode: { type: "start_immediately" },
