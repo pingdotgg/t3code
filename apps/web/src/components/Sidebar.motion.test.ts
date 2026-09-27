@@ -563,6 +563,24 @@ describe("sidebar list motion", () => {
 });
 
 describe("pinning motion", () => {
+  it("keeps the curved flight when a scroll leaves its clipping endpoint unchanged", () => {
+    const rows = Array.from({ length: 16 }, (_, index) => new TestRow(String(index)));
+    const pin = rows.at(-1)!;
+    const { motion, layout, viewport } = fixture(rows, 1000);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, ...rows.slice(0, -1)]);
+    motion.update(true);
+    const first = pin.animations[0]!;
+    first.progress = Number(pin.animate.mock.lastCall![0][80]!.offset);
+    // The browser's rectangle includes the live animation transform.
+    pin.dragTranslate = 1251;
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(first.cancel).not.toHaveBeenCalled();
+    expect(pin.animate).toHaveBeenCalledTimes(1);
+    motion.dispose();
+  });
+
   it("retargets a clipped flight when scrolling exposes its old endpoint", () => {
     const rows = Array.from({ length: 16 }, (_, index) => new TestRow(String(index)));
     const pin = rows.at(-1)!;
@@ -573,6 +591,11 @@ describe("pinning motion", () => {
     motion.update(true);
     const first = pin.animations[0]!;
     first.progress = Number(pin.animate.mock.lastCall![0][80]!.offset);
+    pin.dragTranslate = 1251;
+    first.cancel.mockImplementation(() => {
+      first.playState = "idle";
+      pin.dragTranslate = 0;
+    });
     viewport.top = 600;
     viewport.dispatchEvent(new Event("scroll"));
     expect(first.cancel).toHaveBeenCalledOnce();
@@ -580,6 +603,11 @@ describe("pinning motion", () => {
     expect(pin.animate.mock.lastCall![0].at(-1)?.transform).toBe("translate(0px, 510px)");
     // Scrolling all the way back reveals the actual pinned slot.
     pin.animations[1]!.progress = 0.5;
+    pin.dragTranslate = 880.5;
+    pin.animations[1]!.cancel.mockImplementation(() => {
+      pin.animations[1]!.playState = "idle";
+      pin.dragTranslate = 0;
+    });
     viewport.top = 0;
     viewport.dispatchEvent(new Event("scroll"));
     expect(pin.animate.mock.lastCall![0][0]?.transform).toBe("translate(3.84px, 880.5px)");
@@ -695,6 +723,11 @@ describe("pinning motion", () => {
     expect(pin.animations[0]!.cancel).toHaveBeenCalledOnce();
     // A second interruption retains the X carried into the ordinary glide.
     pin.animations[1]!.progress = 0.5;
+    pin.dragTranslate = 880.5;
+    pin.animations[1]!.cancel.mockImplementation(() => {
+      pin.animations[1]!.playState = "idle";
+      pin.dragTranslate = 0;
+    });
     layout([pin, inserted, first]);
     motion.update(true);
     expect(pin.animate.mock.lastCall![0][0]).toEqual({

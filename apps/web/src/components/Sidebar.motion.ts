@@ -35,6 +35,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       animation: Animation;
       path: { x: number; y: number; offset: number }[];
       pinVisual: boolean;
+      targetY: number;
     }
   >();
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
@@ -177,7 +178,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       })),
       pinning ? { duration: 550, easing: "cubic-bezier(.32,0,.18,1)" } : motionTiming,
     );
-    running.set(node, { animation, path, pinVisual });
+    running.set(node, { animation, path, pinVisual, targetY });
     animation.addEventListener(
       "finish",
       () => {
@@ -190,9 +191,18 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   // A scroll can reveal a clipped endpoint. Retarget from the current visual
   // position so the row still clears the edge before its transform disappears.
   const onScroll = () => {
-    for (const [node, { pinVisual }] of Array.from(running)) {
+    for (const [node, { pinVisual, targetY }] of Array.from(running)) {
       if (!pinVisual) continue;
       const offset = remainingOffset(node);
+      const nextTargetY = viewport
+        ? Math.max(
+            0,
+            viewport.getBoundingClientRect().top +
+              viewport.clientTop -
+              (node.getBoundingClientRect().bottom - offset.y),
+          )
+        : 0;
+      if (nextTargetY === targetY) continue;
       move(node, offset.y, false, offset.x);
     }
   };
