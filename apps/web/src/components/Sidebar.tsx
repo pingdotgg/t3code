@@ -2177,7 +2177,7 @@ export default function Sidebar() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpen: setSidebarOpen, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -2537,6 +2537,36 @@ export default function Sidebar() {
     },
     [openProjectSettings],
   );
+  // Opening the scope picker from the keyboard lands focus in its search
+  // field: the popup mounts in a portal after the state flips, so the flag
+  // carries the intent across the commit and the effect below focuses it.
+  const projectScopeSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const focusProjectScopeSearchOnOpenRef = useRef(false);
+  const openProjectScopeFilter = useCallback(() => {
+    // Without projects the header hides the filter trigger, so there is
+    // nothing to open.
+    if (projectGroups.length === 0) return;
+    // The picker lives inside the sidebar, so a collapsed sidebar opens
+    // first — on mobile that means the sheet, on desktop the panel.
+    if (isMobile) {
+      setOpenMobile(true);
+    } else {
+      setSidebarOpen(true);
+    }
+    focusProjectScopeSearchOnOpenRef.current = true;
+    dispatchProjectScopeMenu({ type: "open-changed", open: true });
+  }, [dispatchProjectScopeMenu, isMobile, projectGroups.length, setOpenMobile, setSidebarOpen]);
+  useEffect(() => {
+    if (!projectScopeMenuState.open || !focusProjectScopeSearchOnOpenRef.current) return;
+    focusProjectScopeSearchOnOpenRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      const input =
+        projectScopeSearchInputRef.current ??
+        document.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
+      input?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [projectScopeMenuState.open]);
 
   // Keep a dropped row at its destination while its server applies the
   // lifecycle command and any order-key writes. The next pickup waits for
@@ -4344,6 +4374,12 @@ export default function Sidebar() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
+      if (command === "sidebar.filterProjects") {
+        event.preventDefault();
+        event.stopPropagation();
+        openProjectScopeFilter();
+        return;
+      }
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
@@ -4373,6 +4409,7 @@ export default function Sidebar() {
   }, [
     keybindings,
     navigateToThread,
+    openProjectScopeFilter,
     orderedThreadKeys,
     routeTerminalOpen,
     routeThreadKey,
@@ -4437,6 +4474,19 @@ export default function Sidebar() {
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+  // Advertised on the filter button's tooltip, mirroring the new-thread
+  // button above: the label stays the accessible name, the tooltip adds
+  // the shortcut when one is configured.
+  const projectScopeFilterLabel = scopedProjectGroup
+    ? `Filter threads by project: ${scopedProjectGroup.displayName}`
+    : "Filter threads by project";
+  const projectScopeFilterShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "sidebar.filterProjects",
+  );
+  const projectScopeFilterTooltip = projectScopeFilterShortcutLabel
+    ? `${projectScopeFilterLabel} (${projectScopeFilterShortcutLabel})`
+    : projectScopeFilterLabel;
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -4477,11 +4527,8 @@ export default function Sidebar() {
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        label={
-                          scopedProjectGroup
-                            ? `Filter threads by project: ${scopedProjectGroup.displayName}`
-                            : "Filter threads by project"
-                        }
+                        label={projectScopeFilterLabel}
+                        tooltip={projectScopeFilterTooltip}
                       />
                     }
                   >
@@ -4505,6 +4552,7 @@ export default function Sidebar() {
                     className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
                   >
                     <ComboboxSearchInput
+                      ref={projectScopeSearchInputRef}
                       aria-label="Search projects"
                       placeholder="Search projects..."
                       value={projectScopeMenuState.query}

@@ -15,8 +15,19 @@ import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
+// The Usage family groups the page opener with its metric and period
+// commands. usage.open has no METRIC/WINDOW option entry, so without an
+// explicit slot it falls back to localeCompare — which cycles against the
+// map order (tokens < limits < open < tokens) and lets unrelated default
+// additions flip the settings list. Pinning every usage.* command makes the
+// comparator transitive, so the order no longer depends on input order.
 const usageCommandOrder = new Map<KeybindingCommand, number>(
-  [...METRIC_OPTIONS, ...WINDOW_OPTIONS].map((option, index) => [option.command, index]),
+  [
+    METRIC_OPTIONS[0]?.command ?? ("usage.cost" as const),
+    "usage.open" as const,
+    ...METRIC_OPTIONS.slice(1).map((option) => option.command),
+    ...WINDOW_OPTIONS.map((option) => option.command),
+  ].map((command, index) => [command, index]),
 );
 
 function compareUsageCommands(left: KeybindingCommand, right: KeybindingCommand): number | null {
