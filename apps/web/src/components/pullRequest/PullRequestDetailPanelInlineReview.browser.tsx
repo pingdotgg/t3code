@@ -264,10 +264,16 @@ describe("PullRequestDetailPanel inline review comments", () => {
     await expect.element(page.getByText("Second observation")).toBeVisible();
     await expect.element(page.getByText("1 of 1 passing")).toBeVisible();
 
+    await page.getByRole("button", { name: "Show oldest activity first" }).click();
     await page.getByRole("tab", { name: "Agent Collaboration" }).click();
     await expect
       .element(page.getByRole("group", { name: "Pull request collaboration status" }))
       .toBeVisible();
+    await page.getByRole("tab", { name: "Timeline", exact: true }).click();
+    await expect
+      .element(page.getByRole("button", { name: "Show newest activity first" }))
+      .toBeVisible();
+    await expect.element(page.getByText("First observation")).toBeVisible();
   });
 
   it("opens a commit from Timeline and prevents historical line comments until returning to all commits", async () => {
@@ -299,6 +305,15 @@ describe("PullRequestDetailPanel inline review comments", () => {
     selectDiffLine(3, "change-addition");
     expect(document.querySelector("[data-pull-request-inline-comment]")).toBeNull();
     await page.getByRole("button", { name: "Return to all commits" }).click();
+    await page.getByRole("tab", { name: "Timeline", exact: true }).click();
+    await page.getByRole("button", { name: `View commit ${commit.oid.slice(0, 7)}` }).click();
+    queryClient?.setQueryData(pullRequestQueryKeys.activity(environmentId, reference), {
+      ...PULL_REQUEST_INLINE_REVIEW_ACTIVITY,
+      commits: [],
+    });
+    await expect
+      .element(page.getByRole("button", { name: "Return to all commits" }))
+      .not.toBeInTheDocument();
     await expect.element(page.getByText("src/engine.ts", { exact: true })).toBeVisible();
     await expect
       .poll(() =>
@@ -354,6 +369,12 @@ describe("PullRequestDetailPanel inline review comments", () => {
     await addLineComment(4, "context", "Keep this invariant.", "right");
     await expect.element(page.getByText("3 pending line comments")).toBeVisible();
 
+    const reviewDisclosure = page.getByText("3 pending line comments", { exact: true });
+    await reviewDisclosure.click();
+    await expect
+      .element(page.getByRole("button", { name: "Comment", exact: true, includeHidden: true }))
+      .not.toBeVisible();
+    await reviewDisclosure.click();
     const submitButton = page.getByRole("button", { name: "Comment", exact: true });
     await submitButton.click();
     await expect.element(submitButton).toBeDisabled();

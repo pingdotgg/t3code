@@ -495,6 +495,10 @@ export function PullRequestDetailPanel({
       : null;
   const detailQuery = useQuery(pullRequestDetailQueryOptions({ environmentId, reference }));
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+  const [timelineNewestFirst, setTimelineNewestFirst] = useState(true);
+  const [expandedTimelineGroups, setExpandedTimelineGroups] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const monitorQuery = useQuery(
     pullRequestMonitorStatusQueryOptions({
       environmentId,
@@ -527,6 +531,13 @@ export function PullRequestDetailPanel({
     null,
   );
   const detail = toDetailView(detailQuery.data, activityQuery.data);
+  if (
+    selectedCommit !== null &&
+    activityQuery.isSuccess &&
+    !activityQuery.data.commits.some((commit) => commit.oid === selectedCommit)
+  ) {
+    setSelectedCommit(null);
+  }
   const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
   const owner = useMemo(
     () => findPullRequestBrowserThread(threads, environmentId, reference),
@@ -1182,6 +1193,10 @@ export function PullRequestDetailPanel({
         {activeTab === "timeline" ? (
           <>
             <PullRequestTimelineTab
+              newestFirst={timelineNewestFirst}
+              setNewestFirst={setTimelineNewestFirst}
+              expandedGroups={expandedTimelineGroups}
+              setExpandedGroups={setExpandedTimelineGroups}
               detail={detail}
               pending={activityQuery.isPending}
               error={activityQuery.error ? errorMessage(activityQuery.error) : null}

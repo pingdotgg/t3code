@@ -13,7 +13,7 @@ import {
   GitPullRequestIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, type Dispatch, type SetStateAction } from "react";
 
 import { Button } from "../ui/button";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -37,6 +37,10 @@ export function PullRequestTimelineTab({
   onRetry,
   onOpenCommit,
   onPreviewMedia,
+  newestFirst,
+  setNewestFirst,
+  expandedGroups,
+  setExpandedGroups,
 }: {
   readonly detail: Detail;
   readonly pending: boolean;
@@ -44,9 +48,11 @@ export function PullRequestTimelineTab({
   readonly onRetry: () => void;
   readonly onOpenCommit: (commit: string) => void;
   readonly onPreviewMedia: (preview: PullRequestMediaPreview) => void;
+  readonly newestFirst: boolean;
+  readonly setNewestFirst: Dispatch<SetStateAction<boolean>>;
+  readonly expandedGroups: ReadonlySet<string>;
+  readonly setExpandedGroups: Dispatch<SetStateAction<ReadonlySet<string>>>;
 }) {
-  const [newestFirst, setNewestFirst] = useState(true);
-  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(() => new Set());
   const rows = useMemo(() => {
     const entries: TimelineEntry[] = [
       { kind: "opened", date: detail.createdAt },
@@ -129,6 +135,7 @@ export function PullRequestTimelineTab({
                 </span>
                 <details
                   className="group min-w-0 flex-1"
+                  open={expandedGroups.has(groupId)}
                   onToggle={(event) => {
                     const open = event.currentTarget.open;
                     setExpandedGroups((current) => {
