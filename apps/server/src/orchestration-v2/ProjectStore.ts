@@ -88,13 +88,14 @@ export class ProjectStoreV2 extends Context.Service<
     readonly findActiveByWorkspaceRoot: (
       workspaceRoot: string,
     ) => Effect.Effect<Option.Option<ProjectRow>, ProjectStoreV2Error>;
+    /** An active project's shell without enrichment such as repository identity. */
     readonly getShell: (
       projectId: ProjectId,
     ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectStoreV2Error>;
-    readonly listShells: Effect.Effect<
-      ReadonlyArray<OrchestrationProjectShell>,
-      ProjectStoreV2Error
-    >;
+    /** Active project shells in creation order, without enrichment. */
+    readonly listShells: (options?: {
+      readonly projectIds?: ReadonlyArray<ProjectId>;
+    }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectStoreV2Error>;
   }
 >()("t3/orchestration-v2/ProjectStore/ProjectStoreV2") {}
 
@@ -267,7 +268,10 @@ export const make = Effect.gen(function* () {
     list,
     findActiveByWorkspaceRoot,
     getShell: (projectId) => get(projectId).pipe(Effect.map(Option.map(toShell))),
-    listShells: list().pipe(Effect.map((rows) => rows.map(toShell))),
+    listShells: (options) =>
+      list(options?.projectIds === undefined ? undefined : { projectIds: options.projectIds }).pipe(
+        Effect.map((rows) => rows.map(toShell)),
+      ),
   });
 });
 

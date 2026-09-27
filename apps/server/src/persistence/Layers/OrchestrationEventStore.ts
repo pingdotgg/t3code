@@ -582,6 +582,26 @@ const makeEventStore = Effect.gen(function* () {
       })),
     );
 
+  const getReplayStats: OrchestrationEventStoreShape["getReplayStats"] = (input) =>
+    sql<{ readonly eventCount: number; readonly rawPayloadBytes: number }>`
+      SELECT
+        COUNT(*) AS "eventCount",
+        COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes"
+      FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
+      WHERE sequence > ${input.afterSequence}
+        AND sequence <= ${input.throughSequence}
+        AND (
+          aggregate_kind = 'project'
+          OR (application_event_version = 2 AND aggregate_kind = 'thread')
+        )
+    `.pipe(
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getReplayStats:query")),
+      Effect.map((rows) => ({
+        eventCount: rows[0]?.eventCount ?? 0,
+        rawPayloadBytes: rows[0]?.rawPayloadBytes ?? 0,
+      })),
+    );
+
   const latestAgentSequence: OrchestrationEventStoreShape["latestAgentSequence"] = (threadId) =>
     sql<{ readonly sequence: number | null }>`
       SELECT MAX(sequence) AS sequence
@@ -719,6 +739,7 @@ const makeEventStore = Effect.gen(function* () {
     appendAgentEvents,
     readAgentEvents,
     getAgentReplayStats,
+    getReplayStats,
     latestAgentSequence,
     latestApplicationSequence,
     readApplicationEvents: catchUpApplicationEvents,

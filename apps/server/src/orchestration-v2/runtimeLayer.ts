@@ -2,7 +2,6 @@ import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import { OrchestrationEventInfrastructureLayerLive } from "../orchestration/runtimeLayer.ts";
-import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { layer as providerSessionRuntimeLayer } from "../persistence/ProviderSessionRuntime.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ProviderAuthServiceLive } from "../provider/Layers/ProviderAuthService.ts";
@@ -41,7 +40,7 @@ import { layer as providerTurnControlServiceLayer } from "./ProviderTurnControlS
 import { layer as providerTurnStartServiceLayer } from "./ProviderTurnStartService.ts";
 import { layer as runExecutionServiceLayer } from "./RunExecutionService.ts";
 import { layer as runFinalizationServiceLayer } from "./RunFinalizationService.ts";
-import { layerFromProjectRepository as runtimePolicyLayerFromProjectRepository } from "./RuntimePolicy.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layerWithLegacyImporter as threadManagementServiceLayer } from "./ThreadManagementService.ts";
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
@@ -50,8 +49,8 @@ import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
 import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledTaskService.ts";
 
-const runtimePolicyProvided = runtimePolicyLayerFromProjectRepository.pipe(
-  Layer.provide(ProjectionProjectRepositoryLive),
+const runtimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provide(ProjectStore.layer),
 );
 
 const eventStoreProvided = eventStoreLayer.pipe(
@@ -188,7 +187,7 @@ const orchestratorProvided = orchestratorLayer.pipe(
       commandReceiptStoreProvided,
       contextHandoffServiceProvided,
       idAllocatorLayer,
-      ProjectionProjectRepositoryLive,
+      ProjectStore.layer,
       providerAdapterRegistryProvided,
       // Same layer reference as the continuation worker and the adapter
       // infrastructure so layer memoization yields one shared request queue.
@@ -245,9 +244,7 @@ const providerContinuationWorkerProvided = providerContinuationWorkerLive.pipe(
   ),
 );
 const threadTitleRegenerationProvided = threadTitleRegenerationServiceLayer.pipe(
-  Layer.provide(
-    Layer.mergeAll(threadManagementProvided, ProjectionProjectRepositoryLive, TextGeneration.layer),
-  ),
+  Layer.provide(Layer.mergeAll(threadManagementProvided, ProjectStore.layer, TextGeneration.layer)),
 );
 const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(

@@ -38,7 +38,7 @@ import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
-import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -529,8 +529,7 @@ const make = (options?: StartupOptions) =>
       yield* runStartupPhase(
         "projects.auto-pull",
         Effect.gen(function* () {
-          const snapshots = yield* ProjectionSnapshotQuery;
-          const projects = yield* snapshots.getProjectShellsWithoutEnrichment();
+          const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
           const settings = yield* serverSettings.getSettings;
           yield* autoPullProjects(projects, settings);
         }),

@@ -155,8 +155,10 @@ import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationInfrastructureLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   OrchestrationV2ProductionLayerLive,
+  ProjectServiceLayerLive,
   ProjectSetupScriptRunnerLayerLive,
 } from "./orchestration-v2/runtimeLayer.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -371,13 +373,11 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(GitWorkflowLayerLive),
-      // Auto-pull reads the projected project row. The orchestration runtime
-      // also consumes the broadcaster (run finalization), so the policy gets
-      // its own snapshot-query build instead of the runtime-level one.
+      // Auto-pull reads the project row. The orchestration runtime also
+      // consumes the broadcaster (run finalization), so the policy cannot read
+      // the store from the runtime's output.
       Layer.provide(
-        VcsStatusBroadcaster.autoPullPolicyLayer.pipe(
-          Layer.provide(OrchestrationInfrastructureLayerLive),
-        ),
+        VcsStatusBroadcaster.autoPullPolicyLayer.pipe(Layer.provide(ProjectStore.layer)),
       ),
     ),
   ),
@@ -451,7 +451,7 @@ const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
     RunFinalizationService.observerLive.pipe(
       Layer.provide(ProjectionStoreV2.layer),
       Layer.provide(PullRequestServiceLive),
-      Layer.provide(OrchestrationInfrastructureLayerLive),
+      Layer.provide(ProjectServiceLayerLive),
     ),
   ),
 );
@@ -466,15 +466,11 @@ const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
 // so every client sees the same shelf.
 const ThreadSettlementWorkerLive = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(
-  Layer.provide(PullRequestServiceLive),
-  Layer.provide(ProjectionStoreV2.layer),
-  Layer.provide(OrchestrationInfrastructureLayerLive),
-);
+).pipe(Layer.provide(PullRequestServiceLive), Layer.provide(ProjectionStoreV2.layer));
 
 const ThreadPullRequestWorkerLive = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(Layer.provide(PullRequestServiceLive), Layer.provide(OrchestrationInfrastructureLayerLive));
+).pipe(Layer.provide(PullRequestServiceLive));
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -528,9 +524,10 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
 ).pipe(
   // Core Services
   Layer.provideMerge(OrchestrationApplicationLayerLive),
-  // Startup reconciliation and the server-owned thread workers still read the
-  // canonical project/thread snapshots while mutations flow through v2.
+  // The application event store, and the V1 snapshot query that thread search
+  // still reads.
   Layer.provideMerge(OrchestrationInfrastructureLayerLive),
+  Layer.provideMerge(ProjectStore.layer),
   Layer.provideMerge(ServerSettingsLayerLive),
   // The asset route uses the registry's GitHub credential for private PR media.
   Layer.provideMerge(Layer.mergeAll(SourceControlProviderRegistryLayerLive, GitHubCli.layer)),

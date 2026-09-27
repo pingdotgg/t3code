@@ -17,7 +17,6 @@ import {
   failEnvironmentNotFound,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import {
@@ -30,6 +29,7 @@ import {
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import { buildActiveShellSnapshot } from "./ShellStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
@@ -70,7 +70,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const projectStore = yield* ProjectStore.ProjectStoreV2;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
 
     const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
@@ -95,10 +95,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* () {
       const base = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
           const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
           return buildActiveShellSnapshot({
-            projects,
+            projects: yield* projectStore.listShells(),
             threads,
             snapshotSequence: yield* applicationEvents.latestApplicationSequence,
           });

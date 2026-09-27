@@ -23,7 +23,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -99,7 +99,7 @@ interface RefreshRequest {
 
 export const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -144,7 +144,7 @@ export const make = Effect.gen(function* () {
   ) {
     const [threadSnapshot, projectShells] = yield* Effect.all([
       readThreadSnapshot(request),
-      snapshots.getProjectShellsWithoutEnrichment(),
+      projectStore.listShells(),
     ]);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
@@ -301,7 +301,7 @@ export const make = Effect.gen(function* () {
                 // Discovery can perform network I/O. Re-read the project at
                 // the transaction boundary so a deleted project or changed
                 // workspace root cannot apply a result from the old checkout.
-                const currentProject = yield* snapshots.getProjectShellById(project.id);
+                const currentProject = yield* projectStore.getShell(project.id);
                 if (!projectWorkspaceMatchesSnapshot(currentProject, project.workspaceRoot)) {
                   return failBackfill([thread]);
                 }

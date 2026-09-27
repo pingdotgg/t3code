@@ -40,9 +40,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { ServerConfig } from "../config.ts";
 import { OrchestrationEventInfrastructureLayerLive } from "../orchestration/runtimeLayer.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
-import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -64,6 +62,7 @@ import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProviderRuntimeRecoveryService } from "./ProviderRuntimeRecoveryService.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
@@ -160,10 +159,60 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
   subscribeChanges: Effect.never,
 });
 
+/** Seed a project row the way a committed `project.created` event folds into it. */
+const seedProject = (input: {
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot: string;
+  readonly defaultModelSelection: ModelSelection | null;
+  readonly createdAt: string;
+}) =>
+  Effect.flatMap(ProjectStore.ProjectStoreV2, (projects) =>
+    projects.apply({
+      sequence: 0,
+      eventId: EventId.make(`seed:${input.projectId}`),
+      aggregateKind: "project",
+      aggregateId: input.projectId,
+      occurredAt: input.createdAt,
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.created",
+      payload: {
+        projectId: input.projectId,
+        title: input.title,
+        workspaceRoot: input.workspaceRoot,
+        defaultModelSelection: input.defaultModelSelection,
+        scripts: [],
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+      },
+    }),
+  );
+
+/** Move a seeded project the way a committed `project.meta-updated` event does. */
+const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: string) =>
+  Effect.flatMap(ProjectStore.ProjectStoreV2, (projects) =>
+    projects.apply({
+      sequence: 0,
+      eventId: EventId.make(`move:${projectId}:${workspaceRoot}`),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: updatedAt,
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.meta-updated",
+      payload: { projectId, workspaceRoot, updatedAt },
+    }),
+  );
+
 const TestLayer = Layer.mergeAll(
   OrchestrationV2LayerLive,
   OrchestrationV2EventSinkLayerLive,
-  ProjectionProjectRepositoryLive,
+  ProjectStore.layer,
   effectOutboxLayer,
   threadCommandExecutorLayer,
 ).pipe(
@@ -1541,7 +1590,6 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
-      const projects = yield* ProjectionProjectRepository;
       const threadId = ThreadId.make("runtime-layer-lifecycle-thread");
       const projectId = ProjectId.make("runtime-layer-lifecycle-project");
       const project = {
@@ -1549,14 +1597,9 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         title: "Lifecycle project",
         workspaceRoot: "/workspace/project",
         defaultModelSelection: null,
-        defaultThreadEnvMode: null,
-        autoPull: false,
-        scripts: [],
         createdAt: "2026-09-07T00:00:00.000Z",
-        updatedAt: "2026-09-07T00:00:00.000Z",
-        deletedAt: null,
       } as const;
-      yield* projects.upsert(project);
+      yield* seedProject(project);
       const create = {
         type: "thread.create" as const,
         createdBy: "user" as const,
@@ -1606,11 +1649,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         number: 24,
         url: "https://github.com/owner/repository/pull/24",
       };
-      yield* projects.upsert({
-        ...project,
-        workspaceRoot: "/workspace/moved",
-        updatedAt: "2026-09-07T00:01:00.000Z",
-      });
+      yield* moveProject(projectId, "/workspace/moved", "2026-09-07T00:01:00.000Z");
       const staleProjectWorkspace = yield* orchestrator
         .dispatch({
           type: "thread.pull-request.sync",
@@ -1629,7 +1668,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.instanceOf(staleProjectWorkspace, OrchestratorDispatchError);
-      yield* projects.upsert(project);
+      yield* moveProject(projectId, project.workspaceRoot, "2026-09-07T00:02:00.000Z");
       yield* orchestrator.dispatch({
         type: "thread.pull-request.sync",
         commandId: CommandId.make("runtime-layer-lifecycle-pr-sync"),
@@ -1901,20 +1940,14 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
       const maintenance = yield* ProjectionMaintenanceV2;
-      const projects = yield* ProjectionProjectRepository;
       const threadId = ThreadId.make("branch-pr-link");
       const projectId = ProjectId.make("branch-pr-project");
-      yield* projects.upsert({
+      yield* seedProject({
         projectId,
         title: "PR links",
         workspaceRoot: "/workspace/pr-links",
         defaultModelSelection: null,
-        defaultThreadEnvMode: null,
-        autoPull: false,
-        scripts: [],
         createdAt: "2026-09-17T00:00:00.000Z",
-        updatedAt: "2026-09-17T00:00:00.000Z",
-        deletedAt: null,
       });
       yield* orchestrator.dispatch({
         type: "thread.create",
@@ -3454,17 +3487,12 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         const projectId = ProjectId.make(`manual-resume:project:${reason}`);
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
-        yield* (yield* ProjectionProjectRepository).upsert({
+        yield* seedProject({
           projectId,
           title: "Resume project",
           workspaceRoot: process.cwd(),
           defaultModelSelection: modelSelection,
-          defaultThreadEnvMode: null,
-          autoPull: false,
-          scripts: [],
           createdAt,
-          updatedAt: createdAt,
-          deletedAt: null,
         });
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -3634,20 +3662,13 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       const orchestrator = yield* OrchestratorV2;
       const events = yield* EventSinkV2;
       const threadId = ThreadId.make(`recovery:${scenario}`);
-      const projects = yield* ProjectionProjectRepository;
       const projectId = ProjectId.make(`recovery:project:${scenario}`);
-      const projectAt = DateTime.formatIso(yield* DateTime.now);
-      yield* projects.upsert({
+      yield* seedProject({
         projectId,
         title: "Recovery project",
         workspaceRoot: process.cwd(),
         defaultModelSelection: modelSelection,
-        defaultThreadEnvMode: null,
-        autoPull: false,
-        scripts: [],
-        createdAt: projectAt,
-        updatedAt: projectAt,
-        deletedAt: null,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
       });
       yield* orchestrator.dispatch({
         type: "thread.create",

@@ -33,7 +33,6 @@ import {
 } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
-import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -53,7 +52,6 @@ import {
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
-import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
@@ -497,7 +495,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const sql = yield* SqlClient.SqlClient;
     const eventStore = yield* OrchestrationEventStore;
     const projectionStateRepository = yield* ProjectionStateRepository;
-    const projectionProjectRepository = yield* ProjectionProjectRepository;
     const projectionThreadRepository = yield* ProjectionThreadRepository;
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
     const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
@@ -553,79 +550,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           )
         ORDER BY sequence ASC
       `,
-    });
-
-    const applyProjectsProjection: ProjectorDefinition["apply"] = Effect.fn(
-      "applyProjectsProjection",
-    )(function* (event, _attachmentSideEffects) {
-      switch (event.type) {
-        case "project.created":
-          yield* projectionProjectRepository.upsert({
-            projectId: event.payload.projectId,
-            title: event.payload.title,
-            workspaceRoot: event.payload.workspaceRoot,
-            defaultModelSelection: event.payload.defaultModelSelection,
-            defaultThreadEnvMode: null,
-            autoPull: false,
-            faviconPath: event.payload.faviconPath ?? null,
-            projectIcon: event.payload.projectIcon ?? null,
-            scripts: event.payload.scripts,
-            createdAt: event.payload.createdAt,
-            updatedAt: event.payload.updatedAt,
-            deletedAt: null,
-          });
-          return;
-
-        case "project.meta-updated": {
-          const existingRow = yield* projectionProjectRepository.getById({
-            projectId: event.payload.projectId,
-          });
-          if (Option.isNone(existingRow)) {
-            return;
-          }
-          yield* projectionProjectRepository.upsert({
-            ...existingRow.value,
-            ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
-            ...(event.payload.workspaceRoot !== undefined
-              ? { workspaceRoot: event.payload.workspaceRoot }
-              : {}),
-            ...(event.payload.defaultModelSelection !== undefined
-              ? { defaultModelSelection: event.payload.defaultModelSelection }
-              : {}),
-            ...(event.payload.defaultThreadEnvMode !== undefined
-              ? { defaultThreadEnvMode: event.payload.defaultThreadEnvMode }
-              : {}),
-            ...(event.payload.autoPull !== undefined ? { autoPull: event.payload.autoPull } : {}),
-            ...(event.payload.faviconPath !== undefined
-              ? { faviconPath: event.payload.faviconPath }
-              : {}),
-            ...(event.payload.projectIcon !== undefined
-              ? { projectIcon: event.payload.projectIcon }
-              : {}),
-            ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
-            updatedAt: event.payload.updatedAt,
-          });
-          return;
-        }
-
-        case "project.deleted": {
-          const existingRow = yield* projectionProjectRepository.getById({
-            projectId: event.payload.projectId,
-          });
-          if (Option.isNone(existingRow)) {
-            return;
-          }
-          yield* projectionProjectRepository.upsert({
-            ...existingRow.value,
-            deletedAt: event.payload.deletedAt,
-            updatedAt: event.payload.deletedAt,
-          });
-          return;
-        }
-
-        default:
-          return;
-      }
     });
 
     const refreshThreadShellSummary = Effect.fn("refreshThreadShellSummary")(function* (
@@ -1997,10 +1921,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const projectors: ReadonlyArray<ProjectorDefinition> = [
       {
-        name: ORCHESTRATION_PROJECTOR_NAMES.projects,
-        apply: applyProjectsProjection,
-      },
-      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
         apply: applyThreadMessagesProjection,
       },
@@ -2274,7 +2194,6 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   OrchestrationProjectionPipeline,
   makeOrchestrationProjectionPipeline(),
 ).pipe(
-  Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),

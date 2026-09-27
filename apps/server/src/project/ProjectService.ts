@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type OrchestrationProjectShell,
   ProjectId,
   type Project,
   type ProjectCreatePayload,
@@ -132,6 +133,17 @@ export class ProjectService extends Context.Service<
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
     readonly snapshot: Effect.Effect<ProjectSnapshot, ProjectOperationError>;
+    /**
+     * An active project's shell with its immediately available repository
+     * identity; missing identity resolves in the background.
+     */
+    readonly getShell: (
+      projectId: ProjectId,
+    ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectOperationError>;
+    /** Active project shells, enriched like `getShell`, in creation order. */
+    readonly listShells: (options?: {
+      readonly projectIds?: ReadonlyArray<ProjectId>;
+    }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectOperationError>;
   }
 >()("t3/project/ProjectService") {}
 
@@ -496,6 +508,40 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const enrichShell = (shell: OrchestrationProjectShell) =>
+    projectEnrichment.getAvailable(shell.workspaceRoot).pipe(
+      Effect.map((enrichment) => ({
+        ...shell,
+        repositoryIdentity: enrichment.repositoryIdentity,
+      })),
+    );
+
+  const getShell: ProjectService["Service"]["getShell"] = Effect.fn("ProjectService.getShell")(
+    function* (projectId) {
+      const shell = yield* projects
+        .getShell(projectId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "read-project", projectId, cause }),
+          ),
+        );
+      return Option.isNone(shell) ? shell : Option.some(yield* enrichShell(shell.value));
+    },
+  );
+
+  const listShells: ProjectService["Service"]["listShells"] = Effect.fn(
+    "ProjectService.listShells",
+  )(function* (options) {
+    const shells = yield* projects
+      .listShells(options)
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProjectOperationError({ operation: "list-projects", cause }),
+        ),
+      );
+    return yield* Effect.forEach(shells, enrichShell, { concurrency: 16 });
+  });
+
   const snapshot = Effect.gen(function* () {
     const rows = yield* projects
       .list()
@@ -519,6 +565,8 @@ export const make = Effect.gen(function* () {
     getById,
     getByWorkspaceRoot,
     snapshot,
+    getShell,
+    listShells,
   });
 });
 

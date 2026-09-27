@@ -53,7 +53,7 @@ import {
 } from "../../persistence/Errors.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
-import { ProjectionProject } from "../../persistence/Services/ProjectionProjects.ts";
+import { ProjectRow } from "../../orchestration-v2/ProjectStore.ts";
 import { ProjectionState } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
@@ -96,7 +96,7 @@ const THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE = 25;
 // SQLite trim defaults to spaces. Match the whitespace removed by String.trim.
 const MESSAGE_TRIM_WHITESPACE =
   "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
-const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
+const ProjectionProjectDbRowSchema = ProjectRow.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     autoPull: Schema.Number,

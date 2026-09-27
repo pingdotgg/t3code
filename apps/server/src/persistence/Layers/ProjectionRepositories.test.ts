@@ -13,10 +13,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Statement from "effect/unstable/sql/Statement";
 
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
-import { ProjectionProjectRepositoryLive } from "./ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "./ProjectionThreads.ts";
 import * as ProjectionThreadPullRequests from "../ProjectionThreadPullRequests.ts";
-import { ProjectionProjectRepository } from "../Services/ProjectionProjects.ts";
 import { ProjectionThreadRepository } from "../Services/ProjectionThreads.ts";
 import {
   ProjectionThreadPullRequestRepository,
@@ -27,7 +25,6 @@ import { ProjectionThreadProposedPlanRepository } from "../Services/ProjectionTh
 
 const projectionRepositoriesLayer = it.layer(
   Layer.mergeAll(
-    ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ProjectionThreadPullRequests.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ProjectionThreadProposedPlanRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -278,58 +275,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           }),
         ),
       );
-    }),
-  );
-
-  it.effect("stores SQL NULL for missing project model options", () =>
-    Effect.gen(function* () {
-      const projects = yield* ProjectionProjectRepository;
-      const sql = yield* SqlClient.SqlClient;
-
-      yield* projects.upsert({
-        projectId: ProjectId.make("project-null-options"),
-        title: "Null options project",
-        workspaceRoot: "/tmp/project-null-options",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        defaultThreadEnvMode: null,
-        autoPull: false,
-        scripts: [],
-        createdAt: "2026-03-24T00:00:00.000Z",
-        updatedAt: "2026-03-24T00:00:00.000Z",
-        deletedAt: null,
-      });
-
-      const rows = yield* sql<{
-        readonly defaultModelSelection: string | null;
-      }>`
-        SELECT default_model_selection_json AS "defaultModelSelection"
-        FROM projection_projects
-        WHERE project_id = 'project-null-options'
-      `;
-      const row = rows[0];
-      if (!row) {
-        return yield* Effect.die("Expected projection_projects row to exist.");
-      }
-
-      assert.strictEqual(
-        row.defaultModelSelection,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        JSON.stringify({
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        }),
-      );
-
-      const persisted = yield* projects.getById({
-        projectId: ProjectId.make("project-null-options"),
-      });
-      assert.deepStrictEqual(Option.getOrNull(persisted)?.defaultModelSelection, {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.4",
-      });
     }),
   );
 

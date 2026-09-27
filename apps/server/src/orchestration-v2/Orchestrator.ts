@@ -57,7 +57,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -645,7 +645,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const eventSink = yield* EventSinkV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocatorV2;
-  const projects = yield* ProjectionProjectRepository;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -2271,9 +2271,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (command.type === "thread.pull-request.sync") {
-      const project = yield* projects
-        .getById({ projectId: command.projectId })
-        .pipe(mapDispatchError(command));
+      const project = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
       const currentSequence = yield* eventSink.latestSequence({ threadId: command.threadId }).pipe(
         Effect.mapError(
           (cause) =>
@@ -9458,7 +9456,7 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EventSinkV2
   | IdAllocatorV2
-  | ProjectionProjectRepository
+  | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | ProviderSwitchServiceV2

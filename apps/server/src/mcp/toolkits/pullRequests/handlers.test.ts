@@ -24,7 +24,7 @@ import {
   OrchestratorDispatchError,
 } from "../../../orchestration-v2/Orchestrator.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectService } from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
 import { PullRequestLinkFailedError, PullRequestsToolkit } from "./tools.ts";
@@ -156,10 +156,8 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const dependencies = Layer.mergeAll(
-    Layer.mock(ProjectionSnapshotQuery)({
-      getThreadShellById: (threadId) =>
-        Effect.succeed(threadId === THREAD_ID ? Option.fromNullishOr(thread) : Option.none()),
-      getProjectShellById: () => Effect.succeed(Option.fromNullishOr(project)),
+    Layer.mock(ProjectService)({
+      getShell: () => Effect.succeed(Option.fromNullishOr(project)),
     }),
     Layer.mock(OrchestratorV2)({
       getThreadShell: (id) =>

@@ -13,7 +13,6 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";
@@ -399,7 +398,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         commandPolicyLayer,
         contextHandoffServiceProvided,
         persistenceLayer,
-        ProjectionProjectRepositoryLive.pipe(Layer.provide(databaseLayer)),
         providedRegistryLayer,
         continuationRequestsLayer,
         runtimeLayer,

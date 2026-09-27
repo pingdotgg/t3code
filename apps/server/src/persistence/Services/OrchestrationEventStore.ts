@@ -111,6 +111,22 @@ export interface OrchestrationEventStoreShape {
     OrchestrationEventStoreError
   >;
 
+  /**
+   * Measure the retained application-event range `(afterSequence, throughSequence]`
+   * without loading or decoding its payloads.
+   */
+  readonly getReplayStats: (input: {
+    readonly afterSequence: number;
+    readonly throughSequence: number;
+  }) => Effect.Effect<
+    {
+      readonly eventCount: number;
+      /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
+      readonly rawPayloadBytes: number;
+    },
+    OrchestrationEventStoreError
+  >;
+
   readonly latestAgentSequence: (
     threadId?: ThreadId,
   ) => Effect.Effect<number, OrchestrationEventStoreError>;

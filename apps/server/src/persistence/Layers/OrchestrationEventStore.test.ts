@@ -380,6 +380,15 @@ layer("OrchestrationEventStore", (it) => {
         rawPayloadBytes: 0,
         hasCreateEvent: false,
       });
+      // The application range skips V1 rows, which a shell resume never replays.
+      assert.deepEqual(
+        yield* store.getReplayStats({ afterSequence: baseline, throughSequence: head }),
+        {
+          eventCount: 3,
+          rawPayloadBytes:
+            Buffer.byteLength(unicodePayload) + 2 * Buffer.byteLength(oversizedPayload),
+        },
+      );
     }),
   );
 });

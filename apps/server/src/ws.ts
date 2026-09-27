@@ -149,6 +149,7 @@ import {
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
 import {
@@ -590,23 +591,23 @@ const canReplayPersistedRange = Effect.fnUntraced(function* (
   headSequence: number,
   maxGap: number,
 ) {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
 
   const replayGap = headSequence - afterSequence;
   if (replayGap < 0 || replayGap > maxGap) {
     return false;
   }
-  const stats = yield* projectionSnapshotQuery.getEventReplayStats({
-    fromSequenceExclusive: afterSequence,
-    toSequenceInclusive: headSequence,
+  const stats = yield* applicationEvents.getReplayStats({
+    afterSequence,
+    throughSequence: headSequence,
   });
-  if (stats.payloadBytes > ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES) {
+  if (stats.rawPayloadBytes > ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES) {
     yield* Effect.logDebug("orchestration replay replaced by snapshot", {
       afterSequence,
       headSequence,
       replayGap,
       eventCount: stats.eventCount,
-      payloadBytes: stats.payloadBytes,
+      payloadBytes: stats.rawPayloadBytes,
       payloadBudgetBytes: ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES,
     });
     return false;
@@ -846,14 +847,14 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    const projectService = yield* ProjectService.ProjectService;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
 
     const enrichmentChanges = yield* projectEnrichment.subscribeChanges;
     const loadProjectMetadataSnapshot = Effect.fn("ws.orchestrationV2.loadProjectMetadataSnapshot")(
       function* (snapshotSequence: number) {
-        const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
-        const enriched = yield* enrichProjectShells(projects);
+        const enriched = yield* enrichProjectShells(yield* projects.listShells());
         return {
           snapshot: {
             schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
@@ -869,10 +870,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
       const base = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
           const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
           return buildActiveShellSnapshot({
-            projects,
+            projects: yield* projects.listShells(),
             threads,
             snapshotSequence: yield* applicationEvents.latestApplicationSequence,
           });
@@ -894,7 +894,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           projectId: stored.aggregateId,
         };
       }
-      const project = yield* projectionSnapshotQuery.getProjectShellById(stored.aggregateId);
+      const project = yield* projectService.getShell(stored.aggregateId);
       return Option.match(project, {
         onNone: () => ({
           kind: "project.removed" as const,
@@ -1082,6 +1082,9 @@ const makeWsRpcLayer = (
         | ServerConfig.ServerConfig
       >();
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const projectStore = yield* ProjectStore.ProjectStoreV2;
+      const projectService = yield* ProjectService.ProjectService;
+      // Thread search is the snapshot query's last reader here.
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
       const providerSessionsV2 = yield* ProviderSessionManagerV2;
@@ -1116,7 +1119,7 @@ const makeWsRpcLayer = (
       const resolvePullRequestSyncKey = (reference: PullRequestRef) =>
         reference.host !== undefined && reference.repository.includes("/")
           ? Effect.succeed(pullRequestSyncKey(reference))
-          : projectionSnapshotQuery.getProjectShellById(reference.projectId).pipe(
+          : projectService.getShell(reference.projectId).pipe(
               Effect.map((project) =>
                 pullRequestSyncKey(reference, Option.getOrUndefined(project)?.repositoryIdentity),
               ),
@@ -1129,7 +1132,6 @@ const makeWsRpcLayer = (
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const projectService = yield* ProjectService.ProjectService;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const agentSessionImporter = yield* AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -1657,12 +1659,11 @@ const makeWsRpcLayer = (
       const getOrchestrationV2ArchivedShellSnapshot = sql
         .withTransaction(
           Effect.gen(function* () {
-            const projects = yield* projectionSnapshotQuery.getProjectShellsWithoutEnrichment();
             const threads = yield* threadManagement.getShellSnapshot({ location: "archive" });
             return {
               schemaVersion: threads.schemaVersion,
               snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-              projects,
+              projects: yield* projectStore.listShells(),
               threads: threads.archivedThreads,
             } as const;
           }),
@@ -3062,8 +3063,8 @@ const makeWsRpcLayer = (
                 });
               }
               if (input.resource._tag === "project-favicon") {
-                const project = yield* projectionSnapshotQuery
-                  .getActiveProjectByWorkspaceRoot(input.resource.cwd)
+                const project = yield* projectStore
+                  .findActiveByWorkspaceRoot(input.resource.cwd)
                   .pipe(
                     Effect.mapError(
                       (cause) =>
@@ -3190,19 +3191,13 @@ const makeWsRpcLayer = (
                             commandId: serverCommandId("pr-created-link"),
                           }).pipe(
                             Effect.provideService(OrchestratorV2, orchestrationEngine),
-                            Effect.provideService(
-                              ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                              projectionSnapshotQuery,
-                            ),
+                            Effect.provideService(ProjectService.ProjectService, projectService),
                           )
                       ).pipe(
                         Effect.andThen(
                           refreshPushedPullRequests(input, result).pipe(
                             Effect.provideService(OrchestratorV2, orchestrationEngine),
-                            Effect.provideService(
-                              ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                              projectionSnapshotQuery,
-                            ),
+                            Effect.provideService(ProjectStore.ProjectStoreV2, projectStore),
                             Effect.provideService(
                               PullRequestService.PullRequestService,
                               pullRequests,
