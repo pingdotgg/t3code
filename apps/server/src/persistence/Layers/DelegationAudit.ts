@@ -46,9 +46,10 @@ const DelegationAuditEventDbRowSchema = DelegationAuditEvent.mapFields(
 );
 
 const PageRequest = Schema.Struct({
-  sourceThreadId: Schema.NullOr(ThreadId),
+  sourceThreadId: ThreadId,
   operationId: Schema.NullOr(Schema.String),
   turnId: Schema.NullOr(DelegationAuditEvent.fields.sourceTurnId),
+  toolCallId: Schema.optional(Schema.NullOr(Schema.String)),
   beforeSequence: Schema.NullOr(DelegationAuditEvent.fields.sequence),
   limit: Schema.Number,
 });
@@ -163,8 +164,17 @@ const make = Effect.gen(function* () {
   const getAuditEventsPage = SqlSchema.findAll({
     Request: PageRequest,
     Result: DelegationAuditEventDbRowSchema,
-    execute: (input) =>
-      sql`
+    execute: (input) => {
+      const operationFilter =
+        input.operationId === null ? sql`` : sql`AND operation_id = ${input.operationId}`;
+      const turnFilter = input.turnId === null ? sql`` : sql`AND source_turn_id = ${input.turnId}`;
+      const toolCallFilter =
+        input.toolCallId === undefined || input.toolCallId === null
+          ? sql``
+          : sql`AND json_extract(context_json, '$.toolCallId') = ${input.toolCallId}`;
+      const cursorFilter =
+        input.beforeSequence === null ? sql`` : sql`AND sequence < ${input.beforeSequence}`;
+      return sql`
         SELECT
           sequence,
           event_id AS "eventId",
@@ -181,13 +191,15 @@ const make = Effect.gen(function* () {
           context_json AS "context",
           payload_json AS "payload"
         FROM delegation_audit_events
-        WHERE (${input.sourceThreadId} IS NULL OR source_thread_id = ${input.sourceThreadId})
-          AND (${input.operationId} IS NULL OR operation_id = ${input.operationId})
-          AND (${input.turnId} IS NULL OR source_turn_id = ${input.turnId})
-          AND (${input.beforeSequence} IS NULL OR sequence < ${input.beforeSequence})
+        WHERE source_thread_id = ${input.sourceThreadId}
+          ${operationFilter}
+          ${turnFilter}
+          ${toolCallFilter}
+          ${cursorFilter}
         ORDER BY sequence DESC
         LIMIT ${input.limit}
-      `,
+      `;
+    },
   });
 
   const insertEvent = (input: {
@@ -365,6 +377,7 @@ const make = Effect.gen(function* () {
         sourceThreadId,
         operationId: input.operationId ?? null,
         turnId: input.turnId ?? null,
+        toolCallId: input.toolCallId ?? null,
         beforeSequence: input.beforeSequence,
         limit: Math.max(1, Math.min(MAX_AUDIT_PAGE_SIZE, input.limit)) + 1,
       });
@@ -402,8 +415,9 @@ const make = Effect.gen(function* () {
         SELECT requested.attempt_id
         FROM delegation_audit_events AS requested
         WHERE requested.source_thread_id = ${sourceThreadId}
-          AND (${input.operationId ?? null} IS NULL OR requested.operation_id = ${input.operationId ?? null})
-          AND (${input.turnId ?? null} IS NULL OR requested.source_turn_id = ${input.turnId ?? null})
+          ${input.operationId === undefined ? sql`` : sql`AND requested.operation_id = ${input.operationId}`}
+          ${input.turnId === undefined ? sql`` : sql`AND requested.source_turn_id = ${input.turnId}`}
+          ${input.toolCallId === undefined ? sql`` : sql`AND json_extract(requested.context_json, '$.toolCallId') = ${input.toolCallId}`}
           AND requested.event_type = 'attempt.requested'
           AND NOT EXISTS (
             SELECT 1

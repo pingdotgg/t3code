@@ -6,13 +6,47 @@ const SECRET_KEY =
   /(?:authorization|bearer|credential|password|passwd|secret|api[_-]?key|private[_-]?key)/iu;
 const SECRET_TOKEN_KEY =
   /^(?:(?:access|refresh|auth|id|session|github|provider|client|bearer)_)?token(?:_(?:value|secret|credential))?$/u;
+const SECRET_ASSIGNMENT_PATTERN =
+  /(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|credential|authorization)\b(?:\\*["'])?\s*[:=]\s*)(\\*["']?)((?:\\(?!["'])|[^,\s"';&\\])+)(\\*["']?)/giu;
+const COOKIE_HEADER_PATTERN = /(\b(?:set-cookie|cookie)\s*:\s*)([^"'\r\n`]+)/giu;
+const COOKIE_PAIR_PATTERN =
+  /(^|[;,\s]+)([A-Za-z0-9_.-]+)(=)(?:"([^"]*)"|'([^']*)'|([^\s;,"']+))/giu;
+const SECRET_COOKIE_NAME = /(?:session|auth|token|csrf|xsrf|sid|secret|credential|api[_-]?key)/iu;
 const INLINE_SECRET_PATTERNS = [
   /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/giu,
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/giu,
-  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|credential|authorization)\b\s*[:=]\s*["']?[^,\s"';&]+/giu,
+  SECRET_ASSIGNMENT_PATTERN,
   /--(?:api-key|access-token|refresh-token|client-secret|password|passwd|secret|token)(?:=|\s+)[^\s]+/giu,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu,
 ];
+
+function redactCookieCredentials(value: string): {
+  readonly value: string;
+  readonly redacted: boolean;
+} {
+  let redacted = false;
+  const result = value.replace(COOKIE_HEADER_PATTERN, (header, prefix: string, cookies: string) => {
+    COOKIE_PAIR_PATTERN.lastIndex = 0;
+    const safeCookies = cookies.replace(
+      COOKIE_PAIR_PATTERN,
+      (
+        pair,
+        separator: string,
+        name: string,
+        assignment: string,
+        doubleQuoted: string | undefined,
+        singleQuoted: string | undefined,
+      ) => {
+        if (!SECRET_COOKIE_NAME.test(name)) return pair;
+        redacted = true;
+        const quote = doubleQuoted !== undefined ? '"' : singleQuoted !== undefined ? "'" : "";
+        return `${separator}${name}${assignment}${quote}${REDACTED_VALUE}${quote}`;
+      },
+    );
+    return `${prefix}${safeCookies}`;
+  });
+  return { value: result, redacted };
+}
 
 interface RedactedValue {
   readonly value: unknown;
@@ -31,11 +65,17 @@ function redactValue(value: unknown, parentKey?: string): RedactedValue {
     let redacted = false;
     for (const pattern of INLINE_SECRET_PATTERNS) {
       pattern.lastIndex = 0;
-      result = result.replace(pattern, () => {
+      result = result.replace(pattern, (...matches: Array<string | number | undefined>) => {
         redacted = true;
+        if (pattern === SECRET_ASSIGNMENT_PATTERN) {
+          return `${matches[1] ?? ""}${matches[2] ?? ""}${REDACTED_VALUE}${matches[4] ?? ""}`;
+        }
         return REDACTED_VALUE;
       });
     }
+    const safeCookies = redactCookieCredentials(result);
+    result = safeCookies.value;
+    redacted ||= safeCookies.redacted;
     return { value: result, redacted };
   }
   if (Array.isArray(value)) {

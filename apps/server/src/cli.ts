@@ -3124,8 +3124,10 @@ const delegationAuditSourceThreadId = (source: Option.Option<string>): ThreadId 
 const delegationAuditReadFilters = (
   turn: Option.Option<string>,
   beforeSequence: Option.Option<number>,
+  toolCallId: Option.Option<string> = Option.none(),
 ) => ({
   ...(Option.isSome(turn) ? { turnId: TurnId.make(turn.value) } : {}),
+  ...(Option.isSome(toolCallId) ? { toolCallId: toolCallId.value } : {}),
   beforeSequence: Option.getOrNull(beforeSequence),
 });
 
@@ -3133,6 +3135,7 @@ const chatAuditCommand = Command.make("audit", {
   ...liveTargetFlags,
   thread: Argument.string("thread").pipe(Argument.withDescription("Source thread id or title.")),
   turn: Flag.string("turn").pipe(Flag.optional),
+  toolCallId: Flag.string("tool-call").pipe(Flag.optional),
   beforeSequence: Flag.integer("before-sequence").pipe(Flag.optional),
   limit: Flag.integer("limit").pipe(Flag.withDefault(50)),
 }).pipe(
@@ -3144,7 +3147,7 @@ const chatAuditCommand = Command.make("audit", {
         const thread = yield* findThreadForCli(shell, flags.thread);
         const page = yield* client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
           sourceThreadId: thread.id,
-          ...delegationAuditReadFilters(flags.turn, flags.beforeSequence),
+          ...delegationAuditReadFilters(flags.turn, flags.beforeSequence, flags.toolCallId),
           limit: flags.limit,
         });
         yield* printJson(page);
@@ -3226,6 +3229,7 @@ const auditExportCommand = Command.make("export", {
   ...liveTargetFlags,
   thread: Argument.string("thread").pipe(Argument.withDescription("Source thread id or title.")),
   turn: Flag.string("turn").pipe(Flag.optional),
+  toolCallId: Flag.string("tool-call").pipe(Flag.optional),
 }).pipe(
   Command.withDescription("Export all delegation audit evidence for a thread as JSON."),
   Command.withHandler((flags) =>
@@ -3233,7 +3237,7 @@ const auditExportCommand = Command.make("export", {
       Effect.gen(function* () {
         const shell = yield* client[ORCHESTRATION_WS_METHODS.getShellSnapshot]({});
         const thread = yield* findThreadForCli(shell, flags.thread);
-        const filters = delegationAuditReadFilters(flags.turn, Option.none());
+        const filters = delegationAuditReadFilters(flags.turn, Option.none(), flags.toolCallId);
         const events = [];
         const cleanupStates = new Map<string, unknown>();
         const warnings = new Set<string>();
@@ -3248,7 +3252,9 @@ const auditExportCommand = Command.make("export", {
           });
           events.push(...page.events);
           for (const cleanup of page.cleanupStates) {
-            cleanupStates.set(cleanup.attemptId, cleanup);
+            if (!cleanupStates.has(cleanup.attemptId)) {
+              cleanupStates.set(cleanup.attemptId, cleanup);
+            }
           }
           for (const warning of page.warnings) warnings.add(warning);
           hasMore = page.hasMore;

@@ -511,6 +511,121 @@ describe("create_nested_thread MCP tool", () => {
     }
   });
 
+  it("keeps a created workspace side effect when its audit append fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-audit-workspace-failure-"));
+    const targetPath = `${root}-child-worktree`;
+    const cliPath = path.join(root, "audit-cli.mjs");
+    const auditPath = path.join(root, "audit-events.jsonl");
+    const dryRunOutcome = {
+      status: "dry-run",
+      threadId: null,
+      threadUrl: null,
+      retryable: false,
+      workspaceCreated: false,
+      cleanupPerformed: false,
+      errorCode: null,
+      message: "Nested-thread inputs are valid; no thread or workspace was created.",
+    };
+    const script = `
+      import fs from "node:fs";
+      const args = process.argv.slice(2);
+      if (args.includes("begin-internal")) {
+        fs.readFileSync(0, "utf8");
+        console.log(JSON.stringify({ initiatingMessageId: "source-message" }));
+      } else if (args.includes("append-internal")) {
+        const event = JSON.parse(fs.readFileSync(0, "utf8"));
+        if (event.eventType === "workspace.created") process.exit(23);
+        fs.appendFileSync(${JSON.stringify(auditPath)}, JSON.stringify(event) + "\\n");
+      } else if (args.includes("--dry-run")) {
+        console.log(JSON.stringify(${JSON.stringify(dryRunOutcome)}));
+      } else {
+        console.log(JSON.stringify(${JSON.stringify(createdOutcome)}));
+      }
+    `;
+
+    try {
+      await initGitRepository(root);
+      await writeFile(cliPath, script);
+      const toolOptions = {
+        cwd: root,
+        toolsets: new Set(["create_nested_thread"]),
+        threadId: "parent-1",
+        cliCommand: process.execPath,
+        cliArgsPrefix: [cliPath],
+        runtimeMode: "full-access" as const,
+        providerInstanceId: ProviderInstanceId.make("copilot"),
+      };
+      const args = {
+        project: root,
+        title: "Audit write failure",
+        prompt: "Create the isolated workspace.",
+        model: "gpt-6-luna",
+        workspace: {
+          mode: "isolated",
+          branch: "feature/audit-write-failure",
+          path: targetPath,
+        },
+      };
+      const result = JSON.parse(
+        await __testing.withNestedThreadAudit(
+          toolOptions,
+          "create_nested_thread",
+          "tool-call-audit-failure",
+          args,
+          (attempts) => {
+            const attempt = attempts[0];
+            if (!attempt) throw new Error("Expected one audited child attempt.");
+            return __testing.createNestedThreadTool(toolOptions, args, {}, attempt);
+          },
+        ),
+      ) as {
+        readonly status: string;
+        readonly workspaceCreated: boolean;
+        readonly errorCode: string;
+      };
+
+      expect(result).toMatchObject({
+        status: "ambiguous",
+        workspaceCreated: true,
+        errorCode: "AUDIT_PERSISTENCE_UNAVAILABLE",
+      });
+      await expect(readFile(path.join(targetPath, "README.md"), "utf8")).resolves.toBe("base\n");
+      const events = (await readFile(auditPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              eventType: string;
+              attemptId?: string;
+              payload: Record<string, unknown>;
+            },
+        );
+      const attemptCompletion = events.find((event) => event.eventType === "attempt.completed");
+      expect(events.some((event) => event.eventType === "workspace.created")).toBe(false);
+      expect(attemptCompletion).toMatchObject({
+        payload: {
+          operationStatus: "ambiguous",
+          workspaceCreated: true,
+          errorCode: "AUDIT_PERSISTENCE_UNAVAILABLE",
+        },
+      });
+      expect(events.at(-1)).toMatchObject({
+        eventType: "operation.failed",
+        payload: {
+          toolTransport: "completed",
+          operationStatus: "failed",
+          completedAttemptCount: 0,
+          failedAttemptCount: 0,
+          unresolvedAttemptIds: [attemptCompletion?.attemptId],
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(targetPath, { recursive: true, force: true });
+    }
+  });
+
   it("accepts any Copilot model slug and makes reasoning optional", () => {
     expect(__testing.availableTools(new Set(["create_nested_thread"]))).toEqual([
       expect.objectContaining({

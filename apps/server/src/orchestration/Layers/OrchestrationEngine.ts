@@ -707,13 +707,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   const auditExit = Option.isSome(maybeDelegationAuditRepository)
                     ? yield* Effect.exit(
                         Effect.gen(function* () {
-                          const priorTransitions = yield* sql<{
+                          type SessionTransition = {
                             readonly sequence: number;
                             readonly occurred_at: string;
                             readonly command_id: string | null;
                             readonly active_turn_id: string | null;
                             readonly active_message_id: string | null;
-                          }>`
+                          };
+                          const [precedingSessionTransition] = yield* sql<SessionTransition>`
                           SELECT
                             sequence,
                             occurred_at,
@@ -725,22 +726,73 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                             AND stream_id = ${sourceThreadId}
                             AND sequence <= ${readModel.snapshotSequence}
                           ORDER BY sequence DESC
-                            LIMIT 2
+                            LIMIT 1
                         `;
-                          const priorTransition = priorTransitions[0] ?? null;
-                          const previousTransition = priorTransitions[1] ?? null;
+                          const [lastActiveTurnTransition] = yield* sql<SessionTransition>`
+                          SELECT
+                            sequence,
+                            occurred_at,
+                            command_id,
+                            json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                            json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                          FROM orchestration_events
+                          WHERE event_type = 'thread.session-set'
+                            AND stream_id = ${sourceThreadId}
+                            AND sequence <= ${readModel.snapshotSequence}
+                            AND json_extract(payload_json, '$.session.activeTurnId') IS NOT NULL
+                          ORDER BY sequence DESC
+                          LIMIT 1
+                        `;
+                          const sameTurnTransitions =
+                            activeTurnId === null
+                              ? []
+                              : yield* sql<SessionTransition>`
+                                SELECT
+                                  sequence,
+                                  occurred_at,
+                                  command_id,
+                                  json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                                  json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                                FROM orchestration_events
+                                WHERE event_type = 'thread.session-set'
+                                  AND stream_id = ${sourceThreadId}
+                                  AND sequence <= ${readModel.snapshotSequence}
+                                  AND json_extract(payload_json, '$.session.activeTurnId') = ${activeTurnId}
+                                ORDER BY sequence DESC
+                                LIMIT 1
+                              `;
+                          const messagePreviouslyPresentTransitions =
+                            activeTurnId === null
+                              ? []
+                              : yield* sql<SessionTransition>`
+                                SELECT
+                                  sequence,
+                                  occurred_at,
+                                  command_id,
+                                  json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                                  json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                                FROM orchestration_events
+                                WHERE event_type = 'thread.session-set'
+                                  AND stream_id = ${sourceThreadId}
+                                  AND sequence <= ${readModel.snapshotSequence}
+                                  AND json_extract(payload_json, '$.session.activeTurnId') = ${activeTurnId}
+                                  AND json_extract(payload_json, '$.session.activeMessageId') IS NOT NULL
+                                ORDER BY sequence DESC
+                                LIMIT 1
+                              `;
+                          const sameTurnTransition = sameTurnTransitions[0] ?? null;
+                          const messagePreviouslyPresentTransition =
+                            messagePreviouslyPresentTransitions[0] ?? null;
                           const evidenceState =
                             activeTurnId === null
-                              ? previousTransition !== null &&
-                                previousTransition.active_turn_id !== null
+                              ? lastActiveTurnTransition !== undefined
                                 ? "request-after-turn-end"
                                 : "never-populated"
                               : activeMessageId !== null
                                 ? "active-message-present"
-                                : priorTransition?.active_turn_id === activeTurnId &&
-                                    priorTransition.active_message_id !== null
+                                : messagePreviouslyPresentTransition !== null
                                   ? "cleared-by-later-update"
-                                  : priorTransition?.active_turn_id === activeTurnId
+                                  : sameTurnTransition !== null
                                     ? "never-populated"
                                     : "unknown";
                           yield* maybeDelegationAuditRepository.value.append({
@@ -761,7 +813,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                               actualActiveMessageId: activeMessageId,
                               evidenceState,
                               orchestrationSequence: readModel.snapshotSequence,
-                              precedingSessionTransition: priorTransition,
+                              precedingSessionTransition: precedingSessionTransition ?? null,
+                              lastActiveTurnTransition: lastActiveTurnTransition ?? null,
+                              messagePreviouslyPresentTransition,
                             },
                           });
                         }),

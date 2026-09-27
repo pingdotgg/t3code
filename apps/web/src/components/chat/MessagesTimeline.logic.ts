@@ -1,6 +1,11 @@
 import { formatElapsed, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type TurnId, type WorkspaceHandoffOrigin } from "@t3tools/contracts";
+import {
+  type DelegationAuditEvent,
+  type MessageId,
+  type TurnId,
+  type WorkspaceHandoffOrigin,
+} from "@t3tools/contracts";
 import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
@@ -11,6 +16,85 @@ export interface TimelineDurationMessage {
   role: "user" | "assistant" | "system";
   createdAt: string;
   completedAt?: string | undefined;
+}
+
+export interface DelegationOperationSummary {
+  readonly operationId: string | null;
+  readonly operationStatus: "succeeded" | "failed" | "failed-with-unresolved" | "unresolved";
+  readonly toolTransport: "completed" | "failed" | "unknown";
+}
+
+export function deriveDelegationOperationSummary(
+  events: ReadonlyArray<DelegationAuditEvent>,
+  sourceTurnId: TurnId | null | undefined,
+  toolCallId: string | null | undefined,
+): DelegationOperationSummary | null {
+  if (!sourceTurnId || !toolCallId) {
+    return null;
+  }
+
+  const correlatedEvents = events.filter(
+    (event) => event.sourceTurnId === sourceTurnId && event.context.toolCallId === toolCallId,
+  );
+  const operationIds = new Set(correlatedEvents.map((event) => event.operationId));
+  if (operationIds.size === 0) {
+    return null;
+  }
+  if (operationIds.size > 1) {
+    return {
+      operationId: null,
+      operationStatus: "unresolved",
+      toolTransport: "unknown",
+    };
+  }
+
+  const operationId = operationIds.values().next().value;
+  if (operationId === undefined) {
+    return null;
+  }
+  const operationEvents = correlatedEvents.filter((event) => event.operationId === operationId);
+  let terminalEvent: DelegationAuditEvent | undefined;
+  for (const event of operationEvents) {
+    if (
+      (event.eventType === "operation.completed" || event.eventType === "operation.failed") &&
+      (terminalEvent === undefined || event.sequence > terminalEvent.sequence)
+    ) {
+      terminalEvent = event;
+    }
+  }
+  if (terminalEvent === undefined) {
+    return {
+      operationId,
+      operationStatus: "unresolved",
+      toolTransport: "unknown",
+    };
+  }
+
+  const payload =
+    typeof terminalEvent.payload === "object" &&
+    terminalEvent.payload !== null &&
+    !Array.isArray(terminalEvent.payload)
+      ? (terminalEvent.payload as Record<string, unknown>)
+      : null;
+  const operationStatus =
+    terminalEvent.eventType === "operation.failed" && payload?.operationStatus === "failed"
+      ? Array.isArray(payload.unresolvedAttemptIds) && payload.unresolvedAttemptIds.length > 0
+        ? "failed-with-unresolved"
+        : "failed"
+      : terminalEvent.eventType === "operation.completed" &&
+          payload?.operationStatus === "succeeded"
+        ? "succeeded"
+        : "unresolved";
+  const toolTransport =
+    payload?.toolTransport === "completed" || payload?.toolTransport === "failed"
+      ? payload.toolTransport
+      : "unknown";
+
+  return {
+    operationId,
+    operationStatus,
+    toolTransport,
+  };
 }
 
 type BaseMessagesTimelineRow =
@@ -728,6 +812,7 @@ function areWorkLogEntriesUnchanged(a: WorkLogEntry, b: WorkLogEntry): boolean {
     a.turnId === b.turnId &&
     a.requestId === b.requestId &&
     a.childReportId === b.childReportId &&
+    a.toolCallId === b.toolCallId &&
     a.toolLifecycleStatus === b.toolLifecycleStatus &&
     a.toolData === b.toolData &&
     a.sourceActivityKind === b.sourceActivityKind &&

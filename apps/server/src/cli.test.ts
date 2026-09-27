@@ -226,8 +226,16 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
         beforeSequence: null,
       });
       assert.deepStrictEqual(
-        __testing.delegationAuditReadFilters(Option.some("turn-1"), Option.some(12)),
-        { turnId: TurnId.make("turn-1"), beforeSequence: 12 },
+        __testing.delegationAuditReadFilters(
+          Option.some("turn-1"),
+          Option.some(12),
+          Option.some("provider-call"),
+        ),
+        {
+          turnId: TurnId.make("turn-1"),
+          toolCallId: "provider-call",
+          beforeSequence: 12,
+        },
       );
       assert.equal(__testing.delegationAuditSourceThreadId(Option.none()), null);
       assert.equal(
@@ -1230,6 +1238,59 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           assert.isFalse(
             queuedChild?.messages.some((message) => message.text === "cross-thread-prompt"),
           );
+
+          yield* engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("source-session-clear-active-message"),
+            threadId: sourceThreadId,
+            createdAt: new Date().toISOString(),
+            session: {
+              threadId: sourceThreadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: TurnId.make("source-turn-without-message"),
+              lastError: null,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+          const rejectedCreation = yield* captureExitAndStdout(
+            runCli([
+              "chat",
+              "new",
+              "--project",
+              workspaceRoot,
+              "--parent",
+              created.threadId,
+              "--cross-thread-source",
+              sourceThreadId,
+              "--cross-thread-capability",
+              capability,
+              "--title",
+              "Missing Active Message Child",
+              "rejected-first-turn",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          assert.equal(rejectedCreation.exit._tag, "Failure");
+          const rejectedOutcome = JSON.parse(rejectedCreation.output) as {
+            readonly status: string;
+            readonly threadId: string | null;
+            readonly errorCode: string | null;
+            readonly cleanupPerformed: boolean;
+          };
+          assert.equal(rejectedOutcome.status, "failed");
+          assert.equal(rejectedOutcome.errorCode, "TURN_START_REJECTED");
+          assert.isTrue(rejectedOutcome.cleanupPerformed);
+          const rejectedThreadId = rejectedOutcome.threadId;
+          if (rejectedThreadId === null) {
+            return assert.fail("Expected the rejected child thread id to remain in the outcome.");
+          }
+          const deletedRejectedChild = (yield* engine.getReadModel()).threads.find(
+            (thread) => thread.id === ThreadId.make(rejectedThreadId),
+          );
+          assert.isNotNull(deletedRejectedChild?.deletedAt);
 
           const queuedOutput = yield* captureStdout(
             runCli([

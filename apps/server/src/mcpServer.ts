@@ -705,13 +705,10 @@ async function withNestedThreadAudit(
     return text;
   }
 
-  const successes: Array<boolean> = [];
   for (const result of outcomes) {
     const context = audit.attempts[result.attemptIndex];
     if (!context) continue;
     const outcome = result.outcome;
-    const successful = outcome.status === "created" || outcome.status === "dry-run";
-    successes.push(successful);
     await appendNestedThreadAudit(options, context, {
       sourceThreadId: ThreadId.make(options.threadId!),
       eventType: "attempt.completed",
@@ -726,10 +723,19 @@ async function withNestedThreadAudit(
       },
     });
   }
-  const operationSucceeded =
-    outcomes.length === audit.attempts.length &&
-    outcomes.every(({ outcome }) => outcome.status === "created" || outcome.status === "dry-run");
-  const completedAttemptCount = successes.filter(Boolean).length;
+  const outcomeByIndex = new Map(outcomes.map((result) => [result.attemptIndex, result.outcome]));
+  const completedAttemptCount = audit.attempts.filter((_, index) => {
+    const status = outcomeByIndex.get(index)?.status;
+    return status === "created" || status === "dry-run";
+  }).length;
+  const failedAttemptCount = audit.attempts.filter(
+    (_, index) => outcomeByIndex.get(index)?.status === "failed",
+  ).length;
+  const unresolvedAttemptIds = audit.attempts.flatMap((attempt, index) => {
+    const status = outcomeByIndex.get(index)?.status;
+    return status === undefined || status === "ambiguous" ? [attempt.attemptId] : [];
+  });
+  const operationSucceeded = completedAttemptCount === audit.attempts.length;
   await appendNestedThreadOperationAudit(
     options,
     audit.operationId,
@@ -739,7 +745,8 @@ async function withNestedThreadAudit(
       operationStatus: operationSucceeded ? "succeeded" : "failed",
       attemptCount: audit.attempts.length,
       completedAttemptCount,
-      failedAttemptCount: successes.length - completedAttemptCount,
+      failedAttemptCount,
+      unresolvedAttemptIds,
     },
   );
   return text;
@@ -1694,16 +1701,29 @@ async function createNestedThreadToolImpl(
     );
   }
   if (auditContext) {
-    await appendNestedThreadAudit(options, auditContext, {
-      sourceThreadId: ThreadId.make(options.threadId),
-      eventType: "workspace.created",
-      payload: {
-        path: workspace.path,
-        branch: workspace.branch,
-        baseRef: finalPreflight.baseRef,
-        baseRevision: finalPreflight.baseRevision,
-      },
-    });
+    try {
+      await appendNestedThreadAudit(options, auditContext, {
+        sourceThreadId: ThreadId.make(options.threadId),
+        eventType: "workspace.created",
+        payload: {
+          path: workspace.path,
+          branch: workspace.branch,
+          baseRef: finalPreflight.baseRef,
+          baseRevision: finalPreflight.baseRevision,
+        },
+      });
+    } catch (error) {
+      return {
+        status: "ambiguous",
+        threadId: null,
+        threadUrl: null,
+        retryable: false,
+        workspaceCreated: true,
+        cleanupPerformed: false,
+        errorCode: "AUDIT_PERSISTENCE_UNAVAILABLE",
+        message: `Git worktree '${workspace.path}' was created, but its audit completion could not be persisted. The workspace was preserved; reconcile the audit and workspace before retrying: ${toErrorMessage(error)}`,
+      };
+    }
   }
 
   const creationOutcome = await invokeNestedThreadCli(

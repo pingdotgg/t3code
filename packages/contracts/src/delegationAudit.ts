@@ -146,6 +146,7 @@ export const DelegationAuditPageInput = Schema.Struct({
   sourceThreadId: Schema.optional(ThreadId),
   operationId: Schema.optional(Schema.String),
   turnId: Schema.optional(TurnId),
+  toolCallId: Schema.optional(Schema.String),
   beforeSequence: Schema.NullOr(NonNegativeInt),
   limit: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(Schema.isLessThanOrEqualTo(100)),
 });

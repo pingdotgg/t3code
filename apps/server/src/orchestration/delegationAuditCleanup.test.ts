@@ -5,7 +5,11 @@ import { deriveDelegationCleanupIntents } from "./delegationAuditCleanup.ts";
 
 const event = (
   sequence: number,
-  eventType: "thread.created" | "thread.deletion.accepted" | "cleanup.completed",
+  eventType:
+    | "thread.created"
+    | "thread.delete.requested"
+    | "thread.deletion.accepted"
+    | "cleanup.completed",
   payload: unknown,
 ): Parameters<typeof deriveDelegationCleanupIntents>[0][number] => ({
   sequence,
@@ -56,8 +60,23 @@ it("keeps the newest applicable cleanup intent for each attempt", () => {
   ]);
 });
 
-it("does not infer pending cleanup for a successful child with no deletion intent", () => {
+it("keeps cleanup intent unknown when a page contains no deletion intent", () => {
   const attempts = deriveDelegationCleanupIntents([event(4, "thread.created", {})]);
+
+  assert.deepStrictEqual(attempts, [
+    {
+      attemptId: "attempt",
+      childThreadId: ThreadId.make("child"),
+      cleanupRequested: null,
+    },
+  ]);
+});
+
+it("preserves an explicit no-worktree deletion decision", () => {
+  const attempts = deriveDelegationCleanupIntents([
+    event(9, "thread.deletion.accepted", { cleanupWorktree: false }),
+    event(4, "thread.delete.requested", { cleanupWorktree: true }),
+  ]);
 
   assert.deepStrictEqual(attempts, [
     {

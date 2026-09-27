@@ -1073,6 +1073,7 @@ const makeWsRpcLayer = (
               for (const attempt of childAttempts) {
                 const jobOption = yield* worktreeCleanupJobs.getByThreadId(attempt.childThreadId);
                 if (Option.isNone(jobOption)) {
+                  if (attempt.cleanupRequested === null) continue;
                   const status = attempt.cleanupRequested ? "pending-enqueue" : "not-required";
                   cleanupStates.push({
                     ...attempt,

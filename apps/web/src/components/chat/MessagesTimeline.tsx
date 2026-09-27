@@ -6,7 +6,7 @@ import {
   type MessageId,
   ThreadId,
   type TurnDiffScope,
-  type TurnId,
+  TurnId,
 } from "@t3tools/contracts";
 import {
   createContext,
@@ -64,6 +64,7 @@ import { ChildFollowUpReceipt } from "./ChildFollowUpPanel";
 import {
   collectReviewOutputMessageIds,
   computeStableMessagesTimelineRows,
+  deriveDelegationOperationSummary,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -1938,6 +1939,17 @@ const WorkEntryDetails = memo(function WorkEntryDetails({
     .filter((value, index, values) => value && values.indexOf(value) === index)
     .join("\n\n");
   const hasAuditEvidence = workEntry.sourceActivityKind?.startsWith("tool.") === true;
+  const toolName =
+    typeof workEntry.toolData === "object" &&
+    workEntry.toolData !== null &&
+    "toolName" in workEntry.toolData &&
+    typeof workEntry.toolData.toolName === "string"
+      ? workEntry.toolData.toolName
+      : null;
+  const isDelegationTool =
+    toolName === "delegate_work" ||
+    toolName === "create_nested_thread" ||
+    toolName === "create_nested_threads";
   if (!detail && !hasAuditEvidence) return null;
   return (
     <div className="ml-[0.5em] border-l border-border/50 pl-[1em] py-1">
@@ -1956,10 +1968,15 @@ const WorkEntryDetails = memo(function WorkEntryDetails({
             environmentId={activeThreadEnvironmentId}
             threadId={activeThreadId}
           />
-          <DelegationAuditDetails
-            environmentId={activeThreadEnvironmentId}
-            threadId={activeThreadId}
-          />
+          {isDelegationTool ? (
+            <DelegationAuditDetails
+              key={`${workEntry.id}:${workEntry.turnId ?? ""}:${workEntry.toolCallId ?? ""}`}
+              environmentId={activeThreadEnvironmentId}
+              threadId={activeThreadId}
+              turnId={workEntry.turnId ? TurnId.make(workEntry.turnId) : null}
+              toolCallId={workEntry.toolCallId ?? null}
+            />
+          ) : null}
         </>
       ) : null}
     </div>
@@ -2031,15 +2048,20 @@ const ActivityEvidenceDetails = memo(function ActivityEvidenceDetails({
 const DelegationAuditDetails = memo(function DelegationAuditDetails({
   environmentId,
   threadId,
+  turnId,
+  toolCallId,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
+  turnId: TurnId | null;
+  toolCallId: string | null;
 }) {
   const [page, setPage] = useState<DelegationAuditPage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadPage = useCallback(
     async (beforeSequence: number | null) => {
+      if (turnId === null || toolCallId === null) return;
       setLoading(true);
       setError(null);
       try {
@@ -2047,6 +2069,8 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
           environmentId,
         ).orchestration.getDelegationAuditPage({
           sourceThreadId: threadId,
+          turnId,
+          toolCallId,
           beforeSequence,
           limit: 50,
         });
@@ -2060,7 +2084,7 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
                 ),
                 cleanupStates: [
                   ...new Map(
-                    [...current.cleanupStates, ...nextPage.cleanupStates].map((cleanup) => [
+                    [...nextPage.cleanupStates, ...current.cleanupStates].map((cleanup) => [
                       cleanup.attemptId,
                       cleanup,
                     ]),
@@ -2075,23 +2099,44 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
         setLoading(false);
       }
     },
-    [environmentId, threadId],
+    [environmentId, threadId, toolCallId, turnId],
   );
+  const operationSummary =
+    page === null ? null : deriveDelegationOperationSummary(page.events, turnId, toolCallId);
 
   return (
     <div className="mt-2 space-y-2">
-      {page === null ? (
+      {turnId === null || toolCallId === null ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400" role="status">
+          Delegation audit cannot be linked to this activity because its turn or tool-call
+          correlation is unavailable.
+        </p>
+      ) : page === null ? (
         <button
           type="button"
           className="text-xs text-muted-foreground underline underline-offset-2"
           disabled={loading}
           onClick={() => void loadPage(null)}
         >
-          {loading ? "Loading delegation audit…" : "Load delegation audit"}
+          {loading ? "Loading delegation audit…" : "Load delegation audit for this tool call"}
         </button>
       ) : (
         <>
-          <p className="text-xs font-medium text-muted-foreground">Delegation audit evidence</p>
+          {operationSummary ? (
+            <p className="text-xs font-medium text-muted-foreground" role="status">
+              Delegation operation{" "}
+              {operationSummary.operationStatus === "failed-with-unresolved"
+                ? "failed with unresolved attempts"
+                : operationSummary.operationStatus}
+              {operationSummary.operationId ? ` · ${operationSummary.operationId}` : ""}
+              {" · tool transport "}
+              {operationSummary.toolTransport}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-700 dark:text-amber-400" role="status">
+              No delegation audit evidence is linked to this tool call.
+            </p>
+          )}
           {page.warnings.map((warning) => (
             <p key={warning} className="text-xs text-amber-700 dark:text-amber-400">
               {warning}
