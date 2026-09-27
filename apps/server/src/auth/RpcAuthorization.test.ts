@@ -82,6 +82,22 @@ it.effect("supports the narrow preview scope and existing persisted preview scop
   }),
 );
 
+it.effect("withholds automation-host registration from the narrow preview scope", () =>
+  Effect.gen(function* () {
+    for (const method of [
+      WS_METHODS.previewAutomationConnect,
+      WS_METHODS.previewAutomationRespond,
+      WS_METHODS.previewAutomationFocusHost,
+    ] as const) {
+      const error = yield* Effect.flip(
+        authorizeRpcMethod(new Set([AuthBrowserPreviewScope]), method, "client"),
+      );
+      expect(error.requiredScope).toBe(AuthOrchestrationOperateScope);
+      yield* authorizeRpcMethod(new Set([AuthOrchestrationOperateScope]), method, "client");
+    }
+  }),
+);
+
 it.effect("restricts host power reports to the local owner session", () =>
   Effect.gen(function* () {
     const scopes = new Set([AuthOrchestrationOperateScope]);

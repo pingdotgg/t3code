@@ -166,6 +166,11 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
+// Browser-control RPCs callable with the narrow preview scope. Automation-host
+// registration/response (previewAutomationConnect/Respond/FocusHost) is
+// deliberately excluded: the preview-scoped session lives in the managed
+// browser partition, where untrusted page JS could otherwise register as an
+// automation host and receive future managedTargetAuth payloads.
 const PREVIEW_RPC_METHODS = new Set<string>([
   WS_METHODS.previewOpen,
   WS_METHODS.previewNavigate,
@@ -174,9 +179,6 @@ const PREVIEW_RPC_METHODS = new Set<string>([
   WS_METHODS.previewRefresh,
   WS_METHODS.previewClose,
   WS_METHODS.previewList,
-  WS_METHODS.previewAutomationConnect,
-  WS_METHODS.previewAutomationRespond,
-  WS_METHODS.previewAutomationFocusHost,
   WS_METHODS.subscribePreviewEvents,
 ]);
 

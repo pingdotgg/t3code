@@ -42,7 +42,6 @@ interface Attestation {
 
 interface ManagedOrigins {
   readonly targetOrigins: ReadonlyArray<string>;
-  readonly authOrigins: ReadonlyArray<string>;
 }
 
 interface ResolvedTarget {
@@ -129,7 +128,6 @@ const makeManagedOrigins = (
   if (!configuredDevUrl) {
     return {
       targetOrigins: apiOrigins,
-      authOrigins: apiOrigins,
     };
   }
 
@@ -139,7 +137,6 @@ const makeManagedOrigins = (
   ) {
     return {
       targetOrigins: apiOrigins,
-      authOrigins: apiOrigins,
     };
   }
 
@@ -149,9 +146,8 @@ const makeManagedOrigins = (
     originForHost(configuredDevUrl.protocol, host, port),
   );
   const targetOrigins = Array.from(new Set([devOrigin, ...apiOrigins, ...devAliases]));
-  const authOrigins = targetOrigins;
 
-  return { targetOrigins, authOrigins };
+  return { targetOrigins };
 };
 
 const resolveManagedTarget = (
@@ -336,9 +332,11 @@ export const makeManagedPreviewAuth = Effect.gen(function* () {
         return next;
       });
 
-      const credentialOrigins = automaticAuthAllowed
-        ? Array.from(new Set([...target.expectedOrigins, ...origins.authOrigins]))
-        : [];
+      // Issue credentials only for the attested target origins. attest() and
+      // openBootstrap() reject every other origin, so credentials minted for the
+      // wider managed origin set would be unconsumable yet still exposed to the
+      // host inside managedTargetAuth.
+      const credentialOrigins = automaticAuthAllowed ? target.expectedOrigins : [];
       const issued: Array<{
         readonly id: string;
         readonly origin: string;
