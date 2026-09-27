@@ -2731,6 +2731,53 @@ struct NativePassiveLiveShellTests {
         await fixture.client.disconnect()
     }
 
+    @Test(
+        "Stop status accepts a read superseded while the live stream is authoritative",
+        arguments: [("one", false), ("one", true), ("two", false)]
+    )
+    func stopStatusDuringLiveUpdates(environmentID: String, authorityLost: Bool) async throws {
+        let server = PassiveLiveServer()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            webSocketConnector: server, fallbackPollingInitialDelay: .seconds(60),
+            aggregateRefreshInterval: .seconds(60), aggregatePublishSleep: {}
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let seed = try await fixture.client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: fixture.client.events())
+        let host = environmentID + ".example"
+        let projectID = "project-" + environmentID
+        let threadID = "thread-" + environmentID
+        await server.waitForSubscriptions(host: host, count: 1)
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: projectID, threadID: threadID, title: "Live seed", snapshotSequence: 10
+        ), host: host)
+        _ = try await recorder.wait { $0.threads.contains { $0.title == "Live seed" } }
+        let held = PassiveRequestGate()
+        await fixture.transport.holdNextShell(host: host, gate: held)
+        let status = Task { @MainActor in
+            try await fixture.client.stopStatus(threadID: FeatureScopedID.thread(environmentID: environmentID, wireID: threadID))
+        }
+        try await held.waitUntilEnteredCancellable()
+        if authorityLost {
+            // The stream stops being authoritative, so the cache cannot stand in for the read.
+            try await server.emit([.object(["kind": .string("refresh-required")])], host: host)
+            _ = try await recorder.wait { $0.connection.state == .reconnecting }
+        } else {
+            // A live turn keeps advancing the shell while the Stop status read is in flight.
+            try await server.snapshot(multiEnvironmentShell(
+                projectID: projectID, threadID: threadID, title: "Live update", snapshotSequence: 11
+            ), host: host)
+            _ = try await recorder.wait { $0.threads.contains { $0.title == "Live update" } }
+        }
+        await held.release()
+        if authorityLost {
+            await #expect(throws: CancellationError.self) { try await status.value }
+        } else {
+            #expect(try await status.value.title == "Live update")
+        }
+        await fixture.client.disconnect()
+    }
+
     @Test("Silent connected shells reconcile through bounded HTTP", arguments: ["one", "two"], [false, true])
     func silentConnectedShellReconciles(environmentID: String, disconnect: Bool) async throws {
         let server = PassiveLiveServer()

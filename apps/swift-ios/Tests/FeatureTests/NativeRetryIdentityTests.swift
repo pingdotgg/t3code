@@ -172,7 +172,6 @@ final class NativeRetryIdentityTests: XCTestCase {
         await fixture.transport.failFollowups()
     }
 
-
     func testLateStopAcknowledgementCannotCancelReplacementGenerationRefresh() async throws {
         let fixture = try await AcceptedSendFixture.make(includePeer: true)
         addTeardownBlock { await fixture.cleanUp() }

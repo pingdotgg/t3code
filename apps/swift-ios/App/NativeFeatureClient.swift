@@ -2601,7 +2601,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let route = try threadRoute(for: threadID)
         let generation = environmentGeneration
         let bootstrapID = foregroundBootstrapID
-        try await refresh(client: route.client)
+        do { try await refresh(client: route.client) } catch is CancellationError where !Task.isCancelled {
+            // A live turn advanced the shell during this read. The cache answers only
+            // while its stream is still authoritative on the current socket.
+            let connectionID = await route.client.currentConnectionID()
+            guard connectionID != nil, shellConnectionIDsByEnvironmentID[route.environmentID] == connectionID,
+                  activeEnvironment?.id != route.environmentID || activeStreamIsAuthoritative
+            else { throw CancellationError() }
+        }
         guard !Task.isCancelled, bootstrapID == foregroundBootstrapID,
               isKnownClient(route.client, environmentID: route.environmentID, generation: generation) else {
             throw CancellationError()
