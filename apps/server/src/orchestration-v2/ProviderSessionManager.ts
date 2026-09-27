@@ -4170,15 +4170,19 @@ export const layerWithOptions = (
                   }
                   yield* scheduleIdleRelease(input.providerSessionId, detached.value.entry.runtime);
                 }).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.fail(
+                  Effect.catchCause((cause) => {
+                    const error = Cause.findErrorOption(cause);
+                    if (Option.isSome(error) && isProviderSessionReleaseError(error.value)) {
+                      return Effect.fail(error.value);
+                    }
+                    return Effect.fail(
                       new ProviderSessionReleaseError({
                         providerSessionId: input.providerSessionId,
                         reason: "manual_shutdown",
                         cause,
                       }),
-                    ),
-                  ),
+                    );
+                  }),
                 ),
               ).pipe(
                 Effect.onExit(() =>

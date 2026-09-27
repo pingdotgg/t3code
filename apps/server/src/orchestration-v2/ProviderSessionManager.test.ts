@@ -9734,10 +9734,11 @@ it.effect("ProviderSessionManagerV2 bounds the detach wait on a stalled in-fligh
 
       const detaching = yield* manager
         .detach({ providerSessionId, threadId: attachThreadId, revokeMcpCredential: true })
-        .pipe(Effect.exit, Effect.forkChild);
+        .pipe(Effect.flip, Effect.forkChild);
       yield* TestClock.adjust("30 seconds");
-      const detachExit = yield* Fiber.join(detaching);
-      assert.equal(detachExit._tag, "Failure");
+      const detachError = yield* Fiber.join(detaching);
+      assert.ok(detachError._tag === "ProviderSessionReleaseError");
+      assert.equal(detachError.reason, "runtime_error");
 
       yield* Deferred.succeed(issueGate, undefined);
       assert.isTrue(Exit.isSuccess(yield* Fiber.join(attaching)));
