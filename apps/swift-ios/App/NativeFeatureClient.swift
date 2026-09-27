@@ -4626,6 +4626,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     let config = try? await probe.serverConfig()
                     await probe.disconnect()
                     guard let environments = try await currentEnvironments(for: environment) else { return }
+                    // A save or config event that landed during the probe is newer.
+                    guard owner?.serverConfigsByEnvironmentID[environment.id] == nil else { return }
                     if let config {
                         applyCatalogue(config, environment: environment, saved: environments)
                         return
