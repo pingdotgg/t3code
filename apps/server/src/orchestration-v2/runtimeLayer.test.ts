@@ -38,7 +38,6 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { ServerConfig } from "../config.ts";
-import { OrchestrationEventInfrastructureLayerLive } from "../orchestration/runtimeLayer.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
@@ -66,6 +65,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
+  OrchestrationEventInfrastructureLayerLive,
   OrchestrationV2EventSinkLayerLive,
   OrchestrationV2LayerLive,
   ProjectServiceLayerLive,
