@@ -1997,6 +1997,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func deleteThread(id: String) async throws {
         let route = try threadRoute(for: id)
         _ = try await route.client.delete(threadID: route.wireID)
+        // A pending accepted-command refresh would publish the deleted thread again.
+        cancelAcceptedCommandRefreshes(threadID: route.uiID)
         archivedThreadsByEnvironmentID[route.environmentID]?.removeAll {
             $0.id == route.uiID
         }

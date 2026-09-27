@@ -251,6 +251,23 @@ final class NativeRetryIdentityTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testDeletingThreadCancelsItsAcceptedSendRefresh() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        var cancellations = fixture.transport.cancellations.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Accepted before delete", selection: nil)
+        let heldRead = await reads.next()
+        let held = try XCTUnwrap(heldRead)
+        let deletion = Task { try await fixture.client.deleteThread(id: fixture.threadID) }
+        let cancelledID = await cancellations.next()
+        XCTAssertEqual(cancelledID, held.id, "A deleted thread's pending refresh must not publish it again.")
+        await fixture.transport.failFollowups()
+        _ = try? await deletion.value
+        await fixture.client.disconnect()
+    }
+
     func testDisconnectCancelsAcceptedSendRefreshWithoutAnotherCommand() async throws {
         let fixture = try await AcceptedSendFixture.make()
         addTeardownBlock { await fixture.cleanUp() }
