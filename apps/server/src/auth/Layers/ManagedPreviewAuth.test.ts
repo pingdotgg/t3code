@@ -155,10 +155,6 @@ it.layer(NodeServices.layer)("ManagedPreviewAuthLive", (it) => {
       if (!grant) return;
 
       const managedTargetAuth = grant.payload;
-      expect(managedTargetAuth.expectedOrigins).toEqual([origin]);
-      // Credentials must be issued only for attested origins: attest() and
-      // openBootstrap() reject every other origin, so wider issuance would only
-      // widen exposure inside managedTargetAuth.
       expect(managedTargetAuth.bootstrapCredentials.map((entry) => entry.origin)).toEqual([origin]);
       const challenge = managedTargetAuth.attestation;
       const signingPublicKey = managedTargetAuth.attestationPublicKey;

@@ -332,10 +332,7 @@ export const makeManagedPreviewAuth = Effect.gen(function* () {
         return next;
       });
 
-      // Issue credentials only for the attested target origins. attest() and
-      // openBootstrap() reject every other origin, so credentials minted for the
-      // wider managed origin set would be unconsumable yet still exposed to the
-      // host inside managedTargetAuth.
+      // attest() and openBootstrap() reject any other origin.
       const credentialOrigins = automaticAuthAllowed ? target.expectedOrigins : [];
       const issued: Array<{
         readonly id: string;

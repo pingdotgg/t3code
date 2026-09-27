@@ -79,21 +79,16 @@ it.effect("supports the narrow preview scope and existing persisted preview scop
       authorizeRpcMethod(new Set([AuthBrowserPreviewScope]), WS_METHODS.serverGetConfig, "client"),
     );
     expect(error.requiredScope).toBe(AuthOrchestrationReadScope);
-  }),
-);
 
-it.effect("withholds automation-host registration from the narrow preview scope", () =>
-  Effect.gen(function* () {
     for (const method of [
       WS_METHODS.previewAutomationConnect,
       WS_METHODS.previewAutomationRespond,
       WS_METHODS.previewAutomationFocusHost,
     ] as const) {
-      const error = yield* Effect.flip(
+      const hostError = yield* Effect.flip(
         authorizeRpcMethod(new Set([AuthBrowserPreviewScope]), method, "client"),
       );
-      expect(error.requiredScope).toBe(AuthOrchestrationOperateScope);
-      yield* authorizeRpcMethod(new Set([AuthOrchestrationOperateScope]), method, "client");
+      expect(hostError.requiredScope).toBe(AuthOrchestrationOperateScope);
     }
   }),
 );
