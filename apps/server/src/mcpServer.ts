@@ -503,6 +503,23 @@ class CommandExecutionError extends Error {
   }
 }
 
+async function readGitRevision(root: string): Promise<string | null> {
+  try {
+    const revision = (await runCommand(root, "git", ["rev-parse", "HEAD"])).stdout.trim();
+    return revision.length > 0 ? revision : null;
+  } catch (error) {
+    if (
+      error instanceof CommandExecutionError &&
+      error.result.code !== null &&
+      error.result.code !== 0 &&
+      error.result.signal === null
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function runCommand(
   root: string,
   command: string,
@@ -559,7 +576,7 @@ async function beginNestedThreadAudit(
     providerInstanceId: options.providerInstanceId ?? null,
     model: options.defaultModel ?? options.delegatedDefaultModelSelection?.model ?? null,
     workspaceRoot: options.cwd,
-    gitRevision: (await runCommand(options.cwd, "git", ["rev-parse", "HEAD"])).stdout.trim(),
+    gitRevision: await readGitRevision(options.cwd),
     buildRevision,
     requests: requestValues.map((argumentsValue, index) => ({
       attemptId: attemptIds[index],
@@ -3061,4 +3078,5 @@ export const __testing = {
   sendToThreadTool,
   reportToParentTool,
   switchWorkspaceTool,
+  withNestedThreadAudit,
 };

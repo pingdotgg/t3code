@@ -2589,6 +2589,7 @@ const chatNewCommand = Command.make("new", {
       const getSnapshot = rpc[ORCHESTRATION_WS_METHODS.getShellSnapshot]({});
       const dispatch = (command: ClientOrchestrationCommand) =>
         rpc[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
+      const auditSourceThreadId = delegationAuditSourceThreadId(flags.crossThreadSource);
       const appendAudit = (
         operationId: string,
         attemptId: string,
@@ -2603,19 +2604,23 @@ const chatNewCommand = Command.make("new", {
           | "thread.deletion.failed",
         childThreadId: ThreadId,
         payload: unknown,
-      ) =>
-        rpc[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]({
+      ) => {
+        if (auditSourceThreadId === null) {
+          return Effect.fail(new Error("Delegation audit events require --cross-thread-source."));
+        }
+        return rpc[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]({
           eventId: EventId.make(
             `delegation-audit:${operationId}:${attemptId}:${crypto.randomUUID()}`,
           ),
           operationId,
-          sourceThreadId: ThreadId.make(flags.crossThreadSource ?? ""),
+          sourceThreadId: auditSourceThreadId,
           attemptId,
           eventType,
           childThreadId,
           payload,
           occurredAt: new Date().toISOString(),
         });
+      };
       return Effect.gen(function* () {
         const snapshot = yield* getSnapshot;
         const project = yield* findProjectForCli(snapshot, flags.project);
@@ -3111,6 +3116,19 @@ const chatQueueCommand = Command.make("queue").pipe(
   ]),
 );
 
+const delegationAuditSourceThreadId = (source: Option.Option<string>): ThreadId | null => {
+  const value = Option.getOrUndefined(source);
+  return value === undefined ? null : ThreadId.make(value);
+};
+
+const delegationAuditReadFilters = (
+  turn: Option.Option<string>,
+  beforeSequence: Option.Option<number>,
+) => ({
+  ...(Option.isSome(turn) ? { turnId: TurnId.make(turn.value) } : {}),
+  beforeSequence: Option.getOrNull(beforeSequence),
+});
+
 const chatAuditCommand = Command.make("audit", {
   ...liveTargetFlags,
   thread: Argument.string("thread").pipe(Argument.withDescription("Source thread id or title.")),
@@ -3126,8 +3144,7 @@ const chatAuditCommand = Command.make("audit", {
         const thread = yield* findThreadForCli(shell, flags.thread);
         const page = yield* client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
           sourceThreadId: thread.id,
-          ...(flags.turn ? { turnId: TurnId.make(flags.turn) } : {}),
-          beforeSequence: flags.beforeSequence ?? null,
+          ...delegationAuditReadFilters(flags.turn, flags.beforeSequence),
           limit: flags.limit,
         });
         yield* printJson(page);
@@ -3149,7 +3166,7 @@ const auditShowCommand = Command.make("show", {
     withLiveRpcClient(flags, (client) =>
       client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
         operationId: flags.operationId,
-        beforeSequence: flags.beforeSequence ?? null,
+        ...delegationAuditReadFilters(Option.none(), flags.beforeSequence),
         limit: flags.limit,
       }).pipe(Effect.flatMap(printJson)),
     ),
@@ -3216,6 +3233,7 @@ const auditExportCommand = Command.make("export", {
       Effect.gen(function* () {
         const shell = yield* client[ORCHESTRATION_WS_METHODS.getShellSnapshot]({});
         const thread = yield* findThreadForCli(shell, flags.thread);
+        const filters = delegationAuditReadFilters(flags.turn, Option.none());
         const events = [];
         const cleanupStates = new Map<string, unknown>();
         const warnings = new Set<string>();
@@ -3224,7 +3242,7 @@ const auditExportCommand = Command.make("export", {
         while (hasMore) {
           const page = yield* client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
             sourceThreadId: thread.id,
-            ...(flags.turn ? { turnId: TurnId.make(flags.turn) } : {}),
+            ...filters,
             beforeSequence,
             limit: 100,
           });
@@ -3238,7 +3256,7 @@ const auditExportCommand = Command.make("export", {
         }
         yield* printJson({
           sourceThreadId: thread.id,
-          turnId: flags.turn ? TurnId.make(flags.turn) : null,
+          turnId: filters.turnId ?? null,
           exportedAt: new Date().toISOString(),
           evidenceIds: events.map((event) => event.eventId),
           buildContext: [
@@ -6299,3 +6317,8 @@ export const cli: Command.Command<"t3", never, {}, unknown, NetService | NodeSer
       installationCommand,
     ]),
   );
+
+export const __testing = {
+  delegationAuditReadFilters,
+  delegationAuditSourceThreadId,
+};

@@ -421,6 +421,96 @@ describe("send_to_thread MCP tool", () => {
 });
 
 describe("create_nested_thread MCP tool", () => {
+  it("allows audited dry-runs and non-workspace creation without a Git HEAD", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-audit-non-git-"));
+    const noGitRoot = path.join(root, "no-git");
+    const emptyGitRoot = path.join(root, "empty-git");
+    const makeToolOptions = (cwd: string, beginPath: string) => {
+      const cliScript = `
+        const fs = require("node:fs");
+        const args = process.argv.slice(1);
+        if (args.includes("begin-internal")) {
+          fs.writeFileSync(${JSON.stringify(beginPath)}, fs.readFileSync(0, "utf8"));
+          console.log(JSON.stringify({ initiatingMessageId: "source-message" }));
+        } else if (args.includes("--dry-run")) {
+          console.log(JSON.stringify({
+            status: "dry-run",
+            threadId: null,
+            threadUrl: null,
+            retryable: false,
+            workspaceCreated: false,
+            cleanupPerformed: false,
+            errorCode: null,
+            message: "Nested-thread inputs are valid; no thread or workspace was created."
+          }));
+        } else if (!args.includes("append-internal")) {
+          console.log(JSON.stringify(${JSON.stringify(createdOutcome)}));
+        }
+      `;
+      return {
+        cwd,
+        toolsets: new Set(["create_nested_thread"]),
+        threadId: "parent-1",
+        cliCommand: process.execPath,
+        cliArgsPrefix: ["-e", cliScript, "--"],
+        runtimeMode: "approval-required" as const,
+        providerInstanceId: ProviderInstanceId.make("copilot"),
+      };
+    };
+    const createAuditedChild = async (
+      toolOptions: ReturnType<typeof makeToolOptions>,
+      dryRun: boolean,
+    ) => {
+      const args = {
+        project: "project-1",
+        title: "No Git required",
+        prompt: "Create this child without requiring a Git HEAD.",
+        model: "gpt-6-luna",
+        dryRun,
+      };
+      const result = await __testing.withNestedThreadAudit(
+        toolOptions,
+        "create_nested_thread",
+        "tool-call",
+        args,
+        (attempts) => {
+          const attempt = attempts[0];
+          if (!attempt) throw new Error("Expected one audited child attempt.");
+          return __testing.createNestedThreadTool(toolOptions, args, {}, attempt);
+        },
+      );
+      return JSON.parse(result) as { readonly status: string };
+    };
+
+    try {
+      await mkdir(noGitRoot);
+      await mkdir(emptyGitRoot);
+      await run("git", ["init", "--quiet"], emptyGitRoot);
+
+      const noGitAuditPath = path.join(root, "no-git-audit.json");
+      const noGit = await createAuditedChild(makeToolOptions(noGitRoot, noGitAuditPath), true);
+      expect(noGit.status).toBe("dry-run");
+      expect(JSON.parse(await readFile(noGitAuditPath, "utf8")).gitRevision).toBeNull();
+
+      const emptyGitAuditPath = path.join(root, "empty-git-audit.json");
+      const emptyGit = await createAuditedChild(
+        makeToolOptions(emptyGitRoot, emptyGitAuditPath),
+        false,
+      );
+      expect(emptyGit.status).toBe("created");
+      expect(JSON.parse(await readFile(emptyGitAuditPath, "utf8")).gitRevision).toBeNull();
+
+      await expect(
+        createAuditedChild(
+          makeToolOptions(path.join(root, "missing-root"), path.join(root, "missing-audit.json")),
+          true,
+        ),
+      ).rejects.toThrow(/git rev-parse HEAD failed/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("accepts any Copilot model slug and makes reasoning optional", () => {
     expect(__testing.availableTools(new Set(["create_nested_thread"]))).toEqual([
       expect.objectContaining({

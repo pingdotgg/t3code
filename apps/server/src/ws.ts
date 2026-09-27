@@ -103,6 +103,7 @@ import {
 } from "./git/VcsBridge.ts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { deriveDelegationCleanupIntents } from "./orchestration/delegationAuditCleanup.ts";
 import { RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -1066,54 +1067,13 @@ const makeWsRpcLayer = (
                 });
               }
               const page = yield* delegationAudit.page({ ...input, sourceThreadId });
-              const childAttempts = new Map<
-                string,
-                { attemptId: string; childThreadId: ThreadId; cleanupRequested: boolean | null }
-              >();
-              for (const event of page.events) {
-                if (
-                  event.attemptId === null ||
-                  event.childThreadId === null ||
-                  ![
-                    "thread.create.requested",
-                    "thread.created",
-                    "turn.start.rejected",
-                    "thread.deletion.accepted",
-                    "cleanup.requested",
-                    "cleanup.queued",
-                    "cleanup.started",
-                    "cleanup.completed",
-                    "cleanup.failed",
-                    "cleanup.cancelled",
-                  ].includes(event.eventType)
-                ) {
-                  continue;
-                }
-                const payload =
-                  event.payload !== null &&
-                  typeof event.payload === "object" &&
-                  !Array.isArray(event.payload)
-                    ? (event.payload as Record<string, unknown>)
-                    : {};
-                const cleanupRequested =
-                  typeof payload.cleanupRequested === "boolean"
-                    ? payload.cleanupRequested
-                    : typeof payload.cleanupWorktree === "boolean"
-                      ? payload.cleanupWorktree
-                      : null;
-                childAttempts.set(event.attemptId, {
-                  attemptId: event.attemptId,
-                  childThreadId: event.childThreadId,
-                  cleanupRequested,
-                });
-              }
+              const childAttempts = deriveDelegationCleanupIntents(page.events);
               const cleanupStates: Array<(typeof page.cleanupStates)[number]> = [];
               const warnings = [...page.warnings];
-              for (const attempt of childAttempts.values()) {
+              for (const attempt of childAttempts) {
                 const jobOption = yield* worktreeCleanupJobs.getByThreadId(attempt.childThreadId);
                 if (Option.isNone(jobOption)) {
-                  const status =
-                    attempt.cleanupRequested === false ? "not-required" : "pending-enqueue";
+                  const status = attempt.cleanupRequested ? "pending-enqueue" : "not-required";
                   cleanupStates.push({
                     ...attempt,
                     jobId: null,

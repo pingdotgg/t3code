@@ -24,9 +24,10 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
+import * as Option from "effect/Option";
 import { Command } from "effect/unstable/cli";
 
-import { cli } from "./cli.ts";
+import { cli, __testing } from "./cli.ts";
 import { CliRuntimeLayerLive } from "./cliRuntime.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
@@ -219,6 +220,23 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
   });
 
 it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
+  it.effect("normalizes optional delegation audit filters and source thread IDs", () =>
+    Effect.sync(() => {
+      assert.deepStrictEqual(__testing.delegationAuditReadFilters(Option.none(), Option.none()), {
+        beforeSequence: null,
+      });
+      assert.deepStrictEqual(
+        __testing.delegationAuditReadFilters(Option.some("turn-1"), Option.some(12)),
+        { turnId: TurnId.make("turn-1"), beforeSequence: 12 },
+      );
+      assert.equal(__testing.delegationAuditSourceThreadId(Option.none()), null);
+      assert.equal(
+        __testing.delegationAuditSourceThreadId(Option.some("source-thread")),
+        ThreadId.make("source-thread"),
+      );
+    }),
+  );
+
   it.effect("accepts the built-in lowercase log-level flag values", () =>
     runCliWithRuntime(["--log-level", "debug", "--version"]),
   );
