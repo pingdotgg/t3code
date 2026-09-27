@@ -51,7 +51,7 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
   return (
     <div
       aria-hidden
-      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-[calc(5rem+var(--sidebar-pull-offset,0px))] select-none overflow-hidden transition-[height] duration-[280ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[pulling=true]/sidebar-pull:transition-none motion-reduce:transition-none"
+      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-[calc(5rem+var(--sidebar-pull-offset,0px))] select-none overflow-hidden transition-[height] sidebar-pull-rebound group-data-[pulling=true]/sidebar-pull:transition-none motion-reduce:transition-none"
     >
       {/* A taller canvas keeps the original scale while the outer mask reveals more. */}
       <div className="h-80">
@@ -232,14 +232,14 @@ function NightlySkyArt({
       <rect width="100%" height="100%" fill={`url(#${glowsId})`} />
       <rect width="100%" height="100%" fill={`url(#${starsId})`} />
 
-      <g className="stage-night-cloud" filter={`url(#${softId})`}>
+      <g filter={`url(#${softId})`}>
         <path
           transform={extended ? "translate(16.25 26.25) scale(0.75)" : undefined}
           d="M-12 88C-12 74 0 63 14 63C18 50 30 41 44 41C58 41 70 49 74 62C79 57 86 54 94 54C110 54 123 66 124 82C132 83 138 88 141 96C156 122 139 148 114 150C106 170 83 173 69 164C46 177 17 161 16 151C-8 159-25 136-12 116V88Z"
           fill={`url(#${cloudId})`}
         />
       </g>
-      <g className="stage-night-cloud" filter={`url(#${softId})`}>
+      <g filter={`url(#${softId})`}>
         <path
           transform={extended ? "translate(51.25 26.25) scale(0.75)" : undefined}
           d="M150 96C151 84 161 75 173 75C176 64 186 57 198 57C210 57 220 64 223 75C231 75 238 80 241 87C250 87 257 91 260 96C280 117 258 142 239 140C228 158 203 154 197 140C171 149 149 132 150 112V96Z"
@@ -248,12 +248,7 @@ function NightlySkyArt({
         />
       </g>
       {extended ? (
-        <g
-          className="stage-night-cloud stage-night-cloud-distant"
-          filter={`url(#${softId})`}
-          fill={`url(#${cloudId})`}
-          fillOpacity="0.35"
-        >
+        <g filter={`url(#${softId})`} fill={`url(#${cloudId})`} fillOpacity="0.35">
           <path
             transform="translate(21.25 68.75) scale(0.75)"
             d="M-20 276C-9 246 16 244 31 252C39 223 65 214 87 231C104 215 129 226 134 245C155 241 176 257 176 276C196 281 201 301 189 317C166 337 132 317 112 328C79 346 62 317 39 325C10 336-20 312-20 276Z"
@@ -375,7 +370,7 @@ function DevBlueprintArt({
         <pattern id={rulerId} width="32" height="6" patternUnits="userSpaceOnUse">
           <path
             d="M4 0V2.5M12 0V2.5M20 0V4M28 0V2.5"
-            className="[stroke:var(--stage-art-line)]"
+            className="stroke-stage-art-line"
             strokeOpacity="0.5"
             strokeWidth="0.5"
           />
@@ -398,7 +393,7 @@ function DevBlueprintArt({
           patternUnits="userSpaceOnUse"
         >
           <g
-            className="[stroke:var(--stage-art-line)]"
+            className="stroke-stage-art-line"
             strokeLinecap="round"
             strokeOpacity="0.6"
             strokeWidth="0.7"
@@ -416,7 +411,7 @@ function DevBlueprintArt({
           </g>
 
           <g
-            className="[stroke:var(--stage-art-line)]"
+            className="stroke-stage-art-line"
             strokeLinecap="round"
             strokeOpacity="0.55"
             strokeWidth="0.6"
@@ -445,7 +440,7 @@ function DevBlueprintArt({
           </g>
 
           {extended ? (
-            <g className="[stroke:var(--stage-art-line)]" strokeOpacity="0.35" strokeWidth="0.6">
+            <g className="stroke-stage-art-line" strokeOpacity="0.35" strokeWidth="0.6">
               <path d="M48 148H136M48 144V152M136 144V152" strokeDasharray="4 4" />
               <circle cx="224" cy="196" r="24" strokeDasharray="4 5" />
               <path d="M218 196H230M224 190V202M72 236V292M68 236H76M68 292H76" />
@@ -456,7 +451,7 @@ function DevBlueprintArt({
             </g>
           ) : null}
 
-          <g className="[stroke:var(--stage-art-line)]" strokeOpacity="0.35" strokeWidth="0.6">
+          <g className="stroke-stage-art-line" strokeOpacity="0.35" strokeWidth="0.6">
             <circle cx="196" cy="38" r="13" strokeDasharray="3.5 4" />
             <path d="M196 33V43M191 38H201" strokeOpacity="0.6" strokeWidth="0.4" />
             <circle cx="414" cy="64" r="10" strokeDasharray="2.5 3.5" />

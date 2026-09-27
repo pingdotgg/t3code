@@ -143,13 +143,13 @@ export function SidebarPullSurface({
         {header}
         <div
           ref={scrollRef}
-          className="sidebar-pull-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <div aria-hidden className="h-[720px]" />
           <div ref={correctionRef} className="h-full">
             <div
               ref={surfaceRef}
-              className="sidebar-pull-surface flex h-full min-h-0 translate-y-[var(--sidebar-pull-offset,0px)] flex-col transition-transform duration-[280ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[pulling=true]/sidebar-pull:transition-none motion-reduce:transition-none"
+              className="flex h-full min-h-0 translate-y-[var(--sidebar-pull-offset,0px)] flex-col transition-transform sidebar-pull-rebound group-data-[pulling=true]/sidebar-pull:transition-none motion-reduce:transition-none"
             >
               {children}
             </div>
