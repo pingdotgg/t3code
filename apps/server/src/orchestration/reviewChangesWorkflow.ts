@@ -20,7 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type { GitCore } from "../git/Services/GitCore.ts";
-import { repositoryFromPullRequestUrl } from "../pullRequestMonitor/canonicalKey.ts";
 import type { ServerSettingsService } from "../serverSettings.ts";
 import type { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -51,9 +50,9 @@ export const runReviewChangesWorkflow = (
   input: WorkflowRunInput,
   options?: {
     readonly expectedHeadSha?: string;
+    /** Pins `gh` capture to this repository so fork/base numbers cannot resolve elsewhere. */
     readonly expectedPullRequest?: {
       readonly repository?: string | undefined;
-      readonly number?: number | undefined;
     };
   },
 ): Effect.Effect<WorkflowRunResult, WorkflowRunError> =>
@@ -151,27 +150,8 @@ export const runReviewChangesWorkflow = (
         message: "Pull request head changed before the review workflow was dispatched.",
       });
     }
-    if (reviewContext.scope === "pull-request") {
-      if (reviewContext.pullRequest.state !== "open") {
-        return skipped(input, "no-reviewable-changes", "This pull request is no longer open.");
-      }
-      const expectedRepository = options?.expectedPullRequest?.repository?.toLowerCase();
-      if (expectedRepository !== undefined && expectedRepository.length > 0) {
-        const capturedRepository = repositoryFromPullRequestUrl(
-          reviewContext.pullRequest.url,
-        )?.toLowerCase();
-        if (capturedRepository !== expectedRepository) {
-          return yield* new WorkflowRunError({
-            message: "Pull request repository changed before the review workflow was dispatched.",
-          });
-        }
-      }
-      const expectedNumber = options?.expectedPullRequest?.number;
-      if (expectedNumber !== undefined && reviewContext.pullRequest.number !== expectedNumber) {
-        return yield* new WorkflowRunError({
-          message: "Pull request number changed before the review workflow was dispatched.",
-        });
-      }
+    if (reviewContext.scope === "pull-request" && reviewContext.pullRequest.state !== "open") {
+      return skipped(input, "no-reviewable-changes", "This pull request is no longer open.");
     }
 
     const title =

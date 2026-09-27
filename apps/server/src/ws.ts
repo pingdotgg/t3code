@@ -2374,12 +2374,6 @@ const makeWsRpcLayer = (
                                 title: result.pr.title,
                                 baseBranch: result.pr.baseBranch,
                                 headBranch: result.pr.headBranch,
-                                pushBranch:
-                                  result.push.status === "pushed" ? result.push.branch : undefined,
-                                branchName:
-                                  result.branch.status === "created"
-                                    ? result.branch.name
-                                    : undefined,
                               })
                             : null;
                         if (

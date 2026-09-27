@@ -255,7 +255,7 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "acceptance-review:case-42:candidate-42:review-changes:1",
         },
-        pullRequestNumber: 42,
+        pullRequest: { repository: "owner/repo", number: 42 },
         readCurrentThread: () => Effect.succeed(current),
         cancelLegacySelfReview: () =>
           Effect.sync(() => {
@@ -291,7 +291,7 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "review-42",
         },
-        pullRequestNumber: 42,
+        pullRequest: { repository: "owner/repo", number: 42 },
         readCurrentThread: () => Effect.succeed(active),
         cancelLegacySelfReview: () => Effect.void,
         runWorkflow: () =>
@@ -317,7 +317,6 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "review-42",
         },
-        pullRequestNumber: 42,
         pullRequest: { repository: "owner/repo", number: 42 },
         readCurrentThread: () => Effect.succeed(unlinked),
         cancelLegacySelfReview: () => Effect.void,
@@ -344,7 +343,6 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "review-42",
         },
-        pullRequestNumber: 42,
         pullRequest: { repository: "owner/repo", number: 42 },
         observationState: "closed",
         readCurrentThread: () => Effect.succeed(current),
@@ -372,7 +370,6 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "review-42",
         },
-        pullRequestNumber: 42,
         pullRequest: { repository: "owner/other", number: 42 },
         readCurrentThread: () => Effect.succeed(current),
         cancelLegacySelfReview: () => Effect.void,

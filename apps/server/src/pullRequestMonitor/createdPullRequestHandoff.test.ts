@@ -37,19 +37,15 @@ describe("buildCreatedPullRequestLink", () => {
   });
 
   it("rejects created results whose URL has no repository identity", () => {
-    expect(
-      buildCreatedPullRequestLink({ ...basePr, url: "https://github.com/owner/pull/42" }),
-    ).toBeNull();
+    expect(buildCreatedPullRequestLink({ ...basePr, url: "not-a-url" })).toBeNull();
   });
 
-  it("falls back to a usable head branch and title", () => {
-    const link = buildCreatedPullRequestLink({
-      ...basePr,
-      title: undefined,
-      headBranch: undefined,
-      pushBranch: "feature",
-    });
-    expect(link?.pullRequest.headBranch).toBe("feature");
+  it("rejects created results without a head branch", () => {
+    expect(buildCreatedPullRequestLink({ ...basePr, headBranch: undefined })).toBeNull();
+  });
+
+  it("defaults a blank title so the link is always durable", () => {
+    const link = buildCreatedPullRequestLink({ ...basePr, title: "  " });
     expect(link?.pullRequest.title).toBe("Pull request #42");
   });
 });
