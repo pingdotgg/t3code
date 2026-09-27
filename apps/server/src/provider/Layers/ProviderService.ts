@@ -381,12 +381,22 @@ function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "st
   }
 }
 
+function readRuntimePayload(runtimePayload: unknown): Record<string, unknown> {
+  return runtimePayload !== null &&
+    typeof runtimePayload === "object" &&
+    !Array.isArray(runtimePayload)
+    ? (runtimePayload as Record<string, unknown>)
+    : {};
+}
+
 function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
     readonly continueAfterServerUpdate?: TurnId;
-    readonly continueAfterServerUpdatePendingMessageId?: MessageId;
+    readonly continueAfterServerUpdatePendingMessageId?: MessageId | null;
+    readonly continueAfterServerUpdateSourcePlanThreadId?: string | null;
+    readonly continueAfterServerUpdateSourcePlanId?: string | null;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
@@ -403,6 +413,17 @@ function toRuntimePayloadFromSession(
       ? {
           continueAfterServerUpdatePendingMessageId:
             extra.continueAfterServerUpdatePendingMessageId,
+        }
+      : {}),
+    ...(extra?.continueAfterServerUpdateSourcePlanThreadId !== undefined
+      ? {
+          continueAfterServerUpdateSourcePlanThreadId:
+            extra.continueAfterServerUpdateSourcePlanThreadId,
+        }
+      : {}),
+    ...(extra?.continueAfterServerUpdateSourcePlanId !== undefined
+      ? {
+          continueAfterServerUpdateSourcePlanId: extra.continueAfterServerUpdateSourcePlanId,
         }
       : {}),
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
@@ -1072,7 +1093,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     extra?: {
       readonly modelSelection?: unknown;
       readonly continueAfterServerUpdate?: TurnId;
-      readonly continueAfterServerUpdatePendingMessageId?: MessageId;
+      readonly continueAfterServerUpdatePendingMessageId?: MessageId | null;
+      readonly continueAfterServerUpdateSourcePlanThreadId?: string | null;
+      readonly continueAfterServerUpdateSourcePlanId?: string | null;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
     },
@@ -2367,22 +2390,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     yield* Effect.forEach(activeSessions, (session) =>
       Effect.gen(function* () {
         const continueAfterRestart = yield* continueAfterRestartFor(session.threadId);
-        const pendingMessageId =
+        const pending =
           continueAfterRestart && !session.activeTurnId && Option.isSome(turns)
             ? Option.getOrNull(
                 yield* turns.value
                   .getPendingTurnStartByThreadId({ threadId: session.threadId })
                   .pipe(Effect.orElseSucceed(() => Option.none())),
-              )?.messageId
-            : undefined;
+              )
+            : null;
         const lastRuntimeEventAt = yield* nowIso;
         yield* upsertSessionBinding(session, session.threadId, {
-          ...(continueAfterRestart && session.status === "running" && session.activeTurnId
+          ...(continueAfterRestart && session.activeTurnId
             ? { continueAfterServerUpdate: session.activeTurnId }
             : {}),
-          ...(pendingMessageId !== undefined
-            ? { continueAfterServerUpdatePendingMessageId: pendingMessageId }
-            : {}),
+          // Null clears a checkpoint from an earlier boot. Leaving the key
+          // absent would let directory merge keep a stale message id.
+          continueAfterServerUpdatePendingMessageId: pending?.messageId ?? null,
+          continueAfterServerUpdateSourcePlanThreadId: pending?.sourceProposedPlanThreadId ?? null,
+          continueAfterServerUpdateSourcePlanId: pending?.sourceProposedPlanId ?? null,
           lastRuntimeEvent: "provider.stopAll",
           lastRuntimeEventAt,
         });
@@ -2403,12 +2428,36 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "ProviderService.stopAll",
           binding,
         );
+        const payload = readRuntimePayload(binding.runtimePayload);
         return yield* directory.upsert({
           threadId: binding.threadId,
           provider: binding.provider,
           providerInstanceId,
           status: "stopped",
           runtimePayload: {
+            // Name the checkpoints this rewrite must keep. The next boot
+            // reads them after the provider process has already exited.
+            ...(typeof payload.continueAfterServerUpdate === "string"
+              ? { continueAfterServerUpdate: payload.continueAfterServerUpdate }
+              : {}),
+            ...(typeof payload.continueAfterServerUpdatePendingMessageId === "string"
+              ? {
+                  continueAfterServerUpdatePendingMessageId:
+                    payload.continueAfterServerUpdatePendingMessageId,
+                }
+              : {}),
+            ...(typeof payload.continueAfterServerUpdateSourcePlanThreadId === "string"
+              ? {
+                  continueAfterServerUpdateSourcePlanThreadId:
+                    payload.continueAfterServerUpdateSourcePlanThreadId,
+                }
+              : {}),
+            ...(typeof payload.continueAfterServerUpdateSourcePlanId === "string"
+              ? {
+                  continueAfterServerUpdateSourcePlanId:
+                    payload.continueAfterServerUpdateSourcePlanId,
+                }
+              : {}),
             activeTurnId: null,
             lastRuntimeEvent: "provider.stopAll",
             lastRuntimeEventAt: yield* nowIso,

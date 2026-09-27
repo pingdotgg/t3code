@@ -512,11 +512,14 @@ it.effect("resends a checkpointed unsent message instead of failing the thread",
     runtimePayload: {
       activeTurnId: null,
       continueAfterServerUpdatePendingMessageId: messageId,
+      continueAfterServerUpdateSourcePlanThreadId: "thread-source-plan",
+      continueAfterServerUpdateSourcePlanId: "plan-1",
     },
   };
 
   return runReconciliation({
     threads: [thread],
+    continueAfterRestart: true,
     query: {
       ...queryWithThreads([thread]),
       getTurnStartMessage: () =>
@@ -555,10 +558,62 @@ it.effect("resends a checkpointed unsent message instead of failing the thread",
         assert(turnStart?.type === "thread.turn.start");
         assert.equal(turnStart.message.text, "Finish the migration");
         assert.equal(turnStart.message.messageId, messageId);
+        assert.deepStrictEqual(turnStart.sourceProposedPlan, {
+          threadId: "thread-source-plan",
+          planId: "plan-1",
+        });
         const sessionSet = dispatched[1];
         assert(sessionSet?.type === "thread.session.set");
         assert.equal(sessionSet.session.status, "starting");
         assert.equal(sessionSet.session.lastError, null);
+      }),
+    ),
+  );
+});
+
+it.effect("drops a checkpointed unsent message when continuation is off", () => {
+  const thread = makeThread("thread-unsent-opt-out", "stopped");
+  const messageId = MessageId.make("message-unsent-opt-out");
+  const dispatched: OrchestrationCommand[] = [];
+  const upserts: ProviderSessionDirectory.ProviderRuntimeBinding[] = [];
+  const binding = {
+    threadId: thread.id,
+    provider: ProviderDriverKind.make("codex"),
+    providerInstanceId,
+    status: "stopped" as const,
+    runtimePayload: {
+      activeTurnId: null,
+      continueAfterServerUpdatePendingMessageId: messageId,
+    },
+  };
+
+  return runReconciliation({
+    threads: [thread],
+    directory: {
+      getBinding: () => Effect.succeedSome(binding),
+      upsert: (next) =>
+        Effect.sync(() => {
+          upserts.push(next);
+        }),
+      recordImportedTranscript: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([{ ...binding, lastSeenAt: updatedAt }]),
+    },
+    dispatch: (command) =>
+      Effect.sync(() => dispatched.push(command)).pipe(Effect.as({ sequence: dispatched.length })),
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(dispatched, []);
+        assert.equal(upserts.length, 1);
+        assert.equal(
+          upserts[0]?.runtimePayload &&
+            typeof upserts[0].runtimePayload === "object" &&
+            !Array.isArray(upserts[0].runtimePayload) &&
+            upserts[0].runtimePayload.continueAfterServerUpdatePendingMessageId,
+          null,
+        );
       }),
     ),
   );

@@ -350,6 +350,8 @@ const ORPHANED_PROVIDER_SESSION_ERROR =
   "Provider session did not survive a server restart. Send a new message to continue.";
 const SERVER_UPDATE_CONTINUATION_KEY = "continueAfterServerUpdate";
 const SERVER_UPDATE_PENDING_MESSAGE_KEY = "continueAfterServerUpdatePendingMessageId";
+const SERVER_UPDATE_SOURCE_PLAN_THREAD_KEY = "continueAfterServerUpdateSourcePlanThreadId";
+const SERVER_UPDATE_SOURCE_PLAN_ID_KEY = "continueAfterServerUpdateSourcePlanId";
 const SERVER_UPDATE_CONTINUATION_PROMPT = "Continue where you left off.";
 const UNFINISHED_TASK_ACTIVITY_KINDS = [
   "task.started",
@@ -510,6 +512,21 @@ function readPendingContinuationMessageId(runtimePayload: unknown): MessageId | 
   return typeof value === "string" && value.length > 0 ? MessageId.make(value) : null;
 }
 
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readCheckpointSourcePlan(
+  runtimePayload: unknown,
+): { readonly threadId: ThreadId; readonly planId: string } | null {
+  const payload = readRuntimePayload(runtimePayload);
+  const threadId = readNonEmptyString(payload[SERVER_UPDATE_SOURCE_PLAN_THREAD_KEY]);
+  const planId = readNonEmptyString(payload[SERVER_UPDATE_SOURCE_PLAN_ID_KEY]);
+  return threadId !== null && planId !== null
+    ? { threadId: ThreadId.make(threadId), planId }
+    : null;
+}
+
 function clearedContinuationPayload(runtimePayload: unknown): Record<string, null> {
   const payload = readRuntimePayload(runtimePayload);
   return {
@@ -517,6 +534,12 @@ function clearedContinuationPayload(runtimePayload: unknown): Record<string, nul
     continueAfterServerUpdatePrepared: null,
     ...(SERVER_UPDATE_PENDING_MESSAGE_KEY in payload
       ? { [SERVER_UPDATE_PENDING_MESSAGE_KEY]: null }
+      : {}),
+    ...(SERVER_UPDATE_SOURCE_PLAN_THREAD_KEY in payload
+      ? { [SERVER_UPDATE_SOURCE_PLAN_THREAD_KEY]: null }
+      : {}),
+    ...(SERVER_UPDATE_SOURCE_PLAN_ID_KEY in payload
+      ? { [SERVER_UPDATE_SOURCE_PLAN_ID_KEY]: null }
       : {}),
   };
 }
@@ -599,6 +622,8 @@ export const markRunningProviderSessionsForContinuation = Effect.gen(function* (
             runtimePayload: {
               ...readRuntimePayload(binding.value.runtimePayload),
               [SERVER_UPDATE_PENDING_MESSAGE_KEY]: pending.value.messageId,
+              [SERVER_UPDATE_SOURCE_PLAN_THREAD_KEY]: pending.value.sourceProposedPlanThreadId,
+              [SERVER_UPDATE_SOURCE_PLAN_ID_KEY]: pending.value.sourceProposedPlanId,
             },
           });
         } else if (session.providerName !== null && session.providerInstanceId !== undefined) {
@@ -611,6 +636,8 @@ export const markRunningProviderSessionsForContinuation = Effect.gen(function* (
             runtimePayload: {
               activeTurnId: null,
               [SERVER_UPDATE_PENDING_MESSAGE_KEY]: pending.value.messageId,
+              [SERVER_UPDATE_SOURCE_PLAN_THREAD_KEY]: pending.value.sourceProposedPlanThreadId,
+              [SERVER_UPDATE_SOURCE_PLAN_ID_KEY]: pending.value.sourceProposedPlanId,
             },
           });
         } else {
@@ -948,9 +975,26 @@ export const reconcileProviderSessions = Effect.gen(function* () {
         const checkpointMessageId = Option.isSome(binding)
           ? readPendingContinuationMessageId(binding.value.runtimePayload)
           : null;
-        // A saved message id is a shutdown checkpoint. Without one, only an
-        // opted-in environment should pick the pending row back up.
-        if (checkpointMessageId === null && !continueAfterRestartFor(thread.projectId)) {
+        // The current preference wins, including over a checkpoint written
+        // while continuation was still on. Turning it off leaves the work stopped.
+        if (!continueAfterRestartFor(thread.projectId)) {
+          // A stopped thread is already idle. Drop the checkpoint instead of
+          // turning the opt-out into a session error.
+          if (
+            checkpointMessageId !== null &&
+            session.activeTurnId === null &&
+            (session.status === "stopped" || session.status === "interrupted") &&
+            Option.isSome(binding)
+          ) {
+            yield* directory.upsert({
+              ...binding.value,
+              runtimePayload: {
+                ...readRuntimePayload(binding.value.runtimePayload),
+                ...clearedContinuationPayload(binding.value.runtimePayload),
+              },
+            });
+            return true;
+          }
           return false;
         }
         if (
@@ -964,12 +1008,14 @@ export const reconcileProviderSessions = Effect.gen(function* () {
         const turns = yield* Effect.serviceOption(
           ProjectionTurnRepository.ProjectionTurnRepository,
         );
-        const durablePending =
-          checkpointMessageId === null && Option.isSome(turns)
-            ? yield* turns.value
-                .getPendingTurnStartByThreadId({ threadId: thread.id })
-                .pipe(Effect.orElseSucceed(() => Option.none()))
-            : Option.none();
+        // Load the pending row even when the message id was checkpointed.
+        // A crash leaves the row behind; a clean stop deletes it, so the
+        // binding also stores the source plan.
+        const durablePending = Option.isSome(turns)
+          ? yield* turns.value
+              .getPendingTurnStartByThreadId({ threadId: thread.id })
+              .pipe(Effect.orElseSucceed(() => Option.none()))
+          : Option.none();
         const messageId =
           checkpointMessageId ??
           (Option.isSome(durablePending) ? durablePending.value.messageId : null);
@@ -985,15 +1031,19 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           return false;
         }
         const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const checkpointPlan = Option.isSome(binding)
+          ? readCheckpointSourcePlan(binding.value.runtimePayload)
+          : null;
         const sourcePlan =
-          Option.isSome(durablePending) &&
+          checkpointPlan ??
+          (Option.isSome(durablePending) &&
           durablePending.value.sourceProposedPlanThreadId !== null &&
           durablePending.value.sourceProposedPlanId !== null
             ? {
                 threadId: durablePending.value.sourceProposedPlanThreadId,
                 planId: durablePending.value.sourceProposedPlanId,
               }
-            : undefined;
+            : null);
         yield* orchestrationEngine.dispatch({
           type: "thread.turn.start",
           commandId: CommandId.make(yield* crypto.randomUUIDv4),
@@ -1009,7 +1059,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           },
           runtimeMode: session.runtimeMode,
           interactionMode: thread.interactionMode,
-          ...(sourcePlan !== undefined ? { sourceProposedPlan: sourcePlan } : {}),
+          ...(sourcePlan !== null ? { sourceProposedPlan: sourcePlan } : {}),
           createdAt,
         });
         yield* orchestrationEngine.dispatch({
