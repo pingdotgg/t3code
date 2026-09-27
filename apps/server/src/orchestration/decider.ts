@@ -65,7 +65,11 @@ import {
   transitionDelegationExecution,
   type RecordedReportOutcome,
 } from "./dispatchAuthority.ts";
-import { delegationStallEpisode, settleDelegation } from "./delegationSettlement.ts";
+import {
+  delegationStallEpisode,
+  indexDelegationChildren,
+  settleDelegation,
+} from "./delegationSettlement.ts";
 import {
   acceptValidationResult,
   claimValidationLease,
@@ -4606,7 +4610,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const settlement = settleDelegation(readModel, child);
+      const childrenByParent = indexDelegationChildren(readModel.threads);
+      const settlement = settleDelegation(readModel, child, command.settledAt, childrenByParent);
       if (!settlement) return [];
       return appendDelegationSettlement({
         readModel,
@@ -4622,7 +4627,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const episode = delegationStallEpisode(readModel, child);
+      const childrenByParent = indexDelegationChildren(readModel.threads);
+      const episode = delegationStallEpisode(readModel, child, command.createdAt, childrenByParent);
       if (!episode || episode.id !== command.stallId || episode.summary !== command.summary) {
         return [];
       }

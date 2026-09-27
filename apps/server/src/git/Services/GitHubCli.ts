@@ -66,10 +66,13 @@ export interface GitHubCliShape {
 
   /**
    * Resolve a pull request by URL, number, or branch-ish identifier.
+   * When `repository` is set with a numeric reference, the lookup is pinned
+   * with `gh --repo` so fork/base ambiguities cannot resolve the wrong PR.
    */
   readonly getPullRequest: (input: {
     readonly cwd: string;
     readonly reference: string;
+    readonly repository?: string | undefined;
   }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
   /**
    * Read the aggregate base-to-head diff. Per-commit patches can repeat paths
@@ -78,6 +81,7 @@ export interface GitHubCliShape {
   readonly getPullRequestPatch: (input: {
     readonly cwd: string;
     readonly reference: string;
+    readonly repository?: string | undefined;
   }) => Effect.Effect<string, GitHubCliError>;
 
   /**

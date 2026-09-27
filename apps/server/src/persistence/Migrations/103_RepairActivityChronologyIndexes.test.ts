@@ -18,7 +18,8 @@ it.effect("repairs skipped chronology indexes above the existing migration high-
       [103, "RepairActivityChronologyIndexes"],
       [104, "StopTerminalPullRequestMonitors"],
       [105, "ProjectionThreadPendingPullRequestAssociation"],
-      [106, "DelegationAudit"],
+      [106, "PullRequestCreationIntents"],
+      [107, "DelegationAudit"],
     ]);
     yield* repair;
     assert.deepStrictEqual(yield* runMigrations(), []);

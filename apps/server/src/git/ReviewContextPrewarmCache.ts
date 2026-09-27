@@ -76,11 +76,16 @@ export function reviewContextPrewarmKey(input: {
   readonly cwd: string;
   readonly scope: string;
   readonly pullRequestNumber?: number | undefined;
+  readonly pullRequestRepository?: string | undefined;
 }): string | null {
   if (input.scope !== "pull-request" || input.pullRequestNumber === undefined) {
     return null;
   }
-  return `${input.cwd}\u0000${input.pullRequestNumber}`;
+  const repository =
+    typeof input.pullRequestRepository === "string" && input.pullRequestRepository.trim().length > 0
+      ? input.pullRequestRepository.trim().toLowerCase()
+      : "";
+  return `${input.cwd}\u0000${repository}\u0000${input.pullRequestNumber}`;
 }
 
 export function makeReviewContextPrewarmCache(): ReviewContextPrewarmCacheShape {

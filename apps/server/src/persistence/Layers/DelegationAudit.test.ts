@@ -6,7 +6,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { DelegationAuditRepositoryLive } from "./DelegationAudit.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 import { DelegationAuditRepository } from "../Services/DelegationAudit.ts";
-import migration from "../Migrations/106_DelegationAudit.ts";
+import migration from "../Migrations/107_DelegationAudit.ts";
 
 const testLayer = it.layer(
   Layer.mergeAll(

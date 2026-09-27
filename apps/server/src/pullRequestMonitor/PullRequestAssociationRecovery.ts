@@ -11,6 +11,7 @@ import { Effect, Layer, PubSub, Result, Stream } from "effect";
 import { resolveThreadWorkspaceCwd } from "../checkpointing/Utils.ts";
 import { GitManager } from "../git/Services/GitManager.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { PullRequestCreationAutomation } from "./PullRequestCreationAutomation.ts";
 import { isReviewWorkflowThread } from "./reviewWorkflowThread.ts";
 import {
   pullRequestAssociationBlockReason,
@@ -289,6 +290,7 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const engine = yield* OrchestrationEngineService;
+    const creationAutomation = yield* PullRequestCreationAutomation;
     const recovery = yield* makePullRequestAssociationRecovery();
     const subscription = yield* engine.acquireDomainEventSubscription;
     yield* Effect.forkScoped(
@@ -304,7 +306,13 @@ export const layer = Layer.effectDiscard(
     );
     // Persisted messages and explicit intents are the retry source after a server restart.
     yield* Effect.forkScoped(
-      Effect.forever(recovery.sweep.pipe(Effect.andThen(Effect.sleep("60 seconds")))),
+      Effect.forever(
+        Effect.gen(function* () {
+          yield* recovery.sweep;
+          yield* creationAutomation.recoverPending();
+          yield* Effect.sleep("60 seconds");
+        }),
+      ),
     );
   }),
 );

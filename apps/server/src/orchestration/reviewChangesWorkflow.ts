@@ -48,7 +48,13 @@ const skipped = (
 export const runReviewChangesWorkflow = (
   dependencies: ReviewChangesWorkflowDependencies,
   input: WorkflowRunInput,
-  options?: { readonly expectedHeadSha?: string },
+  options?: {
+    readonly expectedHeadSha?: string;
+    /** Pins `gh` capture to this repository so fork/base numbers cannot resolve elsewhere. */
+    readonly expectedPullRequest?: {
+      readonly repository?: string | undefined;
+    };
+  },
 ): Effect.Effect<WorkflowRunResult, WorkflowRunError> =>
   Effect.gen(function* () {
     const runId = WorkflowRunId.make(input.idempotencyKey);
@@ -109,7 +115,13 @@ export const runReviewChangesWorkflow = (
       typeof input.input?.pullRequestNumber === "number" &&
       Number.isSafeInteger(input.input.pullRequestNumber) &&
       input.input.pullRequestNumber > 0
-        ? { pullRequestNumber: input.input.pullRequestNumber }
+        ? {
+            pullRequestNumber: input.input.pullRequestNumber,
+            ...(options?.expectedPullRequest?.repository !== undefined &&
+            options.expectedPullRequest.repository.trim().length > 0
+              ? { pullRequestRepository: options.expectedPullRequest.repository.trim() }
+              : {}),
+          }
         : {}),
     });
     if (!reviewContext.hasReviewableChanges) {
@@ -137,6 +149,9 @@ export const runReviewChangesWorkflow = (
       return yield* new WorkflowRunError({
         message: "Pull request head changed before the review workflow was dispatched.",
       });
+    }
+    if (reviewContext.scope === "pull-request" && reviewContext.pullRequest.state !== "open") {
+      return skipped(input, "no-reviewable-changes", "This pull request is no longer open.");
     }
 
     const title =

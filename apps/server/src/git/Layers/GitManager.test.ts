@@ -45,6 +45,7 @@ interface FakeGhScenario {
     url: string;
     baseRefName: string;
     headRefName: string;
+    headRefOid?: string;
     state?: "open" | "closed" | "merged";
     isCrossRepository?: boolean;
     headRepositoryNameWithOwner?: string | null;
@@ -100,6 +101,7 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
   const url = record.url;
   const baseRefName = record.baseRefName;
   const headRefName = record.headRefName;
+  const headRefOid = record.headRefOid;
   const headRepository =
     typeof record.headRepository === "object" && record.headRepository !== null
       ? (record.headRepository as Record<string, unknown>)
@@ -148,6 +150,7 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubPullRequestSummary
     url,
     baseRefName,
     headRefName,
+    ...(typeof headRefOid === "string" ? { headRefOid } : {}),
     ...(state ? { state } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
@@ -1793,6 +1796,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       fs.writeFileSync(path.join(repoDir, "create-pr-only.txt"), "create pr\n");
       yield* runGit(repoDir, ["add", "create-pr-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Create PR only branch"]);
+      const headSha = yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+        Effect.map((result) => result.stdout.trim()),
+      );
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
@@ -1805,22 +1811,48 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/codething-mvp/pull/303",
                 baseRefName: "main",
                 headRefName: "feature/create-pr-only",
+                headRefOid: headSha,
               },
             ]),
           ],
         },
       });
+      let creationIntent: {
+        localBranch: string;
+        headBranch: string;
+        headSelector: string;
+        baseBranch: string;
+        headSha: string;
+      } | null = null;
 
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_pr",
-      });
+      const result = yield* runStackedAction(
+        manager,
+        {
+          cwd: repoDir,
+          action: "create_pr",
+        },
+        {
+          onPullRequestCreateIntent: (context) =>
+            Effect.sync(() => {
+              expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+              creationIntent = context;
+            }),
+        },
+      );
 
       expect(result.commit.status).toBe("skipped_not_requested");
       expect(result.push.status).toBe("pushed");
       expect(result.push.setUpstream).toBe(true);
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(303);
+      expect(creationIntent).toEqual({
+        localBranch: "feature/create-pr-only",
+        headBranch: "feature/create-pr-only",
+        headSelector: "feature/create-pr-only",
+        baseBranch: "main",
+        headSha,
+      });
+      expect(result.pr.headSha).toBe(headSha);
       expect(
         ghCalls.some((call) =>
           call.includes("pr create --base main --head feature/create-pr-only"),
@@ -1853,14 +1885,25 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           ],
         },
       });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "commit_push_pr",
-      });
+      let creationIntentCalls = 0;
+      const result = yield* runStackedAction(
+        manager,
+        {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        },
+        {
+          onPullRequestCreateIntent: () =>
+            Effect.sync(() => {
+              creationIntentCalls += 1;
+            }),
+        },
+      );
 
       expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("opened_existing");
       expect(result.pr.number).toBe(42);
+      expect(creationIntentCalls).toBe(0);
       expect(result.toast).toEqual({
         title: "Opened PR #42",
         description: "Existing PR",

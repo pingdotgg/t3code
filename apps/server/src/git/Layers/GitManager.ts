@@ -66,15 +66,16 @@ function isNotGitRepositoryError(error: GitCommandError): boolean {
   return error.message.toLowerCase().includes("not a git repository");
 }
 
-interface OpenPrInfo {
+interface OpenPrInfo extends PullRequestHeadRemoteInfo {
   number: number;
   title: string;
   url: string;
   baseRefName: string;
   headRefName: string;
+  headSha?: string;
 }
 
-interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
+interface PullRequestInfo extends OpenPrInfo {
   state: "open" | "closed" | "merged";
   updatedAt: string | null;
 }
@@ -85,6 +86,7 @@ interface ResolvedPullRequest {
   url: string;
   baseBranch: string;
   headBranch: string;
+  headSha?: string;
   state: "open" | "closed" | "merged";
   isCrossRepository?: boolean;
   headRepositoryNameWithOwner?: string | null;
@@ -266,6 +268,7 @@ function toPullRequestInfo(summary: GitHubPullRequestSummary): PullRequestInfo {
     url: summary.url,
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
+    ...(summary.headRefOid ? { headSha: summary.headRefOid } : {}),
     state: summary.state ?? "open",
     updatedAt: null,
     ...(summary.isCrossRepository !== undefined
@@ -459,6 +462,7 @@ function toResolvedPullRequest(pr: {
   url: string;
   baseRefName: string;
   headRefName: string;
+  headRefOid?: string;
   state?: "open" | "closed" | "merged";
   isCrossRepository?: boolean;
   headRepositoryNameWithOwner?: string | null;
@@ -469,6 +473,7 @@ function toResolvedPullRequest(pr: {
     url: pr.url,
     baseBranch: pr.baseRefName,
     headBranch: pr.headRefName,
+    ...(pr.headRefOid !== undefined ? { headSha: pr.headRefOid } : {}),
     state: pr.state ?? "open",
     ...(pr.isCrossRepository !== undefined ? { isCrossRepository: pr.isCrossRepository } : {}),
     ...(pr.headRepositoryNameWithOwner !== undefined
@@ -866,8 +871,18 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
           url: firstPullRequest.url,
           baseRefName: firstPullRequest.baseRefName,
           headRefName: firstPullRequest.headRefName,
+          ...(firstPullRequest.headSha !== undefined ? { headSha: firstPullRequest.headSha } : {}),
           state: "open",
           updatedAt: null,
+          ...(firstPullRequest.isCrossRepository !== undefined
+            ? { isCrossRepository: firstPullRequest.isCrossRepository }
+            : {}),
+          ...(firstPullRequest.headRepositoryNameWithOwner !== undefined
+            ? { headRepositoryNameWithOwner: firstPullRequest.headRepositoryNameWithOwner }
+            : {}),
+          ...(firstPullRequest.headRepositoryOwnerLogin !== undefined
+            ? { headRepositoryOwnerLogin: firstPullRequest.headRepositoryOwnerLogin }
+            : {}),
         } satisfies PullRequestInfo;
       }
     }
@@ -1226,6 +1241,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     cwd: string,
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
+    onPullRequestCreateIntent: GitRunStackedActionOptions["onPullRequestCreateIntent"],
   ) {
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
@@ -1256,6 +1272,13 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         baseBranch: existing.baseRefName,
         headBranch: existing.headRefName,
         title: existing.title,
+        ...(existing.headSha ? { headSha: existing.headSha } : {}),
+        ...(existing.isCrossRepository !== undefined
+          ? { isCrossRepository: existing.isCrossRepository }
+          : {}),
+        ...(existing.headRepositoryNameWithOwner !== undefined
+          ? { headRepositoryNameWithOwner: existing.headRepositoryNameWithOwner }
+          : {}),
       };
     }
 
@@ -1290,15 +1313,31 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       phase: "pr",
       label: "Creating GitHub pull request...",
     });
-    yield* gitHubCli
-      .createPullRequest({
+    yield* Effect.gen(function* () {
+      if (onPullRequestCreateIntent) {
+        const headSha = details.revision?.trim() ?? "";
+        if (headSha.length === 0) {
+          return yield* gitManagerError(
+            "runPrStep",
+            "Cannot safely create a PR without recording the current commit.",
+          );
+        }
+        yield* onPullRequestCreateIntent({
+          localBranch: headContext.localBranch,
+          headBranch: headContext.headBranch,
+          headSelector: headContext.preferredHeadSelector,
+          baseBranch,
+          headSha,
+        });
+      }
+      yield* gitHubCli.createPullRequest({
         cwd,
         baseBranch,
         headSelector: headContext.preferredHeadSelector,
         title: generated.title,
         bodyFile,
-      })
-      .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
+      });
+    }).pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
 
     const created = yield* findOpenPr(cwd, headContext);
     if (!created) {
@@ -1317,6 +1356,13 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       baseBranch: created.baseRefName,
       headBranch: created.headRefName,
       title: created.title,
+      ...(created.headSha ? { headSha: created.headSha } : {}),
+      ...(created.isCrossRepository !== undefined
+        ? { isCrossRepository: created.isCrossRepository }
+        : {}),
+      ...(created.headRepositoryNameWithOwner !== undefined
+        ? { headRepositoryNameWithOwner: created.headRepositoryNameWithOwner }
+        : {}),
     };
   });
 
@@ -1716,7 +1762,13 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(modelSelection, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    modelSelection,
+                    input.cwd,
+                    currentBranch,
+                    progress.emit,
+                    options?.onPullRequestCreateIntent,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };

@@ -108,6 +108,7 @@ export const GitResolvedPullRequest = Schema.Struct({
   url: Schema.String,
   baseBranch: TrimmedNonEmptyStringSchema,
   headBranch: TrimmedNonEmptyStringSchema,
+  headSha: Schema.optional(TrimmedNonEmptyStringSchema),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   state: Schema.NullOr(GitPullRequestState).pipe(
@@ -227,6 +228,7 @@ export const GitResolveReviewChangesContextInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   scope: ReviewChangesScope,
   pullRequestNumber: Schema.optional(PositiveInt),
+  pullRequestRepository: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type GitResolveReviewChangesContextInput = typeof GitResolveReviewChangesContextInput.Type;
 
@@ -494,6 +496,9 @@ export const GitRunStackedActionResult = Schema.Struct({
     baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),
     headBranch: Schema.optional(TrimmedNonEmptyStringSchema),
     title: Schema.optional(TrimmedNonEmptyStringSchema),
+    headSha: Schema.optional(TrimmedNonEmptyStringSchema),
+    isCrossRepository: Schema.optional(Schema.Boolean),
+    headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   }),
   toast: GitRunStackedActionToast,
 });
