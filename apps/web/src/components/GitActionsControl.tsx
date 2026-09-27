@@ -316,23 +316,27 @@ export default function GitActionsControl({
       draftId,
       setDraftThreadContext,
       setThreadBranch,
+      threadToastData,
     ],
   );
 
-  const persistDraftPullRequestAssociation = useCallback(
-    (result: GitRunStackedActionResult) => {
+  const persistThreadPullRequestAssociation = useCallback(
+    async (result: GitRunStackedActionResult) => {
+      if (!activeThreadRef || (!activeServerThread && !activeDraftThread)) {
+        return;
+      }
       if (
-        result.pr.status !== "created" ||
-        !activeThreadRef ||
-        !activeDraftThread ||
         activeServerThread
+          ? result.pr.status !== "opened_existing"
+          : result.pr.status !== "created"
       ) {
         return;
       }
       if (
         result.pr.number === undefined ||
         result.pr.url === undefined ||
-        result.pr.url.trim().length === 0
+        result.pr.url.trim().length === 0 ||
+        result.pr.baseBranch === undefined
       ) {
         return;
       }
@@ -341,7 +345,8 @@ export default function GitActionsControl({
         result.pr.headBranch ??
         result.push.branch ??
         result.branch.name ??
-        activeDraftThread.branch ??
+        activeServerThread?.branch ??
+        activeDraftThread?.branch ??
         null;
       if (headBranch === null) {
         return;
@@ -349,18 +354,58 @@ export default function GitActionsControl({
 
       const pullRequest = {
         number: result.pr.number,
-        url: result.pr.url,
+        url: result.pr.url.trim(),
         title: result.pr.title ?? `Pull request #${result.pr.number}`,
-        baseBranch: result.pr.baseBranch ?? "main",
+        baseBranch: result.pr.baseBranch,
         headBranch,
+        ...(result.pr.headSha === undefined ? {} : { headSha: result.pr.headSha }),
+        ...(result.pr.isCrossRepository === undefined
+          ? {}
+          : { isCrossRepository: result.pr.isCrossRepository }),
+        ...(result.pr.headRepositoryNameWithOwner === undefined
+          ? {}
+          : { headRepositoryNameWithOwner: result.pr.headRepositoryNameWithOwner }),
         state: "open" as const,
       };
 
-      setDraftThreadContext(draftId ?? activeThreadRef, {
-        branch: activeDraftThread.branch,
-        worktreePath: activeDraftThread.worktreePath,
-        pullRequest,
-      });
+      if (activeServerThread) {
+        try {
+          const api = readEnvironmentApi(activeThreadRef.environmentId);
+          if (!api) {
+            throw new Error("The thread connection is unavailable.");
+          }
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: activeThreadRef.threadId,
+            pullRequest,
+            pullRequestSource: "manual",
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to associate pull request",
+            description: error instanceof Error ? error.message : "An error occurred.",
+            ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+          });
+          return;
+        }
+        setThreadBranch(
+          activeThreadRef,
+          activeServerThread.branch,
+          activeServerThread.worktreePath,
+          pullRequest,
+        );
+        return;
+      }
+
+      if (activeDraftThread) {
+        setDraftThreadContext(draftId ?? activeThreadRef, {
+          branch: activeDraftThread.branch,
+          worktreePath: activeDraftThread.worktreePath,
+          pullRequest,
+        });
+      }
     },
     [
       activeDraftThread,
@@ -378,9 +423,9 @@ export default function GitActionsControl({
       if (branchUpdate) {
         persistThreadBranchSync(branchUpdate.branch);
       }
-      persistDraftPullRequestAssociation(result);
+      await persistThreadPullRequestAssociation(result);
     },
-    [persistDraftPullRequestAssociation, persistThreadBranchSync],
+    [persistThreadBranchSync, persistThreadPullRequestAssociation],
   );
 
   const { data: gitStatus = null, error: gitStatusError } = useGitStatus({

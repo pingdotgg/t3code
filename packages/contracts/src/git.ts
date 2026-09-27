@@ -228,6 +228,7 @@ export const GitResolveReviewChangesContextInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   scope: ReviewChangesScope,
   pullRequestNumber: Schema.optional(PositiveInt),
+  pullRequestRepository: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type GitResolveReviewChangesContextInput = typeof GitResolveReviewChangesContextInput.Type;
 
