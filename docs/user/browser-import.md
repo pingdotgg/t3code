@@ -30,4 +30,4 @@ Passkeys remain with the credential provider and can be shared across preview pr
 private tabs. Creating a passkey in a private tab can therefore save it permanently. Clearing cookies
 or deleting a browser profile does not delete passkeys; manage them in your credential provider.
 Automatic passkey autofill and passkey requests inside embedded frames are not supported by this
-macOS integration. Unsigned builds cannot access the system browser passkey APIs.
+macOS integration. Availability depends on your version of T3 Code.

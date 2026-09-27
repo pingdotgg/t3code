@@ -8,6 +8,7 @@ typedef void (*Completion)(const char *);
 static NSMutableDictionary *requests;
 
 static NSData *decode(NSString *value) {
+  if (![value isKindOfClass:NSString.class]) return nil;
   NSString *base64 = [[value stringByReplacingOccurrencesOfString:@"-" withString:@"+"]
       stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
   while (base64.length % 4) base64 = [base64 stringByAppendingString:@"="];
@@ -87,22 +88,35 @@ API_AVAILABLE(macos(14.4))
 }
 - (void)start:(NSDictionary *)options {
   if (self.result) return;
+  NSData *challenge = decode(options[@"challenge"]);
+  NSMutableArray<NSData *> *credentialIDs = [NSMutableArray array];
+  for (NSString *identifier in options[@"credentials"]) {
+    NSData *credentialID = decode(identifier);
+    if (!credentialID.length) { [self finish:@{@"error": @"TypeError"}]; return; }
+    [credentialIDs addObject:credentialID];
+  }
+  NSData *userID = nil;
+  if ([options[@"operation"] isEqual:@"create"]) {
+    userID = decode(options[@"userId"]);
+    if (!userID.length || userID.length > 64) { [self finish:@{@"error": @"TypeError"}]; return; }
+  }
+  if (!challenge.length) { [self finish:@{@"error": @"TypeError"}]; return; }
   ASPublicKeyCredentialClientData *clientData = [[ASPublicKeyCredentialClientData alloc]
-      initWithChallenge:decode(options[@"challenge"]) origin:options[@"origin"]];
+      initWithChallenge:challenge origin:options[@"origin"]];
   clientData.crossOrigin = ASPublicKeyCredentialClientDataCrossOriginValueSameOriginWithAncestors;
   ASAuthorizationPlatformPublicKeyCredentialProvider *provider =
       [[ASAuthorizationPlatformPublicKeyCredentialProvider alloc] initWithRelyingPartyIdentifier:options[@"rpId"]];
   NSMutableArray *descriptors = [NSMutableArray array];
-  for (NSString *identifier in options[@"credentials"]) {
+  for (NSData *credentialID in credentialIDs) {
     [descriptors addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor alloc]
-        initWithCredentialID:decode(identifier)]];
+        initWithCredentialID:credentialID]];
   }
   NSMutableArray<ASAuthorizationRequest *> *authorizationRequests = [NSMutableArray array];
   ASAuthorizationRequest *request;
   if ([options[@"operation"] isEqual:@"create"]) {
     ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest *registration =
         [provider createCredentialRegistrationRequestWithClientData:clientData
-            name:options[@"userName"] userID:decode(options[@"userId"])];
+            name:options[@"userName"] userID:userID];
     registration.displayName = options[@"displayName"];
     registration.userVerificationPreference = options[@"userVerification"];
     registration.excludedCredentials = descriptors;
@@ -121,9 +135,9 @@ API_AVAILABLE(macos(14.4))
     ASAuthorizationSecurityKeyPublicKeyCredentialAssertionRequest *securityRequest =
         [securityProvider createCredentialAssertionRequestWithClientData:clientData];
     NSMutableArray *securityDescriptors = [NSMutableArray array];
-    for (NSString *identifier in options[@"credentials"]) {
+    for (NSData *credentialID in credentialIDs) {
       [securityDescriptors addObject:[[ASAuthorizationSecurityKeyPublicKeyCredentialDescriptor alloc]
-          initWithCredentialID:decode(identifier) transports:ASAuthorizationAllSupportedPublicKeyCredentialDescriptorTransports()]];
+          initWithCredentialID:credentialID transports:ASAuthorizationAllSupportedPublicKeyCredentialDescriptorTransports()]];
     }
     securityRequest.allowedCredentials = securityDescriptors;
     securityRequest.userVerificationPreference = options[@"userVerification"];

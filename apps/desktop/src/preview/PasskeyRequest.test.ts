@@ -14,6 +14,44 @@ describe("preview passkey requests", () => {
     expect(passkeyRpId("http://localhost:3000")).toBe("localhost");
     expect(passkeyRpId("https://project.github.io")).toBe("project.github.io");
   });
+  it("canonicalizes mixed-case and international RP hostnames", () => {
+    expect(passkeyRpId("https://login.example.com", "EXAMPLE.COM")).toBe("example.com");
+    expect(passkeyRpId("https://login.xn--bcher-kva.example", "BÜCHER.example")).toBe(
+      "xn--bcher-kva.example",
+    );
+  });
+  it.each([
+    "",
+    "example.com/path",
+    "example.com:443",
+    "example.com?x",
+    "user@example.com",
+    "%65xample.com",
+    " example.com",
+  ])("rejects a non-hostname RP ID: %s", (rp) => {
+    expect(() => passkeyRpId("https://example.com", rp)).toThrow(
+      expect.objectContaining({ name: "SecurityError" }),
+    );
+  });
+  it.each(["A", "AAAAA", "AB", "", "AQ==", "AQ+"])(
+    "rejects malformed credential bytes on both operations: %s",
+    (id) => {
+      expect(() =>
+        normalizePasskeyRequest(
+          "get",
+          { challenge: "AQID", allowCredentials: [{ type: "public-key", id }] },
+          "https://example.com",
+        ),
+      ).toThrow();
+      expect(() =>
+        normalizePasskeyRequest(
+          "create",
+          { ...registration, excludeCredentials: [{ type: "public-key", id }] },
+          "https://example.com",
+        ),
+      ).toThrow();
+    },
+  );
   it.each([
     ["https://example.com", "evil.com"],
     ["https://example.com", "com"],

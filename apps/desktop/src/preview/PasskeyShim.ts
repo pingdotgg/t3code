@@ -80,7 +80,7 @@ export function installPasskeyShim() {
       }
       if (operation === "create")
         Object.defineProperties(response, {
-          getTransports: { value: () => ["internal", "hybrid"] },
+          getTransports: { value: () => ["hybrid", "internal"] },
           getAuthenticatorData: { value: () => response.authenticatorData },
           getPublicKey: { value: () => response.publicKey ?? null },
           getPublicKeyAlgorithm: { value: () => result.response.publicKeyAlgorithm },
@@ -95,7 +95,7 @@ export function installPasskeyShim() {
           ...Object.fromEntries(
             Object.entries(result.response).filter(([key, value]) => key !== "userHandle" || value),
           ),
-          ...(operation === "create" ? { transports: ["internal", "hybrid"] } : {}),
+          ...(operation === "create" ? { transports: ["hybrid", "internal"] } : {}),
         },
         clientExtensionResults: extensionResults,
       };
@@ -113,7 +113,7 @@ export function installPasskeyShim() {
     }
   };
   credentials.get = (options) =>
-    options?.publicKey && options.mediation !== "conditional"
+    options?.publicKey && options.mediation !== "conditional" && options.mediation !== "silent"
       ? perform("get", options.publicKey, options.signal, () => originalGet(options))
       : originalGet(options);
   credentials.create = (options) =>

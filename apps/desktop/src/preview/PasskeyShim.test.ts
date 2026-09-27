@@ -91,6 +91,40 @@ describe("preview passkey page API", () => {
       userVerifyingPlatformAuthenticator: true,
     });
   });
+  it("keeps silent authentication on Chromium without a native prompt", async () => {
+    const h = page();
+    const options = { publicKey: { challenge: new Uint8Array([1]) }, mediation: "silent" as const };
+    expect(await h.navigator.credentials.get(options)).toBeNull();
+    expect(h.originalGet).toHaveBeenCalledWith(options);
+    expect(h.request).not.toHaveBeenCalled();
+  });
+  it("returns sorted registration transports through both WebAuthn accessors", async () => {
+    const h = page();
+    h.request.mockResolvedValue({
+      id: "AQID",
+      authenticatorAttachment: "platform",
+      response: {
+        clientDataJSON: "BAUG",
+        attestationObject: "BwgJ",
+        authenticatorData: "CgsM",
+        publicKey: "DQ4P",
+        publicKeyAlgorithm: -7,
+      },
+    });
+    const credential = (await h.navigator.credentials.create({
+      publicKey: {
+        challenge: new Uint8Array([1]),
+        rp: { name: "Example" },
+        user: { id: new Uint8Array([2]), name: "Alice", displayName: "Alice" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      },
+    })) as PublicKeyCredential;
+    expect((credential.response as AuthenticatorAttestationResponse).getTransports()).toEqual([
+      "hybrid",
+      "internal",
+    ]);
+    expect(credential.toJSON().response).toMatchObject({ transports: ["hybrid", "internal"] });
+  });
   it("rejects an aborted request immediately and cancels the native sheet", async () => {
     const h = page();
     h.request.mockReturnValue(new Promise(() => {}));

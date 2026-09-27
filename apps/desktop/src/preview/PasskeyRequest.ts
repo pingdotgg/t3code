@@ -1,7 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off - RP IDs use the same IDNA conversion as browser hostnames.
+import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import { getDomain } from "tldts";
 
-const Binary = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/));
+const Binary = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+  Schema.makeFilter((value) => Buffer.from(value, "base64url").toString("base64url") === value),
+);
 const Verification = Schema.Literals(["required", "preferred", "discouraged"]);
 const Descriptor = Schema.Struct({ type: Schema.Literal("public-key"), id: Binary });
 const Extensions = Schema.Struct({
@@ -46,7 +51,12 @@ export function passkeyRpId(origin: string, requested?: string) {
   if (url.protocol !== "https:" && !(url.protocol === "http:" && url.hostname === "localhost")) {
     throw new DOMException("Passkeys require a secure origin.", "SecurityError");
   }
-  const rpId = requested ?? url.hostname;
+  if (requested !== undefined && /[\s/:@?#%\\]/u.test(requested)) {
+    throw new DOMException("The relying party must be a hostname.", "SecurityError");
+  }
+  const rpId =
+    requested === undefined ? url.hostname : NodeURL.domainToASCII(requested).toLowerCase();
+  if (!rpId) throw new DOMException("Invalid relying party hostname.", "SecurityError");
   if (rpId !== url.hostname && !url.hostname.endsWith(`.${rpId}`)) {
     throw new DOMException("The relying party does not match this page.", "SecurityError");
   }

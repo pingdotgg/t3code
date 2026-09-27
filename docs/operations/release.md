@@ -454,6 +454,11 @@ Checklist:
 1. Apple Developer account access:
    - Team has rights to create Developer ID certificates.
 2. Create an explicit App ID for `com.t3tools.t3code` and enable Associated Domains.
+   Preview-browser passkeys also require meeting Apple's [browser eligibility requirements](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential):
+   HTTP/HTTPS scheme registration with direct navigation to incoming URLs, and URL entry, search,
+   or bookmarks on launch. T3 Code does not yet implement OS HTTP/HTTPS URL handling; do not treat
+   signing approval alone as release readiness. Implement and verify that behavior before enabling
+   this capability in a release profile.
    For preview-browser passkeys, request Apple's **Web Browser Public Key Credential Requests**
    capability for this App ID and regenerate the Developer ID provisioning profile after approval.
    The packager adds `com.apple.developer.web-browser.public-key-credential` only when the embedded
