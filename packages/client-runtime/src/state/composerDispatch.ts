@@ -13,20 +13,26 @@ export function resolveComposerDispatchMode(input: {
   readonly running: boolean;
   readonly alternateModifier: boolean;
   readonly activeTurnDefault?: ActiveTurnComposerAction;
+  /** The in-flight turn is context compaction, which cannot take a steer, so
+   *  automatic follow-ups queue behind it. */
+  readonly activeTurnIsCompaction?: boolean;
 }): ComposerDispatchMode {
   if (!input.running) return "auto";
   const defaultAction = input.activeTurnDefault ?? "steer";
   if (input.alternateModifier) return defaultAction === "queue" ? "steer" : "queue";
+  if (input.activeTurnIsCompaction && defaultAction !== "restart") return "queue";
   return defaultAction;
 }
 
 /** What the alternate would do, for labelling the affordance that triggers it. */
 export function alternateComposerDispatchAction(
   activeTurnDefault?: ActiveTurnComposerAction,
+  activeTurnIsCompaction?: boolean,
 ): ActiveTurnComposerAction {
   return resolveComposerDispatchMode({
     running: true,
     alternateModifier: true,
     ...(activeTurnDefault === undefined ? {} : { activeTurnDefault }),
+    ...(activeTurnIsCompaction === undefined ? {} : { activeTurnIsCompaction }),
   }) as ActiveTurnComposerAction;
 }
