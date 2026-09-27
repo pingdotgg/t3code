@@ -15,7 +15,9 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
+import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { issueComment, issueSetState, useIssueDetail } from "~/state/issues";
 import { formatEnvironmentQueryError } from "~/state/query";
@@ -215,6 +217,9 @@ function IssueLinkedWork({
   const { threadsByIssue } = useIssueRowThreads(lookup, linkEnvironments);
   const threads = threadsByIssue.get(issueKey(reference)) ?? [];
   const pullRequests = issuePanelPullRequests(closingPullRequests, threads, linkedPullRequests);
+  // The same opener as a pull request link in the Issue's body: the in-app panel where a server
+  // reads it, else the anchor's own GitHub link.
+  const openPullRequest = useOpenChangeRequestLink(undefined, PULL_REQUESTS_PANEL_REF);
   if (threads.length === 0 && pullRequests.length === 0) return null;
   return (
     <section aria-label="Linked threads and pull requests" className="flex flex-col gap-1">
@@ -241,28 +246,37 @@ function IssueLinkedWork({
               ];
         const Icon = presentation?.Icon ?? PULL_REQUEST_STATE_PRESENTATION.open.Icon;
         return (
-          <a
-            key={issueKey(pullRequest)}
-            href={pullRequest.url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-sm hover:bg-accent/50"
-          >
-            <Icon
-              aria-label={presentation?.label ?? "Pull request"}
-              className={cn(
-                "size-4 shrink-0",
-                presentation?.toneClassName ?? "text-muted-foreground",
-              )}
-            />
-            <span className="truncate">
-              {pullRequest.repository}#{pullRequest.number}
-            </span>
-            {presentation ? (
-              <span className="shrink-0 text-xs text-muted-foreground">{presentation.label}</span>
-            ) : null}
-            <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          </a>
+          <div key={issueKey(pullRequest)} className="flex min-w-0 items-center gap-1">
+            <a
+              href={pullRequest.url}
+              target="_blank"
+              rel="noreferrer"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-sm hover:bg-accent/50"
+              onClick={(event) => openPullRequest(event, pullRequest.url)}
+            >
+              <Icon
+                aria-label={presentation?.label ?? "Pull request"}
+                className={cn(
+                  "size-4 shrink-0",
+                  presentation?.toneClassName ?? "text-muted-foreground",
+                )}
+              />
+              <span className="truncate">
+                {pullRequest.repository}#{pullRequest.number}
+              </span>
+              {presentation ? (
+                <span className="shrink-0 text-xs text-muted-foreground">{presentation.label}</span>
+              ) : null}
+            </a>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={`Open ${pullRequest.repository}#${pullRequest.number} on GitHub`}
+              render={<a href={pullRequest.url} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLinkIcon className="size-3" />
+            </Button>
+          </div>
         );
       })}
     </section>

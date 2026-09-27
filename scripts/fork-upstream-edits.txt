@@ -81,3 +81,7 @@ apps/web/src/components/ChatView.tsx
 apps/web/src/components/RightPanelTabs.tsx
 packages/client-runtime/src/rpc/client.ts
 packages/contracts/src/environment.ts
+
+# Issue and pull request links open in the app (#40)
+apps/web/src/components/ChatMarkdown.tsx
+apps/web/src/lib/openPullRequestLink.ts

@@ -464,3 +464,30 @@ for per-match decisions and the absorption PR record.
   ]
 }
 ```
+
+## Issue and pull request links open in the app
+
+```json
+{
+  "id": "issues-open-links",
+  "purpose": "Open GitHub /issues/N links and an Issue's pull requests in the app: the PR panel for pull requests, the Issues panel for Issues, the browser otherwise.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/40"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/41"],
+  "newFiles": [
+    "apps/web/src/components/issues/issueLinkOpening.logic.test.ts",
+    "apps/web/src/components/issues/issueLinkOpening.logic.ts",
+    "apps/web/src/components/issues/useOpenIssueOrPullRequestLink.ts"
+  ],
+  "upstreamFiles": [
+    "apps/web/src/components/ChatMarkdown.tsx",
+    "apps/web/src/lib/openPullRequestLink.ts"
+  ],
+  "sharedFiles": ["docs/user/source-control.md"],
+  "keywords": [
+    "pullRequestCandidateUrlFromReferenceAutolink",
+    "useOpenChangeRequestLink",
+    "PullRequestLinkPreview",
+    "MarkdownAnchor"
+  ]
+}
+```

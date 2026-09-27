@@ -1,15 +1,14 @@
 import type { ScopedThreadRef, ThreadIssueLink } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import { CircleDotIcon, MessageSquarePlusIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { issueLinkEnvironment } from "~/state/issueLinks";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ISSUE_LINK_SOURCE_LABELS, parseIssueReferenceInput } from "./issueLinks.logic";
+import { useOpenIssueInIssuesView } from "./useOpenIssueOrPullRequestLink";
 import { useStartThreadFromIssue } from "./useStartThreadFromIssue";
 import { useThreadIssueLinks } from "./useThreadIssueLinks";
 
@@ -85,18 +84,10 @@ export function ThreadIssueLinks({ threadRef }: { threadRef: ScopedThreadRef }) 
   const link = useAtomCommand(issueLinkEnvironment.link, { reportFailure: true });
   const unlink = useAtomCommand(issueLinkEnvironment.unlink, { reportFailure: true });
   const startThread = useStartThreadFromIssue();
-  const navigate = useNavigate();
+  const openIssueInIssuesView = useOpenIssueInIssuesView();
   // The Issues page opens with this Issue's side panel, read through this thread's server.
   const openIssue = (issue: ThreadIssueLink) =>
-    void navigate({
-      to: "/pull-requests",
-      search: {
-        ...readPullRequestListPreferences(),
-        view: "issues",
-        issue: issue.url,
-        selectedEnvironmentId: threadRef.environmentId,
-      },
-    });
+    openIssueInIssuesView(issue.url, threadRef.environmentId);
   // Null while the link field is closed.
   const [reference, setReference] = useState<string | null>(null);
   const target = reference === null ? null : parseIssueReferenceInput(reference);
