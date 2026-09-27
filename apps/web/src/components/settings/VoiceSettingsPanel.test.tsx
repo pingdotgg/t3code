@@ -69,6 +69,11 @@ vi.mock("../ui/select", () => ({
   SelectValue: "span",
 }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/popover", () => ({
+  Popover: "div",
+  PopoverTrigger: "button",
+  PopoverContent: "div",
+}));
 vi.mock("../ui/textarea", () => ({ Textarea: "textarea" }));
 vi.mock("../ui/badge", () => ({ Badge: "span" }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
@@ -141,7 +146,7 @@ it("shows friendly labels for default voice options", async () => {
   expect(labels).not.toContain("primary-environment");
   expect(labels).not.toContain("system-default");
 });
-it("keeps dictionary corrections collapsed until a word is opened", async () => {
+it("shows saved words as tags with misspelling controls in popovers", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
   vi.stubGlobal("window", { setInterval, clearInterval });
@@ -153,24 +158,16 @@ it("keeps dictionary corrections collapsed until a word is opened", async () => 
     root = create(createElement(VoiceSettingsPanel));
   });
 
-  const dictionaryToggle = root.root.findByProps({ "aria-label": "Saved dictionary words" });
-  expect(dictionaryToggle.props["aria-expanded"]).toBe(false);
-  expect(root.root.findAllByProps({ "aria-label": "Edit aliases for T3 Code" })).toHaveLength(0);
-  await act(async () => dictionaryToggle.props.onClick());
-  expect(dictionaryToggle.props["aria-expanded"]).toBe(true);
-  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
-  expect(root.root.findByProps({ "aria-label": "Edit aliases for T3 Code" })).toBeDefined();
-  await act(async () =>
-    root.root.findByProps({ "aria-label": "Edit aliases for T3 Code" }).props.onClick(),
-  );
+  expect(root.root.findByProps({ "aria-label": "Dictionary entries" })).toBeDefined();
+  const wordTag = root.root.findByProps({ "aria-label": "Edit misspellings for T3 Code" });
+  expect(wordTag.children[0]).toBe("T3 Code");
+  expect(wordTag.findByType("span").children.join("")).toBe("(1)");
+  expect(root.root.findByProps({ "aria-label": "Edit misspellings for Codex" })).toBeDefined();
+  expect(root.root.findByProps({ "aria-label": "Remove T3 Code" })).toBeDefined();
   expect(root.root.findByProps({ "aria-label": "Transcribed as for T3 Code" })).toBeDefined();
-  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for Codex" })).toHaveLength(0);
-  await act(async () =>
-    root.root.findByProps({ "aria-label": "Hide aliases for T3 Code" }).props.onClick(),
-  );
-  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
-  await act(async () => dictionaryToggle.props.onClick());
-  expect(root.root.findAllByProps({ "aria-label": "Edit aliases for T3 Code" })).toHaveLength(0);
+  expect(
+    root.root.findByProps({ "aria-label": "Remove alias tea three code from T3 Code" }),
+  ).toBeDefined();
 });
 it("bulk adds normalized words and reports skipped entries", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -214,9 +211,7 @@ it("bulk adds normalized words and reports skipped entries", async () => {
   await act(async () => addBulk!.props.onClick());
   expect(mocks.saveWords).toHaveBeenCalledWith(mocks.connection, words);
   expect(root.root.findAllByProps({ "aria-label": "Words to add" })).toHaveLength(0);
-  expect(
-    root.root.findByProps({ "aria-label": "Saved dictionary words" }).props["aria-expanded"],
-  ).toBe(true);
+  expect(root.root.findByProps({ "aria-label": "Edit misspellings for New Name" })).toBeDefined();
 });
 it("limits bulk additions to the remaining dictionary capacity", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
