@@ -218,7 +218,12 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           stderr: "ignore",
         }),
       );
-      const output = yield* child.stdout.pipe(Stream.decodeText(), Stream.mkString);
+      const output = yield* child.stdout.pipe(
+        Stream.take(16),
+        Stream.map((chunk) => chunk.subarray(0, 64)),
+        Stream.decodeText(),
+        Stream.mkString,
+      );
       if (Number(yield* child.exitCode) !== 0) return null;
       const match = /^cloudflared version (\d+)\.(\d+)\.(\d+)\b/mu.exec(output);
       if (!match) return null;
@@ -230,6 +235,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       return `${version[0]}.${version[1]}.${version[2]}`;
     }).pipe(
       Effect.scoped,
+      Effect.timeout("2 seconds"),
       Effect.orElseSucceed(() => null),
     );
 
