@@ -1483,8 +1483,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           ]),
         })
         .pipe(Effect.flip);
-      assert.include(error.message, '"gpt-5.4"');
-      assert.include(error.message, '"default"');
+      assert.include(error.message, "Cursor did not switch to the selected model");
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       assert.isTrue(

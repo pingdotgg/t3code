@@ -133,7 +133,8 @@ export function applyCursorAcpModelSelection<E>(input: {
         input.mapError({
           cause: new EffectAcpErrors.AcpRequestError({
             code: -32603,
-            errorMessage: `Cursor stayed on model "${currentModel}" instead of "${requestedModel}"; the prompt was not sent.`,
+            errorMessage: "Cursor did not switch to the selected model; the prompt was not sent.",
+            data: { requestedModel, currentModel },
             method: "session/set_config_option",
           }),
           step: "set-model",
