@@ -3,7 +3,9 @@ import {
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
+  DevinSettings,
   GrokSettings,
+  MuseSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -12,8 +14,10 @@ import {
   AntigravityIcon,
   ClaudeAI,
   CursorIcon,
+  DevinIcon,
   GrokIcon,
   type Icon,
+  MuseIcon,
   OpenAI,
   OpenCodeIcon,
 } from "../Icons";
@@ -69,6 +73,20 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     icon: GrokIcon,
     badgeLabel: "Early Access",
     settingsSchema: GrokSettings,
+  },
+  {
+    value: ProviderDriverKind.make("devin"),
+    label: "Devin",
+    icon: DevinIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: DevinSettings,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse",
+    icon: MuseIcon,
+    badgeLabel: "Early Access",
+    settingsSchema: MuseSettings,
   },
   {
     value: ProviderDriverKind.make("opencode"),

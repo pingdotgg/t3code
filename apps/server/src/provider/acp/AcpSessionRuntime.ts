@@ -1121,6 +1121,31 @@ export const make = (
               "session/set_model",
               requestPayload,
               acp.agent.setSessionModel(requestPayload),
+            ).pipe(
+              Effect.catchCause((cause) => {
+                // Agents that expose model selection only as a session config
+                // option (e.g. devin) answer -32601 here; route through the
+                // negotiated option instead. The -32601 can surface as a typed
+                // AcpRequestError or as a defect holding the decoded JSON-RPC
+                // error, so inspect the whole cause.
+                const methodNotFound = cause.reasons.some((reason) => {
+                  if (Cause.isFailReason(reason)) {
+                    return reason.error._tag === "AcpRequestError" && reason.error.code === -32601;
+                  }
+                  if (Cause.isDieReason(reason)) {
+                    return (
+                      reason.defect instanceof Error &&
+                      /method not found/i.test(reason.defect.message)
+                    );
+                  }
+                  return false;
+                });
+                return methodNotFound
+                  ? setConfigOption(started.modelConfigId ?? "model", modelId).pipe(
+                      Effect.as({} satisfies EffectAcpSchema.SetSessionModelResponse),
+                    )
+                  : Effect.failCause(cause);
+              }),
             );
           }),
         ),

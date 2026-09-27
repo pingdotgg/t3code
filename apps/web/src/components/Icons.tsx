@@ -870,3 +870,29 @@ export const ComputerUseAppIcon: Icon = (props) => {
     </svg>
   );
 };
+
+export const DevinIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#1A1A1A] dark:fill-[#F5F5F5]", className)}
+  >
+    <path
+      fillRule="evenodd"
+      d="M12 21c4.97 0 9-4.03 9-9 0-1.17-.22-2.28-.63-3.3l-1.74.6A7.19 7.19 0 0 1 19.2 12a7.2 7.2 0 1 1-10.75-6.29l1.44-1.14A8.99 8.99 0 0 0 12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9Zm3.55-13.9-1.86 2.36a3.59 3.59 0 0 0-3.84.93 3.6 3.6 0 1 0 5.1 5.1 3.59 3.59 0 0 0 .92-3.84l2.37-1.86a7.16 7.16 0 0 1-2.69 9.41 7.2 7.2 0 1 1 .01-10.1Z"
+      clipRule="evenodd"
+    />
+  </svg>
+);
+
+export const MuseIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("fill-[#1A1A1A] dark:fill-[#F5F5F5]", className)}
+  >
+    <path d="M4 19V5h2.6L12 12.5 17.4 5H20v14h-2.8V9.6l-4 6.4h-2.4l-4-6.4V19H4Z" />
+  </svg>
+);
