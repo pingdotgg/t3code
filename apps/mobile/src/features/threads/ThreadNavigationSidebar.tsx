@@ -33,7 +33,7 @@ import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
+import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -43,7 +43,6 @@ import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
-import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import {
   getConnectionAwareBrandHeaderOptions,
@@ -91,6 +90,8 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenEnvironmentSettings: () => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
+  readonly onOpenPendingTask: (pendingTask: PendingNewTask) => void;
+  readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -159,7 +160,6 @@ function ThreadNavigationSidebarPane(
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const queuedThreadKeys = useQueuedThreadKeys();
-  const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
     () =>
       Object.values(savedConnectionsById)
@@ -720,8 +720,8 @@ function ThreadNavigationSidebarPane(
               environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
               pane="sidebar"
               showPendingDivider={item.showPendingDivider}
-              onSelectPendingTask={openPendingTask}
-              onDeletePendingTask={confirmDeletePendingTask}
+              onSelectPendingTask={props.onOpenPendingTask}
+              onDeletePendingTask={props.onDeletePendingTask}
             />
           );
         }
@@ -832,14 +832,14 @@ function ThreadNavigationSidebarPane(
     [
       archiveThread,
       activeReorderEnvironmentIds,
-      confirmDeletePendingTask,
       confirmDeleteThread,
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
       machineByEnvironmentId,
       moveThread,
-      openPendingTask,
+      props.onDeletePendingTask,
+      props.onOpenPendingTask,
       pinReorderEnvironmentIds,
       pinThread,
       pinningEnvironmentIds,
