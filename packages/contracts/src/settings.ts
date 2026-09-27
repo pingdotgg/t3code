@@ -224,6 +224,17 @@ export const DEFAULT_WORKFLOW_PREWARM_ON_HOVER = true;
 export const DEFAULT_WORKFLOW_RUNS_SHOW_BADGE = true;
 export const DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT = true;
 export const DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM = false;
+/** How often the desktop Dev build checks whether main moved past the running build, in minutes. 0 disables the check. */
+export const DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES = 15;
+export const MIN_LOCAL_REBUILD_STALENESS_CHECK_MINUTES = 0;
+export const MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES = 1440;
+export const LocalRebuildStalenessCheckMinutes = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+    maximum: MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+  }),
+);
+export type LocalRebuildStalenessCheckMinutes = typeof LocalRebuildStalenessCheckMinutes.Type;
 
 export const BrowserRecordingFrameRate = Schema.Literals([30, 60]);
 export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
@@ -419,6 +430,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarNewThreadConfirm: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM)),
+  ),
+  localRebuildStalenessCheckMinutes: LocalRebuildStalenessCheckMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES)),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -874,6 +888,7 @@ export const ClientSettingsPatch = Schema.Struct({
   workflowRunsShowBadge: Schema.optionalKey(Schema.Boolean),
   sidebarSearchShowShortcut: Schema.optionalKey(Schema.Boolean),
   sidebarNewThreadConfirm: Schema.optionalKey(Schema.Boolean),
+  localRebuildStalenessCheckMinutes: Schema.optionalKey(LocalRebuildStalenessCheckMinutes),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
 

@@ -447,6 +447,19 @@ describe("ClientSettings.headerSidebarButtons", () => {
     expect(decodeClientSettings({}).workflowRunsShowBadge).toBe(true);
     expect(decodeClientSettings({}).sidebarSearchShowShortcut).toBe(true);
     expect(decodeClientSettings({}).sidebarNewThreadConfirm).toBe(false);
+    expect(decodeClientSettings({}).localRebuildStalenessCheckMinutes).toBe(15);
+  });
+
+  it("accepts and bounds the local rebuild staleness check interval", () => {
+    expect(decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 30 })).toEqual({
+      localRebuildStalenessCheckMinutes: 30,
+    });
+    expect(decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 0 })).toEqual({
+      localRebuildStalenessCheckMinutes: 0,
+    });
+    expect(() => decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: -1 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 1441 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 2.5 })).toThrow();
   });
 
   it("accepts visibility and behavior patches", () => {
