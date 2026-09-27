@@ -985,6 +985,25 @@ export const PreviewAutomationHostFocus = Schema.Struct({
 });
 export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 
+const PreviewAutomationManagedBootstrapCredential = Schema.Struct({
+  origin: TrimmedNonEmptyString,
+  credential: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+
+/**
+ * Internal server-to-desktop authorization data for an exact managed T3
+ * target. This is never part of an MCP tool input or result.
+ */
+export const PreviewAutomationManagedTargetAuth = Schema.Struct({
+  environmentId: EnvironmentId,
+  expectedOrigins: Schema.Array(TrimmedNonEmptyString),
+  attestation: Schema.optionalKey(TrimmedNonEmptyString),
+  attestationPublicKey: Schema.optionalKey(TrimmedNonEmptyString),
+  bootstrapEncryptionPublicKey: Schema.optionalKey(TrimmedNonEmptyString),
+  bootstrapCredentials: Schema.Array(PreviewAutomationManagedBootstrapCredential),
+});
+export type PreviewAutomationManagedTargetAuth = typeof PreviewAutomationManagedTargetAuth.Type;
+
 export const PreviewAutomationRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   threadId: ThreadId,
@@ -992,6 +1011,7 @@ export const PreviewAutomationRequest = Schema.Struct({
   tabIdExplicit: Schema.optional(Schema.Boolean),
   operation: PreviewAutomationOperation,
   input: Schema.Unknown,
+  managedTargetAuth: Schema.optionalKey(PreviewAutomationManagedTargetAuth),
   timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type PreviewAutomationRequest = typeof PreviewAutomationRequest.Type;
@@ -1298,6 +1318,67 @@ export class PreviewAutomationMalformedResponseError extends Schema.TaggedErrorC
   }
 }
 
+export const PreviewAutomationManagedTargetAuthFailure = Schema.Literals([
+  "pairing-required",
+  "session-revoked",
+  "session-expired",
+  "invalid-session",
+  "target-origin-mismatch",
+  "foreign-environment",
+  "target-instance-changed",
+  "bootstrap-failed",
+  "readiness-timeout",
+  "authorization-revoked",
+]);
+export type PreviewAutomationManagedTargetAuthFailure =
+  typeof PreviewAutomationManagedTargetAuthFailure.Type;
+
+export class PreviewAutomationManagedTargetAuthError extends Schema.TaggedErrorClass<PreviewAutomationManagedTargetAuthError>()(
+  "PreviewAutomationManagedTargetAuthError",
+  {
+    operation: PreviewAutomationOperation,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    providerSessionId: Schema.optional(TrimmedNonEmptyString),
+    providerInstanceId: Schema.optional(ProviderInstanceId),
+    clientId: Schema.optional(TrimmedNonEmptyString),
+    connectionId: Schema.optional(PreviewAutomationConnectionId),
+    requestId: Schema.optional(TrimmedNonEmptyString),
+    tabId: Schema.optional(PreviewTabId),
+    timeoutMs: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    reason: PreviewAutomationManagedTargetAuthFailure,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationManagedTargetAuthError" as const;
+  }
+
+  override get message(): string {
+    switch (this.reason) {
+      case "pairing-required":
+        return "This T3 preview needs explicit pairing. Open an already-paired browser profile or pair this environment manually.";
+      case "session-revoked":
+        return "This preview session was revoked. Automatic reauthorization is disabled; pair the environment again explicitly.";
+      case "session-expired":
+        return "This preview session expired or was cleared. Automatic reauthorization is disabled; pair the environment again explicitly.";
+      case "invalid-session":
+        return "The T3 preview session is invalid. Re-pair the environment explicitly and retry.";
+      case "target-origin-mismatch":
+        return "The T3 preview origin differs from the managed local origin. Open the exact configured origin or pair it explicitly.";
+      case "foreign-environment":
+        return "The T3 target belongs to another environment. Automatic authentication is limited to the currently authorized environment.";
+      case "target-instance-changed":
+        return "The managed T3 server instance changed before authentication. Retry against the current local server.";
+      case "bootstrap-failed":
+        return "The managed T3 preview could not establish its browser session. Check that the local server is running, then pair it explicitly if needed.";
+      case "readiness-timeout":
+        return "The managed T3 preview did not reach authenticated application readiness before the timeout.";
+      case "authorization-revoked":
+        return `Preview authorization for ${this.operation} was revoked while the browser request was running.`;
+    }
+  }
+}
+
 export const PreviewAutomationError = Schema.Union([
   PreviewAutomationUnavailableError,
   PreviewAutomationNoAvailableHostError,
@@ -1316,6 +1397,7 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationRemoteUnavailableError,
   PreviewAutomationMalformedResponseError,
+  PreviewAutomationManagedTargetAuthError,
 ]);
 export type PreviewAutomationError = typeof PreviewAutomationError.Type;
 

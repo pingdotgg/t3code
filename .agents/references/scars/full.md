@@ -10,6 +10,8 @@
 - Guest keyboard isolation must route zoom directly to the preview's tab-owned zoom operations. Reject unsupported popup URLs without loading them into the opener; Electron cannot harden inherited `about:blank` preferences.
 
 - Agent browser access is a server-authoritative capability: gate credential issuance centrally, revoke stale credentials on denial, attach the resulting session consistently across providers, and derive provider instructions from actual tool availability. Never install a per-thread credential into an externally managed OpenCode server because its MCP configuration is shared.
+- Route human and automation tab creation through the same configured-profile helper; preserve a reused tab's profile. Managed local T3 auth must verify the exact instance and origin, keep bootstrap/session material inside the trusted app, and never treat `/pair` as readiness or silently replace revoked access.
+- Managed-preview attestation encrypts the one-time bootstrap exchange, not later cookie-authenticated HTTP traffic. Keep the session preview-scoped and revocable; do not claim protection from an active same-machine loopback relay without authenticated transport.
 - Find-in-chat scrolling must follow selected match identity, not the rebuilt match object; message sends and stream updates otherwise yank the viewport back to an old search result.
 
 ## Package boundaries

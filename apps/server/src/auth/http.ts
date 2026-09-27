@@ -5,10 +5,14 @@ import {
   AuthTokenExchangeRequest,
   type AuthBearerBootstrapResult,
   AuthBootstrapInput,
+  AuthPreviewBootstrapInput,
+  AuthPreviewBootstrapSession,
   AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
+  AuthPreviewAttestationInput,
+  type AuthPreviewBootstrapResult,
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
   EnvironmentRequestInvalidError,
@@ -25,6 +29,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { verifyAndConsumeDpopProof } from "./DpopReplayGuard.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
+import { ManagedPreviewAuth } from "./Services/ManagedPreviewAuth.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { browserApiCorsHeaders } from "../httpCors.ts";
 import { ALL_AUTH_ENVIRONMENT_SCOPES, sessionScopeSet } from "./scopes.ts";
@@ -214,6 +219,86 @@ const credentialResponseHeaders = {
   "cache-control": "no-store",
   pragma: "no-cache",
 };
+
+export const authPreviewAttestationRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/preview-attestation",
+  Effect.gen(function* () {
+    const payload = yield* HttpServerRequest.schemaBodyJson(AuthPreviewAttestationInput).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Invalid preview attestation request.",
+            status: 400,
+            cause,
+          }),
+      ),
+    );
+    const managedPreviewAuth = yield* ManagedPreviewAuth;
+    const signature = yield* managedPreviewAuth.attest(payload.challenge, payload.origin);
+    return signature
+      ? HttpServerResponse.jsonUnsafe(
+          { signature },
+          { status: 200, headers: credentialResponseHeaders },
+        )
+      : HttpServerResponse.empty({ status: 404, headers: credentialResponseHeaders });
+  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
+);
+
+export const authPreviewBootstrapRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/preview-bootstrap",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const payload = yield* HttpServerRequest.schemaBodyJson(AuthPreviewBootstrapInput).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Invalid preview bootstrap request.",
+            status: 400,
+            cause,
+          }),
+      ),
+    );
+    const managedPreviewAuth = yield* ManagedPreviewAuth;
+    const exchange = yield* managedPreviewAuth.openBootstrap(payload).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Managed preview bootstrap is no longer authorized.",
+            status: 401,
+            cause,
+          }),
+      ),
+    );
+    const serverAuth = yield* ServerAuth;
+    const session = yield* serverAuth.exchangeBootstrapCredential(
+      exchange.credential,
+      deriveAuthClientMetadata({ request }),
+    );
+    const encryptedResult = yield* exchange
+      .encryptResponse(
+        JSON.stringify({
+          response: session.response,
+          sessionToken: session.sessionToken,
+        } satisfies typeof AuthPreviewBootstrapSession.Type),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new AuthError({
+              message: "Managed preview bootstrap response could not be encrypted.",
+              status: 500,
+              cause,
+            }),
+        ),
+      );
+    return HttpServerResponse.jsonUnsafe(encryptedResult satisfies AuthPreviewBootstrapResult, {
+      status: 200,
+      headers: credentialResponseHeaders,
+    });
+  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
+);
 
 const respondToEnvironmentAuthError = (error: AuthError) =>
   Effect.succeed(

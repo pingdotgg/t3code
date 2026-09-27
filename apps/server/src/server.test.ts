@@ -141,6 +141,7 @@ import { PortDiscovery } from "./preview/PortScanner.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import { ManagedPreviewAuth } from "./auth/Services/ManagedPreviewAuth.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -166,6 +167,18 @@ import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import { SidebarStateLive } from "./sidebarState.ts";
+
+const ManagedPreviewAuthTest = Layer.succeed(
+  ManagedPreviewAuth,
+  ManagedPreviewAuth.of({
+    prepare: () => Effect.succeed(undefined),
+    attest: () => Effect.succeed(undefined),
+    openBootstrap: () => Effect.die("Managed preview bootstrap is unused in this test."),
+    release: () => Effect.void,
+    revokeProviderSession: () => Effect.void,
+    revokeAll: Effect.void,
+  }),
+);
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -275,6 +288,7 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 
 const authTestLayer = ServerAuthLive.pipe(
   Layer.provide(SqlitePersistenceMemory),
+  Layer.provideMerge(ManagedPreviewAuthTest),
   // Match production AuthLayerLive: expose the store so fully-typed ws routes
   // can resolve it from the test app layer.
   Layer.provideMerge(ServerSecretStoreLive),

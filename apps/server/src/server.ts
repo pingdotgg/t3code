@@ -82,12 +82,15 @@ import {
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authPreviewAttestationRouteLayer,
+  authPreviewBootstrapRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   authWebSocketTicketRouteLayer,
 } from "./auth/http.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { ManagedPreviewAuthLive } from "./auth/Layers/ManagedPreviewAuth.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./auth/Layers/AuthControlPlane.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { CheckoutCoordinatorLive } from "./git/CheckoutCoordinator.ts";
@@ -308,7 +311,7 @@ const PullRequestMonitorLayerLive = pullRequestMonitorAssociationReactorLayer.pi
 const PreviewAutomationLayerLive = Layer.mergeAll(
   PreviewAutomationBroker.layer,
   McpSessionRegistry.layer,
-);
+).pipe(Layer.provideMerge(ManagedPreviewAuthLive));
 
 const TerminalLayerLive = Layer.mergeAll(
   TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive)),
@@ -498,6 +501,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authPreviewAttestationRouteLayer,
+  authPreviewBootstrapRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   authWebSocketTicketRouteLayer,

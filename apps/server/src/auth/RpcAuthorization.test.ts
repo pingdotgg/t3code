@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
+  AuthBrowserPreviewScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   WS_METHODS,
@@ -52,6 +53,32 @@ it.effect("rejects RPC methods outside the persisted scope set", () =>
     );
 
     expect(error.requiredScope).toBe(AuthOrchestrationOperateScope);
+  }),
+);
+
+it.effect("supports the narrow preview scope and existing persisted preview scopes", () =>
+  Effect.gen(function* () {
+    yield* authorizeRpcMethod(new Set([AuthBrowserPreviewScope]), WS_METHODS.previewOpen, "client");
+    yield* authorizeRpcMethod(
+      new Set([AuthBrowserPreviewScope]),
+      WS_METHODS.subscribePreviewEvents,
+      "client",
+    );
+    yield* authorizeRpcMethod(
+      new Set([AuthOrchestrationOperateScope]),
+      WS_METHODS.previewOpen,
+      "client",
+    );
+    yield* authorizeRpcMethod(
+      new Set([AuthOrchestrationReadScope]),
+      WS_METHODS.subscribePreviewEvents,
+      "client",
+    );
+
+    const error = yield* Effect.flip(
+      authorizeRpcMethod(new Set([AuthBrowserPreviewScope]), WS_METHODS.serverGetConfig, "client"),
+    );
+    expect(error.requiredScope).toBe(AuthOrchestrationReadScope);
   }),
 );
 

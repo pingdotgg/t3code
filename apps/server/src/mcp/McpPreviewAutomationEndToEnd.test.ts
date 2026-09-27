@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
+import { ManagedPreviewAuth } from "../auth/Services/ManagedPreviewAuth.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -31,8 +32,20 @@ const ServerEnvironmentTest = Layer.succeed(
   }),
 );
 
+const ManagedPreviewAuthTest = Layer.succeed(
+  ManagedPreviewAuth,
+  ManagedPreviewAuth.of({
+    prepare: () => Effect.succeed(undefined),
+    attest: () => Effect.succeed(undefined),
+    openBootstrap: () => Effect.die("Managed preview bootstrap is unused in this test."),
+    release: () => Effect.void,
+    revokeProviderSession: () => Effect.void,
+    revokeAll: Effect.void,
+  }),
+);
+
 const SupportServicesLive = Layer.mergeAll(
-  PreviewAutomationBroker.layer,
+  PreviewAutomationBroker.layer.pipe(Layer.provide(ManagedPreviewAuthTest)),
   McpSessionRegistry.layer,
 ).pipe(
   Layer.provideMerge(ServerEnvironmentTest),
