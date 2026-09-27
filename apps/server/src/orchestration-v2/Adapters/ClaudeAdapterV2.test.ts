@@ -2013,6 +2013,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         prefix: "t3-claude-v2-wake-",
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+      const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
+        const processed = yield* Deferred.make<void>();
+        processedMessages.set(message, processed);
+        yield* Queue.offer(sdkMessages, message);
+        yield* Deferred.await(processed);
+      });
       const offeredMessages: Array<SDKUserMessage> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const terminalReceipts =
@@ -2040,7 +2047,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.sync(() => {
               openedOptions = input.options;
               return {
-                messages: Stream.fromQueue(sdkMessages),
+                messages: Stream.fromQueue(sdkMessages).pipe(
+                  Stream.flatMap((message) =>
+                    Stream.make(message).pipe(
+                      // The next pull happens after runForEach finishes handling this frame.
+                      Stream.concat(
+                        Stream.fromEffect(
+                          Effect.suspend(() => {
+                            const processed = processedMessages.get(message);
+                            return processed === undefined
+                              ? Effect.void
+                              : Deferred.succeed(processed, undefined);
+                          }),
+                        ).pipe(Stream.drain),
+                      ),
+                    ),
+                  ),
+                ),
                 offer: (message) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
@@ -2096,6 +2119,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         providerThread,
         threadId,
         sdkMessages,
+        offerAndWait,
         offeredMessages,
         continuationRequests,
         events,
@@ -4461,13 +4485,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        yield* Queue.take(harness.terminalReceipts);
 
         // The CLI wakes with a rejected window before the continuation turn
         // exists, then blocks the wake turn itself.
         yield* Queue.offer(harness.sdkMessages, wakeNotification);
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "rate_limit_event",
             rate_limit_info: {
@@ -4480,21 +4503,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        let parkedYields = 0;
-        yield* awaitUntil(() => parkedYields++ >= 50, "parked rate-limit quiet window");
         // The parked rate-limit frame rides along with the wake output; it
         // must not request a continuation on its own.
         assert.lengthOf(harness.continuationRequests, 0);
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           makeAssistantErrorFrame({
             uuid: "00000000-0000-4000-8000-000000000631",
             error: "rate_limit",
           }),
         );
-        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
-        yield* Queue.offer(
-          harness.sdkMessages,
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000632",
             result: "You've hit your session limit · resets 11:10am (Australia/Sydney)",
@@ -4504,8 +4523,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             origin: { kind: "task-notification" },
           }),
         );
-        let settleYields = 0;
-        yield* awaitUntil(() => settleYields++ >= 50, "wake result to settle into the buffer");
         assert.lengthOf(harness.continuationRequests, 1);
 
         yield* harness.runtime.startTurn(
@@ -4521,8 +4538,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             messageCreationSource: "provider",
           }),
         );
-        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
-        const terminal = harness.terminalEvents()[1];
+        const terminal = yield* Queue.take(harness.terminalReceipts);
         assert.equal(terminal?.status, "failed");
         if (terminal === undefined || terminal.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
