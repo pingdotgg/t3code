@@ -812,10 +812,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             baseUrl: input.baseUrl,
             ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
           }),
-          directory: canonicalizeOpenCodeDirectory(
-            input.directory,
-            HostProcessPlatform.defaultValue(),
-          ),
+          directory: canonicalizeOpenCodeDirectory(input.directory, hostPlatform),
         })
       : createOpencodeClient({
           baseUrl: input.baseUrl,

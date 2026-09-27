@@ -40,6 +40,13 @@ function trimText(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** Parses the legacy `"provider/model"` slug used by `session.command`. */
+function parseProviderModelSlug(slug: string): { providerID: string; modelID: string } | undefined {
+  const separator = slug.indexOf("/");
+  if (separator <= 0 || separator === slug.length - 1) return undefined;
+  return { providerID: slug.slice(0, separator), modelID: slug.slice(separator + 1) };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -97,19 +104,22 @@ function toLegacyQuestion(form: FormInfo): LegacyQuestionRequest {
         label: option.label,
         value: option.value,
       })),
-      multiSelect: field.type === "multiselect",
+      multiple: field.type === "multiselect",
     })),
   } as unknown as LegacyQuestionRequest;
 }
 
 function toNextFormAnswer(
-  fields: ReadonlyArray<{ readonly key: string }>,
-  answers: ReadonlyArray<string>,
+  fields: ReadonlyArray<{ readonly key: string; readonly type?: string }>,
+  answers: ReadonlyArray<ReadonlyArray<string>>,
 ): Record<string, string | Array<string>> {
   const answer: Record<string, string | Array<string>> = {};
   fields.forEach((field, index) => {
-    const value = answers[index];
-    if (value !== undefined && value.length > 0) answer[field.key] = value;
+    const values = answers[index] ?? [];
+    if (values.length === 0) return;
+    // OpenCode 2 forms take one string per single-select field and an array for
+    // multiselect; the legacy question contract always hands us string arrays.
+    answer[field.key] = field.type === "multiselect" ? [...values] : values[0]!;
   });
   return answer;
 }
@@ -643,17 +653,28 @@ export function createOpenCodeCompatClient(input: OpenCodeCompatClientInput): Op
           } as unknown as LegacyEventOf<"question.asked">,
         ];
 
-      case "form.replied":
+      case "form.replied": {
+        // The legacy contract expects one string array per question, indexed by
+        // question order; the V2 answer is a record keyed by form field.
+        const form = state.formSessions.get(event.data.id);
+        const fields = (form?.fields ?? []) as ReadonlyArray<{ readonly key: string }>;
+        const record = (event.data.answer ?? {}) as Record<string, string | ReadonlyArray<string>>;
+        const answers = fields.map((field) => {
+          const value = record[field.key];
+          if (value === undefined) return [];
+          return Array.isArray(value) ? [...value] : [value];
+        });
         return [
           {
             type: "question.replied",
             properties: {
               sessionID: event.data.sessionID,
               requestID: event.data.id,
-              answers: event.data.answer,
+              answers,
             },
           } as unknown as LegacyEventOf<"question.replied">,
         ];
+      }
 
       case "form.cancelled":
         return [
@@ -888,7 +909,7 @@ export function createOpenCodeCompatClient(input: OpenCodeCompatClientInput): Op
         messageID?: string;
         command: string;
         arguments?: string;
-        model?: { providerID: string; modelID: string };
+        model?: string | { providerID: string; modelID: string };
         agent?: string;
         variant?: string;
         parts?: ReadonlyArray<{
@@ -899,12 +920,15 @@ export function createOpenCodeCompatClient(input: OpenCodeCompatClientInput): Op
           url?: string;
         }>;
       }) => {
+        // Native command turns pass the legacy `"provider/model"` string.
+        const commandModel =
+          typeof input.model === "string" ? parseProviderModelSlug(input.model) : input.model;
         await applySessionState(
           input.sessionID,
-          input.model !== undefined
+          commandModel !== undefined
             ? {
-                providerID: input.model.providerID,
-                modelID: input.model.modelID,
+                providerID: commandModel.providerID,
+                modelID: commandModel.modelID,
                 ...(input.variant !== undefined ? { variant: input.variant } : {}),
               }
             : undefined,
@@ -920,14 +944,26 @@ export function createOpenCodeCompatClient(input: OpenCodeCompatClientInput): Op
             uri: part.url as string,
             ...(part.filename !== undefined ? { name: part.filename } : {}),
           }));
-        await client.session.command({
-          sessionID: input.sessionID,
-          name: input.command,
-          text: input.arguments ?? text,
-          ...(files.length > 0 ? { files } : {}),
-        });
+        const previousUserMessageID = state.lastUserMessageID.get(input.sessionID);
         if (input.messageID !== undefined) {
           state.lastUserMessageID.set(input.sessionID, input.messageID);
+        }
+        try {
+          await client.session.command({
+            sessionID: input.sessionID,
+            name: input.command,
+            text: input.arguments ?? text,
+            ...(files.length > 0 ? { files } : {}),
+          });
+        } catch (error) {
+          if (previousUserMessageID !== undefined) {
+            state.lastUserMessageID.set(input.sessionID, previousUserMessageID);
+          } else {
+            state.lastUserMessageID.delete(input.sessionID);
+          }
+          throw error;
+        }
+        if (input.messageID !== undefined) {
           push({
             type: "message.updated",
             properties: { sessionID: input.sessionID, info: { id: input.messageID, role: "user" } },
@@ -977,20 +1013,96 @@ export function createOpenCodeCompatClient(input: OpenCodeCompatClientInput): Op
             uri: part.url as string,
             ...(part.filename !== undefined ? { name: part.filename } : {}),
           }));
-        await client.session.prompt({
-          sessionID: input.sessionID,
-          ...(input.messageID !== undefined ? { id: input.messageID } : {}),
-          text,
-          ...(files.length > 0 ? { files } : {}),
-        });
+        const previousUserMessageID = state.lastUserMessageID.get(input.sessionID);
         if (input.messageID !== undefined) {
           state.lastUserMessageID.set(input.sessionID, input.messageID);
+        }
+        try {
+          await client.session.prompt({
+            sessionID: input.sessionID,
+            ...(input.messageID !== undefined ? { id: input.messageID } : {}),
+            text,
+            ...(files.length > 0 ? { files } : {}),
+          });
+        } catch (error) {
+          if (previousUserMessageID !== undefined) {
+            state.lastUserMessageID.set(input.sessionID, previousUserMessageID);
+          } else {
+            state.lastUserMessageID.delete(input.sessionID);
+          }
+          throw error;
+        }
+        if (input.messageID !== undefined) {
           push({
             type: "message.updated",
             properties: { sessionID: input.sessionID, info: { id: input.messageID, role: "user" } },
           } as unknown as LegacyEvent);
         }
         return { data: {} };
+      },
+      prompt: async (input: {
+        sessionID: string;
+        messageID?: string;
+        model?: { providerID: string; modelID: string };
+        agent?: string;
+        variant?: string;
+        system?: string;
+        parts?: ReadonlyArray<{
+          type: string;
+          text?: string;
+          mime?: string;
+          filename?: string;
+          url?: string;
+        }>;
+      }) => {
+        await applySessionState(
+          input.sessionID,
+          input.model !== undefined
+            ? {
+                providerID: input.model.providerID,
+                modelID: input.model.modelID,
+                ...(input.variant !== undefined ? { variant: input.variant } : {}),
+              }
+            : undefined,
+          input.agent,
+        );
+        const bodyText = (input.parts ?? [])
+          .filter((part) => part.type === "text" && typeof part.text === "string")
+          .map((part) => part.text as string)
+          .join("\n");
+        const system = input.system?.trim();
+        const text = system && system.length > 0 ? `${system}\n\n${bodyText}` : bodyText;
+        const files = (input.parts ?? [])
+          .filter((part) => part.type === "file" && typeof part.url === "string")
+          .map((part) => ({
+            uri: part.url as string,
+            ...(part.filename !== undefined ? { name: part.filename } : {}),
+          }));
+        await client.session.prompt({
+          sessionID: input.sessionID,
+          ...(input.messageID !== undefined ? { id: input.messageID } : {}),
+          text,
+          ...(files.length > 0 ? { files } : {}),
+        });
+        // The legacy contract resolves once the turn completes; V2 only
+        // acknowledges the inbox item, so wait for the session to go idle and
+        // then read the finished assistant message.
+        await client.session.wait({ sessionID: input.sessionID });
+        const messages = await client.session.context({ sessionID: input.sessionID });
+        const assistant = messages.toReversed().find((message) => message.type === "assistant");
+        return {
+          data: {
+            info:
+              assistant !== undefined
+                ? {
+                    id: assistant.id,
+                    role: "assistant" as const,
+                    ...(assistant.error !== undefined ? { error: assistant.error } : {}),
+                  }
+                : {},
+            parts: assistant !== undefined ? toParts(assistant) : [],
+          },
+        };
       },
       summarize: async (input: { sessionID: string }) => {
         await client.session.compact({ sessionID: input.sessionID });
@@ -1040,12 +1152,18 @@ export function createOpenCodeCompatClient(input: OpenCodeCompatClientInput): Op
         for (const form of forms.data) state.formSessions.set(form.id, form);
         return { data: forms.data.map(toLegacyQuestion) };
       },
-      reply: async (input: { requestID: string; answers: ReadonlyArray<string> }) => {
+      reply: async (input: {
+        requestID: string;
+        answers: ReadonlyArray<ReadonlyArray<string>>;
+      }) => {
         const form = state.formSessions.get(input.requestID);
         if (form === undefined) {
           throw new Error(`Unknown OpenCode form ${input.requestID}`);
         }
-        const fields = (form.fields ?? []) as ReadonlyArray<{ readonly key: string }>;
+        const fields = (form.fields ?? []) as ReadonlyArray<{
+          readonly key: string;
+          readonly type?: string;
+        }>;
         await client.session.form.reply({
           sessionID: form.sessionID,
           formID: form.id,
