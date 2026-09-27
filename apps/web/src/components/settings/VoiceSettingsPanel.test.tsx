@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   cancel: vi.fn(),
   listModels: vi.fn(),
+  saveWords: vi.fn(),
   customWords: [] as { term: string; aliases: string[] }[],
   connection: {},
   settings: {
@@ -24,6 +25,7 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
       customWords: mocks.customWords,
     }),
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
+  updateEnvironmentSpeechCustomWords: mocks.saveWords,
   getEnvironmentSpeechModels: () =>
     mocks.listModels() ??
     Promise.resolve({
@@ -67,6 +69,7 @@ vi.mock("../ui/select", () => ({
   SelectValue: "span",
 }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/textarea", () => ({ Textarea: "textarea" }));
 vi.mock("../ui/badge", () => ({ Badge: "span" }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
 vi.mock("./VoicePostProcessingSettings", () => ({ VoicePostProcessingSettings: () => null }));
@@ -90,6 +93,7 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount());
   vi.unstubAllGlobals();
   mocks.listModels.mockReset();
+  mocks.saveWords.mockReset();
   mocks.customWords = [];
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
@@ -167,6 +171,73 @@ it("keeps dictionary corrections collapsed until a word is opened", async () => 
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for T3 Code" })).toHaveLength(0);
   await act(async () => dictionaryToggle.props.onClick());
   expect(root.root.findAllByProps({ "aria-label": "Edit aliases for T3 Code" })).toHaveLength(0);
+});
+it("bulk adds normalized words and reports skipped entries", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.customWords = [{ term: "T3 Code", aliases: ["tee three"] }];
+  const words = [
+    ...mocks.customWords,
+    { term: "New Name", aliases: [] },
+    { term: "Other", aliases: [] },
+  ];
+  mocks.saveWords.mockResolvedValue({
+    supported: true,
+    acceleration: "auto",
+    language: "auto",
+    effectiveLanguage: "en",
+    gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
+    customWords: words,
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+
+  await act(async () => root.root.findByProps({ children: "Add multiple words" }).props.onClick());
+  const paste = root.root.findByProps({ "aria-label": "Words to add" });
+  await act(async () =>
+    paste.props.onChange({
+      target: {
+        value: `New   Name\nT3 Code\nTEE THREE\nnew name\n<Other>\n${"x".repeat(51)}`,
+      },
+    }),
+  );
+  const preview = root.root.findByProps({ role: "status" }).children.join("");
+  expect(preview).toContain("2 words ready to add");
+  expect(preview).toContain("3 duplicates");
+  expect(preview).toContain("1 over 50 characters");
+  const addBulk = root.root
+    .findAllByType("button")
+    .find((button) => button.children.join("") === "Add 2 words");
+  expect(addBulk).toBeDefined();
+  await act(async () => addBulk!.props.onClick());
+  expect(mocks.saveWords).toHaveBeenCalledWith(mocks.connection, words);
+  expect(root.root.findAllByProps({ "aria-label": "Words to add" })).toHaveLength(0);
+  expect(
+    root.root.findByProps({ "aria-label": "Saved dictionary words" }).props["aria-expanded"],
+  ).toBe(true);
+});
+it("limits bulk additions to the remaining dictionary capacity", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.customWords = Array.from({ length: 99 }, (_, index) => ({
+    term: `Word ${index}`,
+    aliases: [],
+  }));
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+  await act(async () => root.root.findByProps({ children: "Add multiple words" }).props.onClick());
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Words to add" }).props.onChange({
+      target: { value: "First\nSecond\nThird" },
+    }),
+  );
+  const preview = root.root.findByProps({ role: "status" }).children.join("");
+  expect(preview).toContain("1 word ready to add");
+  expect(preview).toContain("2 over the 100-word limit");
 });
 it("shows models for the selected language while keeping the active model summary", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

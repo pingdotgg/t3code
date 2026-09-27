@@ -45,6 +45,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -55,6 +56,48 @@ const PRIMARY_ENVIRONMENT = "primary-environment";
 const deviceValue = (id: string) => `device:${id}`;
 const environmentValue = (id: EnvironmentId) => `environment:${id}`;
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+const normalizeDictionaryTerm = (value: string) =>
+  value
+    .replace(/[<>"']/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .normalize("NFC");
+const prepareBulkWords = (draft: string, words: SpeechCustomWords) => {
+  const seen = new Set(
+    words.flatMap(({ term, aliases }) =>
+      [term, ...aliases].map((value) => value.toLocaleLowerCase()),
+    ),
+  );
+  const entries: SpeechCustomWords[number][] = [];
+  let duplicates = 0;
+  let tooLong = 0;
+  let overLimit = 0;
+  let invalid = 0;
+  for (const line of draft.split(/\r\n?|\n/)) {
+    if (!line.trim()) continue;
+    const term = normalizeDictionaryTerm(line);
+    if (!term) {
+      invalid++;
+      continue;
+    }
+    if (term.length > 50) {
+      tooLong++;
+      continue;
+    }
+    const key = term.toLocaleLowerCase();
+    if (seen.has(key)) {
+      duplicates++;
+      continue;
+    }
+    seen.add(key);
+    if (words.length + entries.length >= 100) {
+      overLimit++;
+      continue;
+    }
+    entries.push({ term, aliases: [] });
+  }
+  return { entries, duplicates, tooLong, overLimit, invalid };
+};
 const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
 const languageLabel = (code: string) => languageNames.of(code) ?? code;
 // Ethnologue 2026 total speakers, for languages that map clearly to our model codes.
@@ -247,6 +290,8 @@ export function VoiceSettingsPanel() {
     modelIds: ReadonlySet<string>;
   } | null>(null);
   const [customWordDraft, setCustomWordDraft] = useState("");
+  const [bulkWordsDraft, setBulkWordsDraft] = useState("");
+  const [bulkWordsOpen, setBulkWordsOpen] = useState(false);
   const [aliasDrafts, setAliasDrafts] = useState<Record<string, string>>({});
   const [dictionaryOpen, setDictionaryOpen] = useState(false);
   const [expandedDictionaryTerm, setExpandedDictionaryTerm] = useState<string | null>(null);
@@ -384,16 +429,17 @@ export function VoiceSettingsPanel() {
   const acceleration = currentStatus?.supported ? currentStatus.acceleration : "auto";
   const modelUnloadTimeout = currentStatus?.supported ? currentStatus.modelUnloadTimeout : "min_15";
   const gpuDevices = currentStatus?.supported ? currentStatus.gpuDevices : [];
-  const normalizedCustomWord = customWordDraft
-    .replace(/[<>"']/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const updateCustomWords = (words: SpeechCustomWords) => {
+  const normalizedCustomWord = normalizeDictionaryTerm(customWordDraft);
+  const bulkWords = prepareBulkWords(bulkWordsDraft, customWords);
+  const updateCustomWords = (words: SpeechCustomWords, onSuccess?: () => void) => {
     if (!prepared) return;
     setOperation("custom-words");
     void runtime
       .runPromise(updateEnvironmentSpeechCustomWords(prepared, words))
-      .then((value) => setStatus({ prepared, value }))
+      .then((value) => {
+        setStatus({ prepared, value });
+        onSuccess?.();
+      })
       .catch((error) => {
         toastManager.add({
           type: "error",
@@ -419,6 +465,15 @@ export function VoiceSettingsPanel() {
     setCustomWordDraft("");
     setDictionaryOpen(true);
     setExpandedDictionaryTerm(normalizedCustomWord);
+  };
+  const addBulkWords = () => {
+    if (!currentStatus?.supported || operation !== null || bulkWords.entries.length === 0) return;
+    updateCustomWords([...customWords, ...bulkWords.entries], () => {
+      setBulkWordsDraft("");
+      setBulkWordsOpen(false);
+      setDictionaryOpen(true);
+      setExpandedDictionaryTerm(null);
+    });
   };
   const addAlias = (term: string, draft: string) => {
     updateCustomWords(
@@ -838,43 +893,96 @@ export function VoiceSettingsPanel() {
           {...searchableSetting("dictionary")}
           description="Give the transcription model names and uncommon terms to recognize. If a term is transcribed incorrectly, add that version to correct future transcripts."
           control={
-            <div className="flex w-full max-w-80 items-center gap-1.5">
-              <Input
-                value={customWordDraft}
-                maxLength={50}
-                placeholder="Add a word or phrase"
-                aria-label="Add a word or phrase"
-                disabled={!currentStatus?.supported || operation !== null}
-                onChange={(event) => setCustomWordDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  addCustomWord();
-                }}
-              />
-              <Button
-                type="button"
-                size="sm"
-                disabled={
-                  !currentStatus?.supported ||
-                  !normalizedCustomWord ||
-                  normalizedCustomWord.length > 50 ||
-                  customWords.some(({ term, aliases }) =>
-                    [term, ...aliases].some(
-                      (spelling) =>
-                        spelling.toLocaleLowerCase() === normalizedCustomWord.toLocaleLowerCase(),
-                    ),
-                  ) ||
-                  customWords.length >= 100 ||
-                  operation !== null
-                }
-                onClick={addCustomWord}
-              >
-                Add
-              </Button>
+            <div className="w-full max-w-80">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={customWordDraft}
+                  maxLength={50}
+                  placeholder="Add a word or phrase"
+                  aria-label="Add a word or phrase"
+                  disabled={!currentStatus?.supported || operation !== null}
+                  onChange={(event) => setCustomWordDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    addCustomWord();
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    !currentStatus?.supported ||
+                    !normalizedCustomWord ||
+                    normalizedCustomWord.length > 50 ||
+                    customWords.some(({ term, aliases }) =>
+                      [term, ...aliases].some(
+                        (spelling) =>
+                          spelling.toLocaleLowerCase() === normalizedCustomWord.toLocaleLowerCase(),
+                      ),
+                    ) ||
+                    customWords.length >= 100 ||
+                    operation !== null
+                  }
+                  onClick={addCustomWord}
+                >
+                  Add
+                </Button>
+              </div>
+              <div className="mt-1 flex justify-end">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={!currentStatus?.supported || operation !== null}
+                  aria-expanded={bulkWordsOpen}
+                  onClick={() => setBulkWordsOpen((open) => !open)}
+                >
+                  {bulkWordsOpen ? "Hide bulk entry" : "Add multiple words"}
+                </Button>
+              </div>
             </div>
           }
         >
+          {bulkWordsOpen ? (
+            <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+              <p className="text-xs text-muted-foreground">Paste one word or phrase per line.</p>
+              <Textarea
+                value={bulkWordsDraft}
+                maxLength={10_000}
+                placeholder={"T3 Code\nAnother name\nTechnical term"}
+                aria-label="Words to add"
+                disabled={!currentStatus?.supported || operation !== null}
+                onChange={(event) => setBulkWordsDraft(event.target.value)}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p role="status" className="text-xs text-muted-foreground">
+                  {bulkWords.entries.length} {bulkWords.entries.length === 1 ? "word" : "words"}{" "}
+                  ready to add
+                  {bulkWords.duplicates > 0
+                    ? ` · ${bulkWords.duplicates} duplicate${bulkWords.duplicates === 1 ? "" : "s"}`
+                    : ""}
+                  {bulkWords.tooLong > 0 ? ` · ${bulkWords.tooLong} over 50 characters` : ""}
+                  {bulkWords.overLimit > 0
+                    ? ` · ${bulkWords.overLimit} over the 100-word limit`
+                    : ""}
+                  {bulkWords.invalid > 0 ? ` · ${bulkWords.invalid} empty after cleanup` : ""}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    !currentStatus?.supported ||
+                    bulkWords.entries.length === 0 ||
+                    operation !== null
+                  }
+                  onClick={addBulkWords}
+                >
+                  Add {bulkWords.entries.length} {bulkWords.entries.length === 1 ? "word" : "words"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {customWords.length > 0 ? (
             <div className="mt-3 border-t border-border/60">
               <button
