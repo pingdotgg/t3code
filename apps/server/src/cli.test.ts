@@ -1,5 +1,5 @@
 import * as NodeHttp from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,9 +28,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import { TestClock } from "effect/testing";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as CliError from "effect/unstable/cli/CliError";
@@ -69,12 +71,23 @@ import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { authWebSocketTokenRouteLayer, respondToAuthError } from "./auth/http.ts";
 import { rpcAuthorizationLayer } from "./auth/RpcAuthorization.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
+import { GitCoreLive } from "./git/Layers/GitCore.ts";
+import { GitManager } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { DelegationAuditRepository } from "./persistence/Services/DelegationAudit.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { dispatchThroughStartupGate } from "./orchestration/gatedDispatch.ts";
 import { deriveDelegationCleanupIntents } from "./orchestration/delegationAuditCleanup.ts";
+import { redactAuditPayload } from "./orchestration/auditRedaction.ts";
+import { WorktreeCleanupJobRepository } from "./persistence/Services/WorktreeCleanupJobs.ts";
+import { WorktreeCleanupJobRepositoryLive } from "./persistence/Layers/WorktreeCleanupJobs.ts";
+import { __testing as mcpTesting } from "./mcpServer.ts";
+import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
+import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
+import { ProviderService } from "./provider/Services/ProviderService.ts";
+import { TerminalManager } from "./terminal/Services/Manager.ts";
+import { WorkspaceOwnershipRepository } from "./persistence/Services/WorkspaceOwnership.ts";
 
 const makeGitWorkspace = (prefix: string) => {
   const workspace = mkdtempSync(join(tmpdir(), prefix));
@@ -174,6 +187,29 @@ const readPersistedSnapshot = (baseDir: string) =>
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
 
+const readPersistedDelegationCleanupState = (baseDir: string, sourceThreadId: ThreadId) =>
+  Effect.gen(function* () {
+    const config = yield* makeCliTestServerConfig(baseDir);
+    return yield* Effect.gen(function* () {
+      const cleanupJobs = yield* WorktreeCleanupJobRepository;
+      const audit = yield* DelegationAuditRepository;
+      const [jobs, page] = yield* Effect.all(
+        [
+          cleanupJobs.list(),
+          audit.page({ sourceThreadId, beforeSequence: null, limit: 100 }),
+        ] as const,
+        { concurrency: "unbounded" },
+      );
+      return { jobs, events: page.events };
+    }).pipe(
+      Effect.provide(
+        WorktreeCleanupJobRepositoryLive.pipe(
+          Layer.provideMerge(makeProjectPersistenceLayer(config)),
+        ),
+      ),
+    );
+  });
+
 const reviewChangesContext = {
   scope: "uncommitted" as const,
   branch: null,
@@ -207,6 +243,7 @@ const cliTestRpcHandlersLayer = (options: { readonly loseTurnStartReply?: boolea
       const engine = yield* OrchestrationEngineService;
       const snapshots = yield* ProjectionSnapshotQuery;
       const audit = yield* DelegationAuditRepository;
+      const cleanupJobs = yield* WorktreeCleanupJobRepository;
       const startup = yield* ServerRuntimeStartup;
 
       return CliTestRpcGroup.of({
@@ -330,28 +367,50 @@ const cliTestRpcHandlersLayer = (options: { readonly loseTurnStartReply?: boolea
               });
             }
             const page = yield* audit.page({ ...input, sourceThreadId });
-            const cleanupStates = deriveDelegationCleanupIntents(page.events)
-              .filter((attempt) => attempt.cleanupRequested !== null)
-              .map((attempt) => ({
-                ...attempt,
-                jobId: null,
-                status: attempt.cleanupRequested
-                  ? ("pending-enqueue" as const)
-                  : ("not-required" as const),
-                attemptCount: null,
-                nextAttemptAt: null,
-                reason: null,
-                error: null,
-              }));
-            const warnings = [
-              ...page.warnings,
-              ...cleanupStates
-                .filter((state) => state.status === "pending-enqueue")
-                .map(
-                  (state) =>
-                    `Cleanup state for attempt ${state.attemptId} is unresolved; reconciliation is required.`,
+            const warnings = [...page.warnings];
+            const cleanupStates = yield* Effect.forEach(
+              deriveDelegationCleanupIntents(page.events),
+              (attempt) =>
+                cleanupJobs.getByThreadId(attempt.childThreadId).pipe(
+                  Effect.map(
+                    Option.match({
+                      onNone: () => {
+                        if (attempt.cleanupRequested === null) return null;
+                        const status = attempt.cleanupRequested
+                          ? ("pending-enqueue" as const)
+                          : ("not-required" as const);
+                        if (status === "pending-enqueue") {
+                          warnings.push(
+                            `Cleanup state for attempt ${attempt.attemptId} is unresolved; reconciliation is required.`,
+                          );
+                        }
+                        return {
+                          ...attempt,
+                          jobId: null,
+                          status,
+                          attemptCount: null,
+                          nextAttemptAt: null,
+                          reason: null,
+                          error: null,
+                        };
+                      },
+                      onSome: (job) => ({
+                        attemptId: attempt.attemptId,
+                        childThreadId: attempt.childThreadId,
+                        jobId: job.threadId,
+                        status: job.status,
+                        attemptCount: job.attemptCount,
+                        nextAttemptAt: job.nextAttemptAt,
+                        reason: job.lastReason,
+                        error: job.lastError
+                          ? (redactAuditPayload(job.lastError).payload as string)
+                          : null,
+                      }),
+                    }),
+                  ),
                 ),
-            ];
+              { concurrency: 1 },
+            ).pipe(Effect.map((states) => states.filter((state) => state !== null)));
             return { ...page, cleanupStates, warnings };
           }).pipe(
             Effect.mapError((cause) =>
@@ -394,7 +453,10 @@ const cliTestWebSocketRouteLayer = (handlersLayer: CliTestRpcHandlersLayer) =>
 const withLiveProjectCliServer = <A, E, R>(
   baseDir: string,
   run: () => Effect.Effect<A, E, R>,
-  options: { readonly loseTurnStartReply?: boolean } = {},
+  options: {
+    readonly loseTurnStartReply?: boolean;
+    readonly withCleanupReactor?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
@@ -407,6 +469,45 @@ const withLiveProjectCliServer = <A, E, R>(
       orchestrationThreadReadRouteLayer,
       orchestrationDispatchRouteLayer,
     );
+    const projectPersistenceLayer = makeProjectPersistenceLayer(config);
+    const cleanupJobsLayer = WorktreeCleanupJobRepositoryLive.pipe(
+      Layer.provideMerge(projectPersistenceLayer),
+    );
+    const cleanupReactorLayer = options.withCleanupReactor
+      ? ThreadDeletionReactorLive.pipe(
+          Layer.provide(
+            Layer.mock(ProviderService)({
+              stopSession: () => Effect.void,
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(TerminalManager)({
+              close: () => Effect.void,
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(WorkspaceOwnershipRepository)({
+              getByThreadId: () => Effect.succeed([]),
+              release: () => Effect.void,
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(GitManager)({
+              resolvePullRequest: () => Effect.die("unexpected PR lookup in delete cleanup test"),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(GitStatusBroadcaster)({
+              refreshStatus: () => Effect.die("unused cleanup status refresh"),
+            }),
+          ),
+          Layer.provide(GitCoreLive),
+          Layer.provideMerge(projectPersistenceLayer),
+        )
+      : Layer.succeed(ThreadDeletionReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+        });
     const appLayer = HttpRouter.serve(routesLayer, {
       disableListenLog: true,
       disableLogger: true,
@@ -417,7 +518,9 @@ const withLiveProjectCliServer = <A, E, R>(
           Layer.provide(ServerSecretStoreLive),
         ),
       ),
-      Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provideMerge(projectPersistenceLayer),
+      Layer.provideMerge(cleanupJobsLayer),
+      Layer.provideMerge(cleanupReactorLayer),
       Layer.provide(
         Layer.mock(GitCore)({
           createWorktree: () => Effect.die("unexpected createWorktree call in CLI live test"),
@@ -2297,6 +2400,473 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           rmSync(workspaceRoot, { recursive: true, force: true });
         }),
       ),
+    );
+  });
+
+  it.effect("creates durable cleanup intent for five rejected MCP-delegated worktrees", () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-mcp-cleanup-audit-test-"));
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "t3-cli-mcp-cleanup-worktrees-"));
+    const workspaceRoot = makeGitWorkspace("t3-cli-mcp-cleanup-source-");
+    return Effect.gen(function* () {
+      const scenario = yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          yield* runCliWithRuntime([
+            "project",
+            "add",
+            workspaceRoot,
+            "--title",
+            "MCP Cleanup Acceptance Project",
+            "--base-dir",
+            baseDir,
+          ]);
+          const parentOutput = yield* captureStdout(
+            runCli([
+              "chat",
+              "create",
+              "--project",
+              workspaceRoot,
+              "--title",
+              "MCP Cleanup Acceptance Source",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const sourceThreadId = ThreadId.make(
+            (JSON.parse(parentOutput.output) as { readonly threadId: string }).threadId,
+          );
+          yield* runCliWithRuntime([
+            "chat",
+            "send",
+            sourceThreadId,
+            "Request five isolated delegated children.",
+            "--base-dir",
+            baseDir,
+          ]);
+
+          const engine = yield* OrchestrationEngineService;
+          const source = (yield* engine.getReadModel()).threads.find(
+            (thread) => thread.id === sourceThreadId,
+          );
+          const sourceMessage = source?.messages.findLast((message) => message.role === "user");
+          if (!sourceMessage) throw new Error("Expected a persisted initiating user message.");
+          const sourceTurnId = TurnId.make(`mcp-cleanup-source-turn:${crypto.randomUUID()}`);
+          yield* engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(`mcp-cleanup-set-active:${crypto.randomUUID()}`),
+            threadId: sourceThreadId,
+            createdAt: new Date().toISOString(),
+            session: {
+              threadId: sourceThreadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: sourceTurnId,
+              activeMessageId: sourceMessage.id,
+              lastError: null,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+
+          const options = {
+            cwd: workspaceRoot,
+            toolsets: new Set(["delegate_work"]),
+            threadId: sourceThreadId,
+            cliCommand: process.execPath,
+            cliArgsPrefix: [fileURLToPath(new URL("./bin.ts", import.meta.url))],
+            cliBaseDir: baseDir,
+            runtimeMode: "approval-required" as const,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            defaultModel: "gpt-5.4",
+          };
+          const args = {
+            defaults: { project: workspaceRoot, model: "gpt-5.4" },
+            wait: "none",
+            concurrency: 1,
+            children: Array.from({ length: 5 }, (_, index) => ({
+              title: `Rejected isolated child ${String(index + 1)}`,
+              prompt:
+                `Reject isolated child ${String(index + 1)} after thread creation with ` +
+                `{"password":"synthetic-cleanup-password-${String(index + 1)}"} and ` +
+                `Cookie: session=synthetic-cleanup-cookie-${String(index + 1)}.`,
+              workspace: {
+                mode: "isolated",
+                branch: `audit/rejected-child-${String(index + 1)}`,
+                path: join(fixtureRoot, `child-${String(index + 1)}`),
+              },
+            })),
+          };
+
+          const output = yield* Effect.promise(() =>
+            mcpTesting.withNestedThreadAudit(
+              options,
+              "delegate_work",
+              "acceptance-tool-call",
+              args,
+              async (attempts) => {
+                await Effect.runPromise(
+                  engine.dispatch({
+                    type: "thread.session.set",
+                    commandId: CommandId.make(`mcp-cleanup-stop:${crypto.randomUUID()}`),
+                    threadId: sourceThreadId,
+                    createdAt: new Date().toISOString(),
+                    session: {
+                      threadId: sourceThreadId,
+                      status: "stopped",
+                      providerName: "codex",
+                      runtimeMode: "approval-required",
+                      activeTurnId: null,
+                      lastError: null,
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }),
+                );
+                await Effect.runPromise(
+                  engine.dispatch({
+                    type: "thread.session.set",
+                    commandId: CommandId.make(`mcp-cleanup-clear:${crypto.randomUUID()}`),
+                    threadId: sourceThreadId,
+                    createdAt: new Date().toISOString(),
+                    session: {
+                      threadId: sourceThreadId,
+                      status: "running",
+                      providerName: "codex",
+                      runtimeMode: "approval-required",
+                      activeTurnId: sourceTurnId,
+                      lastError: null,
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }),
+                );
+                return mcpTesting.delegateWorkTool(options, args, {}, attempts);
+              },
+            ),
+          );
+          const batch = JSON.parse(output) as {
+            readonly results: ReadonlyArray<{
+              readonly outcome: {
+                readonly status: string;
+                readonly errorCode: string | null;
+                readonly threadId: string | null;
+                readonly workspaceCreated: boolean;
+              };
+            }>;
+          };
+          assert.equal(batch.results.length, 5);
+          assert.isTrue(
+            batch.results.every(
+              ({ outcome }) =>
+                outcome.status === "failed" &&
+                outcome.errorCode === "TURN_START_REJECTED" &&
+                outcome.threadId !== null &&
+                outcome.workspaceCreated,
+            ),
+          );
+          const activityId = EventId.make(`mcp-cleanup-tool:${crypto.randomUUID()}`);
+          const activityCreatedAt = new Date().toISOString();
+          yield* engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make(`mcp-cleanup-activity:${crypto.randomUUID()}`),
+            threadId: sourceThreadId,
+            activity: {
+              id: activityId,
+              tone: "error",
+              kind: "tool.completed",
+              summary: "Delegated isolated work",
+              payload: {
+                itemType: "mcp_tool_call",
+                detail: "Five child operations failed after successful MCP tool transport.",
+                data: {
+                  toolCallId: "acceptance-tool-call",
+                  kind: "other",
+                  rawInput: {
+                    toolName: "delegate_work",
+                    children: args.children,
+                  },
+                  rawOutput: { content: output },
+                },
+              },
+              turnId: sourceTurnId,
+              createdAt: activityCreatedAt,
+            },
+            createdAt: activityCreatedAt,
+          });
+          const childThreadIds = batch.results.map(({ outcome }) => {
+            if (outcome.threadId === null) {
+              throw new Error("Expected each rejected child to retain its thread ID.");
+            }
+            return ThreadId.make(outcome.threadId);
+          });
+          return {
+            sourceThreadId,
+            sourceTurnId,
+            initiatingMessageId: sourceMessage.id,
+            activityId,
+            childThreadIds,
+            worktreePaths: args.children.map((child) => child.workspace.path),
+          };
+        }),
+      );
+
+      const queuedState = yield* readPersistedDelegationCleanupState(
+        baseDir,
+        scenario.sourceThreadId,
+      );
+      assert.equal(queuedState.jobs.length, 5);
+      assert.isTrue(
+        queuedState.jobs.every((job) => job.source === "delete" && job.status === "waiting"),
+      );
+      assert.isTrue(scenario.worktreePaths.every((worktreePath) => existsSync(worktreePath)));
+      assert.isFalse(
+        JSON.stringify(queuedState.events).includes("synthetic-cleanup-password") ||
+          JSON.stringify(queuedState.events).includes("synthetic-cleanup-cookie"),
+      );
+      const operationIds = new Set(queuedState.events.map((event) => event.operationId));
+      assert.equal(operationIds.size, 1);
+      const operationId = [...operationIds][0]!;
+      const operationEvents = queuedState.events.filter(
+        (event) => event.operationId === operationId,
+      );
+      assert.equal(
+        operationEvents.filter((event) => event.eventType === "attempt.requested").length,
+        5,
+      );
+      assert.equal(
+        operationEvents.filter((event) => event.eventType === "attempt.completed").length,
+        5,
+      );
+      assert.equal(
+        operationEvents.filter((event) => event.eventType === "operation.failed").length,
+        1,
+      );
+      for (const childThreadId of scenario.childThreadIds) {
+        const childEvents = operationEvents.filter(
+          (event) => event.childThreadId === childThreadId,
+        );
+        const rejection = childEvents.find((event) => event.eventType === "turn.start.rejected");
+        if (rejection === undefined) {
+          throw new Error(`Expected a structured turn rejection for ${childThreadId}.`);
+        }
+        const rejectionPayload = rejection.payload as {
+          readonly code: string;
+          readonly expectedInitiatingMessageId: string;
+          readonly actualActiveTurnId: string;
+          readonly actualActiveMessageId: string | null;
+          readonly evidenceState: string;
+          readonly orchestrationSequence: number;
+          readonly precedingSessionTransition: unknown;
+          readonly messagePreviouslyPresentTransition: unknown;
+        };
+        assert.equal(rejectionPayload.code, "MISSING_ACTIVE_MESSAGE");
+        assert.equal(rejectionPayload.expectedInitiatingMessageId, scenario.initiatingMessageId);
+        assert.equal(rejectionPayload.actualActiveTurnId, scenario.sourceTurnId);
+        assert.isNull(rejectionPayload.actualActiveMessageId);
+        assert.equal(rejectionPayload.evidenceState, "cleared-by-later-update");
+        assert.isAbove(rejectionPayload.orchestrationSequence, 0);
+        assert.isNotNull(rejectionPayload.precedingSessionTransition);
+        assert.isNotNull(rejectionPayload.messagePreviouslyPresentTransition);
+        assert.isTrue(childEvents.some((event) => event.eventType === "cleanup.requested"));
+        assert.isTrue(childEvents.some((event) => event.eventType === "cleanup.queued"));
+      }
+
+      yield* withLiveProjectCliServer(
+        baseDir,
+        () =>
+          Effect.gen(function* () {
+            const pendingExportOutput = yield* captureStdout(
+              runCli(["audit", "export", scenario.sourceThreadId, "--base-dir", baseDir]),
+            );
+            const pendingExport = JSON.parse(pendingExportOutput.output) as {
+              readonly events: ReadonlyArray<{ readonly eventId: string }>;
+              readonly cleanupStates: ReadonlyArray<{
+                readonly attemptId: string;
+                readonly childThreadId: ThreadId;
+                readonly status: string;
+              }>;
+            };
+            assert.equal(pendingExport.cleanupStates.length, 5);
+            assert.isTrue(
+              pendingExport.cleanupStates.every((cleanup) => cleanup.status === "waiting"),
+              JSON.stringify(pendingExport.cleanupStates, null, 2),
+            );
+            const pendingApiPage = yield* withCliTestRpcClient(baseDir, (rpc) =>
+              rpc[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+                operationId,
+                sourceThreadId: scenario.sourceThreadId,
+                beforeSequence: null,
+                limit: 100,
+              }),
+            );
+            assert.deepStrictEqual(
+              pendingApiPage.events.map((event) => event.eventId).toSorted(),
+              pendingExport.events.map((event) => event.eventId).toSorted(),
+            );
+            assert.equal(pendingApiPage.cleanupStates.length, 5);
+            assert.isTrue(
+              pendingApiPage.cleanupStates.every((cleanup) => cleanup.status === "waiting"),
+            );
+
+            const cleanupJobs = yield* WorktreeCleanupJobRepository;
+            const now = new Date(yield* Clock.currentTimeMillis).toISOString();
+            const persistedJobs = yield* cleanupJobs.list();
+            const dueJobs = yield* cleanupJobs.listDue({ now });
+            assert.equal(dueJobs.length, 5, JSON.stringify({ now, persistedJobs }, null, 2));
+            const reactor = yield* ThreadDeletionReactor;
+            yield* reactor.start();
+            yield* reactor.drain;
+          }),
+        { withCleanupReactor: true },
+      );
+
+      const completedState = yield* readPersistedDelegationCleanupState(
+        baseDir,
+        scenario.sourceThreadId,
+      );
+      assert.equal(completedState.jobs.length, 5);
+      assert.isTrue(
+        completedState.jobs.every((job) => job.status === "completed"),
+        JSON.stringify({
+          jobs: completedState.jobs,
+          cleanupEvents: completedState.events
+            .filter((event) => event.eventType.startsWith("cleanup."))
+            .map(({ eventType, childThreadId, payload }) => ({
+              eventType,
+              childThreadId,
+              payload,
+            })),
+        }),
+      );
+      assert.isTrue(scenario.worktreePaths.every((worktreePath) => !existsSync(worktreePath)));
+      const restartedSnapshot = yield* readPersistedSnapshot(baseDir);
+      const sourceAfterCleanup = restartedSnapshot.threads.find(
+        (thread) => thread.id === scenario.sourceThreadId,
+      );
+      assert.isTrue(
+        sourceAfterCleanup?.activities.some(
+          (activity) =>
+            activity.id === scenario.activityId &&
+            activity.kind === "tool.completed" &&
+            activity.turnId === scenario.sourceTurnId,
+        ) ?? false,
+      );
+      for (const childThreadId of scenario.childThreadIds) {
+        const childEvents = completedState.events.filter(
+          (event) => event.childThreadId === childThreadId,
+        );
+        for (const eventType of [
+          "cleanup.requested",
+          "cleanup.queued",
+          "cleanup.started",
+          "cleanup.completed",
+        ]) {
+          assert.isTrue(
+            childEvents.some((event) => event.eventType === eventType),
+            `${eventType} was not persisted for deleted child ${childThreadId}`,
+          );
+        }
+      }
+
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          const pages: Array<{
+            readonly events: ReadonlyArray<{ readonly eventId: string }>;
+            readonly cleanupStates: ReadonlyArray<{
+              readonly attemptId: string;
+              readonly childThreadId: ThreadId;
+              readonly status: string;
+            }>;
+            readonly hasMore: boolean;
+            readonly nextBeforeSequence: number | null;
+          }> = [];
+          let beforeSequence: number | null = null;
+          do {
+            const output = yield* captureStdout(
+              runCli([
+                "audit",
+                "show",
+                operationId,
+                "--limit",
+                "4",
+                ...(beforeSequence === null ? [] : ["--before-sequence", String(beforeSequence)]),
+                "--base-dir",
+                baseDir,
+              ]),
+            );
+            const page = JSON.parse(output.output) as (typeof pages)[number];
+            pages.push(page);
+            beforeSequence = page.nextBeforeSequence;
+          } while (pages.at(-1)?.hasMore);
+
+          assert.isAbove(pages.length, 1);
+          const pagedEventIds = pages.flatMap((page) => page.events.map((event) => event.eventId));
+          assert.equal(new Set(pagedEventIds).size, pagedEventIds.length);
+          const pagedCleanup = new Map(
+            pages
+              .flatMap((page) => page.cleanupStates)
+              .map((cleanup) => [cleanup.attemptId, cleanup] as const),
+          );
+          assert.equal(pagedCleanup.size, 5);
+          assert.isTrue(
+            [...pagedCleanup.values()].every((cleanup) => cleanup.status === "completed"),
+          );
+
+          const exportOutput = yield* captureStdout(
+            runCli(["audit", "export", scenario.sourceThreadId, "--base-dir", baseDir]),
+          );
+          const exported = JSON.parse(exportOutput.output) as {
+            readonly events: ReadonlyArray<{ readonly eventId: string }>;
+            readonly cleanupStates: ReadonlyArray<{
+              readonly attemptId: string;
+              readonly childThreadId: ThreadId;
+              readonly status: string;
+            }>;
+          };
+          assert.deepStrictEqual(
+            exported.events.map((event) => event.eventId).toSorted(),
+            pagedEventIds.toSorted(),
+          );
+          assert.equal(exported.cleanupStates.length, 5);
+          assert.isTrue(
+            exported.cleanupStates.every(
+              (cleanup) =>
+                cleanup.status === "completed" &&
+                scenario.childThreadIds.includes(cleanup.childThreadId),
+            ),
+          );
+
+          const authorizedPage = yield* withCliTestRpcClient(baseDir, (rpc) =>
+            rpc[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+              operationId,
+              sourceThreadId: scenario.sourceThreadId,
+              beforeSequence: null,
+              limit: 4,
+            }),
+          );
+          assert.deepStrictEqual(
+            authorizedPage.events.map((event) => event.eventId),
+            pages[0]!.events.map((event) => event.eventId),
+          );
+          const childAccess = yield* withCliTestRpcClient(baseDir, (rpc) =>
+            Effect.exit(
+              rpc[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+                operationId,
+                sourceThreadId: scenario.childThreadIds[0]!,
+                beforeSequence: null,
+                limit: 4,
+              }),
+            ),
+          );
+          assert.equal(childAccess._tag, "Failure");
+        }),
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(baseDir, { recursive: true, force: true });
+          rmSync(fixtureRoot, { recursive: true, force: true });
+          rmSync(workspaceRoot, { recursive: true, force: true });
+        }),
+      ),
+      TestClock.withLive,
     );
   });
 
