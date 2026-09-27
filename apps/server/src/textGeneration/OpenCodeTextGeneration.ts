@@ -203,13 +203,14 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       function* (
         server: Pick<
           OpenCodeRuntime.OpenCodeServerConnection,
-          "url" | "serverPassword" | "version"
+          "url" | "serverPassword" | "version" | "generation"
         >,
       ) {
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
           directory: input.cwd,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
+          ...(server.generation !== undefined ? { generation: server.generation } : {}),
         });
         const session = yield* Effect.tryPromise({
           try: () =>

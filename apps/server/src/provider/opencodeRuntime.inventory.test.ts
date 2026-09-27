@@ -15,7 +15,12 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 
-import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
+import {
+  loadOpenCodeInventoryNext,
+  OpenCodeRuntime,
+  OpenCodeRuntimeLive,
+  probeOpenCodeNextServer,
+} from "./opencodeRuntime.ts";
 
 const testLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -281,6 +286,173 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       NodeAssert.equal(result.stdout, "o".repeat(64));
       NodeAssert.equal(result.stderr, "e".repeat(64));
       NodeAssert.equal(result.code, 0);
+    }),
+  );
+
+  it.effect("loads OpenCode 2 inventory through the /api routes", () =>
+    Effect.gen(function* () {
+      const requests: Array<string> = [];
+      const fetch = Object.assign(
+        (input: string | Request | URL): Promise<Response> => {
+          const request = input instanceof Request ? input : new Request(input.toString());
+          const path = new URL(request.url).pathname;
+          requests.push(path);
+          const location = { directory: "/workspace/project" };
+          const body =
+            path === "/api/provider"
+              ? {
+                  location,
+                  data: [{ id: "openai", name: "OpenAI", activation: "auto", package: "pkg" }],
+                }
+              : path === "/api/model"
+                ? {
+                    location,
+                    data: [
+                      {
+                        id: "gpt-5",
+                        modelID: "gpt-5",
+                        providerID: "openai",
+                        name: "GPT-5",
+                        enabled: true,
+                        variants: [{ id: "high" }],
+                      },
+                    ],
+                  }
+                : path === "/api/agent"
+                  ? {
+                      location,
+                      data: [
+                        {
+                          id: "build",
+                          name: "Build",
+                          mode: "primary",
+                          hidden: false,
+                          permissions: [],
+                        },
+                      ],
+                    }
+                  : path === "/api/skill"
+                    ? {
+                        location,
+                        data: [
+                          {
+                            id: "review",
+                            name: "review",
+                            description: "Review",
+                            path: "/skills/review",
+                          },
+                        ],
+                      }
+                    : { location, data: [{ name: "compact", description: "Compact" }] };
+          return Promise.resolve(Response.json(body));
+        },
+        { preconnect: () => undefined },
+      ) as typeof globalThis.fetch;
+
+      const inventory = yield* loadOpenCodeInventoryNext({
+        baseUrl: "http://opencode.test",
+        directory: "/workspace/project",
+        fetch,
+      });
+
+      NodeAssert.deepEqual(requests.toSorted(), [
+        "/api/agent",
+        "/api/command",
+        "/api/model",
+        "/api/provider",
+        "/api/skill",
+      ]);
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.deepEqual(Object.keys(inventory.providerList.all[0]?.models ?? {}), ["gpt-5"]);
+      NodeAssert.deepEqual(inventory.agents, [
+        { name: "build", mode: "primary", hidden: false, permission: [], options: {} },
+      ]);
+      NodeAssert.deepEqual(inventory.skills, [
+        { name: "review", description: "Review", location: "/skills/review" },
+      ]);
+      NodeAssert.deepEqual(inventory.commands, [
+        { name: "compact", description: "Compact", hints: [] },
+      ]);
+    }),
+  );
+
+  it.effect("detects an OpenCode 2 server from /api/info and ignores HTML", () =>
+    Effect.gen(function* () {
+      const jsonFetch = (() =>
+        Promise.resolve(
+          Response.json({ version: "2.0.18", pid: 1, urls: [], paths: { tmp: "/tmp" } }),
+        )) as unknown as typeof globalThis.fetch;
+      NodeAssert.equal(
+        yield* probeOpenCodeNextServer("http://opencode.test", undefined, jsonFetch),
+        "2.0.18",
+      );
+
+      const htmlFetch = (() =>
+        Promise.resolve(
+          new Response("<!doctype html>", { headers: { "content-type": "text/html" } }),
+        )) as unknown as typeof globalThis.fetch;
+      NodeAssert.equal(
+        yield* probeOpenCodeNextServer("http://opencode.test", undefined, htmlFetch),
+        null,
+      );
+    }),
+  );
+
+  it.effect("derives connected providers from models while provider.list is warming", () =>
+    Effect.gen(function* () {
+      const fetch = Object.assign(
+        (input: string | Request | URL): Promise<Response> => {
+          const request = input instanceof Request ? input : new Request(input.toString());
+          const path = new URL(request.url).pathname;
+          const location = { directory: "/workspace/project" };
+          const body =
+            path === "/api/provider"
+              ? { location, data: [] }
+              : path === "/api/model"
+                ? {
+                    location,
+                    data: [
+                      {
+                        id: "gpt-5",
+                        modelID: "gpt-5",
+                        providerID: "openai",
+                        name: "GPT-5",
+                        enabled: true,
+                        variants: [],
+                      },
+                    ],
+                  }
+                : path === "/api/agent"
+                  ? {
+                      location,
+                      data: [
+                        {
+                          id: "build",
+                          name: "Build",
+                          mode: "primary",
+                          hidden: false,
+                          permissions: [],
+                        },
+                      ],
+                    }
+                  : { location, data: [] };
+          return Promise.resolve(Response.json(body));
+        },
+        { preconnect: () => undefined },
+      ) as typeof globalThis.fetch;
+
+      const inventory = yield* loadOpenCodeInventoryNext({
+        baseUrl: "http://opencode.test",
+        directory: "/workspace/project",
+        fetch,
+      });
+
+      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
+      NodeAssert.deepEqual(
+        inventory.providerList.all.map((provider) => provider.id),
+        ["openai"],
+      );
+      NodeAssert.deepEqual(Object.keys(inventory.providerList.all[0]?.models ?? {}), ["gpt-5"]);
     }),
   );
 });

@@ -206,6 +206,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                   ...(effectiveConfig.serverPassword
                     ? { serverPassword: effectiveConfig.serverPassword }
                     : {}),
+                  ...(server.generation !== undefined ? { generation: server.generation } : {}),
                 });
                 return yield* loadWorkspaceInventory(client);
               }),
@@ -218,6 +219,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                   ...(server.serverPassword !== undefined
                     ? { serverPassword: server.serverPassword }
                     : {}),
+                  ...(server.generation !== undefined ? { generation: server.generation } : {}),
                 }),
               ),
             );

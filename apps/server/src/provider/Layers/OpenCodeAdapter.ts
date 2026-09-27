@@ -2866,6 +2866,7 @@ export function makeOpenCodeAdapter(
                 baseUrl: server.url,
                 directory,
                 ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
+                ...(server.generation !== undefined ? { generation: server.generation } : {}),
               });
               if (mcpSession && !server.external) {
                 yield* runOpenCodeSdk("mcp.add", () =>

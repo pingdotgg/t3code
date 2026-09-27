@@ -21,9 +21,11 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import {
+  loadOpenCodeInventoryNext,
   MINIMUM_OPENCODE_VERSION,
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
+  type OpenCodeApiGeneration,
   type OpenCodeInventory,
 } from "../opencodeRuntime.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
@@ -499,16 +501,24 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     readonly url: string;
     readonly serverPassword?: string;
     readonly version: string;
+    readonly generation?: OpenCodeApiGeneration;
   }) =>
-    openCodeRuntime
-      .loadOpenCodeInventory(
-        openCodeRuntime.createOpenCodeSdkClient({
+    (server.generation === "next"
+      ? loadOpenCodeInventoryNext({
           baseUrl: server.url,
           directory: cwd,
           ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
-        }),
-      )
-      .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
+        })
+      : openCodeRuntime.loadOpenCodeInventory(
+          openCodeRuntime.createOpenCodeSdkClient({
+            baseUrl: server.url,
+            directory: cwd,
+            ...(server.serverPassword !== undefined
+              ? { serverPassword: server.serverPassword }
+              : {}),
+          }),
+        )
+    ).pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
   const inventoryEffect = isExternalServer
     ? openCodeRuntime
         .connectToOpenCodeServer({
