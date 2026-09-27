@@ -19,7 +19,8 @@
 import { VoiceToolSchemas, type VoiceToolName } from "@t3tools/contracts";
 import type { VoiceLiveToolExecutor } from "../live-client";
 import type { VoiceNavigator } from "../navigation";
-import type { VoiceToolExecutor } from "../tools";
+import { VoiceToolFailureError, type VoiceToolExecutor } from "../tools";
+import * as Schema from "effect/Schema";
 
 export interface NavigatingVoiceToolExecutorDeps {
   readonly tools: VoiceToolExecutor;
@@ -41,10 +42,19 @@ export function createNavigatingVoiceToolExecutor(
   return {
     async execute(name: string, input: unknown): Promise<unknown> {
       const tool = normalizeToolName(name);
-      if (tool !== "openThread") {
-        return dispatchPerTool(tools, tool, input);
+      const decoded = Schema.decodeUnknownExit(VoiceToolSchemas[tool].input)(input);
+      if (decoded._tag === "Failure") {
+        throw new VoiceToolFailureError({
+          code: "invalid_request",
+          message: `Invalid input for voice.${tool}.`,
+        });
       }
-      const output = await tools.openThread(input as Parameters<typeof tools.openThread>[0]);
+      if (tool !== "openThread") {
+        return dispatchPerTool(tools, tool, decoded.value);
+      }
+      const output = await tools.openThread(
+        decoded.value as Parameters<typeof tools.openThread>[0],
+      );
       const destination = output.destination;
       if (output.environment.status !== "ok" || destination === undefined) {
         // The tool already reported the failure in-band (thread_not_found,

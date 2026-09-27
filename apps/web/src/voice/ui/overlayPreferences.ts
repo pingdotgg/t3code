@@ -71,12 +71,20 @@ export function sanitizeVoiceOverlayPreferences(raw: unknown): VoiceOverlayPrefe
   };
 }
 
+let cachedRaw: string | null = null;
+let cachedPreferences = DEFAULT_VOICE_OVERLAY_PREFERENCES;
+
 function readVoiceOverlayPreferences(): VoiceOverlayPreferences {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw === null
-      ? DEFAULT_VOICE_OVERLAY_PREFERENCES
-      : sanitizeVoiceOverlayPreferences(JSON.parse(raw));
+    if (raw !== cachedRaw) {
+      cachedPreferences =
+        raw === null
+          ? DEFAULT_VOICE_OVERLAY_PREFERENCES
+          : sanitizeVoiceOverlayPreferences(JSON.parse(raw));
+      cachedRaw = raw;
+    }
+    return cachedPreferences;
   } catch {
     return DEFAULT_VOICE_OVERLAY_PREFERENCES;
   }

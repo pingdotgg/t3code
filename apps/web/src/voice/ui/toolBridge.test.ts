@@ -252,3 +252,19 @@ it.each(["unknownTool", "voice.unknownTool", "toString", "voice.__proto__"])(
     expect(navigator.destinations).toEqual([]);
   },
 );
+
+it.each([
+  ["voice.clickControl", { controlId: 42 }],
+  ["voice.openThread", { environmentId: "env-1" }],
+  ["voice.continueThread", null],
+  ["voice.listControls", { query: [] }],
+])("rejects malformed %s input before dispatch or navigation", async (name, input) => {
+  const tools = makeTools();
+  const navigator = makeNavigator({ status: "acknowledged", destination: DESTINATION });
+  const executor = createNavigatingVoiceToolExecutor({ tools, navigator });
+  await expect(executor.execute(name, input)).rejects.toMatchObject({
+    error: { code: "invalid_request" },
+  });
+  expect(tools.calls).toEqual([]);
+  expect(navigator.destinations).toEqual([]);
+});

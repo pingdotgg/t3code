@@ -773,13 +773,17 @@ export function createVoiceHistoryRecorder(
       return;
     }
     const sessionId = identity();
-    store.writeSession({
-      id: current.id,
-      ...(sessionId !== undefined ? { sessionId } : {}),
-      startedAt: current.startedAt,
-      ...(current.endedAt !== undefined ? { endedAt: current.endedAt } : {}),
-      entries: current.entries,
-    });
+    try {
+      store.writeSession({
+        id: current.id,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        startedAt: current.startedAt,
+        ...(current.endedAt !== undefined ? { endedAt: current.endedAt } : {}),
+        entries: current.entries,
+      });
+    } catch {
+      // History is best effort; keep the in-memory record for a later flush.
+    }
     notify();
   };
 

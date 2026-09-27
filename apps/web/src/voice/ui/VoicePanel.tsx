@@ -568,7 +568,10 @@ export function VoicePanel() {
           starting={panelState.starting}
           micMuted={panelState.micMuted}
           activation={prefs.activation}
-          onConnect={() => void controller.connect()}
+          onConnect={() => {
+            userStoppedRef.current = false;
+            void controller.connect();
+          }}
           onTalkPress={() => void controller.connect()}
           onTalkRelease={() => void controller.end()}
           onTalkToggle={toggleTalk}

@@ -119,15 +119,6 @@ describe("voice controls activation modes", () => {
     });
   });
 
-  it("always listening has no Connect button (the panel connects on its own)", () => {
-    const states = buttonStates(renderControls("idle", false, "always"));
-    expect(states).toEqual({
-      Mute: true,
-      End: true,
-      Clear: false,
-    });
-  });
-
   it("hold mode offers the hold-to-talk button instead of Connect", () => {
     const states = buttonStates(renderControls("idle", false, "hold"));
     expect(states).toEqual({

@@ -57,7 +57,7 @@ export function VoiceControls(props: VoiceControlsProps) {
       <span className="text-xs font-medium text-muted-foreground" data-voice-phase={props.phase}>
         {props.starting ? "Starting…" : phaseLabel(props.phase, props.micMuted, activation)}
       </span>
-      {activation === "manual" && (
+      {(activation === "manual" || activation === "always") && (
         <Button
           type="button"
           size="micro"

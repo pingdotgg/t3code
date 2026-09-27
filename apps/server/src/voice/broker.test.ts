@@ -12,6 +12,9 @@ import * as Context from "effect/Context";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -175,7 +178,7 @@ const makeTest = (options?: {
       ),
     );
     const broker = Context.get(context, VoiceLiveBroker);
-    return { state, handlers: voiceBrokerRouteHandlers(broker) };
+    return { state, broker, handlers: voiceBrokerRouteHandlers(broker) };
   });
 
 const MINT_PATH = "/api/voice/sessions";
@@ -739,6 +742,47 @@ describe("voice broker routes", () => {
         }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
         expect(response.status).toBe(401);
         expect(yield* responseBody(response)).toMatchObject({ code: "auth_invalid" });
+      }),
+    ),
+  );
+
+  it.effect("preserves final usage and closed state when close and usage overlap", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, state } = yield* makeTest();
+        const session = yield* broker.mintSession({
+          transport: { type: "webrtc", sdp: "offer-sdp" },
+        });
+        const clock = yield* Clock.Clock;
+        const closing = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const close = yield* broker.closeSession({ sessionId: session.sessionId }).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            currentTimeMillis: Effect.gen(function* () {
+              yield* Deferred.succeed(closing, undefined);
+              yield* Deferred.await(resume);
+              return yield* clock.currentTimeMillis;
+            }),
+          }),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(closing);
+        yield* broker.recordSessionUsage(usageInput(session.sessionId));
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(close);
+        expect(yield* broker.getSessionUsage({ sessionId: session.sessionId })).toEqual(
+          usageInput(session.sessionId),
+        );
+        const result = yield* broker
+          .respond({ sessionId: session.sessionId, input: [] })
+          .pipe(Effect.exit);
+        expect(result._tag).toBe("Failure");
+        expect(state.recorded).toHaveLength(1);
+        yield* broker.closeSession({ sessionId: session.sessionId });
+        expect(yield* broker.getSessionUsage({ sessionId: session.sessionId })).toEqual(
+          usageInput(session.sessionId),
+        );
       }),
     ),
   );

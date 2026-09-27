@@ -407,6 +407,14 @@ function controlStateOf(element: Element): VoiceUiControlState {
   if (element instanceof ownerWindow.HTMLInputElement && element.disabled) {
     return "disabled";
   }
+  if (
+    element instanceof ownerWindow.HTMLOptionElement &&
+    (element.disabled ||
+      element.closest("select")?.disabled ||
+      element.closest("optgroup")?.disabled)
+  ) {
+    return "disabled";
+  }
   if (disabledByAncestorFieldset(element)) {
     return "disabled";
   }
@@ -525,8 +533,9 @@ function dispatchPointerSequence(element: HTMLElement, role: VoiceUiControlRole)
   // dispatched-only events never do.
   if (role === "option" && element instanceof ownerWindow.HTMLOptionElement) {
     element.selected = true;
-    element.dispatchEvent(new ownerWindow.Event("input", { bubbles: true }));
-    element.dispatchEvent(new ownerWindow.Event("change", { bubbles: true }));
+    const target = element.closest("select") ?? element;
+    target.dispatchEvent(new ownerWindow.Event("input", { bubbles: true }));
+    target.dispatchEvent(new ownerWindow.Event("change", { bubbles: true }));
     return;
   }
   element.click();

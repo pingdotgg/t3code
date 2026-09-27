@@ -244,8 +244,16 @@ describe("dom adapter: activation", () => {
     await host.clickControl({ controlId: byName.get("checkbox:")! });
     expect((document.getElementById("opt-in") as HTMLInputElement).checked).toBe(true);
 
-    await host.clickControl({ controlId: byName.get("option:slow")! });
     const select = document.getElementById("model") as HTMLSelectElement;
+    const events: string[] = [];
+    for (const type of ["input", "change"]) {
+      select.addEventListener(type, (event) => {
+        expect(event.target).toBe(select);
+        events.push(`${event.type}:${select.value}`);
+      });
+    }
+    await host.clickControl({ controlId: byName.get("option:slow")! });
+    expect(events).toEqual(["input:slow", "change:slow"]);
     expect(select.value).toBe("slow");
     expect((document.getElementById("slow") as HTMLOptionElement).selected).toBe(true);
   });
@@ -384,3 +392,21 @@ describe("dom adapter: activation", () => {
     expect(clicks).toEqual(["clicked"]);
   });
 });
+
+it.each(["option", "select", "optgroup"])(
+  "refuses options disabled by %s even after listing",
+  async (tag) => {
+    document.body.innerHTML = `<select><option>fast</option><optgroup label="Modes"><option id="slow">slow</option></optgroup></select>`;
+    const host = controls();
+    const listed = await host.listControls({});
+    const id = listed.controls.find((control) => control.name === "slow")!.controlId;
+    const element =
+      tag === "option" ? document.getElementById("slow")! : document.querySelector(tag)!;
+    element.setAttribute("disabled", "");
+    expect(
+      (await host.listControls({})).controls.find((control) => control.controlId === id)?.state,
+    ).toBe("disabled");
+    expect(await host.clickControl({ controlId: id })).toMatchObject({ state: "disabled" });
+    expect(document.querySelector("select")!.value).toBe("fast");
+  },
+);

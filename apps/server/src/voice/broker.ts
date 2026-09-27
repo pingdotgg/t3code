@@ -614,15 +614,19 @@ const makeBroker = Effect.gen(function* () {
   const closeSession = Effect.fn("VoiceLiveBroker.closeSession")(function* (
     input: VoiceBrokerSessionCloseInput,
   ) {
-    const retained = yield* requireSession(input.sessionId);
-    if (retained.status === "open") {
-      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      yield* Ref.update(sessions, (map) => {
-        const next = new Map(map);
-        evictStaleClosedSessions(next, nowMs);
-        next.set(input.sessionId, { ...retained, status: "closed", closedAt: nowMs });
-        return next;
-      });
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const found = yield* Ref.modify(sessions, (map) => {
+      const current = map.get(input.sessionId);
+      if (current === undefined || current.status === "closed") {
+        return [current !== undefined, map];
+      }
+      const next = new Map(map);
+      evictStaleClosedSessions(next, nowMs);
+      next.set(input.sessionId, { ...current, status: "closed", closedAt: nowMs });
+      return [true, next];
+    });
+    if (!found) {
+      return yield* brokerInvalidRequest(`Unknown voice session ${String(input.sessionId)}.`, 404);
     }
     return { closed: true } satisfies VoiceBrokerSessionCloseResult;
   });
@@ -630,13 +634,17 @@ const makeBroker = Effect.gen(function* () {
   const recordSessionUsage = Effect.fn("VoiceLiveBroker.recordSessionUsage")(function* (
     usage: VoiceSessionUsage,
   ) {
-    const retained = yield* requireSession(usage.sessionId);
     const stored: VoiceSessionUsage = { ...usage };
-    yield* Ref.update(sessions, (map) => {
+    const found = yield* Ref.modify(sessions, (map) => {
+      const current = map.get(usage.sessionId);
+      if (current === undefined) return [false, map];
       const next = new Map(map);
-      next.set(usage.sessionId, { ...retained, lastUsage: stored });
-      return next;
+      next.set(usage.sessionId, { ...current, lastUsage: stored });
+      return [true, next];
     });
+    if (!found) {
+      return yield* brokerInvalidRequest(`Unknown voice session ${String(usage.sessionId)}.`, 404);
+    }
     return stored;
   });
 

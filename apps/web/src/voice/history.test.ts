@@ -683,3 +683,40 @@ describe("voice history export", () => {
     expect(parsed.sessions[0]!.entries).toHaveLength(1);
   });
 });
+
+it("keeps successful tools and events working during storage failure, then flushes the retained history", async () => {
+  const { storage } = makeCountingStorage();
+  let blocked = true;
+  const store = createVoiceHistoryStore({
+    storage: {
+      ...storage,
+      setItem: (key, value) => {
+        if (blocked) throw new Error("Quota exceeded");
+        storage.setItem(key, value);
+      },
+    },
+  });
+  const recorder = createVoiceHistoryRecorder({ store });
+  let notifications = 0;
+  recorder.subscribe(() => {
+    notifications += 1;
+  });
+  recorder.beginSession();
+  recorder.record(transcript("input", "u1", "Hello"));
+  const output = { controls: [] };
+  await expect(
+    recorder.recordToolExecution("voice.listControls", {}, async () => output),
+  ).resolves.toBe(output);
+  expect(() => recorder.flush()).not.toThrow();
+  expect(notifications).toBeGreaterThan(0);
+  blocked = false;
+  recorder.flush();
+  const entries = recorder.readSession(recorder.listSessions()[0]!.id)!.entries;
+  expect(entries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "utterance", text: "Hello" }),
+      expect.objectContaining({ kind: "tool", status: "ok" }),
+    ]),
+  );
+  expect(entries.some((entry) => entry.kind === "tool" && entry.status === "failed")).toBe(false);
+});
