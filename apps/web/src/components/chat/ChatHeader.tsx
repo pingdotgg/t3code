@@ -459,7 +459,6 @@ export const ChatHeader = memo(function ChatHeader({
                     type="button"
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
-                    aria-busy={isRegeneratingTitle || undefined}
                     onClick={openMenuFromTitle}
                     onDoubleClick={handleTitleDoubleClick}
                     onBlur={cancelPendingTitleMenu}

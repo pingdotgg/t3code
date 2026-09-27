@@ -891,15 +891,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // looping animation would repaint every row that shows it.
   const titleRegenerationIcon =
     thread.titleRegeneration != null ? (
-      <View accessible accessibilityLabel="Regenerating title">
-        <SymbolView
-          name="arrow.clockwise"
-          size={11}
-          tintColorClassName={rowAppearance.mutedIconTintClassName}
-          type="monochrome"
-        />
-      </View>
+      <SymbolView
+        name="arrow.clockwise"
+        size={11}
+        tintColorClassName={rowAppearance.mutedIconTintClassName}
+        type="monochrome"
+      />
     ) : null;
+  // The row is one accessible element, so nested labels are never read.
+  const rowAccessibilityLabel = [
+    thread.title,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+    thread.titleRegeneration != null ? "regenerating title" : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
 
   // Sidebar rows use navigation foregrounds on their active and idle surfaces.
   const cardContent = (
@@ -1087,9 +1093,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -1119,9 +1123,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}
