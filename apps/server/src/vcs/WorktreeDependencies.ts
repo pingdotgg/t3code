@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { makeFileClone } from "./FileClone.ts";
+import * as FileClone from "./FileClone.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const decodeProjectFile = Schema.decodeUnknownEffect(Schema.fromJsonString(T3ProjectFile));
@@ -13,7 +13,7 @@ export const makeWorktreeDependencies = Effect.fn("makeWorktreeDependencies")(fu
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const driver = yield* GitVcsDriver.GitVcsDriver;
-  const { supported, clone } = yield* makeFileClone();
+  const { supported, clone } = yield* FileClone.makeFileClone();
   const git = (cwd: string, args: string[], allowNonZeroExit = false) =>
     driver.execute({
       operation: "GitVcsDriver.worktreeDependencies",
