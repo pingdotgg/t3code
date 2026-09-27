@@ -482,6 +482,15 @@ export function followStreamInEnvironment<A, E, R>(
   );
 }
 
+/**
+ * Fork (toolboxmd/t3code#52): an atom never observes its own cancellation, so an interrupt-only
+ * failure is the server's. A read that joins a shared lookup another request's cancellation is
+ * tearing down comes back interrupted; it is read once more instead of shown as an error.
+ */
+function retryInterruptedRead<A, E, R>(read: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
+  return read.pipe(Effect.catchCauseIf(Cause.hasInterruptsOnly, () => read));
+}
+
 export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<
@@ -529,7 +538,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         switch (connectionState.phase) {
           case "connected":
             return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input))
+              ? retryInterruptedRead(
+                  runInEnvironment(target.environmentId, options.execute(target.input)),
+                )
               : Effect.never;
           case "connecting":
           case "backoff":

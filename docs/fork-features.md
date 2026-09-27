@@ -498,3 +498,21 @@ for per-match decisions and the absorption PR record.
   ]
 }
 ```
+
+## Interrupted environment reads are read again
+
+```json
+{
+  "id": "query-interrupt-retry",
+  "purpose": "Read an environment query again when the server answers it with an interrupt it did not choose, instead of showing the interrupt as an error.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/52"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/54"],
+  "newFiles": [],
+  "upstreamFiles": [
+    "packages/client-runtime/src/state/runtime.test.ts",
+    "packages/client-runtime/src/state/runtime.ts"
+  ],
+  "sharedFiles": [],
+  "keywords": ["createEnvironmentQueryAtomFamily", "retryInterruptedRead", "hasInterruptsOnly"]
+}
+```

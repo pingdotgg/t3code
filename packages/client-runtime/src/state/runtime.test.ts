@@ -548,6 +548,31 @@ describe("environment query lifecycle", () => {
       }),
     ),
   );
+
+  it.effect("reads again when the server interrupts a query this client did not cancel", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let executions = 0;
+        // The server answers with an interrupt when the read joined a shared lookup that another
+        // request's cancellation tore down.
+        const execute = Effect.suspend(() => {
+          executions += 1;
+          return executions === 1
+            ? Effect.failCause(Cause.interrupt())
+            : Effect.succeed("recovered");
+        });
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+
+        expect(
+          yield* AtomRegistry.getResult(registry, harness.atom, {
+            suspendOnWaiting: true,
+          }),
+        ).toBe("recovered");
+        expect(executions).toBe(2);
+      }),
+    ),
+  );
 });
 
 describe("Atom.fn mutation semantics", () => {
