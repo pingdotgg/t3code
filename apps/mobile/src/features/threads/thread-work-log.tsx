@@ -18,7 +18,7 @@ import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
 import {
   memo,
   useCallback,
@@ -786,6 +786,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const navigation = useNavigation();
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
@@ -852,7 +853,12 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       </WorkLogPressable>
     );
   }
-  const canExpand = row.canExpand;
+  // A subagent's notification opens its thread, like the subagent's own row.
+  const notifiedSubagentThreadId =
+    row.projectedItem.item.type === "notification"
+      ? row.projectedItem.item.childThreadId
+      : undefined;
+  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fullDetail = expanded && !reasoning ? row.getFullDetail() : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
@@ -881,15 +887,26 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
       <WorkLogPressable
-        accessibilityRole={canExpand ? "button" : undefined}
+        accessibilityRole={
+          notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
+        }
         accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
         accessibilityHint={
-          canExpand
-            ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
-            : "Long press to copy."
+          notifiedSubagentThreadId !== undefined
+            ? "Opens this agent's thread. Long press to copy."
+            : canExpand
+              ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
+              : "Long press to copy."
         }
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
+          if (notifiedSubagentThreadId !== undefined) {
+            navigation.navigate("Thread", {
+              environmentId: String(props.environmentId),
+              threadId: String(notifiedSubagentThreadId),
+            });
+            return;
+          }
           if (canExpand) {
             void Haptics.selectionAsync();
             props.onToggleRow(row.id, props.anchorKey);

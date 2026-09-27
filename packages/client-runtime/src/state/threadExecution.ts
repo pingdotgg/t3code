@@ -7,11 +7,16 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   type ModelSelection,
+  type OrchestrationV2BackgroundWorkKind,
+  type OrchestrationV2PendingBackgroundTask,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  derivePendingBackgroundWork,
+  pendingBackgroundTaskKind,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -242,4 +247,80 @@ export function threadRuntimeHasInterruptibleRun(
     runtime?.activeRunId !== null &&
     runtime?.activeRunId !== undefined
   );
+}
+
+const BACKGROUND_WORK_NOUNS: Record<OrchestrationV2BackgroundWorkKind, readonly [string, string]> =
+  {
+    subagent: ["subagent", "subagents"],
+    command: ["command", "commands"],
+    monitor: ["monitor", "monitors"],
+    task: ["background task", "background tasks"],
+  };
+// Order the groups by how a reader thinks about them: agents first, loose tasks last.
+const BACKGROUND_WORK_ORDER: ReadonlyArray<OrchestrationV2BackgroundWorkKind> = [
+  "subagent",
+  "command",
+  "monitor",
+  "task",
+];
+
+export interface PendingBackgroundWorkItem {
+  readonly taskId: string;
+  readonly kind: OrchestrationV2BackgroundWorkKind;
+  /** The work's name, or its noun when the provider gave none. */
+  readonly label: string;
+  readonly childThreadId: OrchestrationV2PendingBackgroundTask["childThreadId"];
+}
+
+export interface PendingBackgroundWorkPresentation {
+  /** "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command". */
+  readonly title: string;
+  readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
+}
+
+function joinWithAnd(parts: ReadonlyArray<string>): string {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+/** Names what a settled thread is still waiting on, grouped by kind, for the composer strip. */
+export function presentPendingBackgroundWork(
+  tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+): PendingBackgroundWorkPresentation | null {
+  if (tasks.length === 0) return null;
+  const items = tasks
+    .map((task): PendingBackgroundWorkItem => {
+      const kind = pendingBackgroundTaskKind(task);
+      const description = task.description?.trim();
+      return {
+        taskId: task.taskId,
+        kind,
+        label:
+          description === undefined || description.length === 0
+            ? BACKGROUND_WORK_NOUNS[kind][0]
+            : description,
+        childThreadId: task.childThreadId,
+      };
+    })
+    // `map` returned a new array; Hermes has no `toSorted`.
+    .sort(
+      (left, right) =>
+        BACKGROUND_WORK_ORDER.indexOf(left.kind) - BACKGROUND_WORK_ORDER.indexOf(right.kind),
+    );
+  const [only] = items;
+  if (items.length === 1 && only !== undefined) {
+    const named = only.label !== BACKGROUND_WORK_NOUNS[only.kind][0];
+    return {
+      title: named
+        ? `Waiting on ${BACKGROUND_WORK_NOUNS[only.kind][0]} ${only.label}`
+        : `Waiting on a ${BACKGROUND_WORK_NOUNS[only.kind][0]}`,
+      items,
+    };
+  }
+  const groups = BACKGROUND_WORK_ORDER.flatMap((kind) => {
+    const count = items.filter((item) => item.kind === kind).length;
+    if (count === 0) return [];
+    return [`${count} ${BACKGROUND_WORK_NOUNS[kind][count === 1 ? 0 : 1]}`];
+  });
+  return { title: `Waiting on ${joinWithAnd(groups)}`, items };
 }

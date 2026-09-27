@@ -455,7 +455,18 @@ function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntr
 }
 
 function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
-  if (item.type === "notification") return "zap";
+  if (item.type === "notification") {
+    switch (item.workKind) {
+      case "subagent":
+        return "hammer";
+      case "command":
+        return "command";
+      case "monitor":
+        return "eye";
+      default:
+        return "zap";
+    }
+  }
   if (item.type === "dynamic_tool") {
     const classified = classifyToolActivity({
       itemType: "dynamic_tool_call",
