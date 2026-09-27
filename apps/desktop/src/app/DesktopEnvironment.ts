@@ -255,8 +255,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : (["Alpha", "Nightly"] as const);
   const legacyDownstreamUserDataDirNames =
     isDownstreamDistribution && resolvedIdentity.distributionName
-      ? legacyDownstreamStages.map(
-          (stage) => `T3 Code (${resolvedIdentity.distributionName} ${stage})`,
+      ? legacyDownstreamStages.map((stage) =>
+          `T3 Code (${resolvedIdentity.distributionName} ${stage})`.replace(/[\\/]/g, "_"),
         )
       : [];
   const legacyConnectionCatalogPaths = legacyDownstreamUserDataDirNames.map((legacyDisplayName) =>
@@ -265,7 +265,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const userDataDirName = isDevelopment
     ? "t3code-dev"
     : isDownstreamDistribution
-      ? productName
+      ? productName.replace(/[\\/]/g, "_")
       : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(

@@ -141,6 +141,20 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("keeps legacy downstream profile names within the app-data directory", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38",
+        appName: "T3 Code (x/../../outside)",
+      });
+      assert.equal(environment.userDataDirName, "T3 Code (x_.._.._outside)");
+      for (const name of environment.legacyDownstreamUserDataDirNames) {
+        assert.notMatch(name, /[\\/]/);
+      }
+    }),
+  );
+
   it("preserves an unrecognized packaged app name as its display name", () => {
     const identity = DesktopEnvironment.currentDesktopAppIdentity({
       isDevelopment: false,

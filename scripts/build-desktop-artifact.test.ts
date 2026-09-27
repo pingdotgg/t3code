@@ -403,6 +403,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("keeps fork Windows URL schemes separate from the official installation", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("1.2.3", "Fork");
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        identity,
+      );
+      assert.deepEqual((config.win as Record<string, unknown>).protocols, [
+        { name: "T3 Code", schemes: [`t3code-${identity.distributionId}`] },
+      ]);
+    }),
+  );
+
   it.effect("enables stable ad hoc update signing for downstream macOS builds", () =>
     Effect.gen(function* () {
       const identity = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
