@@ -233,3 +233,28 @@ describe("project look themes", () => {
     expect(write).not.toHaveBeenCalled();
   });
 });
+
+it("keeps the theme editor preview painted when a project look changes", async () => {
+  const { THEME_PREVIEW_ID } = await import("../themePalette");
+  const toggle = vi.fn();
+  const documentElement = {
+    dataset: { themeId: THEME_PREVIEW_ID },
+    classList: { toggle, add: vi.fn(), remove: vi.fn() },
+  };
+  vi.stubGlobal("window", { localStorage: createStorage() });
+  vi.stubGlobal("document", { documentElement });
+  const { readThemePreference } = await import("./useTheme");
+  const { setLookTheme } = await import("../lookThemeStorage");
+  setLookTheme(
+    {
+      "t3code:theme": "dark",
+      "t3code:theme-appearance-mode": "dark",
+      "t3code:theme-follow-system": null,
+      "t3code:theme-halves:v1": null,
+    },
+    vi.fn(),
+  );
+  expect(readThemePreference()).toBe("dark");
+  expect(documentElement.dataset.themeId).toBe(THEME_PREVIEW_ID);
+  expect(toggle).not.toHaveBeenCalled();
+});

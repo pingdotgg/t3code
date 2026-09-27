@@ -493,3 +493,64 @@ describe("effective project customization", () => {
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(writes);
   });
 });
+
+describe("look metadata patches", () => {
+  it("lets explicit look collections and assignments win alongside appearance edits", async () => {
+    const { getDefaultClientSettings, setActiveLookProjectKey, persistEffectiveSettingsPatch } =
+      await import("./useSettings");
+    const look = {
+      id: "look",
+      name: "Ocean",
+      settings: decodeLookSettings({}),
+      theme: {
+        "t3code:theme": null,
+        "t3code:theme-appearance-mode": null,
+        "t3code:theme-follow-system": null,
+        "t3code:theme-halves:v1": null,
+      },
+    };
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      savedLooks: [look],
+      projectLookAssignments: { project: look.id },
+    });
+    setActiveLookProjectKey("project");
+    const savedLooks = [{ ...look, name: "Renamed" }];
+    await persistEffectiveSettingsPatch({
+      themeBackground: "dune",
+      savedLooks,
+      projectLookAssignments: {},
+    });
+    expect(getDefaultClientSettings().savedLooks).toEqual(savedLooks);
+    expect(getDefaultClientSettings().projectLookAssignments).toEqual({});
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ savedLooks, projectLookAssignments: {} }),
+    );
+  });
+
+  it("applies a look when settings hydrate after its project key resolves", async () => {
+    const { setActiveLookProjectKey } = await import("./useSettings");
+    const { readLookThemeStorage } = await import("../lookThemeStorage");
+    persistenceMocks.getClientSettings.mockResolvedValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      savedLooks: [
+        {
+          id: "look",
+          name: "Ocean",
+          settings: decodeLookSettings({}),
+          theme: {
+            "t3code:theme": "dark",
+            "t3code:theme-appearance-mode": "dark",
+            "t3code:theme-follow-system": null,
+            "t3code:theme-halves:v1": null,
+          },
+        },
+      ],
+      projectLookAssignments: { project: "look" },
+    });
+    setActiveLookProjectKey("project");
+    await ensureClientSettingsHydrated();
+    expect(readLookThemeStorage("t3code:theme")).toBe("dark");
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+  });
+});

@@ -119,10 +119,11 @@ export function persistEffectiveSettingsPatch(patch: ClientSettingsPatch) {
   );
   if (Object.keys(appearance).length === 0) return persistClientSettingsPatch(patch);
   return persistClientSettingsPatch({
-    ...rest,
     savedLooks: clientSettingsSnapshot.savedLooks.map((entry) =>
       entry.id === look.id ? { ...entry, settings: { ...entry.settings, ...appearance } } : entry,
     ),
+    // Explicit collection/assignment updates take precedence over the active-look edit.
+    ...rest,
   });
 }
 

@@ -425,7 +425,7 @@ export function syncDesktopTheme(
 
 onLookThemeChange(() => {
   lastAppliedTheme = null;
-  applyTheme(getStored(), { suppressTransitions: true, preservePreview: false });
+  applyTheme(getStored(), { suppressTransitions: true, preservePreview: true });
   emitChange();
 });
 

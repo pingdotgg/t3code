@@ -23,6 +23,9 @@ export function ProjectLookSync() {
   const project = projects.find(
     (entry) => entry.id === owner?.projectId && entry.environmentId === owner?.environmentId,
   );
+  // Cold deep links use Default until project entities resolve. Keeping the shell
+  // visible is preferable to blocking on a remote environment; this layout effect
+  // applies the look before the next paint. Settings hydration also calls syncLookTheme.
   const key = project ? deriveLogicalProjectKey(project) : null;
   useLayoutEffect(() => {
     if (getActiveLookProjectKey() === key) return;

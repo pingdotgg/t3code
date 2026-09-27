@@ -56,7 +56,8 @@ manage, and edits outside a thread change Default.
 The **⋯** menu next to the picker renames, duplicates, exports (**Copy look JSON** or **Download
 look**), imports, or deletes a look. Deleting returns its projects to Default and can be undone from
 the notification. Imports create a new look without assigning it. Share custom themes separately:
-unavailable theme references fall back to the built-in theme.
+if an imported look uses a theme that isn’t installed, it uses the default theme until you install
+that theme.
 
 ## Background scenes
 

@@ -27,6 +27,7 @@ import {
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import {
+  getActiveLookProjectKey,
   getClientSettings,
   persistClientSettingsUpdate,
   useActiveLookProjectKey,
@@ -71,7 +72,10 @@ import {
   useCustomizeInterfaceStore,
 } from "./customizeInterfaceStore";
 
+import { LookNameInput } from "./LookNameInput";
+
 const DEFAULT_VALUE = "default";
+const MAX_LOOK_FILE_BYTES = 1024 * 1024;
 
 /** Undo history belongs to one editing target; switching looks starts fresh. */
 function resetHistory() {
@@ -258,7 +262,7 @@ function useLooks() {
       anchor.href = url;
       anchor.download = `${look.name.replace(/[^\w.-]+/g, "-").toLowerCase() || "t3"}.look.json`;
       anchor.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     },
     /** Throws on invalid JSON so the import form can show the error inline. */
     importJson: async (source: string) => {
@@ -291,7 +295,7 @@ function useLooks() {
                 restoreLook(current, look, index, keys),
               ).then((ok) => {
                 if (!ok) return;
-                if (!projectKey) setManagedId(look.id);
+                if (!getActiveLookProjectKey()) setManagedId(look.id);
                 resetHistory();
               });
             },
@@ -323,42 +327,18 @@ function LookPicker({
   onCreated: () => void;
 }) {
   const { settings, selected, projectKey } = looks;
-  const [draft, setDraft] = useState(selected?.name ?? "");
-  const cancelled = useRef(false);
   if (renaming && selected) {
-    const commit = () => {
-      const name = draft.trim();
-      if (!cancelled.current && name && name !== selected.name) void looks.rename(selected, name);
-      cancelled.current = false;
-      onRenameDone();
-    };
     return (
-      <Input
-        size="sm"
-        aria-label="Look name"
-        className="min-w-0 flex-1"
-        autoFocus
-        value={draft}
-        onFocus={(event) => event.currentTarget.select()}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            event.stopPropagation();
-            cancelled.current = true;
-            event.currentTarget.blur();
-          }
-        }}
+      <LookNameInput
+        key={selected.id}
+        look={selected}
+        onRename={(name) => void looks.rename(selected, name)}
+        onDone={onRenameDone}
       />
     );
   }
   return (
-    <Menu
-      onOpenChange={(open) => {
-        if (open) setDraft(selected?.name ?? "");
-      }}
-    >
+    <Menu>
       <MenuTrigger render={<SelectButton size="sm" className="min-w-0 flex-1" aria-label="Look" />}>
         <span className="flex min-w-0 items-center gap-2">
           <LookSwatch theme={selected?.theme ?? readDefaultTheme()} />
@@ -403,7 +383,6 @@ function LookPicker({
           onClick={() =>
             void looks.saveCurrentAsNew().then((look) => {
               if (!look) return;
-              setDraft(look.name);
               onCreated();
             })
           }
@@ -430,11 +409,31 @@ function ImportLookPopover({
   const id = useId();
   const [json, setJson] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const submit = async (source: string) => {
+  const submit = async (source: string | File) => {
+    if (inFlight.current) return;
+    if (typeof source !== "string" && source.size > MAX_LOOK_FILE_BYTES) {
+      setError("That file is too large. Choose a look file no larger than 1 MiB.");
+      return;
+    }
+    inFlight.current = true;
+    setPending(true);
     try {
-      await looks.importJson(source);
+      let text: string;
+      if (typeof source === "string") text = source;
+      else {
+        try {
+          text = await source.text();
+        } catch {
+          setError("Couldn’t read that file.");
+          return;
+        }
+        setJson(text);
+      }
+      await looks.importJson(text);
       setJson("");
       setError(null);
       onOpenChange(false);
@@ -444,6 +443,9 @@ function ImportLookPopover({
           ? "That isn’t valid JSON."
           : "That isn’t a T3 Code look. Use Copy look JSON or Download look to export one.",
       );
+    } finally {
+      inFlight.current = false;
+      setPending(false);
     }
   };
   return (
@@ -454,7 +456,13 @@ function ImportLookPopover({
         if (!next) setError(null);
       }}
     >
-      <PopoverPopup anchor={anchor} align="end" width="md" initialFocus={textareaRef}>
+      <PopoverPopup
+        anchor={anchor}
+        align="end"
+        width="md"
+        initialFocus={textareaRef}
+        finalFocus={anchor}
+      >
         <form
           className="space-y-3"
           onSubmit={(event) => {
@@ -499,25 +507,20 @@ function ImportLookPopover({
                 const file = event.target.files?.[0];
                 event.target.value = "";
                 if (!file) return;
-                void file.text().then(
-                  (text) => {
-                    setJson(text);
-                    void submit(text);
-                  },
-                  () => setError("Couldn’t read that file."),
-                );
+                void submit(file);
               }}
             />
             <Button
               size="sm"
               variant="ghost"
               className="me-auto"
+              disabled={pending}
               onClick={() => fileRef.current?.click()}
             >
               <FileUpIcon />
               Choose file…
             </Button>
-            <Button size="sm" type="submit" disabled={!json.trim()}>
+            <Button size="sm" type="submit" disabled={pending || !json.trim()}>
               Import
             </Button>
           </div>
