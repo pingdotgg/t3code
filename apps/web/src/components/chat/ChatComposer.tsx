@@ -564,10 +564,13 @@ function useComposerRestingTransition(
         // height on collapse, while its expanded flow layout falls below the
         // clipped surface on expansion.
         if (footer) {
+          // Pin at its natural destination height so the actions don't snap
+          // when the pin lifts.
+          const nextFooterHeight = footer.getBoundingClientRect().height;
           footer.style.position = "absolute";
           footer.style.top = "auto";
           footer.style.bottom = "1px";
-          footer.style.height = "3rem";
+          footer.style.height = `${String(nextFooterHeight)}px`;
           if (nextIsCollapsed) {
             footer.style.left = "auto";
             footer.style.right = "1px";
