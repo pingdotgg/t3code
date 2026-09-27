@@ -183,7 +183,12 @@ export function sortIssues<Entry extends IssueListEntry>(
 }
 
 export interface IssueFacets {
-  readonly labels: ReadonlyArray<{ readonly name: string; readonly color: string }>;
+  /** Each with how many loaded Issues carry it. */
+  readonly labels: ReadonlyArray<{
+    readonly name: string;
+    readonly color: string;
+    readonly count: number;
+  }>;
   readonly milestones: ReadonlyArray<string>;
   /** Issues that are the parent of at least one loaded Issue. */
   readonly parents: ReadonlyArray<IssueLink>;
@@ -207,9 +212,9 @@ export function collectIssueFacets(entries: ReadonlyArray<IssueListEntry>): Issu
     if (entry.parent !== null) parents.set(issueKey(entry.parent), entry.parent);
   }
   return {
-    labels: [...labels.values()]
-      .toSorted((left, right) => right.count - left.count || left.name.localeCompare(right.name))
-      .map(({ name, color }) => ({ name, color })),
+    labels: [...labels.values()].toSorted(
+      (left, right) => right.count - left.count || left.name.localeCompare(right.name),
+    ),
     milestones: [...milestones]
       .toSorted((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
       .map(([name]) => name),

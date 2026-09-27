@@ -208,7 +208,10 @@ describe("collectIssueFacets", () => {
         parent: link(9),
       }),
     ]);
-    expect(facets.labels.map((label) => label.name)).toEqual(["bug", "docs"]);
+    expect(facets.labels.map((label) => [label.name, label.count])).toEqual([
+      ["bug", 2],
+      ["docs", 1],
+    ]);
     expect(facets.milestones).toEqual(["M1"]);
     expect(facets.parents.map((parent) => parent.number)).toEqual([9]);
   });

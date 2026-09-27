@@ -6,23 +6,19 @@ import {
   type IssueListState,
   type IssuePullRequest,
   type IssueRef,
-  ISSUE_STATUSES,
   type IssueStatus,
   issueStatusOf,
   parseIssueUrl,
 } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
-  ArrowDownUpIcon,
   CalendarArrowDownIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
   ClockIcon,
   CornerDownRightIcon,
   ExternalLinkIcon,
   HashIcon,
   LayersIcon,
-  ListFilterIcon,
   ListTreeIcon,
   MessageSquareIcon,
   MessageSquarePlusIcon,
@@ -45,20 +41,10 @@ import {
   PULL_REQUEST_ROW_NUMBER_CLASS,
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
+import type { PullRequestFilterOption } from "../pullRequest/PullRequestListFilters";
 import { PullRequestLabelChip } from "../pullRequest/pullRequestPresentation";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { SidebarInset } from "../ui/sidebar";
 import { Spinner } from "../ui/spinner";
@@ -77,7 +63,6 @@ import {
   repositoryKey,
   sortIssues,
   type EnvironmentIssueEntry,
-  type IssueListFilters,
   type IssueTreeNode,
 } from "./issueList.logic";
 import { publishIssuePaletteSource } from "./issuePaletteStore";
@@ -89,8 +74,13 @@ import {
   issueStatusInputOf,
   matchesIssueStatusFilters,
   type IssueRowThread,
-  type IssueStatusFilters,
 } from "./issueStatus.logic";
+import {
+  ISSUE_STATE_OPTIONS,
+  IssueFiltersMenu,
+  IssueSortMenu,
+  type IssueMenuFilters,
+} from "./IssueFiltersMenu";
 import { ListModeToggle } from "./ListModeToggle";
 import { useIssueRowThreads } from "./useIssueRowThreads";
 import { useStartThreadFromIssue } from "./useStartThreadFromIssue";
@@ -99,17 +89,11 @@ const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 const PREFERENCES_KEY = "t3code:issue-list-preferences";
 
-const STATE_OPTIONS = [
-  { value: "open", label: "Open" },
-  { value: "closed", label: "Closed" },
-  { value: "all", label: "All" },
-] as const satisfies ReadonlyArray<{ value: IssueListState; label: string }>;
-
 const SORT_OPTIONS = [
   { value: "updated", label: "Recently updated", Icon: ClockIcon },
   { value: "created", label: "Newest", Icon: CalendarArrowDownIcon },
   { value: "number", label: "Number", Icon: HashIcon },
-] as const satisfies ReadonlyArray<{ value: IssueListSort; label: string; Icon: unknown }>;
+] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueListSort>>;
 
 interface IssueListPreferences {
   readonly state: IssueListState;
@@ -130,7 +114,7 @@ function readPreferences(): IssueListPreferences {
       unknown
     >;
     return {
-      state: STATE_OPTIONS.find((option) => option.value === raw.state)?.value ?? "open",
+      state: ISSUE_STATE_OPTIONS.find((option) => option.value === raw.state)?.value ?? "open",
       sort: SORT_OPTIONS.find((option) => option.value === raw.sort)?.value ?? "updated",
       groupByParent: raw.groupByParent === true,
     };
@@ -143,12 +127,6 @@ interface SelectedIssue {
   readonly environmentId: EnvironmentId;
   readonly reference: IssueRef;
 }
-
-const LINKED_OPTIONS = [
-  { value: "", label: "Linked or not" },
-  { value: "linked", label: "Linked to a thread" },
-  { value: "unlinked", label: "Not linked" },
-] as const;
 
 const NO_THREADS: ReadonlyArray<IssueRowThread> = [];
 const NO_LOGINS: ReadonlySet<string> = new Set();
@@ -184,7 +162,7 @@ export function IssuesView() {
   }, []);
   const [searchValue, setSearchValue] = useState("");
   const query = useDebouncedValue(searchValue.trim(), SEARCH_DEBOUNCE_MS);
-  const [filters, setFilters] = useState<IssueListFilters & IssueStatusFilters>({});
+  const [filters, setFilters] = useState<IssueMenuFilters>({});
   const [collapsed, setCollapsed] = useState<ReadonlySet<IssueStatus>>(COLLAPSED_ISSUE_STATUSES);
   const navigate = useNavigate();
   const search = useSearch({ from: "/_chat/pull-requests" });
@@ -420,15 +398,6 @@ export function IssuesView() {
           ?.workspaceRoot ??
         null);
 
-  const repositoryOptions = data?.repositories ?? [];
-  const activeFilterCount =
-    (filters.repository ? 1 : 0) +
-    (filters.labels?.length ?? 0) +
-    (filters.milestone ? 1 : 0) +
-    (filters.parent ? 1 : 0) +
-    (filters.statuses?.length ?? 0) +
-    (filters.linked ? 1 : 0);
-
   let body: ReactNode;
   if (environmentIds.length === 0) {
     body = (
@@ -518,183 +487,19 @@ export function IssuesView() {
                     aria-label="Search Issues"
                   />
                 </InputGroup>
-                <RadioMenu
-                  label="State"
-                  value={preferences.state}
-                  options={STATE_OPTIONS}
-                  onChange={(state) => updatePreferences({ state })}
-                />
-                <RadioMenu
-                  label="Sort"
-                  icon={<ArrowDownUpIcon aria-hidden className="size-4" />}
+                <IssueSortMenu
                   value={preferences.sort}
                   options={SORT_OPTIONS}
                   onChange={(sort) => updatePreferences({ sort })}
                 />
-                <Menu>
-                  <MenuTrigger render={<Button variant="outline" />}>
-                    <ListFilterIcon aria-hidden className="size-4" />
-                    <span>Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</span>
-                  </MenuTrigger>
-                  <MenuPopup align="end" side="bottom" className="max-h-96">
-                    <MenuGroup>
-                      <MenuGroupLabel>Repository</MenuGroupLabel>
-                      <MenuRadioGroup
-                        value={filters.repository ?? ""}
-                        onValueChange={(value) =>
-                          setFilters((previous) => ({
-                            ...previous,
-                            repository: value === "" ? undefined : (value as string),
-                          }))
-                        }
-                      >
-                        <MenuRadioItem value="">All projects</MenuRadioItem>
-                        {repositoryOptions.map((repository) => (
-                          <MenuRadioItem
-                            key={repositoryKey(repository.host, repository.repository)}
-                            value={`${repository.host} ${repository.repository}`}
-                          >
-                            {repository.projectTitle}
-                            <span className="text-muted-foreground"> {repository.repository}</span>
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                    {facets.labels.length > 0 ? (
-                      <>
-                        <MenuSeparator />
-                        <MenuGroup>
-                          <MenuGroupLabel>Labels</MenuGroupLabel>
-                          {facets.labels.map((label) => {
-                            const checked =
-                              filters.labels?.some(
-                                (name) => name.toLowerCase() === label.name.toLowerCase(),
-                              ) ?? false;
-                            return (
-                              <MenuCheckboxItem
-                                key={label.name}
-                                checked={checked}
-                                closeOnClick={false}
-                                onCheckedChange={(next) =>
-                                  setFilters((previous) => {
-                                    const others = (previous.labels ?? []).filter(
-                                      (name) => name.toLowerCase() !== label.name.toLowerCase(),
-                                    );
-                                    const labels = next ? [...others, label.name] : others;
-                                    return { ...previous, labels: labels.slice(0, 10) };
-                                  })
-                                }
-                              >
-                                <PullRequestLabelChip label={label} />
-                              </MenuCheckboxItem>
-                            );
-                          })}
-                        </MenuGroup>
-                      </>
-                    ) : null}
-                    {facets.milestones.length > 0 || filters.milestone ? (
-                      <>
-                        <MenuSeparator />
-                        <MenuGroup>
-                          <MenuGroupLabel>Milestone</MenuGroupLabel>
-                          <MenuRadioGroup
-                            value={filters.milestone ?? ""}
-                            onValueChange={(value) =>
-                              setFilters((previous) => ({
-                                ...previous,
-                                milestone: value === "" ? undefined : (value as string),
-                              }))
-                            }
-                          >
-                            <MenuRadioItem value="">Any milestone</MenuRadioItem>
-                            {facets.milestones.map((milestone) => (
-                              <MenuRadioItem key={milestone} value={milestone}>
-                                {milestone}
-                              </MenuRadioItem>
-                            ))}
-                          </MenuRadioGroup>
-                        </MenuGroup>
-                      </>
-                    ) : null}
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Parent</MenuGroupLabel>
-                      <MenuRadioGroup
-                        value={filters.parent ?? ""}
-                        onValueChange={(value) =>
-                          setFilters((previous) => ({
-                            ...previous,
-                            parent: value === "" ? undefined : (value as string),
-                          }))
-                        }
-                      >
-                        <MenuRadioItem value="">Any parent</MenuRadioItem>
-                        <MenuRadioItem value="none">No parent</MenuRadioItem>
-                        {facets.parents.map((parent) => (
-                          <MenuRadioItem key={issueKey(parent)} value={issueKey(parent)}>
-                            <span className="truncate">
-                              #{parent.number} {parent.title}
-                            </span>
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Status</MenuGroupLabel>
-                      {ISSUE_STATUSES.map((status) => (
-                        <MenuCheckboxItem
-                          key={status}
-                          checked={filters.statuses?.includes(status) ?? false}
-                          closeOnClick={false}
-                          onCheckedChange={(next) =>
-                            setFilters((previous) => {
-                              const others = (previous.statuses ?? []).filter(
-                                (value) => value !== status,
-                              );
-                              return { ...previous, statuses: next ? [...others, status] : others };
-                            })
-                          }
-                        >
-                          <IssueStatusGlyph status={status} className="size-3.5" />
-                          {ISSUE_STATUS_PRESENTATION[status].label}
-                        </MenuCheckboxItem>
-                      ))}
-                    </MenuGroup>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Linked</MenuGroupLabel>
-                      <MenuRadioGroup
-                        value={filters.linked ?? ""}
-                        onValueChange={(value) =>
-                          setFilters((previous) => ({
-                            ...previous,
-                            linked: value === "linked" || value === "unlinked" ? value : undefined,
-                          }))
-                        }
-                      >
-                        {LINKED_OPTIONS.map((option) => (
-                          <MenuRadioItem key={option.value} value={option.value}>
-                            {option.label}
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                    {activeFilterCount > 0 ? (
-                      <>
-                        <MenuSeparator />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="w-full justify-start"
-                          onClick={() => setFilters({})}
-                        >
-                          Clear filters
-                        </Button>
-                      </>
-                    ) : null}
-                  </MenuPopup>
-                </Menu>
+                <IssueFiltersMenu
+                  state={preferences.state}
+                  onState={(state) => updatePreferences({ state })}
+                  filters={filters}
+                  onFilters={setFilters}
+                  facets={facets}
+                  repositories={data?.repositories ?? []}
+                />
                 <Toggle
                   variant="outline"
                   aria-label="Group by parent"
@@ -790,40 +595,6 @@ function EmptyState({ children }: { children: ReactNode }) {
     <div className="flex min-h-40 items-center justify-center text-sm text-muted-foreground">
       {children}
     </div>
-  );
-}
-
-function RadioMenu<Value extends string>({
-  label,
-  icon,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  icon?: ReactNode;
-  value: Value;
-  options: ReadonlyArray<{ readonly value: Value; readonly label: string }>;
-  onChange: (value: Value) => void;
-}) {
-  const current = options.find((option) => option.value === value) ?? options[0];
-  return (
-    <Menu>
-      <MenuTrigger aria-label={`${label}: ${current?.label}`} render={<Button variant="outline" />}>
-        {icon}
-        <span>{current?.label}</span>
-        <ChevronDownIcon aria-hidden className="size-3 text-muted-foreground/70" />
-      </MenuTrigger>
-      <MenuPopup align="start" side="bottom">
-        <MenuRadioGroup value={value} onValueChange={(next) => onChange(next as Value)}>
-          {options.map((option) => (
-            <MenuRadioItem key={option.value} value={option.value}>
-              {option.label}
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-      </MenuPopup>
-    </Menu>
   );
 }
 

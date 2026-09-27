@@ -318,7 +318,10 @@ for per-match decisions and the absorption PR record.
 {
   "id": "issues-browse",
   "purpose": "List GitHub Issues of all project repositories beside PRs, with filters, parent tree and a side panel.",
-  "issues": ["https://github.com/toolboxmd/t3code/issues/27"],
+  "issues": [
+    "https://github.com/toolboxmd/t3code/issues/27",
+    "https://github.com/toolboxmd/t3code/issues/42"
+  ],
   "prs": ["https://github.com/toolboxmd/t3code/pull/32"],
   "newFiles": [
     "apps/server/src/issues/IssueService.live.test.ts",
@@ -327,6 +330,7 @@ for per-match decisions and the absorption PR record.
     "apps/server/src/issues/gitHubIssues.ts",
     "apps/server/src/issues/issueRpcHandlers.ts",
     "apps/web/src/components/issues/IssueDetailPanel.tsx",
+    "apps/web/src/components/issues/IssueFiltersMenu.tsx",
     "apps/web/src/components/issues/IssuesView.tsx",
     "apps/web/src/components/issues/ListModeToggle.tsx",
     "apps/web/src/components/issues/issueList.logic.test.ts",
@@ -334,6 +338,8 @@ for per-match decisions and the absorption PR record.
     "apps/web/src/components/issues/issuePaletteItems.tsx",
     "apps/web/src/components/issues/issuePaletteStore.ts",
     "apps/web/src/components/issues/issuePresentation.tsx",
+    "apps/web/src/components/pullRequest/pullRequestFilterSearch.logic.test.ts",
+    "apps/web/src/components/pullRequest/pullRequestFilterSearch.logic.ts",
     "apps/web/src/state/issues.ts",
     "packages/contracts/src/issues.ts"
   ],
@@ -343,6 +349,7 @@ for per-match decisions and the absorption PR record.
     "apps/server/src/server.ts",
     "apps/server/src/ws.ts",
     "apps/web/src/components/CommandPalette.tsx",
+    "apps/web/src/components/pullRequest/PullRequestListFilters.tsx",
     "apps/web/src/routes/_chat.pull-requests.tsx",
     "apps/web/src/state/pullRequests.ts",
     "docs/user/source-control.md",
