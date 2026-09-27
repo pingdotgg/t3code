@@ -1773,19 +1773,16 @@ public final class FeatureRootModel {
                 deliveredAwaitingDetail.removeValue(forKey: id)
             }
         }
-        let queued = pendingSubmissionsByID.values
-            .filter { $0.threadID == incoming.thread.id }
-            .sorted { $0.identity.createdAt < $1.identity.createdAt }
         let delivered = deliveredAwaitingDetail.values
-            .filter { $0.threadID == incoming.thread.id }
+            .filter { $0.threadID == incoming.thread.id && !existing.contains($0.message.id) }
             .map(\.message)
-            .sorted { $0.createdAt < $1.createdAt }
+        let queued = pendingSubmissionsByID.values
+            .filter { $0.threadID == incoming.thread.id && !existing.contains($0.identity.messageID) }
+            .map(queuedMessage(for:))
         guard !queued.isEmpty || !delivered.isEmpty else { return incoming }
         var result = incoming
-        result.messages.append(contentsOf: delivered.filter { !existing.contains($0.id) })
-        result.messages.append(contentsOf: queued.lazy
-            .filter { !existing.contains($0.identity.messageID) }
-            .map(queuedMessage(for:)))
+        // A newer send can be delivered while an older one waits to retry; keep send order.
+        result.messages.append(contentsOf: (delivered + queued).sorted { $0.createdAt < $1.createdAt })
         return result
     }
 

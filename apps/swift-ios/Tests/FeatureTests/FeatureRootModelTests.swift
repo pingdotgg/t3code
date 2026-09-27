@@ -1792,6 +1792,19 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func localCopiesKeepSendOrderWhenANewerSendIsDeliveredFirst() async throws {
+        let (client, model, thread) = await deliveredMessageModel()
+        client.sendMessageError = URLError(.notConnectedToInternet)
+        _ = await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "first", selection: nil))
+        client.sendMessageError = nil
+        #expect(await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "second", selection: nil)))
+        // An older read that includes neither message.
+        _ = await model.detail(for: thread.id, force: true)
+        let texts = model.details[thread.id]?.messages.map(\.text) ?? []
+        #expect(texts.filter { $0 == "first" || $0 == "second" } == ["first", "second"])
+    }
+
+    @Test
     func startedTaskKeepsItsPromptUntilTheServerIncludesIt() async throws {
         let client = FeatureClientStub()
         client.snapshot = FeatureSnapshot(
