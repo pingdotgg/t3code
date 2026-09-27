@@ -419,8 +419,7 @@ function useComposerRestingTransition(
     promptFromTop: number | null;
     promptHeight: number | null;
     actionFromBottom: number | null;
-    actionFromRight: number | null;
-  }>({ promptFromTop: null, promptHeight: null, actionFromBottom: null, actionFromRight: null });
+  }>({ promptFromTop: null, promptHeight: null, actionFromBottom: null });
   const animationRef = useRef<Animation | null>(null);
   const animationFromHeightRef = useRef<number | null>(null);
   const animationTargetHeightRef = useRef<number | null>(null);
@@ -621,28 +620,16 @@ function useComposerRestingTransition(
           (previousContentOffsetsRef.current.actionFromBottom === null
             ? null
             : animatedRect.bottom - previousContentOffsetsRef.current.actionFromBottom);
-        const previousActionRight =
-          interruptedActionRect?.right ??
-          (previousContentOffsetsRef.current.actionFromRight === null
-            ? null
-            : animatedRect.right - previousContentOffsetsRef.current.actionFromRight);
         const contentAnimations: Animation[] = [];
         const animateContentPosition = (
           content: HTMLElement | null,
           previousTop: number | null,
-          previousRight: number | null = null,
         ) => {
           if (!content || previousTop === null) return;
-          const rect = content.getBoundingClientRect();
-          const offsetY = previousTop - rect.top;
-          // Resting and expanded footers use different end padding.
-          const offsetX = previousRight === null ? 0 : previousRight - rect.right;
-          if (Math.abs(offsetY) < 0.5 && Math.abs(offsetX) < 0.5) return;
+          const offset = previousTop - content.getBoundingClientRect().top;
+          if (Math.abs(offset) < 0.5) return;
           const contentAnimation = content.animate(
-            [
-              { transform: `translate(${String(offsetX)}px, ${String(offsetY)}px)` },
-              { transform: "none" },
-            ],
+            [{ transform: `translateY(${String(offset)}px)` }, { transform: "none" }],
             {
               duration: remainingDuration,
               easing: COMPOSER_RESTING_TRANSITION_EASING,
@@ -654,7 +641,7 @@ function useComposerRestingTransition(
           contentAnimations.push(contentAnimation);
         };
         animateContentPosition(prompt, previousPromptTop);
-        animateContentPosition(action, previousActionTop, previousActionRight);
+        animateContentPosition(action, previousActionTop);
         contentAnimationsRef.current = contentAnimations;
 
         if (stateChanged) {
@@ -768,7 +755,6 @@ function useComposerRestingTransition(
         promptFromTop: nextPromptTop === null ? null : nextPromptTop - nextRect.top,
         promptHeight: nextPromptRect?.height ?? null,
         actionFromBottom: nextActionRect === null ? null : nextRect.bottom - nextActionRect.top,
-        actionFromRight: nextActionRect === null ? null : nextRect.right - nextActionRect.right,
       };
     },
     [
@@ -838,7 +824,6 @@ function useComposerRestingTransition(
         promptFromTop: promptRect === undefined ? null : promptRect.top - elementRect.top,
         promptHeight: promptRect?.height ?? null,
         actionFromBottom: actionRect === undefined ? null : elementRect.bottom - actionRect.top,
-        actionFromRight: actionRect === undefined ? null : elementRect.right - actionRect.right,
       };
     });
     observer.observe(element);
