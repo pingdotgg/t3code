@@ -34,6 +34,7 @@ const previewSessions: Readonly<Record<string, PreviewSessionSnapshot>> = {
 async function mountTabs(
   mounted: readonly RightPanelSurface[] = surfaces,
   activeSurfaceId = "files",
+  dirtyFilePaths?: ReadonlySet<string>,
 ) {
   // Panel width is clamped to a share of the viewport, and the tab strip
   // scrolls once tabs overflow. Pin a desktop viewport so layout assertions
@@ -61,6 +62,7 @@ async function mountTabs(
       activeSurfaceId={activeSurfaceId}
       previewSessions={previewSessions}
       terminalLabels={{ "terminal-a": "Terminal 2" }}
+      {...(dirtyFilePaths ? { dirtyFilePaths } : {})}
       {...callbacks}
     >
       <div>Active surface</div>
@@ -247,6 +249,28 @@ describe("RightPanelTabs", () => {
         new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
       );
       expect(callbacks.onClose).toHaveBeenCalledWith(surfaces[2]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("marks dirty file tabs and exposes the full path", async () => {
+    const { screen } = await mountTabs(surfaces, "files", new Set(["src/index.ts"]));
+    try {
+      await expect.element(page.getByLabelText("Unsaved changes")).toBeInTheDocument();
+      await expect.element(page.getByTitle("src/index.ts")).toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("shows no dirty marker without pending edits", async () => {
+    const { screen } = await mountTabs();
+    try {
+      await expect
+        .element(page.getByRole("button", { name: "Close index.ts" }))
+        .toBeInTheDocument();
+      expect(page.getByLabelText("Unsaved changes")).not.toBeInTheDocument();
     } finally {
       await screen.unmount();
     }

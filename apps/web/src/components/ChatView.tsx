@@ -324,6 +324,7 @@ const EMPTY_OLDER_ACTIVITY_STATE = {
 } as const;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_DIRTY_FILE_PATHS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -988,6 +989,9 @@ function ChatViewBody(
   >({});
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [isExportingThread, setIsExportingThread] = useState(false);
+  const [dirtyFilePathsByThread, setDirtyFilePathsByThread] = useState<
+    Record<string, ReadonlySet<string>>
+  >({});
   const [startingWorkflowId, setStartingWorkflowId] = useState<string | null>(null);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -1140,6 +1144,9 @@ function ChatViewBody(
     [activeThread?.environmentId, activeThread?.id],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const activeDirtyFilePaths = activeThreadKey
+    ? (dirtyFilePathsByThread[activeThreadKey] ?? EMPTY_DIRTY_FILE_PATHS)
+    : undefined;
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingServerThreadKeys = new Set(openServerTerminalThreadKeys);
     const existingDraftThreadKeys = new Set(draftThreadKeys);
@@ -2270,6 +2277,24 @@ function ChatViewBody(
     (relativePath: string) => {
       if (!activeThreadRef) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+    },
+    [activeThreadRef],
+  );
+  const handleFilePendingChange = useCallback(
+    (relativePath: string, pending: boolean) => {
+      if (!activeThreadRef) return;
+      const key = scopedThreadKey(activeThreadRef);
+      setDirtyFilePathsByThread((previous) => {
+        const current = previous[key] ?? EMPTY_DIRTY_FILE_PATHS;
+        if (pending ? current.has(relativePath) : !current.has(relativePath)) return previous;
+        const next = new Set(current);
+        if (pending) {
+          next.add(relativePath);
+        } else {
+          next.delete(relativePath);
+        }
+        return { ...previous, [key]: next };
+      });
     },
     [activeThreadRef],
   );
@@ -5017,6 +5042,7 @@ function ChatViewBody(
               revealLine={surface.kind === "file" ? surface.revealLine : null}
               threadRef={activeThreadRef}
               onOpenFile={openRightPanelFile}
+              onPendingChange={handleFilePendingChange}
             />
           ) : null;
       }
@@ -5339,6 +5365,7 @@ function ChatViewBody(
                 onAddInsights={addInsightsSurface}
                 onAddDevice={addDeviceSurface}
                 onAddPullRequests={addPullRequestsSurface}
+                {...(activeDirtyFilePaths ? { dirtyFilePaths: activeDirtyFilePaths } : {})}
                 maximized={rightPanelMaximized}
                 onToggleMaximize={toggleRightPanelMaximized}
               >
@@ -5399,6 +5426,7 @@ function ChatViewBody(
             onAddInsights={addInsightsSurface}
             onAddDevice={addDeviceSurface}
             onAddPullRequests={addPullRequestsSurface}
+            {...(activeDirtyFilePaths ? { dirtyFilePaths: activeDirtyFilePaths } : {})}
           >
             {renderRightPanelSurfaces()}
           </RightPanelTabs>
