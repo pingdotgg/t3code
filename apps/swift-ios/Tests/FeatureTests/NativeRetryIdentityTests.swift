@@ -251,6 +251,33 @@ final class NativeRetryIdentityTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testSupersededAcceptedSendRefreshDoesNotPublishItsOlderDetail() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.transport.holdFollowups(includeShell: false)
+        let history = AcceptedSendDetailHistory(model: fixture.model, threadID: fixture.threadID)
+        history.start()
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "First", selection: nil)
+        let firstRead = await reads.next()
+        let first = try XCTUnwrap(firstRead)
+        XCTAssertTrue(first.path.hasPrefix("/api/orchestration/threads/"))
+        // The second acceptance lands while the first read is still in flight.
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Second", selection: nil)
+        let stale = "Read started before the second send was accepted"
+        await fixture.transport.release(first.id, detailMessage: stale)
+        let followUpRead = await reads.next()
+        let followUp = try XCTUnwrap(followUpRead)
+        XCTAssertTrue(followUp.path.hasPrefix("/api/orchestration/threads/"))
+        let fresh = "Read after the second send was accepted"
+        await fixture.transport.release(followUp.id, detailMessage: fresh)
+        try await AcceptedSendDetailReceipt(
+            model: fixture.model, threadID: fixture.threadID, expectedMessage: fresh
+        ).wait()
+        XCTAssertFalse(history.seen.contains(stale), "A superseded read must not replace newer accepted state.")
+        await fixture.client.disconnect()
+    }
+
     func testDeletingThreadCancelsItsAcceptedSendRefresh() async throws {
         let fixture = try await AcceptedSendFixture.make()
         addTeardownBlock { await fixture.cleanUp() }
@@ -1258,6 +1285,28 @@ private final class AcceptedSendRootReadiness {
         guard let pending = continuation else { return }
         continuation = nil
         if let error { pending.resume(throwing: error) } else { pending.resume() }
+    }
+}
+
+/// Records every last-message text the model shows for a thread.
+@MainActor
+private final class AcceptedSendDetailHistory {
+    private let model: FeatureRootModel
+    private let threadID: String
+    private(set) var seen: [String] = []
+
+    init(model: FeatureRootModel, threadID: String) {
+        self.model = model
+        self.threadID = threadID
+    }
+
+    func start() {
+        let text = withObservationTracking {
+            model.details[threadID]?.messages.last?.text
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.start() }
+        }
+        if let text, seen.last != text { seen.append(text) }
     }
 }
 

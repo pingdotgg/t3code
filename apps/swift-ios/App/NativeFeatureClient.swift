@@ -2317,7 +2317,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 self?.acceptedCommandRefreshes[threadID]?.needsDetail = false
                 self?.acceptedCommandRefreshes[threadID]?.pending = false
                 if needsDetail {
-                    try? await self?.refreshThread(id: threadID, client: client)
+                    try? await self?.refreshThread(id: threadID, client: client) { [weak self] in
+                        self?.acceptedCommandRefreshes[threadID]?.pending == true
+                    }
                 }
                 guard self?.isCurrentAcceptedCommandRefresh(threadID: threadID, id: id) == true else { break }
                 try? await self?.refresh(client: client)
@@ -5119,7 +5121,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let environment = client.environment
         let generation = environmentGeneration
         let shell = try await client.shellSnapshot()
-        guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
+        // A cancelled refresh (for example, of a thread deleted meanwhile) must not
+        // write a shell that was read before the change.
+        guard !Task.isCancelled,
+              isKnownClient(client, environmentID: environment.id, generation: generation) else {
             throw CancellationError()
         }
         guard shell.snapshotSequence
@@ -5176,7 +5181,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func refreshThread(
-        id: String, client: T3Client, expectedStreamGeneration: Int? = nil
+        id: String, client: T3Client, expectedStreamGeneration: Int? = nil,
+        isSuperseded: (() -> Bool)? = nil
     ) async throws {
         let route = try threadRoute(for: id)
         guard route.client === client else {
@@ -5198,6 +5204,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               expectedStreamGeneration.map({ isCurrentDetail(route, generation: $0) }) ?? true else {
             throw CancellationError()
         }
+        // A newer accepted command makes this snapshot stale; its owner reads again.
+        if isSuperseded?() == true { return }
         if activeThreadID == route.uiID {
             if activeRawThread == nil, historyEpoch != threadHistoryEpoch {
                 return
