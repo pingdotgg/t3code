@@ -17,6 +17,7 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
@@ -279,6 +280,16 @@ export function createVcsEnvironmentAtoms<R, E>(
     });
 
   return {
+    configuration: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:configuration",
+      tag: WS_METHODS.vcsConfigurationRead,
+    }),
+    writeConfiguration: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:write-configuration",
+      tag: WS_METHODS.vcsConfigurationWrite,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     listRefs,
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",

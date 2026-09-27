@@ -171,6 +171,7 @@ import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as VcsConfigurationService from "./vcs/VcsConfigurationService.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -737,6 +738,9 @@ const buildAppUnderTest = (options?: {
     const vcsProvisioningLayer = VcsProvisioningService.layer.pipe(
       Layer.provide(vcsDriverRegistryLayer),
     );
+    const vcsConfigurationLayer = VcsConfigurationService.layer.pipe(
+      Layer.provide(vcsDriverRegistryLayer),
+    );
     const reviewLayer = options?.layers?.reviewService
       ? Layer.mock(ReviewService.ReviewService)({
           ...options.layers.reviewService,
@@ -935,7 +939,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),
       Layer.provide(reviewLayer),
-      Layer.provide(vcsProvisioningLayer),
+      Layer.provide(Layer.merge(vcsProvisioningLayer, vcsConfigurationLayer)),
       Layer.provide(
         Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
           ...options?.layers?.sourceControlRepositoryService,

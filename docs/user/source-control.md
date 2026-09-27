@@ -85,6 +85,10 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Configure a Git repository
+
+Select one Git checkout in **Settings → Source Control → Repository configuration** on web or desktop. On mobile, open **Repository configuration** from the repository sheet. Set the commit author, email, and large-file diff threshold for that checkout. Git treats files above the threshold as binary in diffs; checkpoints still include them. Reset removes a repository override and restores the inherited Git setting.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit

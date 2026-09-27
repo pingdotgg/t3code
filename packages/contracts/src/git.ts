@@ -191,6 +191,29 @@ export const VcsInitInput = Schema.Struct({
 });
 export type VcsInitInput = typeof VcsInitInput.Type;
 
+export const VcsConfigurationInput = Schema.Struct({ cwd: TrimmedNonEmptyStringSchema });
+export type VcsConfigurationInput = typeof VcsConfigurationInput.Type;
+
+const VcsConfigurationValue = Schema.Struct({
+  effective: Schema.NullOr(Schema.String),
+  repository: Schema.NullOr(Schema.String),
+});
+
+export const VcsConfigurationResult = Schema.Struct({
+  kind: VcsDriverKind,
+  userName: VcsConfigurationValue,
+  userEmail: VcsConfigurationValue,
+  largeFile: VcsConfigurationValue,
+});
+export type VcsConfigurationResult = typeof VcsConfigurationResult.Type;
+
+export const VcsConfigurationWriteInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  setting: Schema.Literals(["userName", "userEmail", "largeFile"]),
+  value: Schema.NullOr(Schema.String),
+});
+export type VcsConfigurationWriteInput = typeof VcsConfigurationWriteInput.Type;
+
 // RPC Results
 
 const VcsStatusChangeRequest = Schema.Struct({

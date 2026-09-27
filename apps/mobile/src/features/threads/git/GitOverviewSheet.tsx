@@ -5,10 +5,19 @@ import {
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  type VcsConfigurationResult,
+  type VcsConfigurationWriteInput,
+} from "@t3tools/contracts";
 import {
   CommonActions,
   StackActions,
@@ -17,7 +26,15 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import {
+  Alert,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  TextInput,
+  View,
+} from "react-native";
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -36,6 +53,7 @@ import {
 } from "../../../native/StackHeader";
 import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../../state/query";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -45,6 +63,58 @@ import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigat
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+
+function ConfigurationField({
+  label,
+  detail,
+  entry,
+  setting,
+  disabled,
+  onWrite,
+}: {
+  label: string;
+  detail: string;
+  entry: VcsConfigurationResult["userName"];
+  setting: VcsConfigurationWriteInput["setting"];
+  disabled: boolean;
+  onWrite: (setting: VcsConfigurationWriteInput["setting"], value: string | null) => void;
+}) {
+  const [value, setValue] = useState(entry.repository ?? entry.effective ?? "");
+  return (
+    <View className="gap-2 border-t border-border px-4 py-3">
+      <Text className="text-sm font-t3-bold">{label}</Text>
+      <Text className="text-xs text-foreground-muted">{detail}</Text>
+      <TextInput
+        className="rounded-xl border border-border bg-screen px-3 py-2 text-foreground"
+        accessibilityLabel={label}
+        value={value}
+        onChangeText={setValue}
+        editable={!disabled}
+        autoCapitalize="none"
+      />
+      <Text className="text-xs text-foreground-muted">
+        {entry.repository !== null
+          ? "Repository override"
+          : entry.effective !== null
+            ? `Inherited: ${entry.effective}`
+            : "Unset"}
+      </Text>
+      <View className="flex-row gap-3">
+        <Pressable
+          disabled={disabled || value.trim() === ""}
+          onPress={() => onWrite(setting, value)}
+        >
+          <Text className="font-t3-bold text-primary">Save</Text>
+        </Pressable>
+        {entry.repository !== null ? (
+          <Pressable disabled={disabled} onPress={() => onWrite(setting, null)}>
+            <Text className="font-t3-bold text-foreground-muted">Reset</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
 
 type GitOverviewSheetProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -75,10 +145,6 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   );
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const theme = useUniwindTheme();
-  const foregroundColor = theme["--color-foreground"];
-  const sheetColor = theme["--color-sheet"];
-
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
@@ -87,12 +153,53 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         })
       : null,
   );
+  const [configurationOpen, setConfigurationOpen] = useState(false);
+  const [configurationSaving, setConfigurationSaving] = useState(false);
+  const configuration = useEnvironmentQuery(
+    configurationOpen &&
+      selectedThread !== null &&
+      selectedThreadCwd !== null &&
+      gitStatus.data?.isRepo === true
+      ? vcsEnvironment.configuration({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
+  const writeConfiguration = useAtomCommand(vcsEnvironment.writeConfiguration, {
+    reportFailure: false,
+  });
+  const theme = useUniwindTheme();
+  const foregroundColor = theme["--color-foreground"];
+  const sheetColor = theme["--color-sheet"];
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
+  const onWriteConfiguration = useCallback(
+    (setting: VcsConfigurationWriteInput["setting"], value: string | null) => {
+      if (selectedThread === null || selectedThreadCwd === null) return;
+      setConfigurationSaving(true);
+      void writeConfiguration({
+        environmentId: selectedThread.environmentId,
+        input: { cwd: selectedThreadCwd, setting, value },
+      }).then((result) => {
+        setConfigurationSaving(false);
+        if (result._tag === "Success") {
+          configuration.refresh();
+        } else if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          Alert.alert(
+            "Could not update repository configuration",
+            error instanceof Error ? error.message : "An error occurred.",
+          );
+        }
+      });
+    },
+    [configuration, selectedThread, selectedThreadCwd, writeConfiguration],
+  );
   const isRepo = gitStatus.data?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
@@ -306,6 +413,56 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             })
           }
         />
+        {isRepo ? (
+          <>
+            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
+            <SheetListRow
+              icon="slider.horizontal.3"
+              title="Repository configuration"
+              subtitle="Author identity and large-file settings"
+              onPress={() => setConfigurationOpen((open) => !open)}
+            />
+            {configurationOpen ? (
+              configuration.error ? (
+                <Text className="px-4 py-3 text-sm text-destructive">{configuration.error}</Text>
+              ) : configuration.data ? (
+                <>
+                  <ConfigurationField
+                    key={`${selectedThread?.environmentId}:${selectedThreadCwd}:name:${configuration.data.userName.repository}:${configuration.data.userName.effective}`}
+                    label="Commit author name"
+                    detail="Used for new commits in this repository"
+                    entry={configuration.data.userName}
+                    setting="userName"
+                    disabled={configurationSaving}
+                    onWrite={onWriteConfiguration}
+                  />
+                  <ConfigurationField
+                    key={`${selectedThread?.environmentId}:${selectedThreadCwd}:email:${configuration.data.userEmail.repository}:${configuration.data.userEmail.effective}`}
+                    label="Commit author email"
+                    detail="Used for new commits in this repository"
+                    entry={configuration.data.userEmail}
+                    setting="userEmail"
+                    disabled={configurationSaving}
+                    onWrite={onWriteConfiguration}
+                  />
+                  <ConfigurationField
+                    key={`${selectedThread?.environmentId}:${selectedThreadCwd}:large:${configuration.data.largeFile.repository}:${configuration.data.largeFile.effective}`}
+                    label="Large file diff threshold"
+                    detail="Git treats files above this size as binary in diffs. Enter MiB."
+                    entry={configuration.data.largeFile}
+                    setting="largeFile"
+                    disabled={configurationSaving}
+                    onWrite={onWriteConfiguration}
+                  />
+                </>
+              ) : (
+                <Text className="px-4 py-3 text-sm text-foreground-muted">
+                  Loading configuration...
+                </Text>
+              )
+            ) : null}
+          </>
+        ) : null}
       </View>
 
       {linkedPrChains.length > 0 ? (

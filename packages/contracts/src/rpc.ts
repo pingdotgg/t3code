@@ -64,6 +64,9 @@ import {
   VcsCreateWorktreeInput,
   VcsCreateWorktreeResult,
   VcsInitInput,
+  VcsConfigurationInput,
+  VcsConfigurationResult,
+  VcsConfigurationWriteInput,
   VcsListRefsInput,
   VcsListRefsResult,
   GitManagerServiceError,
@@ -319,6 +322,8 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsConfigurationRead: "vcs.configuration.read",
+  vcsConfigurationWrite: "vcs.configuration.write",
 
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
@@ -1091,6 +1096,17 @@ const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsConfigurationReadRpc = Rpc.make(WS_METHODS.vcsConfigurationRead, {
+  payload: VcsConfigurationInput,
+  success: VcsConfigurationResult,
+  error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
+});
+
+const WsVcsConfigurationWriteRpc = Rpc.make(WS_METHODS.vcsConfigurationWrite, {
+  payload: VcsConfigurationWriteInput,
+  error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
+});
+
 /**
  * Ephemeral live diff preview for compact/mobile surfaces.
  * Not the persisted T3 Review model. Future review sessions should use
@@ -1491,6 +1507,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsConfigurationReadRpc,
+  WsVcsConfigurationWriteRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,
