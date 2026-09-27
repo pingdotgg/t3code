@@ -41,6 +41,7 @@ import {
 } from "~/composer-logic";
 import {
   createComposerDeadKeyGravePlugin,
+  insertComposerPaste,
   isPlainDeadKeyDown,
   rememberPlainDeadKey,
 } from "~/composerDeadKeyGrave";
@@ -1038,7 +1039,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           const editorInstance = editorHolder.current;
           if (editorInstance) {
             insertMarkdownParagraphs(text, skillLabelFor, { styling: richText }, (content) => {
-              editorInstance.commands.insertContent(content);
+              insertComposerPaste(editorInstance, content);
             });
             scrollTiptapCaretIntoView(editorInstance);
           }

@@ -10,6 +10,7 @@ import {
   DEAD_KEY_GRAVE_MAX_AGE_MS,
   deadKeyGraveTextEdit,
   isPlainDeadKeyDown,
+  insertComposerPaste,
   rememberPlainDeadKey,
 } from "./composerDeadKeyGrave";
 
@@ -116,6 +117,53 @@ describe("composer dead-key graves", () => {
     rememberPlainDeadKey(view);
     view.dispatch(view.state.tr.insertText(grave).setMeta("paste", true));
     expect(view.state.doc.textContent).toBe(grave);
+  });
+
+  it("leaves a single look-alike unchanged when insertContent is marked as paste", async () => {
+    const { Editor, Extension } = await import("@tiptap/core");
+    const { default: StarterKit } = await import("@tiptap/starter-kit");
+    const mountEditor = () => {
+      const parent = document.createElement("div");
+      document.body.append(parent);
+      const editor = new Editor({
+        element: parent,
+        extensions: [
+          StarterKit.configure({
+            blockquote: false,
+            bulletList: false,
+            codeBlock: false,
+            heading: false,
+            horizontalRule: false,
+            listItem: false,
+            link: false,
+            orderedList: false,
+            underline: false,
+            dropcursor: false,
+            gapcursor: false,
+            trailingNode: false,
+            code: false,
+          }),
+          Extension.create({
+            name: "composerDeadKeyGrave",
+            addProseMirrorPlugins() {
+              return [createComposerDeadKeyGravePlugin()];
+            },
+          }),
+        ],
+        content: "<p></p>",
+      });
+      views.push(editor);
+      rememberPlainDeadKey(editor.view);
+      return editor;
+    };
+
+    const pasted = mountEditor();
+    insertComposerPaste(pasted, grave);
+    expect(pasted.getText()).toBe(grave);
+
+    const typed = mountEditor();
+    typed.chain().insertContent(grave).run();
+    expect(typed.getText()).toBe("`");
   });
 
   it("stores each grave look-alike as an ASCII backtick", async () => {

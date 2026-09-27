@@ -11,6 +11,16 @@ export const DEAD_KEY_GRAVE_MAX_AGE_MS = 1000;
 const deadKeyStateKey = new PluginKey<{ at: number | null }>("composerDeadKeyGrave");
 const appliedMetaKey = new PluginKey<undefined>("composerDeadKeyGraveApplied");
 
+/** Mark a composer paste insert the same way native ProseMirror paste does. */
+export function insertComposerPaste<
+  Chain extends {
+    setMeta(key: string, value: string | boolean): Chain;
+    insertContent(value: unknown): { run(): boolean };
+  },
+>(editor: { chain: () => Chain }, content: unknown): void {
+  editor.chain().setMeta("paste", true).setMeta("uiEvent", "paste").insertContent(content).run();
+}
+
 export function rememberPlainDeadKey(
   view: { dispatch: (transaction: Transaction) => void; state: EditorState },
   nowMs = performance.now(),
