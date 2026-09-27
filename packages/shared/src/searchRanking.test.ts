@@ -164,6 +164,58 @@ describe("scoreQueryMatch", () => {
     ).toBeNull();
   });
 
+  it("prefers the folded exact match over a loose subsequence match", () => {
+    // "İptal" lowercases to "i̇ptal" (i + U+0307), so an ASCII query can only
+    // subsequence-match the plain string. Returning that loose score would rank
+    // the field as a guess, while the fold finds an exact match.
+    const tiers = {
+      exactBase: 0,
+      prefixBase: 102,
+      boundaryBase: 104,
+      includesBase: 106,
+      fuzzyBase: 200,
+    };
+    expect(
+      scoreQueryMatch({
+        value: "i̇ptal",
+        query: "iptal",
+        ...tiers,
+      }),
+    ).toBe(0);
+  });
+
+  it("does not let the fold promote a candidate that a strong tier already matched", () => {
+    // The fold trims whitespace, so "cafe " folds onto "cafe" exactly. Ranking
+    // it as an exact match would reorder every existing result, which is not
+    // this change's business. 101 is prefixBase plus the length penalty.
+    expect(
+      scoreQueryMatch({
+        value: "cafe ",
+        query: "cafe",
+        exactBase: 0,
+        prefixBase: 100,
+        includesBase: 106,
+        fuzzyBase: 200,
+      }),
+    ).toBe(101);
+  });
+
+  it("keeps returning the plain subsequence score when nothing folds", () => {
+    // "gcm" is a subsequence of "git-commit" but not a substring of it, so only
+    // the third pass can match it. Folding changes neither string, so the
+    // folded pass is skipped and this score has to survive on its own.
+    expect(
+      scoreQueryMatch({
+        value: "git-commit",
+        query: "gcm",
+        exactBase: 0,
+        prefixBase: 100,
+        includesBase: 106,
+        fuzzyBase: 200,
+      }),
+    ).toBe(223);
+  });
+
   it("returns null when neither the plain nor the folded comparison matches", () => {
     expect(
       scoreQueryMatch({

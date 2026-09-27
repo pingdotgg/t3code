@@ -132,31 +132,46 @@ function findBoundaryMatchIndex(
  * **Expects pre-normalized inputs**: both `value` and `query` must already be
  * trimmed and lowercased (e.g. via {@link normalizeSearchQuery}).
  *
- * When the plain comparison finds nothing, the same comparison is retried with
- * both sides run through {@link foldForSearch}, which is what lets "iptal" find
- * "İptal" and "cafe" find "Café". The fold has to be applied to the candidate as
- * well as the query: folding only the query would compare `cafe` against `café`
- * and lose the match. Retrying rather than pre-folding is deliberate — callers
- * index thousands of candidates per keystroke, and a fallback that only runs
- * after a miss leaves the hot path byte-for-byte what it was, so no query that
- * matched before can stop matching.
+ * Three passes, strongest tier first:
+ *
+ * 1. The plain comparison, without the subsequence tier. These are the matches
+ *    that keep the exact score they have always returned.
+ * 2. The same comparison with both sides run through {@link foldForSearch}, which
+ *    is what lets "iptal" find "İptal" and "cafe" find "Café". The fold has to
+ *    reach the candidate as well as the query: folding only the query would
+ *    compare `cafe` against `Café` and lose the match.
+ * 3. The plain comparison's subsequence tier, for queries that were never a
+ *    substring in the first place.
+ *
+ * The order matters more than it looks. `"İptal"` lowercases to `i̇ptal` (i plus
+ * U+0307), which an ASCII query can only subsequence-match, so pass 3 alone
+ * would rank it as a loose guess while pass 2 finds an exact match. Folding
+ * before the strong tiers instead would be wrong in the other direction: the
+ * fold trims whitespace, so taking the best of both passes would silently
+ * promote every candidate with a trailing space from 103 to 0.
  */
 export function scoreQueryMatch(input: ScoreQueryMatchInput): number | null {
-  const direct = scoreNormalizedMatch(input);
+  const direct = scoreNormalizedMatch(input, { skipFuzzy: true });
   if (direct !== null) {
     return direct;
   }
 
   const value = foldForSearch(input.value);
   const query = foldForSearch(input.query);
-  if (value === input.value && query === input.query) {
-    return null;
+  if (value !== input.value || query !== input.query) {
+    const folded = scoreNormalizedMatch({ ...input, value, query });
+    if (folded !== null) {
+      return folded;
+    }
   }
 
-  return scoreNormalizedMatch({ ...input, value, query });
+  return scoreNormalizedMatch(input);
 }
 
-function scoreNormalizedMatch(input: ScoreQueryMatchInput): number | null {
+function scoreNormalizedMatch(
+  input: ScoreQueryMatchInput,
+  options?: { skipFuzzy?: boolean },
+): number | null {
   const { value, query } = input;
 
   if (!value || !query) {
@@ -189,7 +204,7 @@ function scoreNormalizedMatch(input: ScoreQueryMatchInput): number | null {
     }
   }
 
-  if (input.fuzzyBase !== undefined) {
+  if (input.fuzzyBase !== undefined && !options?.skipFuzzy) {
     const fuzzyScore = scoreSubsequenceMatch(value, query);
     if (fuzzyScore !== null) {
       return input.fuzzyBase + fuzzyScore;
