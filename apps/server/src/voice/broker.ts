@@ -379,6 +379,7 @@ export class VoiceLiveBroker extends Context.Service<
   }
 >()("t3/voice/broker/VoiceLiveBroker") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const resolvedHttpClient = yield* HttpClient.HttpClient;
   // The fetch client carries no default timeout: wrap it once so a stalled
