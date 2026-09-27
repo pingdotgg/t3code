@@ -6182,9 +6182,9 @@ it.effect(
     }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 keeps the attach lock through the adapter call when a detach queues",
-  () =>
+it.effect.each([1, 131, 261, 391])(
+  "ProviderSessionManagerV2 keeps the attach lock through the adapter call when a detach queues (offsets starting at %i)",
+  (firstOffset) =>
     Effect.gen(function* () {
       // Every op offset past the credential-issuance gate gets its own fresh
       // manager: the attach is suspended exactly there, and the queued detach
@@ -6195,7 +6195,7 @@ it.effect(
       // reaches well past the bookkeeping-to-admission boundary (~op 505 on
       // the unfused implementation — credential issuance dominates the
       // ~440 ops between the park point and the lock release).
-      for (let offset = 1; offset <= 520; offset += 1) {
+      for (let offset = firstOffset; offset < firstOffset + 130; offset += 1) {
         const state = yield* Ref.make(emptyState);
         const issuing = yield* Deferred.make<void>();
         const issueGate = yield* Deferred.make<void>();
