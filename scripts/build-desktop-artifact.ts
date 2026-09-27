@@ -168,7 +168,6 @@ interface BuildCliInput {
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
   readonly wslRuntime: Option.Option<string>;
-  readonly wslPrebuild: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -938,7 +937,6 @@ interface ResolvedBuildOptions {
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
   readonly wslRuntime: string | undefined;
-  readonly wslPrebuild: string | undefined;
   readonly buildIdentity: DesktopBuildIdentity;
 }
 
@@ -1581,11 +1579,6 @@ const BuildEnvConfig = Config.all({
   // by the build_linux_cli CI job. The Windows build embeds it verbatim as the
   // WSL runtime.
   wslRuntime: Config.String("T3CODE_DESKTOP_WSL_RUNTIME").pipe(Config.option),
-  // Path to a prebuilt Linux node-pty binary (pty.node) for the target arch,
-  // produced by the Linux CI job and handed to the Windows packaging job. Placed
-  // into the staged node-pty so the WSL backend ships a ready binary and never
-  // compiles on the user's machine.
-  wslPrebuild: Config.String("T3CODE_DESKTOP_WSL_PREBUILD").pipe(Config.option),
   distribution: Config.String("T3CODE_DESKTOP_DISTRIBUTION").pipe(Config.option),
 });
 
@@ -1684,8 +1677,6 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslRuntime =
     Option.getOrUndefined(input.wslRuntime) ?? Option.getOrUndefined(env.wslRuntime);
-  const wslPrebuild =
-    Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
   const buildIdentity = yield* resolveDesktopBuildIdentity(
     version ?? serverPackageJson.version,
     Option.getOrUndefined(env.distribution),
@@ -1705,7 +1696,6 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     mockUpdates,
     mockUpdateServerPort,
     wslRuntime,
-    wslPrebuild,
     buildIdentity,
   } satisfies ResolvedBuildOptions;
 });
@@ -4070,12 +4060,6 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   wslRuntime: Flag.String("wsl-runtime").pipe(
     Flag.withDescription(
       "Path to the Linux CLI release archive (t3-<version>-linux-x64.tar.gz) to embed as the WSL runtime of a Windows build (env: T3CODE_DESKTOP_WSL_RUNTIME).",
-    ),
-    Flag.optional,
-  ),
-  wslPrebuild: Flag.String("wsl-prebuild").pipe(
-    Flag.withDescription(
-      "Path to a prebuilt Linux node-pty (pty.node) for the target arch, staged for the WSL backend (env: T3CODE_DESKTOP_WSL_PREBUILD).",
     ),
     Flag.optional,
   ),

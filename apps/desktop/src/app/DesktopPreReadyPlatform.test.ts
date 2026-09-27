@@ -119,6 +119,7 @@ describe("DesktopPreReadyPlatform", () => {
           supportFetchAPI: true,
           corsEnabled: true,
           stream: true,
+          codeCache: true,
         },
       });
     }),

@@ -522,10 +522,7 @@ export const make = Effect.gen(function* () {
               ),
             ),
           );
-          if (
-            candidate !== catalogPath &&
-            catalogs.some((catalog) => catalog.path === catalogPath)
-          ) {
+          if (candidate !== catalogPath) {
             yield* decodeRuntimeConnectionCatalogDocumentJson(decrypted).pipe(
               Effect.mapError(
                 (cause) =>

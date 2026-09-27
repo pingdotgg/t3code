@@ -136,7 +136,8 @@ describe("DesktopConnectionCatalogStore", () => {
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const catalog =
+          '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[]}';
 
         assert.isTrue(yield* store.set(catalog));
         assert.deepStrictEqual(yield* store.get, Option.some(catalog));
@@ -371,6 +372,37 @@ describe("DesktopConnectionCatalogStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  for (const invalid of ["not JSON", '{"schemaVersion":999}']) {
+    it.effect(`preserves an invalid sole legacy catalog: ${invalid}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-catalog-invalid-" });
+        yield* Effect.gen(function* () {
+          const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          yield* fs.makeDirectory(environment.stateDir, { recursive: true });
+          const legacyPath = environment.legacyConnectionCatalogPaths[0]!;
+          const encrypted = yield* encodeEncryptedCatalogFixture({
+            version: 1,
+            encryptedCatalog: Buffer.from(`encrypted:${invalid}`).toString("base64"),
+          });
+          yield* fs.writeFileString(legacyPath, encrypted);
+          const error = yield* store.get.pipe(Effect.flip);
+          assert.instanceOf(
+            error,
+            DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreDocumentDecodeError,
+          );
+          assert.equal(yield* fs.readFileString(legacyPath), encrypted);
+          assert.isFalse(yield* fs.exists(environment.connectionCatalogPath));
+        }).pipe(
+          Effect.provide(
+            makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Nightly)"),
+          ),
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
   it.effect("clearing one channel preserves an unmigrated sibling catalog", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -407,7 +439,8 @@ describe("DesktopConnectionCatalogStore", () => {
             makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Nightly)"),
           ),
         );
-        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const catalog =
+          '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[]}';
         const legacyPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json`;
         const stablePath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
         const encryptedCatalog = Buffer.from(`encrypted:${catalog}`, "utf8").toString("base64");
@@ -450,7 +483,8 @@ describe("DesktopConnectionCatalogStore", () => {
             ),
           ),
         );
-        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const catalog =
+          '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[]}';
         const legacyPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json`;
         const stablePath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
         const encryptedCatalog = Buffer.from(`encrypted:${catalog}`, "utf8").toString("base64");
@@ -482,7 +516,8 @@ describe("DesktopConnectionCatalogStore", () => {
         });
         const legacyPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json`;
         const stablePath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
-        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const catalog =
+          '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[]}';
         const encryptedCatalog = Buffer.from(`encrypted:${catalog}`, "utf8").toString("base64");
         const permissionError = PlatformError.systemError({
           _tag: "PermissionDenied",
@@ -537,7 +572,8 @@ describe("DesktopConnectionCatalogStore", () => {
       const releaseDecrypt = yield* Deferred.make<void>();
       const saveStarted = yield* Deferred.make<void>();
       const operations: string[] = [];
-      const oldCatalog = '{"schemaVersion":1,"targets":[]}';
+      const oldCatalog =
+        '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[]}';
       const newCatalog = '{"schemaVersion":1,"targets":[],"profiles":[]}';
       const safeStorageLayer = Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
         isEncryptionAvailable: Effect.succeed(true),
