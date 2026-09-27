@@ -21,6 +21,7 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import * as VoiceBroker from "./broker.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import {
@@ -28,7 +29,6 @@ import {
   evictStaleClosedSessions,
   OPENAI_API_KEY_SECRET_NAME,
   VoiceLiveBroker,
-  VoiceLiveBrokerLive,
   voiceBrokerRouteHandlers,
 } from "./broker.ts";
 
@@ -165,7 +165,7 @@ const makeTest = (options?: {
       options.upstream(state);
     }
     const context = yield* Layer.build(
-      VoiceLiveBrokerLive.pipe(
+      VoiceBroker.layer.pipe(
         Layer.provide(
           FetchHttpClient.layer.pipe(
             Layer.provide(Layer.succeed(FetchHttpClient.Fetch, makeUpstreamFetch(state))),

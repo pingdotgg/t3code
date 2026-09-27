@@ -492,11 +492,13 @@ export function VoicePanel() {
       className={`fixed z-50 ${positionClasses}`}
       style={positionStyle}
     >
-      <button
+      <Button
         type="button"
         aria-label={`Voice, ${panelState.phase}`}
         data-voice-phase={panelState.phase}
-        className="flex cursor-grab items-center gap-1.5 rounded-full border bg-background px-3 py-2 text-xs font-medium shadow-lg select-none active:cursor-grabbing"
+        variant="glass"
+        size="sm"
+        className="cursor-grab select-none active:cursor-grabbing"
         // Draggable, tap-to-expand, plus hold-to-talk and double-press in
         // those activation modes (see the handlers above).
         onPointerDown={(event) => {
@@ -524,7 +526,7 @@ export function VoicePanel() {
           className={`inline-block h-2 w-2 rounded-full ${PHASE_DOT_CLASSES[panelState.phase] ?? PHASE_DOT_CLASSES.idle}`}
         />
         Voice
-      </button>
+      </Button>
     </div>
   );
 

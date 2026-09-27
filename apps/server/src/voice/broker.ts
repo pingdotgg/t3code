@@ -190,9 +190,6 @@ const voiceBrokerErrorResponse = (error: VoiceBrokerError) =>
     ),
   );
 
-const brokerInvalidRequest = (message: string, status = 400) =>
-  new VoiceBrokerError({ code: "invalid_request", message, status });
-
 // ---------------------------------------------------------------------------
 // Voice tool advertisement (names from the frozen registry; concise because
 // execution stays client-owned and the model-visible list grants no authority)
@@ -382,7 +379,7 @@ export class VoiceLiveBroker extends Context.Service<
   }
 >()("t3/voice/broker/VoiceLiveBroker") {}
 
-const makeBroker = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const resolvedHttpClient = yield* HttpClient.HttpClient;
   // The fetch client carries no default timeout: wrap it once so a stalled
   // OpenAI request fails with a TimeoutError instead of pending forever. Both
@@ -395,7 +392,12 @@ const makeBroker = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
 
-  const settingsFailure = () => brokerInvalidRequest("Could not access voice settings.", 500);
+  const settingsFailure = () =>
+    new VoiceBrokerError({
+      code: "invalid_request",
+      message: "Could not access voice settings.",
+      status: 500,
+    });
   const getSettings = Effect.fn("VoiceLiveBroker.getSettings")(function* () {
     const config = yield* loadBrokerConfig(secrets);
     const key = yield* secrets
@@ -435,10 +437,11 @@ const makeBroker = Effect.gen(function* () {
   ) {
     const retained = (yield* Ref.get(sessions)).get(sessionId);
     if (retained === undefined) {
-      return yield* brokerInvalidRequest(
-        `Unknown voice session ${String(sessionId)}. The broker only knows sessions it minted in this server process.`,
-        404,
-      );
+      return yield* new VoiceBrokerError({
+        code: "invalid_request",
+        message: `Unknown voice session ${String(sessionId)}. The broker only knows sessions it minted in this server process.`,
+        status: 404,
+      });
     }
     return retained;
   });
@@ -550,17 +553,21 @@ const makeBroker = Effect.gen(function* () {
   const respond = Effect.fn("VoiceLiveBroker.respond")(function* (input: VoiceBackendRequest) {
     const retained = yield* requireSession(input.sessionId);
     if (retained.status !== "open" || !retained.clientDelegation) {
-      return yield* brokerInvalidRequest(
-        "The command backend requires an open client-delegation session.",
-      );
+      return yield* new VoiceBrokerError({
+        code: "invalid_request",
+        message: "The command backend requires an open client-delegation session.",
+        status: 400,
+      });
     }
     const encoded = yield* encodeBackendInput(input.input).pipe(
       Effect.mapError(() => upstreamFailureError(400)),
     );
     if (encoded.length > 128_000) {
-      return yield* brokerInvalidRequest(
-        "Voice command context is full. Start a fresh voice session.",
-      );
+      return yield* new VoiceBrokerError({
+        code: "invalid_request",
+        message: "Voice command context is full. Start a fresh voice session.",
+        status: 400,
+      });
     }
     const config = yield* loadBrokerConfig(secrets);
     const key = yield* secrets
@@ -626,7 +633,11 @@ const makeBroker = Effect.gen(function* () {
       return [true, next];
     });
     if (!found) {
-      return yield* brokerInvalidRequest(`Unknown voice session ${String(input.sessionId)}.`, 404);
+      return yield* new VoiceBrokerError({
+        code: "invalid_request",
+        message: `Unknown voice session ${String(input.sessionId)}.`,
+        status: 404,
+      });
     }
     return { closed: true } satisfies VoiceBrokerSessionCloseResult;
   });
@@ -643,7 +654,11 @@ const makeBroker = Effect.gen(function* () {
       return [true, next];
     });
     if (!found) {
-      return yield* brokerInvalidRequest(`Unknown voice session ${String(usage.sessionId)}.`, 404);
+      return yield* new VoiceBrokerError({
+        code: "invalid_request",
+        message: `Unknown voice session ${String(usage.sessionId)}.`,
+        status: 404,
+      });
     }
     return stored;
   });
@@ -673,7 +688,7 @@ const makeBroker = Effect.gen(function* () {
   });
 });
 
-export const VoiceLiveBrokerLive = Layer.effect(VoiceLiveBroker, makeBroker);
+export const layer = Layer.effect(VoiceLiveBroker, make);
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -749,11 +764,23 @@ const decodeJsonBody = <A>(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const raw = yield* request.json.pipe(
-      Effect.mapError(() => brokerInvalidRequest("The request body must be JSON.")),
+      Effect.mapError(
+        () =>
+          new VoiceBrokerError({
+            code: "invalid_request",
+            message: "The request body must be JSON.",
+            status: 400,
+          }),
+      ),
     );
     return yield* Schema.decodeUnknownEffect(schema)(raw).pipe(
-      Effect.mapError(() =>
-        brokerInvalidRequest("The request body does not match the voice broker schema."),
+      Effect.mapError(
+        () =>
+          new VoiceBrokerError({
+            code: "invalid_request",
+            message: "The request body does not match the voice broker schema.",
+            status: 400,
+          }),
       ),
     );
   });
@@ -823,7 +850,11 @@ const getSessionUsageRoute = (broker: VoiceLiveBroker["Service"]) =>
       const url = HttpServerRequest.toURL(request);
       const sessionId = url._tag === "Some" ? url.value.searchParams.get("sessionId") : null;
       if (sessionId === null || sessionId.length === 0) {
-        return yield* brokerInvalidRequest("The sessionId query parameter is required.");
+        return yield* new VoiceBrokerError({
+          code: "invalid_request",
+          message: "The sessionId query parameter is required.",
+          status: 400,
+        });
       }
       const usage = yield* broker.getSessionUsage({ sessionId: VoiceSessionId.make(sessionId) });
       return HttpServerResponse.jsonUnsafe(usage);
@@ -869,4 +900,4 @@ export const voiceBrokerRouteLayer = Layer.unwrap(
       HttpRouter.add("GET", VOICE_BROKER_USAGE_PATH, getSessionUsageRoute(broker)),
     );
   }),
-).pipe(Layer.provide(VoiceLiveBrokerLive));
+).pipe(Layer.provide(layer));
