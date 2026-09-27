@@ -168,6 +168,7 @@ import { ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAut
 import { rpcAuthorizationLayer } from "./auth/RpcAuthorization.ts";
 import { PreviewManager } from "./preview/Manager.ts";
 import { PortDiscovery } from "./preview/PortScanner.ts";
+import { PullRequestCreationAutomation } from "./pullRequestMonitor/PullRequestCreationAutomation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { PreviewAutomationBroker } from "./mcp/PreviewAutomationBroker.ts";
 import {
@@ -184,7 +185,6 @@ import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { repositoryFromPullRequestUrl } from "./pullRequestMonitor/PullRequestMonitorAssociationReactor.ts";
-import { buildCreatedPullRequestLink } from "./pullRequestMonitor/createdPullRequestHandoff.ts";
 import * as PullRequestMonitors from "./pullRequestMonitor/PullRequestMonitorService.ts";
 import { CollaborativeAcceptanceCoordinator } from "./collaborativeAcceptance/Coordinator.ts";
 import { acceptanceAuthorityForThread } from "./collaborativeAcceptance/authority.ts";
@@ -284,6 +284,7 @@ const makeWsRpcLayer = (
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
+      const pullRequestCreationAutomation = yield* PullRequestCreationAutomation;
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const diffStateQuery = yield* DiffStateQuery;
       const keybindings = yield* Keybindings;
@@ -2347,8 +2348,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "git" },
           ),
-        [WS_METHODS.gitRunStackedAction]: (input) =>
-          observeRpcStream(
+        [WS_METHODS.gitRunStackedAction]: (input) => {
+          const projectId = input.projectId;
+          const threadId = input.threadId;
+          return observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
               gitManager
@@ -2357,51 +2360,68 @@ const makeWsRpcLayer = (
                   progressReporter: {
                     publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
                   },
+                  ...(threadId !== undefined && projectId !== undefined
+                    ? {
+                        onPullRequestCreateIntent: (context) =>
+                          pullRequestCreationAutomation.recordIntent({
+                            actionId: input.actionId,
+                            threadId,
+                            projectId,
+                            cwd: input.cwd,
+                            ...context,
+                          }),
+                      }
+                    : {}),
                 })
                 .pipe(
                   Effect.matchCauseEffect({
                     onFailure: (cause) => Queue.failCause(queue, cause),
                     onSuccess: (result) =>
                       Effect.gen(function* () {
-                        const projectId = input.projectId;
-                        const threadId = input.threadId;
-                        const createdLink =
-                          projectId !== undefined && threadId !== undefined
-                            ? buildCreatedPullRequestLink({
-                                status: result.pr.status,
-                                url: result.pr.url,
-                                number: result.pr.number,
-                                title: result.pr.title,
-                                baseBranch: result.pr.baseBranch,
-                                headBranch: result.pr.headBranch,
-                              })
-                            : null;
+                        const createdPrNumber = result.pr.number;
                         if (
-                          createdLink !== null &&
+                          result.pr.status === "created" &&
                           projectId !== undefined &&
                           threadId !== undefined
                         ) {
-                          yield* orchestrationEngine
-                            .dispatch({
-                              type: "thread.pull-request.link",
-                              commandId: CommandId.make(
-                                `server:created-pr:${threadId}:${createdLink.pullRequest.number}:${crypto.randomUUID()}`,
-                              ),
+                          yield* pullRequestCreationAutomation
+                            .handleCreatedResult({
+                              actionId: input.actionId,
                               threadId,
-                              pullRequest: createdLink.pullRequest,
-                              source: "created",
+                              projectId,
+                              cwd: input.cwd,
+                              pullRequest: result.pr,
                             })
-                            .pipe(Effect.ignore({ log: true }));
+                            .pipe(
+                              Effect.catch((error) =>
+                                Effect.logWarning(
+                                  "created PR handoff failed; durable recovery will retry",
+                                  {
+                                    actionId: input.actionId,
+                                    operation: error.operation,
+                                    detail: error.detail,
+                                  },
+                                ),
+                              ),
+                            );
+                        }
+                        if (
+                          result.pr.status === "created" &&
+                          typeof createdPrNumber === "number" &&
+                          projectId !== undefined &&
+                          threadId !== undefined
+                        ) {
                           const settingsResult = yield* Effect.result(serverSettings.getSettings);
                           const enabled =
                             Result.isSuccess(settingsResult) &&
                             settingsResult.success.autoMonitorPullRequestsOnCreate === true;
-                          if (enabled) {
+                          const repository = repositoryFromPullRequestUrl(result.pr.url);
+                          if (enabled && repository) {
                             yield* withPullRequestMonitors((service) =>
                               service.start({
                                 projectId,
-                                repository: createdLink.repository,
-                                number: createdLink.pullRequest.number,
+                                repository,
+                                number: createdPrNumber,
                                 ownerThreadId: threadId,
                               }),
                             ).pipe(Effect.ignore({ log: true }));
@@ -2414,7 +2434,8 @@ const makeWsRpcLayer = (
                 ),
             ),
             { "rpc.aggregate": "git" },
-          ),
+          );
+        },
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           observeRpcEffect(WS_METHODS.gitResolvePullRequest, gitManager.resolvePullRequest(input), {
             "rpc.aggregate": "git",

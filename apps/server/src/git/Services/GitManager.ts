@@ -27,9 +27,25 @@ export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
 }
 
+export interface GitPullRequestCreationIntentContext {
+  readonly localBranch: string;
+  readonly headBranch: string;
+  readonly headSelector: string;
+  readonly baseBranch: string;
+  readonly headSha: string;
+}
+
 export interface GitRunStackedActionOptions {
   readonly actionId?: string;
   readonly progressReporter?: GitActionProgressReporter;
+  /**
+   * Called after confirming there is no open PR and before creating one.
+   * Callers must only persist local intent here; orchestration dispatch waits
+   * until the checkout reservation has been released.
+   */
+  readonly onPullRequestCreateIntent?: (
+    context: GitPullRequestCreationIntentContext,
+  ) => Effect.Effect<void, GitManagerServiceError>;
 }
 
 /**

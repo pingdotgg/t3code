@@ -19,6 +19,8 @@ import {
   EnvironmentId,
   EventId,
   GitCommandError,
+  GitManagerError,
+  type GitRunStackedActionResult,
   KeybindingRule,
   MessageId,
   MOBILE_PROTOCOL_VERSION,
@@ -135,6 +137,10 @@ import { ProviderService, type ProviderServiceShape } from "./provider/Services/
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
+import {
+  PullRequestCreationAutomation,
+  type PullRequestCreationAutomationShape,
+} from "./pullRequestMonitor/PullRequestCreationAutomation.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
 import { PreviewManager } from "./preview/Manager.ts";
 import { PortDiscovery } from "./preview/PortScanner.ts";
@@ -406,6 +412,7 @@ const buildAppUnderTest = (options?: {
     providerService?: Partial<ProviderServiceShape>;
     relayClient?: Partial<RelayClientShape>;
     collaborativeAcceptanceCoordinator?: Partial<CollaborativeAcceptanceCoordinatorShape>;
+    pullRequestCreationAutomation?: Partial<PullRequestCreationAutomationShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -546,13 +553,21 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(gitCoreLayer),
       Layer.provide(gitManagerLayer),
-      Layer.provideMerge(gitStatusBroadcasterLayer),
       Layer.provide(
-        Layer.mock(ProjectSetupScriptRunner)({
-          runForThread: () => Effect.succeed({ status: "no-script" as const }),
-          ...options?.layers?.projectSetupScriptRunner,
-        }),
+        Layer.merge(
+          Layer.mock(PullRequestCreationAutomation)({
+            recordIntent: () => Effect.die("Unexpected PR creation intent."),
+            handleCreatedResult: () => Effect.die("Unexpected created PR result."),
+            recoverPending: () => Effect.void,
+            ...options?.layers?.pullRequestCreationAutomation,
+          }),
+          Layer.mock(ProjectSetupScriptRunner)({
+            runForThread: () => Effect.succeed({ status: "no-script" as const }),
+            ...options?.layers?.projectSetupScriptRunner,
+          }),
+        ),
       ),
+      Layer.provideMerge(gitStatusBroadcasterLayer),
       Layer.provide(
         Layer.mock(TerminalManager)({
           ...options?.layers?.terminalManager,
@@ -5778,6 +5793,176 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes PR creation intent only for newly created pull requests", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("created-pr-thread");
+      const projectId = ProjectId.make("created-pr-project");
+      const createdResult: GitRunStackedActionResult = {
+        action: "create_pr",
+        branch: { status: "skipped_not_requested" },
+        commit: { status: "skipped_not_requested" },
+        push: { status: "skipped_up_to_date" },
+        pr: {
+          status: "created",
+          number: 42,
+          url: "https://github.com/acme/app/pull/42",
+          baseBranch: "main",
+          headBranch: "feature/create-review",
+          headSha: "0123456789abcdef",
+          title: "Create review handoff",
+          isCrossRepository: false,
+          headRepositoryNameWithOwner: "acme/app",
+        },
+        toast: {
+          title: "Created PR #42",
+          cta: { kind: "none" },
+        },
+      };
+      const existingResult: GitRunStackedActionResult = {
+        ...createdResult,
+        pr: { ...createdResult.pr, status: "opened_existing" },
+        toast: {
+          title: "Opened PR #42",
+          cta: {
+            kind: "open_pr",
+            label: "Open PR",
+            url: "https://github.com/acme/app/pull/42",
+          },
+        },
+      };
+      const actionResults = [createdResult, existingResult];
+      const automationCalls: Array<{ readonly type: string; readonly input: unknown }> = [];
+      const handoffFailure = Effect.fail(
+        new GitManagerError({
+          operation: "linkCreatedPullRequest",
+          detail: "The durable handoff will retry.",
+        }),
+      );
+      let resultIndex = 0;
+
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              autoMonitorPullRequestsOnCreate: false,
+            }),
+          },
+          pullRequestCreationAutomation: {
+            recordIntent: (input) =>
+              Effect.sync(() => {
+                automationCalls.push({ type: "intent", input });
+              }),
+            handleCreatedResult: (input) => {
+              automationCalls.push({ type: "created", input });
+              return input.actionId === "handoff-failure-action" ? handoffFailure : Effect.void;
+            },
+          },
+          gitManager: {
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            localStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasOriginRemote: true,
+                isDefaultBranch: false,
+                branch: "feature/create-review",
+                revision: "0123456789abcdef",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            remoteStatus: () =>
+              Effect.succeed({
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+            status: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasOriginRemote: true,
+                isDefaultBranch: false,
+                branch: "feature/create-review",
+                revision: "0123456789abcdef",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+            runStackedAction: (input, options) =>
+              Effect.gen(function* () {
+                const result = actionResults[resultIndex++];
+                if (!result) return yield* Effect.die("Unexpected stacked action.");
+                if (result.pr.status === "created") {
+                  yield* (
+                    options?.onPullRequestCreateIntent?.({
+                      localBranch: "feature/create-review",
+                      headBranch: "feature/create-review",
+                      headSelector: "feature/create-review",
+                      baseBranch: "main",
+                      headSha: "0123456789abcdef",
+                    }) ?? Effect.void
+                  );
+                }
+                yield* (
+                  options?.progressReporter?.publish({
+                    actionId: input.actionId,
+                    cwd: input.cwd,
+                    action: input.action,
+                    kind: "action_finished",
+                    result,
+                  }) ?? Effect.void
+                );
+                return result;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      for (const actionId of ["handoff-failure-action", "existing-action"]) {
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.gitRunStackedAction]({
+              actionId,
+              cwd: "/tmp/repo",
+              action: "create_pr",
+              threadId,
+              projectId,
+            }).pipe(Stream.runCollect),
+          ),
+        );
+      }
+
+      assert.deepStrictEqual(
+        automationCalls.map((call) => call.type),
+        ["intent", "created"],
+      );
+      assert.deepStrictEqual(automationCalls[0]?.input, {
+        actionId: "handoff-failure-action",
+        threadId,
+        projectId,
+        cwd: "/tmp/repo",
+        localBranch: "feature/create-review",
+        headBranch: "feature/create-review",
+        headSelector: "feature/create-review",
+        baseBranch: "main",
+        headSha: "0123456789abcdef",
+      });
+      assert.deepStrictEqual(automationCalls[1]?.input, {
+        actionId: "handoff-failure-action",
+        threadId,
+        projectId,
+        cwd: "/tmp/repo",
+        pullRequest: createdResult.pr,
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
