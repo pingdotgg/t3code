@@ -486,13 +486,13 @@ export function UsagePage() {
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {metric !== "cost"
-                          ? `${formatCount(merged.sessions)} sessions`
-                          : merged.costQuality.unpricedShare > 0
-                            ? `${formatCount(merged.sessions)} sessions · API estimate excludes ${formatPercent(
-                                merged.costQuality.unpricedShare,
-                              )} unpriced records`
-                            : `${formatCount(merged.sessions)} sessions · API estimate`}
+                        {formatCount(merged.sessions)} sessions
+                        {metric === "cost" && (
+                          <>
+                            {" · API estimate"}
+                            {merged.costQuality.unpricedShare > 0 && <sup>*</sup>}
+                          </>
+                        )}
                       </span>
                     </div>
 
@@ -734,6 +734,13 @@ export function UsagePage() {
                     </table>
                   )}
                 </section>
+
+                {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    * API estimate excludes {formatPercent(merged.costQuality.unpricedShare)}{" "}
+                    unpriced records.
+                  </p>
+                )}
               </>
             )}
           </WorkspacePageContainer>
