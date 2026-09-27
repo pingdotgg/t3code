@@ -375,7 +375,7 @@ function DevBlueprintArt({
         <pattern id={rulerId} width="32" height="6" patternUnits="userSpaceOnUse">
           <path
             d="M4 0V2.5M12 0V2.5M20 0V4M28 0V2.5"
-            style={{ stroke: "var(--stage-art-line)" }}
+            className="[stroke:var(--stage-art-line)]"
             strokeOpacity="0.5"
             strokeWidth="0.5"
           />
@@ -398,7 +398,7 @@ function DevBlueprintArt({
           patternUnits="userSpaceOnUse"
         >
           <g
-            style={{ stroke: "var(--stage-art-line)" }}
+            className="[stroke:var(--stage-art-line)]"
             strokeLinecap="round"
             strokeOpacity="0.6"
             strokeWidth="0.7"
@@ -416,7 +416,7 @@ function DevBlueprintArt({
           </g>
 
           <g
-            style={{ stroke: "var(--stage-art-line)" }}
+            className="[stroke:var(--stage-art-line)]"
             strokeLinecap="round"
             strokeOpacity="0.55"
             strokeWidth="0.6"
@@ -445,7 +445,7 @@ function DevBlueprintArt({
           </g>
 
           {extended ? (
-            <g style={{ stroke: "var(--stage-art-line)" }} strokeOpacity="0.35" strokeWidth="0.6">
+            <g className="[stroke:var(--stage-art-line)]" strokeOpacity="0.35" strokeWidth="0.6">
               <path d="M48 148H136M48 144V152M136 144V152" strokeDasharray="4 4" />
               <circle cx="224" cy="196" r="24" strokeDasharray="4 5" />
               <path d="M218 196H230M224 190V202M72 236V292M68 236H76M68 292H76" />
@@ -456,7 +456,7 @@ function DevBlueprintArt({
             </g>
           ) : null}
 
-          <g style={{ stroke: "var(--stage-art-line)" }} strokeOpacity="0.35" strokeWidth="0.6">
+          <g className="[stroke:var(--stage-art-line)]" strokeOpacity="0.35" strokeWidth="0.6">
             <circle cx="196" cy="38" r="13" strokeDasharray="3.5 4" />
             <path d="M196 33V43M191 38H201" strokeOpacity="0.6" strokeWidth="0.4" />
             <circle cx="414" cy="64" r="10" strokeDasharray="2.5 3.5" />
