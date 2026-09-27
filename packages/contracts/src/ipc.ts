@@ -110,6 +110,15 @@ import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import type { WorkflowRunResult } from "./agentWorkflows.ts";
 import type { WorkflowRunInput } from "./workflowRuntime.ts";
+import type {
+  DelegationAuditActivityEvidence,
+  DelegationAuditActivityEvidenceInput,
+  DelegationAuditAppendInput,
+  DelegationAuditBeginInput,
+  DelegationAuditBeginResult,
+  DelegationAuditPage,
+  DelegationAuditPageInput,
+} from "./delegationAudit.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -1200,6 +1209,12 @@ export interface EnvironmentApi {
     getThreadActivities: (
       input: OrchestrationGetThreadActivitiesInput,
     ) => Promise<OrchestrationGetThreadActivitiesResult>;
+    getDelegationAuditPage: (input: DelegationAuditPageInput) => Promise<DelegationAuditPage>;
+    beginDelegationAudit: (input: DelegationAuditBeginInput) => Promise<DelegationAuditBeginResult>;
+    appendDelegationAuditEvent: (input: DelegationAuditAppendInput) => Promise<void>;
+    getActivityEvidence: (
+      input: DelegationAuditActivityEvidenceInput,
+    ) => Promise<DelegationAuditActivityEvidence>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;

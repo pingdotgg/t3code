@@ -149,6 +149,101 @@ testLayer("WorktreeCleanupJobRepository", (it) => {
       }),
   );
 
+  it.effect(
+    "persists linked cleanup transitions and redacts errors before writing audit evidence",
+    () =>
+      Effect.gen(function* () {
+        const jobs = yield* WorktreeCleanupJobRepository;
+        const sql = yield* SqlClient.SqlClient;
+        const sourceThreadId = ThreadId.make("audit-source");
+        const childThreadId = ThreadId.make("audit-child");
+        const context = {
+          authorization: {
+            sourceThreadId,
+            sourceTurnId: null,
+            initiatingMessageId: null,
+            scope: "orchestration:operate",
+          },
+          toolName: "create_nested_threads",
+          toolVersion: "1.0.0",
+          toolCallId: "test-call",
+          providerInstanceId: null,
+          model: null,
+          workspaceRoot: "/tmp/project",
+          gitRevision: null,
+          buildRevision: "test-build",
+        };
+        yield* sql`
+            INSERT INTO delegation_audit_events (
+              event_id, operation_id, attempt_id, source_thread_id, source_turn_id,
+              source_message_id, child_thread_id, event_type, occurred_at, evidence_status,
+              redacted, context_json, payload_json
+            )
+            VALUES (
+              'audit-linked-child', 'audit-operation', 'audit-attempt', ${sourceThreadId},
+              NULL, NULL, ${childThreadId}, 'thread.created', ${at(0)}, 'complete', 0,
+              ${JSON.stringify(context)}, '{}'
+            )
+          `;
+
+        const cleanup = yield* jobs.enqueue(
+          intent({
+            id: childThreadId,
+            path: "/tmp/audit-child",
+            source: "delete",
+            requestedAt: at(0),
+          }),
+        );
+        yield* jobs.tryReserveForRemoval({
+          threadId: cleanup.threadId,
+          canonicalWorktreePath: cleanup.canonicalWorktreePath,
+          reservedAt: at(0),
+        });
+        yield* jobs.recordFailure({
+          threadId: cleanup.threadId,
+          error: "Bearer test-secret-with-more-than-20-chars",
+          reason: "git-command-failed",
+          now: at(1),
+          nextAttemptAt: at(10),
+          maxAttempts: 1,
+        });
+        yield* jobs.retry({ threadId: cleanup.threadId, nextAttemptAt: at(20) });
+        yield* jobs.tryReserveForRemoval({
+          threadId: cleanup.threadId,
+          canonicalWorktreePath: cleanup.canonicalWorktreePath,
+          reservedAt: at(20),
+        });
+        yield* jobs.markCompleted({ threadId: cleanup.threadId });
+
+        const auditRows = yield* sql<{
+          readonly event_type: string;
+          readonly payload_json: string;
+        }>`
+            SELECT event_type, payload_json
+            FROM delegation_audit_events
+            WHERE operation_id = 'audit-operation'
+            ORDER BY sequence ASC
+          `;
+        const cleanupRows = auditRows.filter((row) => row.event_type.startsWith("cleanup."));
+        assert.deepEqual(
+          cleanupRows.map((row) => row.event_type),
+          [
+            "cleanup.requested",
+            "cleanup.queued",
+            "cleanup.started",
+            "cleanup.failed",
+            "cleanup.queued",
+            "cleanup.started",
+            "cleanup.completed",
+          ],
+        );
+        assert.include(cleanupRows[3]?.payload_json ?? "", "[REDACTED]");
+        assert.notInclude(cleanupRows[3]?.payload_json ?? "", "test-secret");
+        assert.include(cleanupRows[3]?.payload_json ?? "", '"status":"needs-attention"');
+        assert.include(cleanupRows[6]?.payload_json ?? "", '"status":"completed"');
+      }),
+  );
+
   it.effect("preserves explicit cancellation and does not reactivate cancelled rows", () =>
     Effect.gen(function* () {
       const jobs = yield* WorktreeCleanupJobRepository;

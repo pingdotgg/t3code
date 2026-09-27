@@ -10,6 +10,7 @@ import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/c
 import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { killProcessTree } from "@t3tools/shared/processTree";
 import { ChildDecision, ChildWaitCondition, MessageId, ThreadId } from "@t3tools/contracts";
+import { buildRevision } from "./buildIdentity.ts";
 
 import { issueCrossThreadDispatchCapability } from "./orchestration/CrossThreadDispatchCapability.ts";
 import { composeDelegationPrompt, DELEGATION_PROMPT_BLOCKS } from "./delegationPrompt.ts";
@@ -74,6 +75,7 @@ const DEFAULT_TERMINAL_TIMEOUT_MS = 30_000;
 const DEFAULT_NESTED_THREAD_BATCH_CONCURRENCY = 4;
 const MAX_NESTED_THREAD_BATCH_CONCURRENCY = 4;
 const MAX_NESTED_THREAD_BATCH_SIZE = 16;
+const MCP_SERVER_VERSION = "1.0.0";
 const WORKSPACE_HANDOFF_CONTINUATION_PROMPT =
   "Continue the task from the previous user request in the newly bound workspace. Do not merely acknowledge the workspace change; proceed with the requested work.";
 const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", "dist", ".next", ".turbo"]);
@@ -175,7 +177,7 @@ async function handleMcpHttpRequest(
         result: {
           protocolVersion: asString(params.protocolVersion) ?? "2025-03-26",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "t3-tools", version: "1.0.0" },
+          serverInfo: { name: "t3-tools", version: MCP_SERVER_VERSION },
         },
       });
       return;
@@ -211,7 +213,7 @@ async function handleMcpHttpRequest(
         return;
       }
       try {
-        const text = await callTool(options, name, asRecord(params.arguments));
+        const text = await callTool(options, name, asRecord(params.arguments), String(body.id));
         writeJsonResponse(response, 200, {
           jsonrpc: "2.0",
           id: body.id,
@@ -411,6 +413,7 @@ async function spawnCommand(
   command: string,
   commandArgs: ReadonlyArray<string>,
   requestedTimeoutMs?: unknown,
+  stdinText?: string,
 ): Promise<string> {
   const timeoutMs =
     typeof requestedTimeoutMs === "number" && Number.isFinite(requestedTimeoutMs)
@@ -421,9 +424,12 @@ async function spawnCommand(
     const { command: spawnTarget, shell } = resolveWindowsSpawn(command);
     const child = spawn(spawnTarget, [...commandArgs], {
       cwd: root,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdinText === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       shell,
     });
+    if (stdinText !== undefined) {
+      child.stdin?.end(stdinText);
+    }
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -501,13 +507,224 @@ async function runCommand(
   root: string,
   command: string,
   args: ReadonlyArray<string>,
+  stdinText?: string,
 ): Promise<TerminalResult> {
-  const output = await spawnCommand(root, command, args);
+  const output = await spawnCommand(root, command, args, undefined, stdinText);
   const result = parseTerminalResult(output, `${command} ${args.join(" ")}`.trim());
   if (result.code !== 0) {
     throw new CommandExecutionError(command, args, result);
   }
   return result;
+}
+
+interface NestedThreadAuditContext {
+  readonly operationId: string;
+  readonly attemptId: string;
+  readonly initiatingMessageId: string | null;
+}
+
+async function invokeAuditCli(
+  options: McpServeOptions,
+  command: "begin-internal" | "append-internal",
+  payload: unknown,
+): Promise<string> {
+  const args = [
+    ...(options.cliArgsPrefix ?? []),
+    "audit",
+    command,
+    ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
+  ];
+  const result = await runCommand(options.cwd, options.cliCommand, args, JSON.stringify(payload));
+  return result.stdout.trim();
+}
+
+async function beginNestedThreadAudit(
+  options: McpServeOptions,
+  toolName: NestedThreadCreationPolicy["toolName"],
+  toolCallId: string,
+  argumentsValue: Record<string, unknown>,
+  requestValues: ReadonlyArray<unknown>,
+): Promise<{
+  readonly operationId: string;
+  readonly attempts: ReadonlyArray<NestedThreadAuditContext>;
+}> {
+  const operationId = randomUUID();
+  const attemptIds = requestValues.map(() => randomUUID());
+  const rawResult = await invokeAuditCli(options, "begin-internal", {
+    operationId,
+    sourceThreadId: ThreadId.make(options.threadId!),
+    toolCallId,
+    toolName,
+    toolVersion: MCP_SERVER_VERSION,
+    providerInstanceId: options.providerInstanceId ?? null,
+    model: options.defaultModel ?? options.delegatedDefaultModelSelection?.model ?? null,
+    workspaceRoot: options.cwd,
+    gitRevision: (await runCommand(options.cwd, "git", ["rev-parse", "HEAD"])).stdout.trim(),
+    buildRevision,
+    requests: requestValues.map((argumentsValue, index) => ({
+      attemptId: attemptIds[index],
+      arguments: argumentsValue,
+    })),
+    occurredAt: new Date().toISOString(),
+  });
+  let beginResult: { initiatingMessageId: string | null };
+  try {
+    beginResult = JSON.parse(rawResult) as { initiatingMessageId: string | null };
+  } catch {
+    throw new Error("Delegation audit persistence returned an invalid begin response.");
+  }
+  return {
+    operationId,
+    attempts: attemptIds.map((attemptId) => ({
+      operationId,
+      attemptId,
+      initiatingMessageId: beginResult.initiatingMessageId,
+    })),
+  };
+}
+
+async function appendNestedThreadAudit(
+  options: McpServeOptions,
+  context: NestedThreadAuditContext,
+  input: {
+    readonly sourceThreadId: ThreadId;
+    readonly eventType:
+      | "workspace.create.requested"
+      | "workspace.created"
+      | "workspace.create.failed"
+      | "thread.create.requested"
+      | "thread.created"
+      | "thread.create.failed"
+      | "turn.start.requested"
+      | "turn.start.accepted"
+      | "thread.deletion.accepted"
+      | "thread.deletion.failed"
+      | "cleanup.queued"
+      | "cleanup.failed"
+      | "attempt.completed";
+    readonly childThreadId?: ThreadId | null;
+    readonly payload: unknown;
+  },
+): Promise<void> {
+  await invokeAuditCli(options, "append-internal", {
+    eventId: `delegation-audit:${context.operationId}:${context.attemptId}:${randomUUID()}`,
+    operationId: context.operationId,
+    sourceThreadId: input.sourceThreadId,
+    attemptId: context.attemptId,
+    eventType: input.eventType,
+    childThreadId: input.childThreadId ?? null,
+    payload: input.payload,
+    occurredAt: new Date().toISOString(),
+  });
+}
+
+async function appendNestedThreadOperationAudit(
+  options: McpServeOptions,
+  operationId: string,
+  eventType: "operation.completed" | "operation.failed",
+  payload: unknown,
+): Promise<void> {
+  await invokeAuditCli(options, "append-internal", {
+    eventId: `delegation-audit:${operationId}:${eventType}:${randomUUID()}`,
+    operationId,
+    sourceThreadId: ThreadId.make(options.threadId!),
+    attemptId: null,
+    eventType,
+    childThreadId: null,
+    payload,
+    occurredAt: new Date().toISOString(),
+  });
+}
+
+async function withNestedThreadAudit(
+  options: McpServeOptions,
+  toolName: NestedThreadCreationPolicy["toolName"],
+  toolCallId: string,
+  args: Record<string, unknown>,
+  execute: (attempts: ReadonlyArray<NestedThreadAuditContext>) => Promise<string>,
+): Promise<string> {
+  const children = Array.isArray(args.children) ? args.children : null;
+  const requestValues =
+    children === null
+      ? [args]
+      : children.map((child) =>
+          toolName === "delegate_work" ? { defaults: args.defaults ?? null, child } : child,
+        );
+  const audit = await beginNestedThreadAudit(options, toolName, toolCallId, args, requestValues);
+  let text: string;
+  try {
+    text = await execute(audit.attempts);
+  } catch (cause) {
+    await appendNestedThreadOperationAudit(options, audit.operationId, "operation.failed", {
+      toolTransport: "failed",
+      operationStatus: "unknown",
+      unresolvedAttemptIds: audit.attempts.map((attempt) => attempt.attemptId),
+      error: toErrorMessage(cause),
+    });
+    throw cause;
+  }
+  let outcomes: ReadonlyArray<{
+    readonly attemptIndex: number;
+    readonly outcome: NestedThreadCreationOutcome;
+  }>;
+  try {
+    const decoded = JSON.parse(text) as unknown;
+    if (children === null) {
+      outcomes = [{ attemptIndex: 0, outcome: decodeNestedThreadCreationOutcome(decoded) }];
+    } else {
+      const batch = decodeNestedThreadBatchCreationOutcome(decoded);
+      outcomes = batch.results.map((result) => ({
+        attemptIndex: result.index,
+        outcome: result.outcome,
+      }));
+    }
+  } catch (cause) {
+    await appendNestedThreadOperationAudit(options, audit.operationId, "operation.failed", {
+      toolTransport: "completed",
+      operationStatus: "unknown",
+      unresolvedAttemptIds: audit.attempts.map((attempt) => attempt.attemptId),
+      error: `The tool returned an unstructured result: ${toErrorMessage(cause)}`,
+    });
+    return text;
+  }
+
+  const successes: Array<boolean> = [];
+  for (const result of outcomes) {
+    const context = audit.attempts[result.attemptIndex];
+    if (!context) continue;
+    const outcome = result.outcome;
+    const successful = outcome.status === "created" || outcome.status === "dry-run";
+    successes.push(successful);
+    await appendNestedThreadAudit(options, context, {
+      sourceThreadId: ThreadId.make(options.threadId!),
+      eventType: "attempt.completed",
+      childThreadId: outcome.threadId ? ThreadId.make(outcome.threadId) : null,
+      payload: {
+        toolTransport: "completed",
+        operationStatus: outcome.status,
+        retryable: outcome.retryable,
+        errorCode: outcome.errorCode,
+        message: outcome.message,
+        workspaceCreated: outcome.workspaceCreated,
+      },
+    });
+  }
+  const operationSucceeded =
+    outcomes.length === audit.attempts.length &&
+    outcomes.every(({ outcome }) => outcome.status === "created" || outcome.status === "dry-run");
+  await appendNestedThreadOperationAudit(
+    options,
+    audit.operationId,
+    operationSucceeded ? "operation.completed" : "operation.failed",
+    {
+      toolTransport: "completed",
+      operationStatus: operationSucceeded ? "succeeded" : "failed",
+      attemptCount: audit.attempts.length,
+      completedAttemptCount: successes.length,
+      failedAttemptCount: successes.filter((success) => !success).length,
+    },
+  );
+  return text;
 }
 
 function requireAbsolutePath(value: string | undefined, toolName: string): string {
@@ -573,6 +790,7 @@ interface IsolatedWorkspaceSpec {
 interface WorkspacePreflight {
   readonly workspace: IsolatedWorkspaceSpec;
   readonly baseRef: string;
+  readonly baseRevision: string;
 }
 
 class WorkspaceConflictError extends Error {
@@ -894,7 +1112,7 @@ async function preflightGitWorktree(
     );
   }
 
-  return { workspace, baseRef };
+  return { workspace, baseRef, baseRevision: baseResult.stdout.trim() };
 }
 
 async function recordThreadWorkspaceBinding(
@@ -1163,6 +1381,7 @@ function nestedThreadCommandArgs(
     readonly assignmentId?: string;
     readonly parentWait?: ChildWaitCondition | null;
   },
+  auditContext?: NestedThreadAuditContext,
 ): ReadonlyArray<string> {
   return [
     ...(options.cliArgsPrefix ?? []),
@@ -1195,6 +1414,16 @@ function nestedThreadCommandArgs(
     options.runtimeMode,
     ...(input.workspace
       ? ["--branch", input.workspace.branch, "--worktree", input.workspace.path]
+      : []),
+    ...(auditContext
+      ? [
+          "--audit-operation-id",
+          auditContext.operationId,
+          "--audit-attempt-id",
+          auditContext.attemptId,
+          "--audit-initiating-message-id",
+          auditContext.initiatingMessageId ?? "",
+        ]
       : []),
     ...(input.dryRun ? ["--dry-run"] : []),
     "--title",
@@ -1233,6 +1462,7 @@ async function createNestedThreadToolImpl(
   args: Record<string, unknown>,
   dependencies: NestedThreadToolDependencies,
   policy: NestedThreadCreationPolicy = SINGLE_NESTED_THREAD_POLICY,
+  auditContext?: NestedThreadAuditContext,
 ): Promise<NestedThreadCreationOutcome> {
   validateNestedThreadContext(options, policy.toolName);
   const project = asString(args.project)?.trim() || options.cwd;
@@ -1346,19 +1576,23 @@ async function createNestedThreadToolImpl(
     if (dryRun) return validationOutcome;
     const creationOutcome = await invokeNestedThreadCli(
       options,
-      nestedThreadCommandArgs(authenticatedOptions, {
-        project,
-        title,
-        prompt: childPrompt,
-        model: effectiveModel,
-        reasoning,
-        workspace,
-        dryRun: false,
-        followUp,
-        ...(threadId ? { threadId } : {}),
-        ...(assignmentId ? { assignmentId } : {}),
-        ...(parentWait !== undefined ? { parentWait } : {}),
-      }),
+      nestedThreadCommandArgs(
+        authenticatedOptions,
+        {
+          project,
+          title,
+          prompt: childPrompt,
+          model: effectiveModel,
+          reasoning,
+          workspace,
+          dryRun: false,
+          followUp,
+          ...(threadId ? { threadId } : {}),
+          ...(assignmentId ? { assignmentId } : {}),
+          ...(parentWait !== undefined ? { parentWait } : {}),
+        },
+        auditContext,
+      ),
       false,
     );
     return creationOutcome.status === "created" && assignmentId
@@ -1378,9 +1612,34 @@ async function createNestedThreadToolImpl(
   await dependencies.beforeWorkspaceRevalidation();
   const finalPreflight = await preflightGitWorktree(options.cwd, workspace);
   workspace = finalPreflight.workspace;
+  if (auditContext) {
+    await appendNestedThreadAudit(options, auditContext, {
+      sourceThreadId: ThreadId.make(options.threadId),
+      eventType: "workspace.create.requested",
+      payload: {
+        path: workspace.path,
+        branch: workspace.branch,
+        baseRef: finalPreflight.baseRef,
+        baseRevision: finalPreflight.baseRevision,
+      },
+    });
+  }
   try {
     await dependencies.createWorkspace(options.cwd, finalPreflight);
   } catch (error) {
+    if (auditContext) {
+      await appendNestedThreadAudit(options, auditContext, {
+        sourceThreadId: ThreadId.make(options.threadId),
+        eventType: "workspace.create.failed",
+        payload: {
+          path: workspace.path,
+          branch: workspace.branch,
+          baseRef: finalPreflight.baseRef,
+          baseRevision: finalPreflight.baseRevision,
+          error: toErrorMessage(error),
+        },
+      });
+    }
     let sideEffects: Awaited<ReturnType<typeof inspectWorkspaceSideEffects>>;
     try {
       sideEffects = await inspectWorkspaceSideEffects(options.cwd, workspace);
@@ -1416,22 +1675,38 @@ async function createNestedThreadToolImpl(
       { retryable: true },
     );
   }
+  if (auditContext) {
+    await appendNestedThreadAudit(options, auditContext, {
+      sourceThreadId: ThreadId.make(options.threadId),
+      eventType: "workspace.created",
+      payload: {
+        path: workspace.path,
+        branch: workspace.branch,
+        baseRef: finalPreflight.baseRef,
+        baseRevision: finalPreflight.baseRevision,
+      },
+    });
+  }
 
   const creationOutcome = await invokeNestedThreadCli(
     options,
-    nestedThreadCommandArgs(authenticatedOptions, {
-      project,
-      title,
-      prompt: childPrompt,
-      model: effectiveModel,
-      reasoning,
-      workspace,
-      dryRun: false,
-      followUp,
-      ...(threadId ? { threadId } : {}),
-      ...(assignmentId ? { assignmentId } : {}),
-      ...(parentWait !== undefined ? { parentWait } : {}),
-    }),
+    nestedThreadCommandArgs(
+      authenticatedOptions,
+      {
+        project,
+        title,
+        prompt: childPrompt,
+        model: effectiveModel,
+        reasoning,
+        workspace,
+        dryRun: false,
+        followUp,
+        ...(threadId ? { threadId } : {}),
+        ...(assignmentId ? { assignmentId } : {}),
+        ...(parentWait !== undefined ? { parentWait } : {}),
+      },
+      auditContext,
+    ),
     false,
   );
   if (creationOutcome.status === "dry-run") {
@@ -1496,13 +1771,20 @@ async function createNestedThreadTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
   dependencyOverrides: Partial<NestedThreadToolDependencies> = {},
+  auditContext?: NestedThreadAuditContext,
 ): Promise<string> {
   try {
     return serializeNestedThreadOutcome(
-      await createNestedThreadToolImpl(options, args, {
-        ...defaultNestedThreadToolDependencies,
-        ...dependencyOverrides,
-      }),
+      await createNestedThreadToolImpl(
+        options,
+        args,
+        {
+          ...defaultNestedThreadToolDependencies,
+          ...dependencyOverrides,
+        },
+        SINGLE_NESTED_THREAD_POLICY,
+        auditContext,
+      ),
     );
   } catch (error) {
     return serializeNestedThreadOutcome(
@@ -1575,6 +1857,7 @@ async function createNestedThreadsTool(
   args: Record<string, unknown>,
   dependencyOverrides: Partial<NestedThreadToolDependencies> = {},
   policy: NestedThreadCreationPolicy = BATCH_NESTED_THREAD_POLICY,
+  auditContexts: ReadonlyArray<NestedThreadAuditContext> = [],
 ): Promise<string> {
   validateNestedThreadContext(options, policy.toolName);
   if (!Array.isArray(args.children)) {
@@ -1665,7 +1948,13 @@ async function createNestedThreadsTool(
       );
     }
     try {
-      return await createNestedThreadToolImpl(options, child, dependencies, policy);
+      return await createNestedThreadToolImpl(
+        options,
+        child,
+        dependencies,
+        policy,
+        auditContexts[index],
+      );
     } catch (error) {
       return batchItemFailure(error);
     }
@@ -1702,6 +1991,7 @@ async function delegateWorkTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
   dependencyOverrides: Partial<NestedThreadToolDependencies> = {},
+  auditContexts: ReadonlyArray<NestedThreadAuditContext> = [],
 ): Promise<string> {
   validateNestedThreadContext(options, "delegate_work");
   const parentThreadId = options.threadId;
@@ -1785,6 +2075,7 @@ async function delegateWorkTool(
     },
     dependencyOverrides,
     DELEGATE_WORK_POLICY,
+    auditContexts,
   );
   return serializedBatch;
 }
@@ -2566,7 +2857,12 @@ export function fingerprintMcpToolContract(toolsets: ReadonlySet<string>): strin
     .digest("hex");
 }
 
-async function callTool(options: McpServeOptions, name: string, args: Record<string, unknown>) {
+async function callTool(
+  options: McpServeOptions,
+  name: string,
+  args: Record<string, unknown>,
+  toolCallId: string,
+) {
   if (!options.toolsets.has(name)) {
     throw new Error(`MCP tool is not enabled: ${name}`);
   }
@@ -2597,11 +2893,26 @@ async function callTool(options: McpServeOptions, name: string, args: Record<str
     case "switch_workspace":
       return await switchWorkspaceTool(options, args);
     case "delegate_work":
-      return await delegateWorkTool(options, args);
+      return await withNestedThreadAudit(options, "delegate_work", toolCallId, args, (attempts) =>
+        delegateWorkTool(options, args, {}, attempts),
+      );
     case "create_nested_thread":
-      return await createNestedThreadTool(options, args);
+      return await withNestedThreadAudit(
+        options,
+        "create_nested_thread",
+        toolCallId,
+        args,
+        (attempts) => createNestedThreadTool(options, args, {}, attempts[0]),
+      );
     case "create_nested_threads":
-      return await createNestedThreadsTool(options, args);
+      return await withNestedThreadAudit(
+        options,
+        "create_nested_threads",
+        toolCallId,
+        args,
+        (attempts) =>
+          createNestedThreadsTool(options, args, {}, BATCH_NESTED_THREAD_POLICY, attempts),
+      );
     case "send_to_thread":
       return await sendToThreadTool(options, args);
     case "report_to_parent":
@@ -2640,7 +2951,7 @@ async function handleRequest(options: McpServeOptions, request: JsonRpcRequest):
           result: {
             protocolVersion: "2024-11-05",
             capabilities: { tools: {} },
-            serverInfo: { name: "t3-tools", version: "0.0.0" },
+            serverInfo: { name: "t3-tools", version: MCP_SERVER_VERSION },
           },
         });
         return;
@@ -2657,7 +2968,7 @@ async function handleRequest(options: McpServeOptions, request: JsonRpcRequest):
         if (!name) {
           throw new Error("tools/call requires a string name");
         }
-        const text = await callTool(options, name, asRecord(params.arguments));
+        const text = await callTool(options, name, asRecord(params.arguments), String(request.id));
         writeMessage({
           jsonrpc: "2.0",
           id: request.id,

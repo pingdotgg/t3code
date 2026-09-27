@@ -31,6 +31,7 @@ import {
   CollaborativeAcceptanceRequestTransportContext,
 } from "./collaborativeAcceptance.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { DelegationAuditCommandContext } from "./delegationAudit.ts";
 import { ReviewResult, ReviewSnapshot } from "./review.ts";
 import { GitPullRequestAssociation } from "./git.ts";
 import {
@@ -60,6 +61,10 @@ export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getThreadActivities: "orchestration.getThreadActivities",
+  getDelegationAuditPage: "orchestration.getDelegationAuditPage",
+  beginDelegationAudit: "orchestration.beginDelegationAudit",
+  appendDelegationAuditEvent: "orchestration.appendDelegationAuditEvent",
+  getActivityEvidence: "orchestration.getActivityEvidence",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   getTurnDiffState: "orchestration.getTurnDiffState",
   getFullThreadDiffState: "orchestration.getFullThreadDiffState",
@@ -1472,6 +1477,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   origin: Schema.optional(MessageOrigin),
   crossThreadSourceThreadId: Schema.optional(ThreadId),
   crossThreadDispatchCapability: Schema.optional(Schema.String),
+  delegationAudit: Schema.optional(DelegationAuditCommandContext),
   createdAt: IsoDateTime,
 });
 
@@ -1494,6 +1500,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   crossThreadSourceThreadId: Schema.optional(ThreadId),
   crossThreadDispatchCapability: Schema.optional(Schema.String),
+  delegationAudit: Schema.optional(DelegationAuditCommandContext),
   createdAt: IsoDateTime,
 });
 
