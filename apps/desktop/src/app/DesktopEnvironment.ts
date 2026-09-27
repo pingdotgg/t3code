@@ -265,7 +265,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const userDataDirName = isDevelopment
     ? "t3code-dev"
     : isDownstreamDistribution
-      ? productName.replace(/[\\/]/g, "_")
+      ? `t3code-distribution-${distributionId}`.replace(/[\\/]/g, "_")
       : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(

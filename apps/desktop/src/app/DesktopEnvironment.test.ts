@@ -55,7 +55,10 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.branding.stageLabel, "Nightly");
       assert.isTrue(environment.isDownstreamDistribution);
       assert.equal(environment.productName, "T3 Code (Fork)");
-      assert.equal(environment.userDataDirName, "T3 Code (Fork)");
+      assert.equal(
+        environment.userDataDirName,
+        `t3code-distribution-${environment.distributionId}`,
+      );
       assert.deepEqual(environment.legacyDownstreamUserDataDirNames, [
         "T3 Code (Fork Nightly)",
         "T3 Code (Fork Alpha)",
@@ -64,6 +67,48 @@ describe("DesktopEnvironment", () => {
         environment.connectionCatalogPath,
         "/Users/alice/.t3/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json",
       );
+    }),
+  );
+
+  it.effect("isolates an Alpha distribution from the legacy official profile", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appName: "T3 Code (Alpha)",
+        packagedIdentity: {
+          appId: "com.t3tools.t3code.alpha-test",
+          packageName: "t3code-alpha-test",
+          productName: "T3 Code (Alpha)",
+          displayName: "T3 Code (Alpha Alpha)",
+          distributionName: "Alpha",
+          distributionId: "alpha-test",
+        },
+      });
+      assert.isTrue(environment.isDownstreamDistribution);
+      assert.equal(environment.userDataDirName, "t3code-distribution-alpha-test");
+      assert.notEqual(environment.userDataDirName, environment.legacyUserDataDirName);
+      assert.notInclude(environment.legacyDownstreamUserDataDirNames, "T3 Code (Alpha)");
+    }),
+  );
+
+  it.effect("contains profile paths even for embedded distribution IDs with separators", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appName: "T3 Code (Alpha)",
+        packagedIdentity: {
+          appId: "com.t3tools.t3code.alpha-test",
+          packageName: "t3code-alpha-test",
+          productName: "T3 Code (Alpha)",
+          displayName: "T3 Code (Alpha Alpha)",
+          distributionName: "Alpha",
+          distributionId: "../alpha\\test",
+        },
+      });
+      assert.isTrue(environment.isDownstreamDistribution);
+      assert.equal(environment.userDataDirName, "t3code-distribution-.._alpha_test");
+      assert.notEqual(environment.userDataDirName, environment.legacyUserDataDirName);
+      assert.notInclude(environment.legacyDownstreamUserDataDirNames, "T3 Code (Alpha)");
     }),
   );
 
@@ -148,7 +193,7 @@ describe("DesktopEnvironment", () => {
         appVersion: "0.0.38",
         appName: "T3 Code (x/../../outside)",
       });
-      assert.equal(environment.userDataDirName, "T3 Code (x_.._.._outside)");
+      assert.match(environment.userDataDirName, /^t3code-distribution-[a-z0-9-]+$/);
       for (const name of environment.legacyDownstreamUserDataDirNames) {
         assert.notMatch(name, /[\\/]/);
       }

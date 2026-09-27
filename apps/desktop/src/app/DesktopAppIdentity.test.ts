@@ -187,7 +187,8 @@ describe("DesktopAppIdentity", () => {
   });
 
   it.effect("identifies a failed downstream stable-path probe", () => {
-    const stablePath = "/Users/alice/Library/Application Support/T3 Code (Fork)";
+    const stablePath =
+      "/Users/alice/Library/Application Support/t3code-distribution-fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45";
     const cause = PlatformError.systemError({
       _tag: "PermissionDenied",
       module: "FileSystem",
@@ -225,7 +226,10 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Fork)");
+        assert.equal(
+          userDataPath,
+          "/Users/alice/Library/Application Support/t3code-distribution-fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
+        );
       }),
       {
         legacyPathExists: true,
