@@ -2318,7 +2318,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 self?.acceptedCommandRefreshes[threadID]?.pending = false
                 if needsDetail {
                     try? await self?.refreshThread(id: threadID, client: client) { [weak self] in
-                        self?.acceptedCommandRefreshes[threadID]?.pending == true
+                        guard self?.acceptedCommandRefreshes[threadID]?.pending == true else { return false }
+                        // The discarded detail must be read again, even for a shell-only Stop.
+                        self?.acceptedCommandRefreshes[threadID]?.needsDetail = true
+                        return true
                     }
                 }
                 guard self?.isCurrentAcceptedCommandRefresh(threadID: threadID, id: id) == true else { break }

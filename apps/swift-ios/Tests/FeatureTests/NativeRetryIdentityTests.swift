@@ -118,10 +118,21 @@ final class NativeRetryIdentityTests: XCTestCase {
         await fixture.transport.release(shell.id)
         let trailingRead = await reads.next()
         let trailing = try XCTUnwrap(trailingRead)
-        XCTAssertEqual(trailing.path, "/api/orchestration/shell", "Stop requests shell repair without discarding or repeating the send detail repair")
+        XCTAssertTrue(
+            trailing.path.hasPrefix("/api/orchestration/threads/"),
+            "Stop superseded the in-flight send detail, so the send's repair reads detail again"
+        )
+        let marker = "Send detail recovered after Stop"
+        await fixture.transport.release(trailing.id, detailMessage: marker)
+        try await AcceptedSendDetailReceipt(
+            model: fixture.model, threadID: fixture.threadID, expectedMessage: marker
+        ).wait()
+        let finalRead = await reads.next()
+        let final = try XCTUnwrap(finalRead)
+        XCTAssertEqual(final.path, "/api/orchestration/shell")
         await fixture.client.disconnect()
         let cancelled = await cancellations.next()
-        XCTAssertEqual(cancelled, trailing.id)
+        XCTAssertEqual(cancelled, final.id)
         let commands = await fixture.socket.commands
         XCTAssertEqual(commands.count, 2)
     }
