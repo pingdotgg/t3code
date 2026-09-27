@@ -476,7 +476,8 @@ export const make = Effect.gen(function* () {
     if (retained === undefined) {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
-        message: `Unknown voice session ${String(sessionId)}. The broker only knows sessions it minted in this server process.`,
+        message:
+          "Unknown voice session. The broker only knows sessions it minted in this server process.",
         operation: "requireSession",
         category: "validation",
         status: 404,
@@ -689,7 +690,7 @@ export const make = Effect.gen(function* () {
     if (!found) {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
-        message: `Unknown voice session ${String(input.sessionId)}.`,
+        message: "Unknown voice session.",
         operation: "closeSession",
         category: "validation",
         status: 404,
@@ -712,7 +713,7 @@ export const make = Effect.gen(function* () {
     if (!found) {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
-        message: `Unknown voice session ${String(usage.sessionId)}.`,
+        message: "Unknown voice session.",
         operation: "recordSessionUsage",
         category: "validation",
         status: 404,

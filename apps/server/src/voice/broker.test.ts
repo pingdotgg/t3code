@@ -684,6 +684,42 @@ describe("voice broker routes", () => {
     ),
   );
 
+  it.effect("keeps untrusted session identifiers out of public unknown-session errors", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { handlers } = yield* makeTest();
+        const sessionId = "private-session-".repeat(1000);
+        const requests = [
+          runHandler(handlers.getUsage, {
+            method: "GET",
+            path: `${USAGE_PATH}?sessionId=${sessionId}`,
+            token: OPERATE_TOKEN,
+          }),
+          runHandler(handlers.closeSession, {
+            method: "POST",
+            path: CLOSE_PATH,
+            token: OPERATE_TOKEN,
+            body: { sessionId },
+          }),
+          runHandler(handlers.recordUsage, {
+            method: "POST",
+            path: USAGE_PATH,
+            token: OPERATE_TOKEN,
+            body: usageInput(sessionId),
+          }),
+        ];
+        for (const request of requests) {
+          const response = yield* request.pipe(Effect.provide(makeEnvironmentAuthLayer()));
+          expect(response.status).toBe(404);
+          const body = yield* Effect.promise(() => response.text());
+          expect(body).toContain('"code":"invalid_request"');
+          expect(body).not.toContain("private-session-");
+          expect(body.length).toBeLessThan(200);
+        }
+      }),
+    ),
+  );
+
   it.effect("maps upstream credential failures to auth_invalid", () =>
     Effect.scoped(
       Effect.gen(function* () {
