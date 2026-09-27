@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  foldForSearch,
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,

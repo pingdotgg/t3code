@@ -4,6 +4,32 @@ export type RankedSearchResult<T> = {
   tieBreaker: string;
 };
 
+/**
+ * Folds text to a form where matching ignores the differences a reader should
+ * not have to care about: case, accents, and Turkish dotted/dotless I.
+ *
+ * The Turkish fold is the reason this is not `toLowerCase`. Turkish and
+ * Azerbaijani added a dotless `ı`, and no normalization maps it to `i`, so a
+ * developer who types "yapilandirma" never finds "Yapılandırma" and a label
+ * reading "İptal" is unreachable by typing "iptal". Turkish developers type
+ * ASCII by reflex even when the UI is Turkish, and the command palette indexes
+ * English keywords, so the search box has to meet them in the middle.
+ *
+ * The fold is deliberately locale-independent. Callers include the server, which
+ * has no locale of its own, and it must reach the same answer for the same
+ * input. Collapsing `i` and `ı` into one form costs exactly one extra match —
+ * typing `i` also finds `ı` — and removes a whole class of dead searches.
+ */
+export function foldForSearch(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/ı/g, "i")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function normalizeSearchQuery(
   input: string,
   options?: {
@@ -14,9 +40,10 @@ export function normalizeSearchQuery(
   if (!trimmed) {
     return "";
   }
-  return options?.trimLeadingPattern
-    ? trimmed.replace(options.trimLeadingPattern, "").toLowerCase()
-    : trimmed.toLowerCase();
+  const withoutPattern = options?.trimLeadingPattern
+    ? trimmed.replace(options.trimLeadingPattern, "")
+    : trimmed;
+  return foldForSearch(withoutPattern);
 }
 
 export function scoreSubsequenceMatch(value: string, query: string): number | null {
