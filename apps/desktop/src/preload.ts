@@ -24,6 +24,7 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const LOCAL_REBUILD_GET_STATE_CHANNEL = "desktop:local-rebuild-get-state";
 const LOCAL_REBUILD_START_CHANNEL = "desktop:local-rebuild-start";
+const LOCAL_REBUILD_CHECK_STALENESS_CHANNEL = "desktop:local-rebuild-check-staleness";
 const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
@@ -205,6 +206,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
   getLocalRebuildState: () => ipcRenderer.invoke(LOCAL_REBUILD_GET_STATE_CHANNEL),
   rebuildAndRestart: () => ipcRenderer.invoke(LOCAL_REBUILD_START_CHANNEL),
+  checkLocalRebuildStaleness: () => ipcRenderer.invoke(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL),
   showNotification: (request) => ipcRenderer.invoke(SHOW_NOTIFICATION_CHANNEL, request),
   onNotificationClick: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, click: unknown) => {

@@ -117,6 +117,7 @@ const clientSettings: ClientSettings = {
   workflowRunsShowBadge: true,
   sidebarSearchShowShortcut: true,
   sidebarNewThreadConfirm: false,
+  localRebuildStalenessCheckMinutes: 15,
 };
 
 const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
