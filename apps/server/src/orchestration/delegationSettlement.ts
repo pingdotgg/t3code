@@ -159,6 +159,13 @@ function latestThreadActivityAt(thread: OrchestrationThread): string | undefined
   );
 }
 
+function completionState(activity: OrchestrationThread["activities"][number] | undefined): unknown {
+  const payload = activity?.payload;
+  return typeof payload === "object" && payload !== null && "state" in payload
+    ? payload.state
+    : undefined;
+}
+
 export function delegationStallEpisode(
   readModel: OrchestrationReadModel,
   child: OrchestrationThread,
@@ -296,13 +303,17 @@ export function delegationSettlementNotBefore(child: OrchestrationThread): strin
   if (!latestTurn) {
     return null;
   }
-  const awaitingCompletionEvidence =
-    latestTurn.state === "completed" &&
-    !child.activities.some(
-      (activity) =>
-        activity.kind === "insights.turn.completed" && activity.turnId === latestTurn.turnId,
-    );
-  if (latestTurn.state !== "interrupted" && !awaitingCompletionEvidence) {
+  const completion = child.activities.findLast(
+    (activity) =>
+      activity.kind === "insights.turn.completed" && activity.turnId === latestTurn.turnId,
+  );
+  const providerCompletionState = completionState(completion);
+  const awaitingCompletionEvidence = latestTurn.state === "completed" && completion === undefined;
+  const interruptedWithoutProviderCompletion =
+    latestTurn.state === "interrupted" &&
+    providerCompletionState !== "completed" &&
+    providerCompletionState !== "failed";
+  if (!interruptedWithoutProviderCompletion && !awaitingCompletionEvidence) {
     return null;
   }
   const settledAt =
@@ -369,20 +380,16 @@ export function settleDelegation(
   ) {
     return null;
   }
-  const completionState =
-    completion?.payload !== null &&
-    typeof completion?.payload === "object" &&
-    completion.payload !== undefined &&
-    "state" in completion.payload
-      ? completion.payload.state
-      : undefined;
+  const state = completionState(completion);
   const outcome =
-    completionState === "failed" || latestTurn.state === "error"
+    state === "failed" || latestTurn.state === "error"
       ? "failed"
-      : latestTurn.state === "completed" &&
-          (completionState === "completed" || completion === undefined)
+      : state === "completed" &&
+          (latestTurn.state === "completed" || latestTurn.state === "interrupted")
         ? "result-available"
-        : "blocked";
+        : latestTurn.state === "completed" && completion === undefined
+          ? "result-available"
+          : "blocked";
   const resultMessage = child.messages.findLast(
     (message) =>
       message.role === "assistant" && message.turnId === latestTurn.turnId && !message.streaming,

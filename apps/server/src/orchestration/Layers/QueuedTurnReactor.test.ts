@@ -826,6 +826,7 @@ describe("QueuedTurnReactor", () => {
                 state: "interrupted" as const,
                 completedAt: interruptedAt,
               },
+              activities: [],
               session: {
                 threadId: child.id,
                 status: "ready" as const,
@@ -844,6 +845,43 @@ describe("QueuedTurnReactor", () => {
     });
 
     expect(settlementCommands(commands)).toHaveLength(1);
+  });
+
+  it("settles provider-confirmed completion without the interrupted grace", async () => {
+    const state = delegatedReadModel();
+    const child = state.threads[1]!;
+    const completedAt = new Date().toISOString();
+    const providerCompletedState: OrchestrationReadModel = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id
+          ? thread
+          : {
+              ...thread,
+              updatedAt: completedAt,
+              latestTurn: {
+                ...thread.latestTurn!,
+                state: "interrupted" as const,
+                completedAt,
+              },
+              session: {
+                threadId: child.id,
+                status: "ready" as const,
+                providerName: "copilot",
+                runtimeMode: "approval-required" as const,
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: completedAt,
+              },
+            },
+      ),
+    };
+    const commands = await runReactor(providerCompletedState, monitorSnapshot("head"), {
+      waitAfterStartMs: 50,
+    });
+
+    expect(settlementCommands(commands)).toHaveLength(1);
+    expect(delegationStallCommands(commands)).toEqual([]);
   });
 
   it("settles a completed delegated turn without insights after its grace", async () => {
@@ -898,6 +936,7 @@ describe("QueuedTurnReactor", () => {
                 state: "interrupted" as const,
                 completedAt: interruptedAt,
               },
+              activities: [],
               session: {
                 threadId: child.id,
                 status: "ready" as const,
