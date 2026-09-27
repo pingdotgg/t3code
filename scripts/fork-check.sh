@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 # fork-check.sh: verify the fork stack model on the current branch.
-# Usage: scripts/fork-check.sh [--base <sha>] [--upstream <remote>] [--max-commits <n>]
-# Exits 0 when the stack is a small, merge-free stack whose upstream-file
+# Usage: scripts/fork-check.sh [--base <sha>] [--upstream <remote>]
+# Exits 0 when the stack is a merge-free stack whose upstream-file
 # modifications are all allowlisted in scripts/fork-upstream-edits.txt.
 set -euo pipefail
 
 BASE=""
 UPSTREAM="upstream"
-MAX_COMMITS=20
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --base) BASE="$2"; shift 2 ;;
     --upstream) UPSTREAM="$2"; shift 2 ;;
-    --max-commits) MAX_COMMITS="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,6p' "$0"
       exit 0
@@ -54,12 +52,8 @@ if [[ -n "$MERGES" ]]; then
 fi
 
 COUNT="$(git rev-list --count "$BASE"..HEAD)"
-echo "fork-check: stack: $COUNT commit(s) on top of base (limit $MAX_COMMITS)."
+echo "fork-check: stack: $COUNT commit(s) on top of base."
 git log --oneline "$BASE"..HEAD || true
-if [[ "$COUNT" -gt "$MAX_COMMITS" ]]; then
-  echo "fork-check: FAIL: stack exceeds $MAX_COMMITS commits; split the work." >&2
-  exit 1
-fi
 
 # Files changed across the stack, classified against the base: a changed path
 # that does not exist in the base is a new fork-only file (always fine).

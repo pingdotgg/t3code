@@ -198,7 +198,6 @@ their Blacksmith labels: they need upstream secrets and must not run here.
 runs `scripts/fork-check.sh`, which verifies:
 
 - the stack on top of the upstream base contains no merge commits,
-- the stack is small (at most 20 commits),
 - every modification to an upstream-owned file is allowlisted in
   `scripts/fork-upstream-edits.txt` (new fork-only files are always fine),
 - this document and a valid feature map exist, with exactly one feature owner
