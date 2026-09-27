@@ -188,6 +188,7 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import {
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
+  resolveComposerRestingTweenTiming,
   shouldAnimateComposerRestingTransition,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -422,6 +423,7 @@ function useComposerRestingTransition(
   }>({ promptFromTop: null, promptHeight: null, actionFromBottom: null, actionFromRight: null });
   const animationRef = useRef<Animation | null>(null);
   const animationFromHeightRef = useRef<number | null>(null);
+  const animationTargetHeightRef = useRef<number | null>(null);
   const contentAnimationsRef = useRef<Animation[]>([]);
   const stateChangeAnimationsRef = useRef<Animation[]>([]);
   const pinnedOverlayRef = useRef<HTMLElement | null>(null);
@@ -524,24 +526,24 @@ function useComposerRestingTransition(
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
       const nextPromptTop = nextPromptRect?.top ?? null;
       const nextActionRect = action?.getBoundingClientRect() ?? null;
-      // The footer is pinned below for the tween; pinning it at its natural
-      // destination height keeps the actions from snapping when the pin lifts.
-      const nextFooterHeight = footer?.getBoundingClientRect().height ?? 0;
-      // A retarget mid-flight (the body resizing during the tween, which a
-      // rewrapping draft or placeholder does on every frame) keeps the original
-      // start height and clock. Restarting instead leaves each new animation
-      // pending on its first keyframe, so the card freezes and then snaps.
-      // Only a reversed state change starts a fresh tween.
-      const continuing =
-        interruptedAnimation !== null &&
-        !stateChanged &&
-        typeof interruptedStartTime === "number" &&
-        typeof interruptedDuration === "number" &&
-        interruptedCurrentTime !== null &&
-        animationFromHeightRef.current !== null;
-      const previousHeight = continuing
-        ? animationFromHeightRef.current
-        : (interruptedHeight ?? previousHeightRef.current);
+      const timing = resolveComposerRestingTweenTiming({
+        stateChanged,
+        defaultDurationMs: animationDurationMs,
+        nextHeight,
+        settledHeight: previousHeightRef.current,
+        interrupted:
+          interruptedHeight === null
+            ? null
+            : {
+                renderedHeight: interruptedHeight,
+                startTime: typeof interruptedStartTime === "number" ? interruptedStartTime : null,
+                currentTime: interruptedCurrentTime,
+                durationMs: typeof interruptedDuration === "number" ? interruptedDuration : null,
+                fromHeight: animationFromHeightRef.current,
+                targetHeight: animationTargetHeightRef.current,
+              },
+      });
+      const previousHeight = timing.fromHeight;
       const shouldAnimate = shouldAnimateComposerRestingTransition({
         hasCompletedInitialLayout: hasCompletedInitialLayoutRef.current,
         stateChanged,
@@ -554,9 +556,8 @@ function useComposerRestingTransition(
         previousHeight !== null &&
         Math.abs(previousHeight - nextHeight) >= 0.5
       ) {
-        const duration = continuing ? interruptedDuration : animationDurationMs;
-        const elapsed = continuing ? interruptedCurrentTime : 0;
-        const remainingDuration = Math.max(1, duration - elapsed);
+        const duration = timing.durationMs;
+        const remainingDuration = timing.remainingMs;
         element.style.overflow = "clip";
         surface.style.height = "100%";
 
@@ -601,9 +602,13 @@ function useComposerRestingTransition(
             easing: COMPOSER_RESTING_TRANSITION_EASING,
           },
         );
-        if (continuing) animation.startTime = interruptedStartTime;
+        if (timing.startTime !== null) {
+          animation.startTime =
+            timing.startTime === "now" ? document.timeline.currentTime : timing.startTime;
+        }
         animationRef.current = animation;
         animationFromHeightRef.current = previousHeight;
+        animationTargetHeightRef.current = nextHeight;
 
         const animatedRect = element.getBoundingClientRect();
         const previousPromptTop =
@@ -645,7 +650,7 @@ function useComposerRestingTransition(
           );
           // Retargets recreate these from the current position every frame;
           // starting them now instead of pending lets them actually advance.
-          if (continuing) contentAnimation.startTime = document.timeline.currentTime;
+          if (timing.startTime !== null) contentAnimation.startTime = document.timeline.currentTime;
           contentAnimations.push(contentAnimation);
         };
         animateContentPosition(prompt, previousPromptTop);
@@ -742,6 +747,7 @@ function useComposerRestingTransition(
           }
           animationRef.current = null;
           animationFromHeightRef.current = null;
+          animationTargetHeightRef.current = null;
           contentAnimationsRef.current = [];
           stateChangeAnimationsRef.current = [];
           clearTransitionStyles();
