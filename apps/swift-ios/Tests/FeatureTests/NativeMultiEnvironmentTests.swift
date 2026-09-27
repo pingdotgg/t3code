@@ -2683,6 +2683,7 @@ struct NativePassiveLiveShellTests {
                 if id == "two" { peerSleepRecorder.yield(interval) }
                 try await Task.sleep(for: interval)
             },
+            aggregateStreamRetrySleep: { _, _ in },
             aggregatePublishSleep: {},
             aggregateRefreshReceipt: { receipts.record($0) }
         )
@@ -2706,6 +2707,27 @@ struct NativePassiveLiveShellTests {
         var sleeps = peerSleeps.makeAsyncIterator()
         while let next = await sleeps.next(), next != .seconds(24 * 60 * 60) {}
         #expect(await clock.intervals.count == 1)
+        // Updates still arriving on the open socket must not hide the rejection.
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "After rejection", snapshotSequence: 11
+        ), host: "two.example")
+        let afterUpdate = try await recorder.wait { $0.threads.contains { $0.title == "After rejection" } }
+        #expect(afterUpdate.environments.first { $0.id == "two" }?.connectionState == .needsPairing)
+        // A closed stream and its fresh snapshot must neither hide the rejection nor end the back-off.
+        let reads = await fixture.transport.shellReadCount(host: "two.example")
+        try await server.finish(host: "two.example")
+        await server.waitForSubscriptions(host: "two.example", count: 2)
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "After reconnect", snapshotSequence: 12
+        ), host: "two.example")
+        let afterReconnect = try await recorder.wait { $0.threads.contains { $0.title == "After reconnect" } }
+        #expect(afterReconnect.environments.first { $0.id == "two" }?.connectionState == .needsPairing)
+        // A woken fallback read would land before this later update is published.
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Still backed off", snapshotSequence: 13
+        ), host: "two.example")
+        _ = try await recorder.wait { $0.threads.contains { $0.title == "Still backed off" } }
+        #expect(await fixture.transport.shellReadCount(host: "two.example") == reads)
         await fixture.client.disconnect()
     }
 

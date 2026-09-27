@@ -4429,14 +4429,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         func refreshShell(_ environment: Environment, state: PassiveShellState) async {
             var interval = fastInterval
-            // A rejected credential outlives the open socket; stop the quiet cadence.
-            var credentialRejected = false
             while owns(environment) {
                 do {
                     let wasLive = state.isLive
                     if wasLive || !state.needsHTTP {
                         let delay = interval
-                        let reconciles = wasLive && !credentialRejected
+                        // A rejected credential outlives the open socket; stop the quiet cadence.
+                        let reconciles = wasLive && !state.credentialRejected
                         await withTaskGroup(of: Void.self) { group in
                             group.addTask {
                                 if reconciles {
@@ -4473,7 +4472,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                           authority == state.authorityRevision, connectionID == currentConnection else { continue }
                     // A rejected credential applies even while the old socket stays open.
                     if let error = hydrationError, error.isRejectedAuthorization {
-                        credentialRejected = true
+                        state.credentialRejected = true
                         owner?.applyEnvironmentLoad(EnvironmentShellLoad(
                             environment: environment, client: client, shell: nil, config: nil,
                             credentialRejected: true, failureDetail: error.localizedDescription
@@ -4538,15 +4537,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 // A read begun before the stream lost completeness cannot
                 // repair that gap, even if the socket identity is unchanged.
                 state.authorityRevision &+= 1
-                markStreamPaused(environment)
+                markStreamPaused(environment, state: state)
                 state.requestRepair()
                 do { try await streamRetrySleep(environment.id, failureInterval) } catch { return }
             }
         }
 
-        func markStreamPaused(_ environment: Environment) {
+        func markStreamPaused(_ environment: Environment, state: PassiveShellState) {
             guard let owner, owns(environment) else { return }
             owner.shellConnectionIDsByEnvironmentID[environment.id] = nil
+            // A rejected credential still needs pairing; keep Pair again visible.
+            guard !state.credentialRejected else { return }
             owner.environmentConnectionStates[environment.id] = .reconnecting
             owner.environmentConnectionDetails[environment.id] = "Live updates paused. Refreshing over HTTP."
             schedulePublication(environment.id)
@@ -4578,7 +4579,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 let wasLive = state.isLive
                 state.isLive = true
                 state.needsHTTP = false
-                if !wasLive { state.wakeWaiter() }
+                // A rejected peer keeps its back-off even when a new stream seeds it.
+                if !wasLive && !state.credentialRejected { state.wakeWaiter() }
             case .synchronized:
                 // A completion marker cannot make an arbitrary cached shell authoritative.
                 return state.isLive
@@ -4627,8 +4629,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 || current?.threads.map(\.id) != shell.threads.map(\.id)
             owner.shellsByEnvironmentID[environment.id] = shell
             owner.environmentClients[environment.id] = client
-            owner.environmentConnectionStates[environment.id] = .connected
-            owner.environmentConnectionDetails[environment.id] = nil
+            // Stream deltas still arrive on the old socket; keep showing the rejection.
+            if !state.credentialRejected {
+                owner.environmentConnectionStates[environment.id] = .connected
+                owner.environmentConnectionDetails[environment.id] = nil
+            }
             if membershipChanged { owner.rebuildEntityIndexes(savedEnvironments) }
             owner.synchronizeActiveDetail(with: shell, environment: environment)
             refreshReceipt(.shellApplied(environmentID: environment.id, sequence: shell.snapshotSequence))
@@ -4724,9 +4729,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         var authorityRevision = 0
         var isLive = false
         var needsHTTP = false
+        /// Set when HTTP rejects this peer's credential; cleared by a new worker after re-pairing.
+        var credentialRejected = false
         private var waiter: (id: UUID, continuation: CheckedContinuation<Void, Never>)?
 
         func requestRepair() {
+            // Stream failures must not wake a rejected peer before its back-off.
+            guard !credentialRejected else { return }
             needsHTTP = true
             wakeWaiter()
         }
