@@ -23,7 +23,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import * as VoiceBroker from "./broker.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import { SecretStoreReadError, ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import {
   DEFAULT_DELEGATION_INSTRUCTIONS,
   evictStaleClosedSessions,
@@ -158,6 +158,8 @@ const makeEnvironmentAuthLayer = () =>
 const makeTest = (options?: {
   readonly secrets?: Record<string, string>;
   readonly upstream?: (state: UpstreamRecorder) => void;
+  readonly secretFailure?: SecretStoreReadError;
+  readonly fetch?: typeof fetch;
 }) =>
   Effect.gen(function* () {
     const state: UpstreamRecorder = { recorded: [], queue: [] };
@@ -168,11 +170,15 @@ const makeTest = (options?: {
       VoiceBroker.layer.pipe(
         Layer.provide(
           FetchHttpClient.layer.pipe(
-            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, makeUpstreamFetch(state))),
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, options?.fetch ?? makeUpstreamFetch(state)),
+            ),
           ),
         ),
         Layer.provide(
-          makeSecretStoreLayer(options?.secrets ?? { [OPENAI_API_KEY_SECRET_NAME]: "test-key" }),
+          options?.secretFailure === undefined
+            ? makeSecretStoreLayer(options?.secrets ?? { [OPENAI_API_KEY_SECRET_NAME]: "test-key" })
+            : Layer.mock(ServerSecretStore)({ get: () => Effect.fail(options.secretFailure!) }),
         ),
         Layer.provide(NodeServices.layer),
       ),
@@ -607,6 +613,73 @@ describe("voice broker routes", () => {
         };
         expect(upstreamBody.session.model).toBe("gpt-live-custom");
         expect(upstreamBody.session.delegation.responses.model).toBe("gpt-small-custom");
+      }),
+    ),
+  );
+
+  it.effect("retains secret-store causes without exposing them over HTTP", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cause = new SecretStoreReadError({
+          resource: "private-resource",
+          cause: new Error("private detail"),
+        });
+        const { broker, handlers } = yield* makeTest({ secretFailure: cause });
+        const failure = yield* broker.getSettings().pipe(Effect.flip);
+        expect(failure.operation).toBe("getSettings.key");
+        expect(failure.category).toBe("secret_store");
+        expect(failure.cause).toBe(cause);
+        const response = yield* runHandler(handlers.mintSession, {
+          method: "POST",
+          path: MINT_PATH,
+          token: OPERATE_TOKEN,
+          body: { transport: { type: "webrtc", sdp: "offer-sdp" } },
+        }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+        expect(yield* responseBody(response)).toEqual({
+          code: "auth_invalid",
+          message: "Voice authentication failed. Check the OpenAI key.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("retains transport and response decoding causes at both upstream boundaries", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, state } = yield* makeTest();
+        const mint = () =>
+          broker.mintSession({
+            clientDelegation: true,
+            transport: { type: "webrtc", sdp: "offer-sdp" },
+          });
+        const session = yield* mint();
+        for (const body of ["not JSON", {}]) {
+          state.queue.push({ status: 200, body });
+          const liveFailure = yield* mint().pipe(Effect.flip);
+          expect(liveFailure.operation).toBe("mintSession");
+          expect(liveFailure.category).toBe("response_decoding");
+          expect(liveFailure.cause).toBeDefined();
+          state.queue.push({ status: 200, body });
+          const backendFailure = yield* broker
+            .respond({ sessionId: session.sessionId, input: [] })
+            .pipe(Effect.flip);
+          expect(backendFailure.operation).toBe("respond");
+          expect(backendFailure.category).toBe("response_decoding");
+          expect(backendFailure.cause).toBeDefined();
+        }
+        const transportCause = new Error("offline");
+        const failingFetch: typeof fetch = () => Promise.reject(transportCause);
+        const failed = yield* makeTest({ fetch: failingFetch });
+        const transportFailure = yield* failed.broker
+          .mintSession({ transport: { type: "webrtc", sdp: "offer-sdp" } })
+          .pipe(Effect.flip);
+        expect(transportFailure.category).toBe("http");
+        expect(transportFailure.cause).toBeDefined();
+        const validationFailure = yield* broker
+          .closeSession({ sessionId: VoiceSessionId.make("unknown") })
+          .pipe(Effect.flip);
+        expect(validationFailure.category).toBe("validation");
+        expect(validationFailure.cause).toBeUndefined();
       }),
     ),
   );

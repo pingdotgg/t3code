@@ -175,6 +175,15 @@ export const DEFAULT_DELEGATION_INSTRUCTIONS =
 
 export class VoiceBrokerError extends Schema.TaggedError<VoiceBrokerError>()("VoiceBrokerError", {
   code: VoiceToolErrorCode,
+  operation: Schema.String,
+  category: Schema.Literals([
+    "validation",
+    "secret_store",
+    "encoding",
+    "http",
+    "response_decoding",
+  ]),
+  cause: Schema.optional(Schema.Defect()),
   message: Schema.String,
   /** HTTP status the route responds with. */
   status: Schema.Number,
@@ -297,7 +306,12 @@ const UpstreamLiveSessionCreated = Schema.Struct({
 /** Maps an OpenAI failure to the frozen VoiceToolError codes: credential
     problems are `auth_invalid`, upstream 5xx/network problems are
     `environment_unreachable`, and rejected requests are `invalid_request`. */
-const upstreamFailureError = (status: number): VoiceBrokerError => {
+const upstreamFailureError = (
+  status: number,
+  operation: string,
+  category: VoiceBrokerError["category"],
+  cause?: unknown,
+): VoiceBrokerError => {
   const code: VoiceToolErrorCode =
     status === 401 || status === 403
       ? "auth_invalid"
@@ -315,6 +329,9 @@ const upstreamFailureError = (status: number): VoiceBrokerError => {
     code,
     message,
     status: httpStatus,
+    operation,
+    category,
+    ...(cause === undefined ? {} : { cause }),
   });
 };
 
@@ -393,17 +410,24 @@ export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
 
-  const settingsFailure = () =>
+  const settingsFailure = (
+    operation: string,
+    category: VoiceBrokerError["category"],
+    cause: unknown,
+  ) =>
     new VoiceBrokerError({
       code: "invalid_request",
       message: "Could not access voice settings.",
+      operation,
+      category,
+      cause,
       status: 500,
     });
   const getSettings = Effect.fn("VoiceLiveBroker.getSettings")(function* () {
     const config = yield* loadBrokerConfig(secrets);
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
-      .pipe(Effect.mapError(settingsFailure));
+      .pipe(Effect.mapError((cause) => settingsFailure("getSettings.key", "secret_store", cause)));
     return {
       keyConfigured: Option.isSome(key) && new TextDecoder().decode(key.value).trim().length > 0,
       liveModel: config.model,
@@ -419,16 +443,28 @@ export const make = Effect.gen(function* () {
       backendModel: input.backendModel,
       instructions: config.instructions,
       delegationInstructions: config.delegation.instructions,
-    }).pipe(Effect.mapError(settingsFailure));
+    }).pipe(
+      Effect.mapError((cause) => settingsFailure("updateSettings.config", "encoding", cause)),
+    );
     yield* secrets
       .set(VOICE_BROKER_CONFIG_SECRET_NAME, new TextEncoder().encode(encoded))
-      .pipe(Effect.mapError(settingsFailure));
+      .pipe(
+        Effect.mapError((cause) => settingsFailure("updateSettings.config", "secret_store", cause)),
+      );
     if (input.apiKey === null) {
-      yield* secrets.remove(OPENAI_API_KEY_SECRET_NAME).pipe(Effect.mapError(settingsFailure));
+      yield* secrets
+        .remove(OPENAI_API_KEY_SECRET_NAME)
+        .pipe(
+          Effect.mapError((cause) =>
+            settingsFailure("updateSettings.removeKey", "secret_store", cause),
+          ),
+        );
     } else if (input.apiKey !== undefined) {
       yield* secrets
         .set(OPENAI_API_KEY_SECRET_NAME, new TextEncoder().encode(input.apiKey))
-        .pipe(Effect.mapError(settingsFailure));
+        .pipe(
+          Effect.mapError((cause) => settingsFailure("updateSettings.key", "secret_store", cause)),
+        );
     }
     return yield* getSettings();
   });
@@ -441,6 +477,8 @@ export const make = Effect.gen(function* () {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
         message: `Unknown voice session ${String(sessionId)}. The broker only knows sessions it minted in this server process.`,
+        operation: "requireSession",
+        category: "validation",
         status: 404,
       });
     }
@@ -454,16 +492,14 @@ export const make = Effect.gen(function* () {
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
       .pipe(
-        Effect.catch((cause) =>
-          Effect.logError("failed to read the OpenAI API key secret", { cause }).pipe(
-            Effect.as(Option.none<Uint8Array>()),
-          ),
-        ),
+        Effect.mapError((cause) => upstreamFailureError(401, "mintSession", "secret_store", cause)),
       );
     if (Option.isNone(key)) {
       return yield* new VoiceBrokerError({
         code: "auth_invalid",
         message: "This environment has no OpenAI API key configured for voice sessions.",
+        operation: "mintSession",
+        category: "validation",
         status: 401,
       });
     }
@@ -516,17 +552,21 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catch((cause) =>
           Effect.logWarning("OpenAI Live session request failed", { cause }).pipe(
-            Effect.flatMap(() => Effect.fail(upstreamFailureError(500))),
+            Effect.flatMap(() =>
+              Effect.fail(upstreamFailureError(500, "mintSession", "http", cause)),
+            ),
           ),
         ),
       );
 
     if (response.status < 200 || response.status >= 300) {
-      return yield* upstreamFailureError(response.status);
+      return yield* upstreamFailureError(response.status, "mintSession", "http");
     }
 
     const body = yield* response.json.pipe(
-      Effect.mapError(() => upstreamFailureError(response.status)),
+      Effect.mapError((cause) =>
+        upstreamFailureError(response.status, "mintSession", "response_decoding", cause),
+      ),
     );
     const decoded = Schema.decodeUnknownExit(UpstreamLiveSessionCreated)(body);
     if (decoded._tag === "Failure") {
@@ -534,6 +574,9 @@ export const make = Effect.gen(function* () {
         code: "environment_unreachable",
         message:
           "OpenAI Live session response did not match the documented shape (session.id and transport.sdp).",
+        operation: "mintSession",
+        category: "response_decoding",
+        cause: decoded.cause,
         status: 502,
       });
     }
@@ -557,24 +600,30 @@ export const make = Effect.gen(function* () {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
         message: "The command backend requires an open client-delegation session.",
+        operation: "respond",
+        category: "validation",
         status: 400,
       });
     }
     const encoded = yield* encodeBackendInput(input.input).pipe(
-      Effect.mapError(() => upstreamFailureError(400)),
+      Effect.mapError((cause) => upstreamFailureError(400, "respond", "encoding", cause)),
     );
     if (encoded.length > 128_000) {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
         message: "Voice command context is full. Start a fresh voice session.",
+        operation: "respond",
+        category: "validation",
         status: 400,
       });
     }
     const config = yield* loadBrokerConfig(secrets);
     const key = yield* secrets
       .get(OPENAI_API_KEY_SECRET_NAME)
-      .pipe(Effect.mapError(() => upstreamFailureError(401)));
-    if (Option.isNone(key)) return yield* upstreamFailureError(401);
+      .pipe(
+        Effect.mapError((cause) => upstreamFailureError(401, "respond", "secret_store", cause)),
+      );
+    if (Option.isNone(key)) return yield* upstreamFailureError(401, "respond", "validation");
     const tools = (Object.keys(VoiceToolSchemas) as Array<keyof typeof VoiceToolSchemas>).map(
       (name) => {
         const document = Schema.toJsonSchemaDocument(
@@ -611,12 +660,16 @@ export const make = Effect.gen(function* () {
           include: ["reasoning.encrypted_content"],
         }),
       })
-      .pipe(Effect.mapError(() => upstreamFailureError(500)));
+      .pipe(Effect.mapError((cause) => upstreamFailureError(500, "respond", "http", cause)));
     if (response.status < 200 || response.status >= 300) {
-      return yield* upstreamFailureError(response.status);
+      return yield* upstreamFailureError(response.status, "respond", "http");
     }
-    const body = yield* response.json.pipe(Effect.mapError(() => upstreamFailureError(500)));
-    return yield* decodeBackendResult(body).pipe(Effect.mapError(() => upstreamFailureError(500)));
+    const body = yield* response.json.pipe(
+      Effect.mapError((cause) => upstreamFailureError(500, "respond", "response_decoding", cause)),
+    );
+    return yield* decodeBackendResult(body).pipe(
+      Effect.mapError((cause) => upstreamFailureError(500, "respond", "response_decoding", cause)),
+    );
   }, Effect.scoped);
 
   const closeSession = Effect.fn("VoiceLiveBroker.closeSession")(function* (
@@ -637,6 +690,8 @@ export const make = Effect.gen(function* () {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
         message: `Unknown voice session ${String(input.sessionId)}.`,
+        operation: "closeSession",
+        category: "validation",
         status: 404,
       });
     }
@@ -658,6 +713,8 @@ export const make = Effect.gen(function* () {
       return yield* new VoiceBrokerError({
         code: "invalid_request",
         message: `Unknown voice session ${String(usage.sessionId)}.`,
+        operation: "recordSessionUsage",
+        category: "validation",
         status: 404,
       });
     }
@@ -770,6 +827,8 @@ const decodeJsonBody = <A>(
           new VoiceBrokerError({
             code: "invalid_request",
             message: "The request body must be JSON.",
+            operation: "decodeRequest",
+            category: "validation",
             status: 400,
           }),
       ),
@@ -780,6 +839,8 @@ const decodeJsonBody = <A>(
           new VoiceBrokerError({
             code: "invalid_request",
             message: "The request body does not match the voice broker schema.",
+            operation: "decodeRequest",
+            category: "validation",
             status: 400,
           }),
       ),
@@ -854,6 +915,8 @@ const getSessionUsageRoute = (broker: VoiceLiveBroker["Service"]) =>
         return yield* new VoiceBrokerError({
           code: "invalid_request",
           message: "The sessionId query parameter is required.",
+          operation: "getSessionUsage",
+          category: "validation",
           status: 400,
         });
       }
