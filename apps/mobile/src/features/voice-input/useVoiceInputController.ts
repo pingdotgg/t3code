@@ -9,7 +9,7 @@ import {
 import { File } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 
@@ -90,35 +90,37 @@ export function useVoiceInputController(input: {
     text: input.draftMessage,
     selection: input.selection,
   });
-  const reconciledDraft = reconcileVoiceDraftRender(
-    renderedDraftRef.current,
-    {
-      ownerKey: latestInputRef.current.ownerKey,
-      text: latestInputRef.current.draftMessage,
-      selection: latestInputRef.current.selection,
-    },
-    {
+  useLayoutEffect(() => {
+    const reconciledDraft = reconcileVoiceDraftRender(
+      renderedDraftRef.current,
+      {
+        ownerKey: latestInputRef.current.ownerKey,
+        text: latestInputRef.current.draftMessage,
+        selection: latestInputRef.current.selection,
+      },
+      {
+        ownerKey: input.ownerKey,
+        text: input.draftMessage,
+        selection: input.selection,
+      },
+      acknowledgedDraftsRef.current,
+    );
+    if (reconciledDraft.externalDraftChange) revisionRef.current += 1;
+    acknowledgedDraftsRef.current = reconciledDraft.externalDraftChange
+      ? []
+      : acknowledgedDraftsRef.current.slice(reconciledDraft.consumedAcknowledgements);
+    renderedDraftRef.current = {
       ownerKey: input.ownerKey,
       text: input.draftMessage,
       selection: input.selection,
-    },
-    acknowledgedDraftsRef.current,
-  );
-  if (reconciledDraft.externalDraftChange) revisionRef.current += 1;
-  acknowledgedDraftsRef.current = reconciledDraft.externalDraftChange
-    ? []
-    : acknowledgedDraftsRef.current.slice(reconciledDraft.consumedAcknowledgements);
-  renderedDraftRef.current = {
-    ownerKey: input.ownerKey,
-    text: input.draftMessage,
-    selection: input.selection,
-  };
-  latestInputRef.current = {
-    ...input,
-    ownerKey: reconciledDraft.current.ownerKey,
-    draftMessage: reconciledDraft.current.text,
-    selection: reconciledDraft.current.selection,
-  };
+    };
+    latestInputRef.current = {
+      ...input,
+      ownerKey: reconciledDraft.current.ownerKey,
+      draftMessage: reconciledDraft.current.text,
+      selection: reconciledDraft.current.selection,
+    };
+  });
 
   const handleRecorderStatus = useCallback((status: RecordingStatus) => {
     controllerRef.current?.handleRecorderStatus({

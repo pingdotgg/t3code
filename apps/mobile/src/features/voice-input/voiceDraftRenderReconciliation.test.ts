@@ -53,7 +53,7 @@ describe("reconcileVoiceDraftRender", () => {
     expect(draftEcho).toEqual({
       current: acknowledged,
       externalDraftChange: false,
-      consumedAcknowledgements: 1,
+      consumedAcknowledgements: 0,
     });
   });
 
@@ -65,6 +65,17 @@ describe("reconcileVoiceDraftRender", () => {
       current: second,
       externalDraftChange: false,
       consumedAcknowledgements: 1,
+    });
+  });
+
+  it("accepts an edit restoring an older hypothesis with a different selection", () => {
+    const first = { ...rendered, text: "before one", selection: { start: 10, end: 10 } };
+    const current = { ...first, text: "before one two", selection: { start: 14, end: 14 } };
+    const edited = { ...first, selection: { start: 0, end: 6 } };
+    expect(reconcileVoiceDraftRender(rendered, current, edited, [first, current])).toEqual({
+      current: edited,
+      externalDraftChange: true,
+      consumedAcknowledgements: 2,
     });
   });
 

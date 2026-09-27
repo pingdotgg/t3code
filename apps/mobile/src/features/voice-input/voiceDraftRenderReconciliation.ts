@@ -28,7 +28,10 @@ export function reconcileVoiceDraftRender(
   readonly consumedAcknowledgements: number;
 } {
   if (!sameDraft(rendered, incoming)) {
-    const acknowledgedIndex = acknowledged.findIndex((snapshot) => sameDraft(snapshot, incoming));
+    const acknowledgedIndex = acknowledged.findIndex(
+      (snapshot) =>
+        sameDraft(snapshot, incoming) && sameSelection(snapshot.selection, incoming.selection),
+    );
     if (!sameDraft(current, incoming) && acknowledgedIndex === -1) {
       return {
         current: incoming,
