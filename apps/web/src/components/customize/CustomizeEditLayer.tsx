@@ -109,7 +109,7 @@ function measureThreadRow(): Measurement {
   return best;
 }
 
-function measureSurface(surface: EditSurface): Measurement {
+export function measureSurface(surface: EditSurface): Measurement {
   if (surface === "threadRow") return measureThreadRow();
   const selector = surface === "chatHeader" ? SURFACE_SELECTORS.header : SURFACE_SELECTORS.composer;
   const container = document.querySelector(selector);
