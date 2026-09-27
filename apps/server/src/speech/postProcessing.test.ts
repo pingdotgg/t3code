@@ -1,4 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,9 +22,15 @@ const runPostProcess = (
   );
 
 describe("postProcessTranscript", () => {
-  it.effect("uses the dedicated model selection and selected prompt", () =>
+  it.effect("uses the dedicated model selection and built-in prompt", () =>
     Effect.gen(function* () {
-      const generate = vi.fn(() => Effect.succeed({ transcription: "  Clean text.  " }));
+      const generate = vi.fn(
+        (
+          _input: Parameters<
+            TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"]
+          >[0],
+        ) => Effect.succeed({ transcription: "  Clean text.  " }),
+      );
       const settings = {
         ...DEFAULT_SERVER_SETTINGS,
         speechPostProcessingEnabled: true,
@@ -43,6 +53,60 @@ describe("postProcessTranscript", () => {
           prompt: expect.stringContaining("<transcript>\nuh clean text\n</transcript>"),
         }),
       );
+      expect(generate.mock.calls[0]?.[0].prompt).toContain(DEFAULT_SPEECH_POST_PROCESSING_PROMPT);
+    }),
+  );
+
+  it.effect("uses custom instructions when selected", () =>
+    Effect.gen(function* () {
+      const generate = vi.fn(
+        (
+          _input: Parameters<
+            TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"]
+          >[0],
+        ) => Effect.succeed({ transcription: "Clean text." }),
+      );
+      yield* runPostProcess(
+        {
+          transcript: "clean text",
+          cwd: "C:/neutral",
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            speechPostProcessingPrompt: {
+              mode: "custom",
+              customInstructions: "Keep technical terms verbatim.",
+            },
+          },
+        },
+        generate,
+      );
+      const prompt = generate.mock.calls[0]?.[0].prompt;
+      expect(prompt).toContain("Keep technical terms verbatim.");
+      expect(prompt).not.toContain(DEFAULT_SPEECH_POST_PROCESSING_PROMPT);
+    }),
+  );
+
+  it.effect("uses built-in cleanup while custom instructions are blank", () =>
+    Effect.gen(function* () {
+      const generate = vi.fn(
+        (
+          _input: Parameters<
+            TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"]
+          >[0],
+        ) => Effect.succeed({ transcription: "Clean text." }),
+      );
+      yield* runPostProcess(
+        {
+          transcript: "clean text",
+          cwd: "C:/neutral",
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            speechPostProcessingPrompt: { mode: "custom", customInstructions: "" },
+          },
+        },
+        generate,
+      );
+      expect(generate.mock.calls[0]?.[0].prompt).toContain(DEFAULT_SPEECH_POST_PROCESSING_PROMPT);
     }),
   );
 
@@ -63,7 +127,7 @@ describe("postProcessTranscript", () => {
     }),
   );
 
-  it.effect("adds context-sensitive correction instructions to the selected prompt", () =>
+  it.effect("adds context-sensitive correction instructions to the prompt", () =>
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "I want yellow." }));
       const settings = { ...DEFAULT_SERVER_SETTINGS, speechCorrectionWord: "err" };

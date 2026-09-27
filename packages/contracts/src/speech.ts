@@ -112,16 +112,6 @@ export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
   timeout: SpeechModelUnloadTimeout,
 });
 export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
-export const SpeechPostProcessingPrompt = Schema.Struct({
-  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
-  prompt: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(10_000)),
-});
-export type SpeechPostProcessingPrompt = typeof SpeechPostProcessingPrompt.Type;
-export const SpeechPostProcessingPrompts = Schema.Array(SpeechPostProcessingPrompt).check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(20),
-);
 export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
   transcript: Schema.String.check(Schema.isMaxLength(100_000)),
 });

@@ -1,4 +1,4 @@
-import type { ServerSettings } from "@t3tools/contracts";
+import { DEFAULT_SPEECH_POST_PROCESSING_PROMPT, type ServerSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -16,15 +16,14 @@ export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(f
   if (!input.settings.speechPostProcessingEnabled || input.transcript.trim().length === 0) {
     return input.transcript;
   }
-  const selectedPrompt = input.settings.speechPostProcessingPrompts.find(
-    (prompt) => prompt.id === input.settings.speechPostProcessingSelectedPromptId,
-  );
-  if (!selectedPrompt) return input.transcript;
+  const { mode, customInstructions } = input.settings.speechPostProcessingPrompt;
+  const instructions =
+    (mode === "custom" ? customInstructions.trim() : "") || DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const { prompt } = buildTranscriptionPostProcessingPrompt(
     input.settings.speechCorrectionWord.trim()
-      ? `${selectedPrompt.prompt}\n\nCorrection cue: ${quoteCorrectionWord(input.settings.speechCorrectionWord.trim())}. Only when this cue clearly marks a spoken self-correction, apply the correction the speaker made and omit the cue from the result. The correction may revise, add to, or retract earlier speech. Preserve everything else. If the cue is an intended part of the sentence, keep it. Use the surrounding context to decide; do not assume every occurrence is a correction.`
-      : selectedPrompt.prompt,
+      ? `${instructions}\n\nCorrection cue: ${quoteCorrectionWord(input.settings.speechCorrectionWord.trim())}. Only when this cue clearly marks a spoken self-correction, apply the correction the speaker made and omit the cue from the result. The correction may revise, add to, or retract earlier speech. Preserve everything else. If the cue is an intended part of the sentence, keep it. Use the surrounding context to decide; do not assume every occurrence is a correction.`
+      : instructions,
     input.transcript,
   );
   const generated = yield* textGeneration.generateTranscriptionPostProcessing({

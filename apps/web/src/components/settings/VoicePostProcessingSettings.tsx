@@ -1,7 +1,6 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { DEFAULT_SPEECH_POST_PROCESSING_PROMPT, ProviderDriverKind } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { CheckIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef } from "react";
 
 import {
   getCustomModelOptionsByInstance,
@@ -12,16 +11,13 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import { randomUUID } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -32,8 +28,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export function VoicePostProcessingSettings() {
-  const [renamingPromptId, setRenamingPromptId] = useState<string | null>(null);
-  const [draftPrompt, setDraftPrompt] = useState<{ name: string; prompt: string } | null>(null);
+  const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environment, connectedEnvironments } = useSettingsScope();
@@ -65,11 +60,11 @@ export function VoicePostProcessingSettings() {
     (entry) => entry.instanceId === modelSelection.instanceId,
   );
   const provider: ProviderDriverKind = instanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
-  const selectedSpeechPrompt =
-    settings.speechPostProcessingPrompts.find(
-      (prompt) => prompt.id === settings.speechPostProcessingSelectedPromptId,
-    ) ?? settings.speechPostProcessingPrompts[0];
   const hasServerTargets = connectedEnvironments.length > 0;
+  const customInstructions =
+    settings.speechPostProcessingPrompt.customInstructions === DEFAULT_SPEECH_POST_PROCESSING_PROMPT
+      ? ""
+      : settings.speechPostProcessingPrompt.customInstructions;
 
   return (
     <SettingsSection title="Improve transcripts">
@@ -170,199 +165,56 @@ export function VoicePostProcessingSettings() {
       />
       <SettingsRow
         serverScoped
-        settingKeys={["speechPostProcessingPrompts", "speechPostProcessingSelectedPromptId"]}
+        settingKeys={["speechPostProcessingPrompt"]}
         {...searchableSetting("speech-post-processing-prompt")}
-        description="Instructions used to clean the transcript. The transcript is supplied separately as untrusted text."
-      >
-        {draftPrompt ? (
-          <div className="w-full space-y-2 pt-3 pb-2">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-              <Input
-                value={draftPrompt.name}
-                maxLength={100}
-                aria-label="New prompt preset name"
-                onChange={(event) => setDraftPrompt({ ...draftPrompt, name: event.target.value })}
-              />
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      aria-label="Save prompt preset"
-                      disabled={!draftPrompt.name.trim() || !draftPrompt.prompt.trim()}
-                      onClick={() => {
-                        const prompt = {
-                          id: randomUUID(),
-                          name: draftPrompt.name.trim(),
-                          prompt: draftPrompt.prompt.trim(),
-                        };
-                        updateSettings({
-                          speechPostProcessingPrompts: [
-                            ...settings.speechPostProcessingPrompts,
-                            prompt,
-                          ],
-                          speechPostProcessingSelectedPromptId: prompt.id,
-                        });
-                        setDraftPrompt(null);
-                      }}
-                    />
-                  }
-                >
-                  <CheckIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>Save preset</TooltipPopup>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="Cancel new prompt preset"
-                      onClick={() => setDraftPrompt(null)}
-                    />
-                  }
-                >
-                  <XIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>Cancel</TooltipPopup>
-              </Tooltip>
-            </div>
-            <Textarea
-              autoFocus
-              value={draftPrompt.prompt}
-              maxLength={10_000}
-              placeholder="Enter prompt instructions"
-              aria-label="New voice post-processing prompt"
-              onChange={(event) => setDraftPrompt({ ...draftPrompt, prompt: event.target.value })}
-            />
-          </div>
-        ) : selectedSpeechPrompt ? (
-          <div className="w-full space-y-2 pt-3 pb-2">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2">
-              {renamingPromptId === selectedSpeechPrompt.id ? (
-                <Input
-                  key={selectedSpeechPrompt.id}
-                  autoFocus
-                  defaultValue={selectedSpeechPrompt.name}
-                  maxLength={100}
-                  aria-label="Rename voice post-processing prompt preset"
-                  onBlur={(event) => {
-                    const name = event.target.value.trim();
-                    setRenamingPromptId(null);
-                    if (!name || name === selectedSpeechPrompt.name) return;
-                    updateSettings({
-                      speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map(
-                        (prompt) =>
-                          prompt.id === selectedSpeechPrompt.id ? { ...prompt, name } : prompt,
-                      ),
-                    });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape")
-                      event.currentTarget.value = selectedSpeechPrompt.name;
-                    if (event.key === "Enter" || event.key === "Escape") event.currentTarget.blur();
-                  }}
-                />
-              ) : (
-                <Select
-                  value={selectedSpeechPrompt.id}
-                  onValueChange={(id) =>
-                    id && updateSettings({ speechPostProcessingSelectedPromptId: id })
-                  }
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="min-w-0"
-                    aria-label="Voice post-processing prompt preset"
-                  >
-                    <SelectValue>{selectedSpeechPrompt.name}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup align="end" alignItemWithTrigger={false}>
-                    {settings.speechPostProcessingPrompts.map((prompt) => (
-                      <SelectItem key={prompt.id} value={prompt.id}>
-                        {prompt.name}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              )}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="Rename prompt preset"
-                      disabled={renamingPromptId === selectedSpeechPrompt.id}
-                      onClick={() => setRenamingPromptId(selectedSpeechPrompt.id)}
-                    />
-                  }
-                >
-                  <PencilIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>Rename preset</TooltipPopup>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      aria-label="Create prompt preset"
-                      onClick={() => setDraftPrompt({ name: "New prompt", prompt: "" })}
-                    />
-                  }
-                >
-                  <PlusIcon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>New preset</TooltipPopup>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="Delete prompt preset"
-                      disabled={settings.speechPostProcessingPrompts.length <= 1}
-                      onClick={() => {
-                        const prompts = settings.speechPostProcessingPrompts.filter(
-                          (prompt) => prompt.id !== selectedSpeechPrompt.id,
-                        );
-                        updateSettings({
-                          speechPostProcessingPrompts: prompts,
-                          speechPostProcessingSelectedPromptId: prompts[0]?.id ?? "",
-                        });
-                      }}
-                    />
-                  }
-                >
-                  <Trash2Icon className="size-3.5" />
-                </TooltipTrigger>
-                <TooltipPopup>Delete preset</TooltipPopup>
-              </Tooltip>
-            </div>
-            <Textarea
-              key={selectedSpeechPrompt.id}
-              defaultValue={selectedSpeechPrompt.prompt}
-              maxLength={10_000}
+        description="Use the built-in transcript cleanup prompt or write your own instructions."
+        control={
+          <Select
+            value={settings.speechPostProcessingPrompt.mode}
+            onValueChange={(mode) => {
+              if (!mode) return;
+              const nextInstructions =
+                customInstructionsRef.current?.value.trim() ?? customInstructions;
+              updateSettings({
+                speechPostProcessingPrompt: {
+                  mode: mode as "default" | "custom",
+                  customInstructions: nextInstructions,
+                },
+              });
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-56"
               aria-label="Voice post-processing prompt"
+            >
+              <SelectValue>
+                {settings.speechPostProcessingPrompt.mode === "custom"
+                  ? "Custom instructions"
+                  : "Improve transcription"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="default">Improve transcription</SelectItem>
+              <SelectItem value="custom">Custom instructions</SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      >
+        {settings.speechPostProcessingPrompt.mode === "custom" ? (
+          <div className="w-full pt-3 pb-2">
+            <Textarea
+              key={customInstructions}
+              ref={customInstructionsRef}
+              defaultValue={customInstructions}
+              maxLength={10_000}
+              rows={8}
+              placeholder="Write instructions for cleaning voice transcripts."
+              aria-label="Custom voice post-processing instructions"
               onBlur={(event) => {
-                const promptText = event.target.value.trim();
-                if (!promptText) {
-                  event.target.value = selectedSpeechPrompt.prompt;
-                  return;
-                }
-                if (promptText === selectedSpeechPrompt.prompt) return;
-                updateSettings({
-                  speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map((prompt) =>
-                    prompt.id === selectedSpeechPrompt.id
-                      ? { ...prompt, prompt: promptText }
-                      : prompt,
-                  ),
-                });
+                const customInstructions = event.target.value.trim();
+                if (customInstructions !== settings.speechPostProcessingPrompt.customInstructions)
+                  updateSettings({ speechPostProcessingPrompt: { customInstructions } });
               }}
             />
           </div>

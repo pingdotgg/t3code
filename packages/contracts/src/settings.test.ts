@@ -554,9 +554,9 @@ describe("ServerSettings speech model", () => {
       model: "gpt-6-luna",
       options: [{ id: "reasoningEffort", value: "low" }],
     });
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompts).toHaveLength(1);
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingSelectedPromptId).toBe(
-      "improve-transcription",
-    );
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompt).toEqual({
+      mode: "default",
+      customInstructions: "",
+    });
   });
 });
