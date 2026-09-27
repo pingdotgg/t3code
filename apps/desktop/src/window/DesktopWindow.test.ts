@@ -441,6 +441,7 @@ describe("DesktopWindow", () => {
           focus: vi.fn(() => {
             focusedContents = contents;
           }),
+          ipc: { handle: vi.fn(), on: vi.fn() },
           copyImageAt: vi.fn(),
           replaceMisspelling: vi.fn(),
         });

@@ -950,6 +950,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // client's maps alone were 50 MB of app.asar that no request ever read.
   "!**/*.map",
   "!**/*.d.cts",
+  "!apps/desktop/resources/preview-passkeys.dylib",
+  "!apps/desktop/prod-resources/preview-passkeys.dylib",
   "!apps/desktop/resources/browser-secret",
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
@@ -1268,6 +1270,41 @@ export function resolveMacPasskeySigningConfiguration(
   };
 }
 
+export class MacPasskeyProfileReadError extends Schema.TaggedError<MacPasskeyProfileReadError>()(
+  "MacPasskeyProfileReadError",
+  { cause: Schema.Defect() },
+) {}
+
+const decodeBrowserPasskeyProfile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      Entitlements: Schema.Struct({
+        "com.apple.developer.web-browser.public-key-credential": Schema.optional(Schema.Boolean),
+      }),
+    }),
+  ),
+);
+
+// Never add a restricted entitlement the embedded profile does not authorize (#4224).
+export const readBrowserPasskeyProfile = Effect.fn("readBrowserPasskeyProfile")(function* (
+  profile: string,
+) {
+  const output = yield* spawnAndCollectOutput(
+    ChildProcess.make("security", ["cms", "-D", "-i", profile]).pipe(
+      ChildProcess.pipeTo(ChildProcess.make("plutil", ["-convert", "json", "-o", "-", "--", "-"])),
+    ),
+  ).pipe(Effect.mapError((cause) => new MacPasskeyProfileReadError({ cause })));
+  if (output.exitCode !== 0) {
+    return yield* new MacPasskeyProfileReadError({
+      cause: new Error("Could not decode the macOS provisioning profile."),
+    });
+  }
+  const decoded = yield* decodeBrowserPasskeyProfile(output.stdout).pipe(
+    Effect.mapError((cause) => new MacPasskeyProfileReadError({ cause })),
+  );
+  return decoded.Entitlements["com.apple.developer.web-browser.public-key-credential"] === true;
+});
+
 function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -1279,6 +1316,7 @@ function escapeXml(value: string): string {
 
 export function renderMacPasskeyEntitlements(
   configuration: MacPasskeySigningConfiguration,
+  browserPasskeys = false,
 ): string {
   const associatedDomains = configuration.rpDomains
     .map((domain) => `      <string>webcredentials:${escapeXml(domain)}</string>`)
@@ -1296,7 +1334,7 @@ export function renderMacPasskeyEntitlements(
     <array>
 ${associatedDomains}
     </array>
-    <key>com.apple.security.cs.allow-jit</key>
+${browserPasskeys ? "    <key>com.apple.developer.web-browser.public-key-credential</key>\n    <true/>\n" : ""}    <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
@@ -2664,6 +2702,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
+      ...(platform === "mac"
+        ? [
+            {
+              from: "apps/desktop/prod-resources/preview-passkeys.dylib",
+              to: "preview-passkeys.dylib",
+            },
+          ]
+        : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
     ],
@@ -3608,6 +3654,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     options.verbose,
   );
 
+  if (options.platform === "mac") {
+    yield* runCommand(
+      ChildProcess.make(
+        "node",
+        [
+          path.join(repoRoot, "apps/desktop/scripts/build-preview-passkeys.mjs"),
+          "--arch",
+          options.arch,
+          "--output",
+          path.join(stageResourcesDir, "preview-passkeys.dylib"),
+        ],
+        { cwd: repoRoot },
+      ),
+      { label: "build preview passkey bridge", verbose: options.verbose },
+    );
+  }
+
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
@@ -3637,7 +3700,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
       });
     }
-    yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
+    const browserPasskeys = yield* readBrowserPasskeyProfile(
+      macPasskeySigning.provisioningProfilePath,
+    );
+    yield* fs.writeFileString(
+      macEntitlementsPath,
+      renderMacPasskeyEntitlements(macPasskeySigning, browserPasskeys),
+    );
   }
 
   // Windows splits dependencies per process: app.asar carries only the

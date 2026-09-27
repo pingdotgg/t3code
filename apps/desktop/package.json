@@ -22,6 +22,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
+    "cborg": "6.1.2",
     "dbus-next": "0.10.2",
     "effect": "catalog:",
     "electron": "44.4.2",
@@ -29,7 +30,8 @@
     "electron-updater": "^6.8.9",
     "ffi-rs": "1.3.2",
     "playwright-core": "1.60.0",
-    "react-grab": "^0.1.32"
+    "react-grab": "^0.1.32",
+    "tldts": "7.4.2"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -454,6 +454,12 @@ Checklist:
 1. Apple Developer account access:
    - Team has rights to create Developer ID certificates.
 2. Create an explicit App ID for `com.t3tools.t3code` and enable Associated Domains.
+   For preview-browser passkeys, request Apple's **Web Browser Public Key Credential Requests**
+   capability for this App ID and regenerate the Developer ID provisioning profile after approval.
+   The packager adds `com.apple.developer.web-browser.public-key-credential` only when the embedded
+   profile authorizes it. Without that capability the app still launches, but the preview cannot use
+   existing iCloud or system-provider passkeys. This capability is separate from Clerk's Associated
+   Domains entitlement; adding it to a plist alone is insufficient and can prevent app launch.
 3. Create a `Developer ID Application` certificate and a compatible provisioning profile for that
    App ID with Associated Domains enabled.
 4. Export the certificate + private key as `.p12` from Keychain.
@@ -468,7 +474,11 @@ Checklist:
    - `APPLE_API_ISSUER`: Issuer ID
 10. Complete the Clerk Native API and AASA setup in [T3 Connect setup](./connect-setup.md#desktop-passkeys).
 11. Re-run a tag release and confirm macOS artifacts are signed/notarized and contain the expected
-    `com.apple.developer.associated-domains` entitlement.
+    `com.apple.developer.associated-domains` entitlement. For preview-browser passkeys, also verify
+    `com.apple.developer.web-browser.public-key-credential` is present, then test an existing passkey
+    on an unrelated HTTPS site and a localhost registration on macOS 14.4+. Verify cancellation,
+    navigation, and popup sign-in with both Apple Passwords and an enabled third-party provider.
+    Dev/ad-hoc builds cannot substitute for this signed-artifact check.
 
 Notes:
 

@@ -170,6 +170,12 @@ importers:
       '@t3tools/tailscale':
         specifier: workspace:*
         version: link:../../packages/tailscale
+      cborg:
+        specifier: 6.1.2
+        version: 6.1.2
+      tldts:
+        specifier: 7.4.2
+        version: 7.4.2
       dbus-next:
         specifier: 0.10.2
         version: 0.10.2(patch_hash=cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4)
@@ -6474,6 +6480,10 @@ packages:
 
   capnweb@0.12.0:
     resolution: {integrity: sha512-jgZ/LMtMVTi+RVlooIslH78Gg23XbDTdvcLghWx3oz17D6u5GuJARt+uhZk/wcTo+f81eeabfnow4d3zLBj+JQ==}
+
+  cborg@6.1.2:
+    resolution: {integrity: sha512-hQfFh6FuuCDoycN68FtUpjtQx5kCtxOLA8msbpJZxjtxaMqxgHl+4GNwO+0YexH/lHmVzhhAKa0ua+vtmTRoVw==}
+    hasBin: true
 
   ccount@2.0.1:
     resolution: {integrity: sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==}
@@ -16937,6 +16947,8 @@ snapshots:
       typescript: 6.0.3
 
   capnweb@0.12.0: {}
+
+  cborg@6.1.2: {}
 
   ccount@2.0.1: {}
 

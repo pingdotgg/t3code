@@ -44,6 +44,8 @@ import {
   preflightMacDesktopBuild,
   preflightWindowsDesktopBuild,
   renderMacPasskeyEntitlements,
+  readBrowserPasskeyProfile,
+  MacPasskeyProfileReadError,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
@@ -562,6 +564,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
       "!**/*.map",
       "!**/*.d.cts",
+      "!apps/desktop/resources/preview-passkeys.dylib",
+      "!apps/desktop/prod-resources/preview-passkeys.dylib",
       "!apps/desktop/resources/browser-secret",
       "!apps/desktop/resources/browser-secret/**/*",
       "!apps/desktop/prod-resources/browser-secret",
@@ -634,7 +638,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
       assert.deepStrictEqual(winWithoutWslRuntime.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslRuntime.asarUnpack, win.asarUnpack);
-      assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
+      assert.deepStrictEqual(mac.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        {
+          from: "apps/desktop/prod-resources/preview-passkeys.dylib",
+          to: "preview-passkeys.dylib",
+        },
+      ]);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
@@ -1839,6 +1849,65 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+  });
+
+  for (const allowed of [undefined, false, true]) {
+    it.effect(`reads browser credential authorization from a decoded profile: ${allowed}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const permitted = yield* readBrowserPasskeyProfile("/tmp/profile");
+          assert.equal(permitted, allowed === true);
+        }),
+      ).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              mockProcess(
+                0,
+                JSON.stringify({
+                  Entitlements:
+                    allowed === undefined
+                      ? {}
+                      : { "com.apple.developer.web-browser.public-key-credential": allowed },
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  it.effect(
+    "rejects an unreadable provisioning profile instead of silently enabling its entitlement",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const failure = yield* readBrowserPasskeyProfile("/tmp/profile").pipe(Effect.flip);
+          assert.instanceOf(failure, MacPasskeyProfileReadError);
+        }),
+      ).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(mockProcess(1))),
+        ),
+      ),
+  );
+
+  it("requests browser credentials only when the provisioning profile authorizes them", () => {
+    const configuration = resolveMacPasskeySigningConfiguration({
+      T3CODE_APPLE_TEAM_ID: "ABC1234567",
+      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "clerk.example.com",
+    });
+    assert.notInclude(
+      renderMacPasskeyEntitlements(configuration),
+      "com.apple.developer.web-browser.public-key-credential",
+    );
+    assert.include(
+      renderMacPasskeyEntitlements(configuration, true),
+      "<key>com.apple.developer.web-browser.public-key-credential</key>\n    <true/>",
+    );
   });
 
   it("rejects incomplete macOS passkey signing configuration", () => {

@@ -44,3 +44,5 @@ node_modules/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+
+apps/desktop/resources/preview-passkeys.dylib

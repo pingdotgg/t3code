@@ -2049,7 +2049,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler((details) => {
           if (previewWindowOpenAction(details) === "popup") {
-            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+            return {
+              action: "allow",
+              overrideBrowserWindowOptions: {
+                ...POPUP_WINDOW_OPTIONS,
+                webPreferences: {
+                  ...POPUP_WINDOW_OPTIONS.webPreferences,
+                  preload: path.join(
+                    path.dirname(pictureInPicturePreloadPath),
+                    "preview-passkey-preload.cjs",
+                  ),
+                },
+              },
+            };
           }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>

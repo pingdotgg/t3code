@@ -26,6 +26,7 @@ import {
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import { installPreviewPasskeys } from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -532,6 +533,13 @@ export const make = Effect.gen(function* () {
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
+      if (environment.platform === "darwin" && contents !== window.webContents) {
+        installPreviewPasskeys(
+          contents,
+          ownerWindow,
+          environment.resolveResourcePathCandidates("preview-passkeys.dylib"),
+        );
+      }
       contents.on("context-menu", (event, params) => {
         event.preventDefault();
         if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
