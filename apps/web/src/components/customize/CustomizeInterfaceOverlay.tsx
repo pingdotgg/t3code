@@ -4,6 +4,7 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useState }
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
 import { CustomizeEditLayer } from "./CustomizeEditLayer";
+import { CustomizeHotspots } from "./CustomizeHotspots";
 import { type EditSurface, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
 import { CustomizePopover } from "./CustomizePopover";
 import { readSelectorRect, SURFACE_SELECTORS, useLiveMeasure } from "./customizeTargets";
@@ -121,6 +122,9 @@ export function CustomizeInterfaceOverlay({
     [focusOnOpen],
   );
 
+  const [highlighted, setHighlighted] = useState<EditSurface | null>(null);
+  // The hovered row unmounts when editing starts, so its leave never fires.
+  if (editing && highlighted) setHighlighted(null);
   const back = useCallback(() => setEditing(null), [setEditing]);
   const handleEscape = useCallback(
     () => (useCustomizeInterfaceStore.getState().editing ? back() : close()),
@@ -140,10 +144,22 @@ export function CustomizeInterfaceOverlay({
   const sheet = anchors.viewport.width < SHEET_MAX_WIDTH;
   return (
     <div data-customize-interface className="contents">
+      {/* The sheet covers most of a narrow screen, so its rows lead into editing instead. */}
+      {sheet ? null : (
+        <CustomizeHotspots
+          visible={visible}
+          highlighted={highlighted}
+          onEdit={(surface) => {
+            setHighlighted(null);
+            setEditing(surface);
+          }}
+        />
+      )}
       <CustomizePopover
         returnFocusTo={lastEdited}
         onDone={close}
         onOpenSettings={openSettings}
+        onFineTuneHover={setHighlighted}
         className={cn(
           "transition-[opacity,scale,translate] duration-200 ease-out motion-reduce:transition-opacity",
           sheet

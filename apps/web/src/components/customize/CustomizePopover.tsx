@@ -416,6 +416,7 @@ export function CustomizePopover({
   returnFocusTo,
   onDone,
   onOpenSettings,
+  onFineTuneHover,
 }: {
   className?: string;
   style?: CSSProperties;
@@ -423,6 +424,8 @@ export function CustomizePopover({
   returnFocusTo: EditSurface | null;
   onDone: () => void;
   onOpenSettings: () => void;
+  /** The surface whose fine-tune row is hovered or focused, to light it up on the page. */
+  onFineTuneHover: (surface: EditSurface | null) => void;
 }) {
   const sectionRef = useRef<HTMLElement>(null);
   // Take focus from whatever opened the mode (the command palette hands it
@@ -571,6 +574,10 @@ export function CustomizePopover({
                 type="button"
                 data-fine-tune={entry.surface}
                 onClick={() => setEditing(entry.surface)}
+                onPointerEnter={() => onFineTuneHover(entry.surface)}
+                onPointerLeave={() => onFineTuneHover(null)}
+                onFocus={() => onFineTuneHover(entry.surface)}
+                onBlur={() => onFineTuneHover(null)}
                 className="flex h-9 w-full cursor-pointer items-center gap-3 px-4 text-left text-sm outline-none hover:bg-accent/50 focus-visible:bg-accent/60 [&_svg]:size-4 [&_svg]:shrink-0"
               >
                 <span className="text-muted-foreground">{entry.icon}</span>
