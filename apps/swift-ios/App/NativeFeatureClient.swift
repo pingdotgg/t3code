@@ -4221,7 +4221,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     case .unrelated:
                         continue
                     }
-                    let environments = try await self.runtime.environments()
+                    // A failed catalog read skips this publish; later events still apply.
+                    guard let environments = try? await self.runtime.environments() else { continue }
                     guard self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID),
                           environments.contains(activeClient.environment), let activeEnvironment = self.activeEnvironment
                     else { return }
