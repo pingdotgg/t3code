@@ -4618,7 +4618,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
 
         func refreshCatalogue(_ environment: Environment) async {
-            while isCurrent && owner?.serverConfigsByEnvironmentID[environment.id] == nil {
+            // A rejected peer needs pairing; re-pairing starts a new worker.
+            while isCurrent && owner?.serverConfigsByEnvironmentID[environment.id] == nil
+                && owner?.environmentConnectionStates[environment.id] != .needsPairing {
                 do {
                     guard try await currentEnvironments(for: environment) != nil else { return }
                     // Never disconnect the shared client if this peer becomes selected.
