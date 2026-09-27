@@ -91,7 +91,9 @@ public final class FeatureRootModel {
     )
     private var pendingSubmissionsByID: [String: FeatureQueuedSubmission] = [:]
     /// Accepted messages not yet present in a server transcript, by message ID.
-    private var deliveredAwaitingDetail: [String: FeatureQueuedSubmission] = [:]
+    private var deliveredAwaitingDetail: [String: (threadID: String, message: FeatureMessage)] = [:]
+    /// Message IDs in each thread's latest server transcript.
+    private var serverMessageIDs: [String: Set<String>] = [:]
     private var activeSubmissionCounts: [String: Int] = [:]
     private var pendingThreadsByID: [String: FeatureThread] = [:]
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
@@ -1319,7 +1321,7 @@ public final class FeatureRootModel {
     }
 
     private func removeThread(id: String) {
-        deliveredAwaitingDetail = deliveredAwaitingDetail.filter { $0.value.threadID != id }
+        forgetDeliveredMessages(threadID: id)
         guard let index = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
@@ -1526,7 +1528,13 @@ public final class FeatureRootModel {
         return true
     }
 
+    private func forgetDeliveredMessages(threadID: String) {
+        deliveredAwaitingDetail = deliveredAwaitingDetail.filter { $0.value.threadID != threadID }
+        serverMessageIDs[threadID] = nil
+    }
+
     private func removeDetail(id: String) {
+        forgetDeliveredMessages(threadID: id)
         if details.removeValue(forKey: id) != nil {
             detailRecency.removeAll { $0 == id }
         }
@@ -1539,6 +1547,8 @@ public final class FeatureRootModel {
     }
 
     private func clearDetails() {
+        deliveredAwaitingDetail.removeAll()
+        serverMessageIDs.removeAll()
         detailLoadGeneration &+= 1
         detailLoadRevisions.removeAll()
         storedDetailLoadRequestRevisions.removeAll()
@@ -1742,10 +1752,11 @@ public final class FeatureRootModel {
 
     private func addingPendingMessages(to incoming: FeatureThreadDetail) -> FeatureThreadDetail {
         let existing = Set(incoming.messages.map(\.id))
+        serverMessageIDs[incoming.thread.id] = existing
         // A delivered message stays visible until a server transcript includes it.
         // Its refresh no longer blocks the send, so an older read can arrive first.
-        for (id, submission) in deliveredAwaitingDetail
-        where submission.threadID == incoming.thread.id && existing.contains(id) {
+        for (id, delivered) in deliveredAwaitingDetail
+        where delivered.threadID == incoming.thread.id && existing.contains(id) {
             deliveredAwaitingDetail.removeValue(forKey: id)
         }
         let queued = pendingSubmissionsByID.values
@@ -1753,14 +1764,11 @@ public final class FeatureRootModel {
             .sorted { $0.identity.createdAt < $1.identity.createdAt }
         let delivered = deliveredAwaitingDetail.values
             .filter { $0.threadID == incoming.thread.id }
-            .sorted { $0.identity.createdAt < $1.identity.createdAt }
+            .map(\.message)
+            .sorted { $0.createdAt < $1.createdAt }
         guard !queued.isEmpty || !delivered.isEmpty else { return incoming }
         var result = incoming
-        result.messages.append(contentsOf: delivered.lazy.map { submission in
-            var message = self.queuedMessage(for: submission)
-            message.state = .complete
-            return message
-        })
+        result.messages.append(contentsOf: delivered)
         result.messages.append(contentsOf: queued.lazy
             .filter { !existing.contains($0.identity.messageID) }
             .map(queuedMessage(for:)))
@@ -1840,7 +1848,12 @@ public final class FeatureRootModel {
         }
         pendingCompletionSubmissionIDs.remove(submission.id)
         pendingSubmissionsByID.removeValue(forKey: submission.id)
-        deliveredAwaitingDetail[submission.identity.messageID] = submission
+        // A transcript that already includes it confirmed delivery; do not retain it.
+        if serverMessageIDs[submission.threadID]?.contains(submission.identity.messageID) != true {
+            var message = queuedMessage(for: submission)
+            message.state = .complete
+            deliveredAwaitingDetail[submission.identity.messageID] = (submission.threadID, message)
+        }
         setAttachmentOutboxOwnership(false, for: submission)
         pendingThreadsByID.removeValue(forKey: submission.threadID)
         markQueuedMessageDelivered(submission)

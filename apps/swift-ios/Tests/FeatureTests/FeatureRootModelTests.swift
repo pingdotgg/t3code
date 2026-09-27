@@ -1725,6 +1725,53 @@ struct FeatureRootModelTests {
         #expect(model.details[thread.id]?.messages.filter { $0.id == delivered.id }.count == 1)
     }
 
+    private func deliveredMessageModel() async -> (FeatureClientStub, FeatureRootModel, FeatureThread) {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(
+            id: "thread-1", projectID: "project-1", environmentID: "environment-1", title: "Thread"
+        )
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1", name: "Studio", endpoint: "https://studio.example",
+                    isActive: true, connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        let model = testRootModel(client: client)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+        return (client, model, thread)
+    }
+
+    @Test
+    func confirmedDeliveredMessageDoesNotReturnAfterARewind() async throws {
+        let (client, model, thread) = await deliveredMessageModel()
+        #expect(await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "ship it", selection: nil)))
+        let id = try #require(model.details[thread.id]?.messages.last?.id)
+        client.threadDetail = FeatureThreadDetail(
+            thread: thread, messages: [FeatureMessage(id: id, role: .user, text: "ship it")]
+        )
+        _ = await model.detail(for: thread.id, force: true)
+        // A rewind removes the message from the server transcript.
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.messages.contains { $0.id == id } == false)
+    }
+
+    @Test
+    func clearedDetailsDropRetainedDeliveredMessages() async throws {
+        let (_, model, thread) = await deliveredMessageModel()
+        #expect(await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "ship it", selection: nil)))
+        let id = try #require(model.details[thread.id]?.messages.last?.id)
+        await model.reloadAfterConnection()
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.messages.contains { $0.id == id } == false)
+    }
+
     @Test
     func sendPreservesTheThreadAutomaticPermission() async {
         let client = FeatureClientStub()
