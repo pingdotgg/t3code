@@ -472,20 +472,32 @@ function rehypePreserveImageSourceMeta() {
 function rehypeMarkdownHeadingIds() {
   return (tree: MarkdownImageHastNode) => {
     const slugger = new GithubSlugger();
+    const reservedIds = new Set<string>();
     const textContent = (node: MarkdownImageHastNode): string =>
       node.type === "text" && typeof node.value === "string"
         ? node.value
         : (node.children ?? []).map(textContent).join("");
-    const visit = (node: MarkdownImageHastNode) => {
+    const reserveAuthoredIds = (node: MarkdownImageHastNode) => {
+      if (typeof node.properties?.id === "string") {
+        reservedIds.add(normalizeSanitizedFragmentId(node.properties.id));
+      }
+      node.children?.forEach(reserveAuthoredIds);
+    };
+    const addHeadingIds = (node: MarkdownImageHastNode) => {
       if (/^h[1-6]$/.test(node.tagName ?? "") && typeof node.properties?.id !== "string") {
+        const headingText = textContent(node);
+        let id = slugger.slug(headingText);
+        while (reservedIds.has(id)) id = slugger.slug(headingText);
+        reservedIds.add(id);
         node.properties = {
           ...node.properties,
-          id: `${SANITIZED_FRAGMENT_PREFIX}${slugger.slug(textContent(node))}`,
+          id: `${SANITIZED_FRAGMENT_PREFIX}${id}`,
         };
       }
-      node.children?.forEach(visit);
+      node.children?.forEach(addHeadingIds);
     };
-    visit(tree);
+    reserveAuthoredIds(tree);
+    addHeadingIds(tree);
   };
 }
 

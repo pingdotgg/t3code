@@ -90,18 +90,19 @@ describe("Markdown file preview fragments", () => {
               threadId: ThreadId.make("thread"),
             }}
             text={[
-              "[Second](#operating-model-1) · [Missing](#missing)",
+              "[Second](#operating-model-2) · [Missing](#missing)",
               "## Operating Model",
               "## Operating Model",
+              '<span id="operating-model-1"></span>',
             ].join("\n\n")}
           />,
         );
       });
 
-      const target = container.querySelector("#user-content-operating-model-1");
+      const target = container.querySelector("#user-content-operating-model-2");
       expect(target?.textContent).toBe("Operating Model");
       await act(async () => {
-        container.querySelector<HTMLAnchorElement>('a[href="#operating-model-1"]')?.click();
+        container.querySelector<HTMLAnchorElement>('a[href="#operating-model-2"]')?.click();
       });
       expect(scrollIntoView).toHaveBeenCalledOnce();
       expect(scrollIntoView.mock.contexts[0]).toBe(target);
