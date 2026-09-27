@@ -33,10 +33,12 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -53,6 +55,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -77,13 +80,11 @@ import type {
   AcpSessionRuntimeOptions,
   AcpSessionRuntimeStartResult,
 } from "../../provider/acp/AcpSessionRuntime.ts";
-import { acpReadTextFile, acpWriteTextFile } from "../../provider/acp/AcpClientFs.ts";
 import {
   acpClientExecuteDisposition,
-  acpClientReadDisposition,
-  acpClientWriteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
+  type AcpPermissionDisposition,
   makeAcpClientPolicyGrants,
   unknownRecord,
 } from "../../provider/acp/AcpClientPolicy.ts";
@@ -137,8 +138,22 @@ import {
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
+/**
+ * Quiet window after a settled turn's last background rearm before it
+ * finalizes, so a slightly late post-hydration assistant chunk stays in the
+ * same turn. Grok commonly sends its final summary just over two seconds after
+ * the hydrated tool frame; two seconds split that tail into a second synthetic
+ * wake. Longer floors (4–20s) only prolonged Working. No per-model carveouts.
+ */
+const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
+  /**
+   * Policy the session opened with. A runtime-mode change reopens the session,
+   * so flavors that encode permissions in the launch command (Grok) read it here.
+   */
+  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Scoped credentials for terminal fallback when an ACP agent drops `mcpServers`. */
@@ -170,6 +185,17 @@ export interface AcpAdapterV2ExtensionContext {
   readonly reportProviderRetry: (input: {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
+  }) => Effect.Effect<void>;
+  /**
+   * A subagent's structured end on the root session (Grok `subagent_finished`),
+   * keyed by its child session id. Finishes the subagent row, in the turn that
+   * holds it or in the carryover of a settled one.
+   */
+  readonly finishSubagent: (notice: {
+    readonly sessionId: string;
+    readonly childSessionId: string;
+    readonly status: "completed" | "failed" | "cancelled";
+    readonly result: string | null;
   }) => Effect.Effect<void>;
   /**
    * Session-scoped background-task lifecycle reported via extension
@@ -243,6 +269,24 @@ export interface AcpAdapterV2Flavor {
   /** Native session mode to select for a runtime policy (e.g. Antigravity `yolo`). */
   readonly sessionModeForPolicy?: (policy: ProviderAdapterV2RuntimePolicy) => string | undefined;
   /**
+   * Opts the session into the ACP client `fs` capability. Agents read and write
+   * files themselves under their own permission model unless a flavor sets
+   * this. Requests pass the runtime policy guard, then these handlers, which
+   * receive the cwd of the policy active when the request arrives (null when
+   * the session has no workspace). Antigravity sets it and confines requests
+   * to that workspace.
+   */
+  readonly clientFileSystem?: {
+    readonly readTextFile: (
+      request: EffectAcpSchema.ReadTextFileRequest,
+      cwd: string | null,
+    ) => Effect.Effect<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError>;
+    readonly writeTextFile: (
+      request: EffectAcpSchema.WriteTextFileRequest,
+      cwd: string | null,
+    ) => Effect.Effect<EffectAcpSchema.WriteTextFileResponse, EffectAcpErrors.AcpError>;
+  };
+  /**
    * Permission requests that are really questions (Antigravity `interaction_*`
    * tool calls). Returns the question and a response builder; undefined routes
    * the request through the normal approval card.
@@ -255,6 +299,15 @@ export interface AcpAdapterV2Flavor {
         ) => EffectAcpSchema.RequestPermissionResponse | undefined;
       }
     | undefined;
+  /**
+   * Replaces T3's runtime-policy answer to a permission request. Grok's Auto
+   * mode only asks about what its own classifier refused, so those must reach
+   * the user instead of being approved by T3's policy.
+   */
+  readonly permissionDisposition?: (
+    policy: ProviderAdapterV2RuntimePolicy,
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => AcpPermissionDisposition;
   /** Approval choices to advertise on the approval card for a permission request. */
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -437,9 +490,10 @@ export interface AcpAdapterV2Options {
   /** How agents spawn this install's `acp-mcp-bridge`; see `resolveSelfInvocation`. */
   readonly selfInvocation: SelfInvocation;
   /**
-   * Enables the ACP client `terminal` capability. Sessions advertise
-   * `terminal: true` and run agent-created terminals through this spawner
-   * with the provider instance's environment.
+   * Opts the session into the ACP client `terminal` capability. Agents run
+   * commands themselves unless an adapter sets this; with it, sessions
+   * advertise `terminal: true` and run agent-created terminals through this
+   * spawner with the provider instance's environment. Devin sets it.
    */
   readonly clientTerminals?: {
     readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -456,6 +510,12 @@ export interface AcpAdapterV2Options {
     readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   };
   readonly testHooks?: {
+    /**
+     * A settled turn with no background work left armed its finish debounce
+     * ({@link ACP_DEFERRED_FINALIZE_DEBOUNCE}); replay advances its test clock
+     * by exactly that on this receipt.
+     */
+    readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     readonly beforeNativeResponseAdmissionCheck?: (
@@ -572,8 +632,8 @@ export const AcpProviderCapabilitiesV2 = {
     nativeRequestIds: "weak",
   },
   runtimePolicy: {
-    // T3 policy-checks permission requests and its own client fs/terminal
-    // handlers, but ACP agents execute their own tools unconfined.
+    // ACP agents run their own tools; T3 only answers their permission
+    // requests by policy.
     enforcement: "client-boundary",
   },
 } satisfies OrchestrationV2ProviderCapabilities;
@@ -872,15 +932,45 @@ function structuredFileChanges(toolCall: AcpToolCallState) {
   });
 }
 
-function structuredDiffPatch(toolCall: AcpToolCallState): string | undefined {
-  const content = toolCall.data.content;
+// Past this edit distance an edit keeps no patch text, so projecting a large
+// rewrite cannot stall the event loop in the diff search. A created or emptied
+// file has one empty side and needs no search, so it is never capped.
+const ACP_V1_DIFF_MAX_EDITS = 1_000;
+
+/**
+ * Patch text for a tool call's diff content. ACP v2 diffs carry it as
+ * `patch.text`. ACP v1 diffs carry `oldText`/`newText` instead (`oldText`
+ * null or absent for a new file), and agents that negotiate v1 still send
+ * that shape, so the patch is built from the two sides.
+ */
+export function acpToolCallDiffPatch(content: unknown): string | undefined {
   if (!Array.isArray(content)) return undefined;
-  for (const entry of content) {
+  const diffs = content.flatMap((entry) => {
     const diff = unknownRecord(entry);
-    const patch = unknownRecord(diff?.patch);
-    if (diff?.type === "diff" && typeof patch?.text === "string") return patch.text;
+    return diff?.type === "diff" ? [diff] : [];
+  });
+  for (const diff of diffs) {
+    const patch = unknownRecord(diff.patch);
+    if (typeof patch?.text === "string") return patch.text;
   }
-  return undefined;
+  const v1Patches = diffs.flatMap((diff) => {
+    if (typeof diff.path !== "string" || typeof diff.newText !== "string") return [];
+    const oldText = typeof diff.oldText === "string" ? diff.oldText : undefined;
+    const patch = structuredPatch(
+      oldText === undefined ? "/dev/null" : diff.path,
+      diff.path,
+      oldText ?? "",
+      diff.newText,
+      undefined,
+      undefined,
+      {
+        context: 3,
+        maxEditLength: oldText && diff.newText ? ACP_V1_DIFF_MAX_EDITS : Number.POSITIVE_INFINITY,
+      },
+    );
+    return patch === undefined || patch.hunks.length === 0 ? [] : [patch];
+  });
+  return v1Patches.length === 0 ? undefined : formatPatch(v1Patches, FILE_HEADERS_ONLY);
 }
 
 function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
@@ -960,12 +1050,17 @@ function selectPermissionOptionId(
   return request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
 }
 
+/**
+ * The runtime policy approves one request, so answer with the agent's
+ * allow-once option. Its allow-always option can outlive the session (Grok
+ * saves it for the whole project); use it only when no allow-once exists.
+ */
 function selectAutoApprovedPermissionOption(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): string | undefined {
   return (
-    selectPermissionOptionId(request, "acceptForSession") ??
-    selectPermissionOptionId(request, "accept")
+    selectPermissionOptionId(request, "accept") ??
+    selectPermissionOptionId(request, "acceptForSession")
   );
 }
 
@@ -1009,6 +1104,9 @@ interface ActiveAcpTurn {
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
+  // Root item ordinals allocated in this turn. Subagent child items keep
+  // theirs on the subagent, which carries over into later turns.
+  readonly itemOrdinals: Map<string, number>;
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
@@ -1245,6 +1343,7 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   readonly assistantMessages: Map<string, string>;
+  readonly childItemOrdinals: Map<string, number>;
   nextChildOrdinal: number;
   /**
    * Whether a terminal carryover status has been projected to events.
@@ -1483,9 +1582,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             embeddedTerminalsByToolCallId.delete(oldest);
           }
         };
-        // Client fs/terminal requests run with the T3 server's privileges, so
-        // they are policy-checked against the active turn policy; approvals the
-        // user already granted satisfy an "ask" disposition.
+        // Client terminals (Devin) run with the T3 server's privileges, so they
+        // are policy-checked against the active turn policy; a command the user
+        // already approved satisfies an "ask" disposition.
         const clientPolicyGrants = makeAcpClientPolicyGrants();
         let latestRuntimePolicy: ProviderAdapterV2RuntimePolicy = input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
@@ -1537,8 +1636,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const emitNativeResponseLifecycle =
           options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
         const nextElicitationOrdinal = yield* Ref.make(0);
-        const itemOrdinals = yield* Ref.make(new Map<string, number>());
-        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
         const snapshot = yield* Ref.make<SnapshotMessageState>({
           order: [],
@@ -1885,6 +1982,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const mcpContext = acpMcpContext(threadId, self);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
+            runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
             ...(mcpContext.processEnvironment === undefined
@@ -1893,7 +1991,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
             clientCapabilities: {
-              fs: { readTextFile: true, writeTextFile: true },
+              fs: {
+                readTextFile: flavor.clientFileSystem !== undefined,
+                writeTextFile: flavor.clientFileSystem !== undefined,
+              },
               terminal: clientTerminals !== undefined,
               elicitation: { form: {}, ...(flavor.onUrlElicitation ? { url: {} } : {}) },
               ...(flavor.clientCapabilitiesMeta ? { _meta: flavor.clientCapabilitiesMeta } : {}),
@@ -1977,26 +2078,22 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             : Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore),
         );
 
-        const resolveItemOrdinal = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          nativeItemId: string,
-        ) {
-          const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
+        const resolveItemOrdinal = (context: ActiveAcpTurn, nativeItemId: string) =>
+          Effect.sync(() => {
+            const existing = context.itemOrdinals.get(nativeItemId);
+            if (existing !== undefined) return existing;
+            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
+            context.itemOrdinals.set(nativeItemId, ordinal);
+            return ordinal;
+          });
+
+        const resolveSubagentChildOrdinal = (subagent: ActiveAcpSubagent, nativeItemId: string) => {
+          const existing = subagent.childItemOrdinals.get(nativeItemId);
           if (existing !== undefined) return existing;
-          const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-            const next = (current.get(context.nativeTurnId) ?? 0) + 1;
-            const updated = new Map(current);
-            updated.set(context.nativeTurnId, next);
-            return [next, updated] as const;
-          });
-          const ordinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
-          yield* Ref.update(itemOrdinals, (current) => {
-            const updated = new Map(current);
-            updated.set(nativeItemId, ordinal);
-            return updated;
-          });
+          const ordinal = subagent.nextChildOrdinal++;
+          subagent.childItemOrdinals.set(nativeItemId, ordinal);
           return ordinal;
-        });
+        };
 
         const emitProviderRetry = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
@@ -2424,14 +2521,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           subagent.assistantMessages.set(nativeItemId, messageText);
           subagent.assistantText = messageText;
           const now = yield* DateTime.now;
-          let ordinal = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
-          if (ordinal === undefined) {
-            ordinal = subagent.nextChildOrdinal++;
-            const allocated = ordinal;
-            yield* Ref.update(itemOrdinals, (current) =>
-              new Map(current).set(nativeItemId, allocated),
-            );
-          }
+          const ordinal = resolveSubagentChildOrdinal(subagent, nativeItemId);
           const artifacts = makeSubagentConversationArtifacts({
             messageId: providerMessageId(nativeItemId),
             turnItemId: providerTurnItemId(nativeItemId),
@@ -2568,6 +2658,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             childSessionId: null,
             assistantText: "",
             assistantMessages: new Map(),
+            childItemOrdinals: new Map(),
             nextChildOrdinal: 101,
             terminalStatusProjected: false,
           };
@@ -3070,7 +3161,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const rawOutput = toolCall.data.rawOutput ?? toolCall.data.content;
           const changes = structuredFileChanges(toolCall);
           const path = changes[0]?.path ?? pathFromToolCall(toolCall);
-          const diffText = structuredDiffPatch(toolCall) ?? textFromUnknown(rawOutput);
+          const diffText =
+            acpToolCallDiffPatch(toolCall.data.content) ?? textFromUnknown(rawOutput);
           const rawInputRecord = unknownRecord(rawInput);
           const inputVariant =
             typeof rawInputRecord?.variant === "string"
@@ -3160,9 +3252,28 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           } else {
             switch (toolCall.kind) {
               case "read":
+                turnItem = {
+                  ...base,
+                  title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
+                  type: "dynamic_tool",
+                  toolName: "Read",
+                  input:
+                    path === undefined ||
+                    ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
+                      ? (rawInputRecord ?? {})
+                      : { ...rawInputRecord, path },
+                  ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                };
+                break;
               case "search":
                 turnItem = {
                   ...base,
+                  title:
+                    formatSearchToolLabel({
+                      rawInput: rawInputRecord,
+                      input: rawInputRecord,
+                      ...(path === undefined ? {} : { pattern: path }),
+                    }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
                   ...(path === undefined
@@ -4140,14 +4251,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 const status = toolStatus(merged.status);
                 const startedAt = context.toolStartedAt.get(key) ?? now;
                 context.toolStartedAt.set(key, startedAt);
-                let ordinal = (yield* Ref.get(itemOrdinals)).get(key);
-                if (ordinal === undefined) {
-                  ordinal = subagent.nextChildOrdinal++;
-                  const allocated = ordinal;
-                  yield* Ref.update(itemOrdinals, (current) =>
-                    new Map(current).set(key, allocated),
-                  );
-                }
+                const ordinal = resolveSubagentChildOrdinal(subagent, key);
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
                   driver,
@@ -4957,6 +5061,45 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           return true;
         });
 
+        const finishSubagentFromNotice = Effect.fnUntraced(function* (notice: {
+          readonly childSessionId: string;
+          readonly status: "completed" | "failed" | "cancelled";
+          readonly result: string | null;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          const subagent =
+            context === null ? undefined : context.subagentsBySessionId.get(notice.childSessionId);
+          if (context !== null && subagent !== undefined && !context.finalized) {
+            if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return;
+            yield* emitSubagent(context, {
+              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? notice.childSessionId,
+              prompt: subagent.task.prompt,
+              title: subagent.task.title,
+              model: subagent.task.model,
+              status: notice.status,
+              childSessionId: notice.childSessionId,
+              result: notice.result,
+              suppressNormalTool: true,
+            });
+            yield* rearmDeferredFinalize(context);
+            return;
+          }
+          // The root turn already settled: the subagent is carryover. Project
+          // its end while the completed root still owns the run.
+          const carryover = yield* Ref.get(carryoverSubagents);
+          yield* updateCarryoverSubagentStatus(
+            notice.childSessionId,
+            notice.status,
+            notice.result,
+            {
+              project:
+                carryover !== null &&
+                carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
+                carryover.rootTerminalStatus === "completed",
+            },
+          );
+        });
+
         applyFinalizedActiveTurnSubagentTerminal = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           notification: EffectAcpSchema.SessionNotification,
@@ -5168,36 +5311,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             ),
           );
 
-        const guardClientFsWrite = (path: string) =>
-          clientPolicyContext.pipe(
-            Effect.flatMap(({ policy, turnKey }) => {
-              const disposition = acpClientWriteDisposition(policy, path);
-              if (
-                disposition === "allow" ||
-                (disposition === "ask" &&
-                  clientPolicyGrants.allowsWrite({ path, cwd: policy.cwd, turnKey }))
-              ) {
-                return Effect.void;
-              }
-              return denyClientRequest(`fs/write_text_file for '${path}'`, disposition);
-            }),
-          );
-
-        const guardClientFsRead = (path: string) =>
-          clientPolicyContext.pipe(
-            Effect.flatMap(({ policy, turnKey }) => {
-              const disposition = acpClientReadDisposition(policy, path);
-              if (
-                disposition === "allow" ||
-                (disposition === "ask" &&
-                  clientPolicyGrants.allowsRead({ path, cwd: policy.cwd, turnKey }))
-              ) {
-                return Effect.void;
-              }
-              return denyClientRequest(`fs/read_text_file for '${path}'`, disposition);
-            }),
-          );
-
         const guardClientTerminalCreate = clientPolicyContext.pipe(
           Effect.flatMap(({ policy, turnKey }) => {
             const disposition = acpClientExecuteDisposition(policy);
@@ -5281,16 +5394,24 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               Effect.succeed(request),
               requestContext.requestId,
             );
-          yield* targetRuntime.handleReadTextFile((request) =>
-            guardClientFsRead(request.path).pipe(
-              Effect.andThen(acpReadTextFile(options.fileSystem, request)),
-            ),
-          );
-          yield* targetRuntime.handleWriteTextFile((request) =>
-            guardClientFsWrite(request.path).pipe(
-              Effect.andThen(acpWriteTextFile(options.fileSystem, request)),
-            ),
-          );
+          // Without the capability no fs handler is registered, so a stray
+          // request (OpenCode and Kilo send one after approved edits) gets
+          // method-not-found and cannot touch the disk. A flavor that opts in
+          // serves requests itself, confined to the workspace of the policy
+          // active when the request arrives; the agent asks before its edits.
+          const clientFileSystem = flavor.clientFileSystem;
+          if (clientFileSystem !== undefined) {
+            yield* targetRuntime.handleReadTextFile((request) =>
+              clientPolicyContext.pipe(
+                Effect.flatMap(({ policy }) => clientFileSystem.readTextFile(request, policy.cwd)),
+              ),
+            );
+            yield* targetRuntime.handleWriteTextFile((request) =>
+              clientPolicyContext.pipe(
+                Effect.flatMap(({ policy }) => clientFileSystem.writeTextFile(request, policy.cwd)),
+              ),
+            );
+          }
           if (handlerOptions.mcp !== false) {
             yield* wireAcpRuntimeMcpHandlers(targetRuntime, runtimeMcpBridge);
           }
@@ -5329,7 +5450,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 handlerGeneration,
                 Effect.gen(function* () {
                   const context = yield* activeContext;
-                  const disposition = acpPermissionDisposition(context.input.runtimePolicy, params);
+                  const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
+                    context.input.runtimePolicy,
+                    params,
+                  );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);
                     return {
@@ -5410,8 +5534,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               ) {
                 clientPolicyGrants.recordApproval({
                   kind: providerRequestKind(parsedPermission.kind),
-                  locations: (params.toolCall.locations ?? []).map((location) => location.path),
-                  cwd: context.input.runtimePolicy.cwd,
                   scope: decision === "acceptForSession" ? "session" : "turn",
                   turnKey: String(context.providerTurnId),
                 });
@@ -5589,6 +5711,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               requestUserInput,
               captureProposedPlan,
               lastProposedPlanMarkdown,
+              finishSubagent: (notice) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    // Root-session notices only; nested subagents report to
+                    // their own parent session.
+                    if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
+                    yield* finishSubagentFromNotice(notice);
+                  }),
+                ).pipe(Effect.asVoid),
               applyBackgroundTaskMutation: (mutation) =>
                 runRuntimeCallbackAtGeneration(
                   handlerGeneration,
@@ -6368,15 +6501,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (hasDeferredBackgroundWork(context)) return;
             context.backgroundFinalizeGeneration += 1;
             const generation = context.backgroundFinalizeGeneration;
-            // Minimal quiet for all models (no per-model carveouts). Defer +
-            // awaitingBackgroundHydration hold the turn through monitors; this
-            // is only a short debounce after the last rearm so a slightly late
-            // post-hydration assistant chunk stays in the same continuation.
-            // Grok commonly sends its final summary just over two seconds after
-            // the hydrated tool frame; two seconds split that tail into a second
-            // synthetic wake. Longer floors (4–20s) only prolonged Working.
             yield* Effect.gen(function* () {
-              yield* Effect.sleep("3000 millis");
+              yield* Effect.sleep(ACP_DEFERRED_FINALIZE_DEBOUNCE);
               if (
                 context.finalized ||
                 context.interrupted ||
@@ -6388,6 +6514,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               const status = context.promptSettledStatus ?? "completed";
               yield* finalizeTurn(context, status);
             }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+            yield* (
+              options.testHooks?.onDeferredFinalizeScheduled?.(ACP_DEFERRED_FINALIZE_DEBOUNCE) ??
+                Effect.void
+            );
           });
 
         const resolvePromptParts = Effect.fnUntraced(function* (
@@ -6619,6 +6749,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               nativeTurnId,
               startedAt,
               completed,
+              itemOrdinals: new Map(),
               user: { current: null, nextSegment: 0 },
               assistant: { current: null, nextSegment: 0 },
               reasoning: { current: null, nextSegment: 0 },
@@ -6801,6 +6932,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     ) {
                       context.promptSettled = true;
                       context.promptSettledStatus = status;
+                      // The agent finished this prompt's reply. Background work
+                      // holds the run open, not the text it already sent.
+                      yield* closeTextStreams(context);
                       return;
                     }
                     yield* finalizeTurn(context, status);
@@ -7514,8 +7648,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
                         yield* Ref.set(promptInstructionStates, new Map());
-                        yield* Ref.set(itemOrdinals, new Map());
-                        yield* Ref.set(nextItemOrdinalsByTurn, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {
                           order: [],

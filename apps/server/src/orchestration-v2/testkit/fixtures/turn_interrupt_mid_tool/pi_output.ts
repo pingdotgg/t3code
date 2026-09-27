@@ -57,6 +57,8 @@ export function assertTurnInterruptMidToolPiOutput(
     projection.providerTurns.map((turn) => turn.status),
     ["interrupted"],
   );
+  // Read before Stop kills Pi, so a later rollback can fork at this turn.
+  assert.equal(projection.providerTurns[0]?.nativeTurnRef?.strength, "strong");
   assert.deepEqual(
     projection.providerSessions.map((session) => [session.status, session.lastError]),
     [["stopped", null]],

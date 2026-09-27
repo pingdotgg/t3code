@@ -24,6 +24,9 @@ import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
+export const ROLLBACK_FAILED_MESSAGE =
+  "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
+
 export class CheckpointRollbackExecutionError extends Schema.TaggedError<CheckpointRollbackExecutionError>()(
   "CheckpointRollbackExecutionError",
   {
@@ -51,7 +54,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       case "shared-workspace":
         return SHARED_WORKSPACE_RESTORE_MESSAGE;
       case "unexpected-failure":
-        return `Failed to execute rollback target ${this.checkpointId} on provider thread ${this.providerThreadId} for thread ${this.threadId}.`;
+        return ROLLBACK_FAILED_MESSAGE;
     }
   }
 }

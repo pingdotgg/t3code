@@ -135,14 +135,20 @@ const makeTestRelay = Effect.fnUntraced(function* (
   options: {
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
+    /** Starts unlinked with publishing off when false. */
+    readonly linked?: boolean;
   } = {},
 ) {
-  const values = new Map<string, Uint8Array>([
-    [PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true")],
-    [RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")],
-    [RELAY_ISSUER_SECRET, new TextEncoder().encode("https://relay.example.test")],
-    [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-1")],
-  ]);
+  const values = new Map<string, Uint8Array>(
+    options.linked === false
+      ? []
+      : [
+          [PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true")],
+          [RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")],
+          [RELAY_ISSUER_SECRET, new TextEncoder().encode("https://relay.example.test")],
+          [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-1")],
+        ],
+  );
   const secretReads: string[] = [];
   const secrets = ServerSecretStore.of({
     get: (name) =>
@@ -162,10 +168,16 @@ const makeTestRelay = Effect.fnUntraced(function* (
   });
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
+  // Catch-up publishes read the whole shell once each.
+  const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.of({
     getThreadShell: (threadId) =>
       Effect.sync(() => shellReads.push(threadId)).pipe(Effect.andThen(Ref.get(currentShell))),
-    getShellSnapshot: unused,
+    getShellSnapshot: () =>
+      Effect.sync(() => {
+        catchUp.shellSnapshotReads += 1;
+        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
+      }),
     ensureLegacyTranscript: unused,
     dispatch: unused,
     getTimelinePage: () => Effect.die("Unused timeline read"),
@@ -227,7 +239,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       update: unused,
       delete: unused,
       getByWorkspaceRoot: unused,
-      snapshot: unused(),
+      snapshot: Effect.succeed({ projects: [] } as never),
       getById: () =>
         Effect.succeed(
           Option.some({
@@ -245,7 +257,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications };
+  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -650,5 +662,74 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 1);
     }),
+  );
+});
+
+describe.sequential("startup catch-up", () => {
+  const link = (secrets: ServerSecretStore["Service"]) =>
+    Effect.all(
+      [
+        secrets.set(RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")),
+        secrets.set(RELAY_ISSUER_SECRET, new TextEncoder().encode("https://relay.example.test")),
+        secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-1")),
+      ],
+      { discard: true },
+    );
+  const enablePublishing = (secrets: ServerSecretStore["Service"]) =>
+    secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+  const linkChecks = (secretReads: ReadonlyArray<string>) =>
+    secretReads.filter((name) => name === RELAY_URL_SECRET).length;
+
+  it.effect("checks an unlinked environment once a minute and still catches up once linked", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay({ linked: false });
+      yield* enablePublishing(secrets);
+      yield* relay.start();
+
+      // Get past the backoff ramp, then count checks in a steady window.
+      yield* TestClock.adjust("10 minutes");
+      const checksBeforeWindow = linkChecks(secretReads);
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(linkChecks(secretReads) - checksBeforeWindow, 10);
+      assert.equal(catchUp.shellSnapshotReads, 0);
+
+      yield* link(secrets);
+      yield* TestClock.adjust("1 minute");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("publishes at once when this process links while the check is backed off", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, catchUp } = yield* makeTestRelay({ linked: false });
+      yield* enablePublishing(secrets);
+      yield* relay.start();
+
+      // Backed off to 60 s: the next check is still seconds away.
+      yield* TestClock.adjust("10 minutes");
+      yield* link(secrets);
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 0);
+
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("catches up within 5 s when another process enables publishing on a link", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, catchUp } = yield* makeTestRelay({ linked: false });
+      yield* link(secrets);
+      yield* relay.start();
+
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(catchUp.shellSnapshotReads, 0);
+
+      // `t3 connect publish` writes the opt-in without waking this process.
+      yield* enablePublishing(secrets);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+    }).pipe(Effect.scoped),
   );
 });

@@ -31,7 +31,9 @@ import {
   SUBAGENT_CONTINUE_PARENT_PROMPT,
   SUBAGENT_CONTINUE_PROMPT,
   SUBAGENT_PROMPT,
+  SUBAGENT_V2_APPROVAL_PROMPT,
   SUBAGENT_V2_PROMPT,
+  SUBAGENT_V2_NESTED_APPROVAL_PROMPT,
   SUBAGENT_V2_NESTED_PROMPT,
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
@@ -86,7 +88,9 @@ const SCENARIO_NAMES = [
   "subagent",
   "subagent_continue",
   "subagent_v2",
+  "subagent_v2_approval",
   "subagent_v2_nested",
+  "subagent_v2_nested_approval",
   "multi_turn",
   "queued_turn",
   "provider_thread_resume",
@@ -98,6 +102,7 @@ const SCENARIO_NAMES = [
   "turn_interrupt",
   "turn_interrupt_mid_tool",
   "thread_rollback",
+  "thread_rollback_after_restart",
   "thread_fork_native_continue",
   "thread_fork_native_siblings",
   "thread_merge_back_continue",
@@ -470,6 +475,31 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       ],
     },
     {
+      name: "subagent_v2_approval",
+      fileName: "subagent_v2_approval.ndjson",
+      description:
+        "One root turn in approval-required mode whose multi-agent v2 subagent runs a command that needs approval.",
+      runs: [
+        {
+          name: "spawn-v2-subagent-needing-approval",
+          description:
+            "The child inherits the root's approval policy, so its write asks the client for approval on the child's native thread and turn.",
+          // The adapter's approval-required turn defaults.
+          turnDefaults: {
+            approvalPolicy: "untrusted",
+            sandboxPolicy: { type: "readOnly" },
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "spawn-v2-subagent-needing-approval",
+              prompt: SUBAGENT_V2_APPROVAL_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
       name: "subagent_v2_nested",
       fileName: "subagent_v2_nested.ndjson",
       description:
@@ -484,6 +514,31 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
               type: "turn",
               label: "spawn-nested-v2-subagents",
               prompt: SUBAGENT_V2_NESTED_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "subagent_v2_nested_approval",
+      fileName: "subagent_v2_nested_approval.ndjson",
+      description:
+        "One root turn in approval-required mode whose multi-agent v2 subagent spawns a subagent that runs a command that needs approval.",
+      runs: [
+        {
+          name: "spawn-nested-v2-subagent-needing-approval",
+          description:
+            "Depth 2 lets the first child spawn once. The grandchild inherits the root's approval policy, so its write asks the client for approval on the grandchild's native thread and turn.",
+          threadConfig: { "agents.max_depth": 2 },
+          turnDefaults: {
+            approvalPolicy: "untrusted",
+            sandboxPolicy: { type: "readOnly" },
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "spawn-nested-v2-subagent-needing-approval",
+              prompt: SUBAGENT_V2_NESTED_APPROVAL_PROMPT,
             },
           ],
         },
@@ -725,6 +780,41 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
           name: "rollback-one-turn",
           description:
             "Two completed turns, thread/revert before the second turn, then a post-rollback turn.",
+          steps: [
+            {
+              type: "turn",
+              label: "first-before-rollback",
+              prompt: THREAD_ROLLBACK_FIRST_PROMPT,
+            },
+            {
+              type: "turn",
+              label: "second-before-rollback",
+              prompt: THREAD_ROLLBACK_SECOND_PROMPT,
+            },
+            {
+              type: "rollback",
+              label: "rollback-latest-turn",
+              numTurns: 1,
+            },
+            {
+              type: "turn",
+              label: "post-rollback",
+              prompt: THREAD_ROLLBACK_AFTER_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "thread_rollback_after_restart",
+      fileName: "thread_rollback_after_restart.ndjson",
+      description:
+        "One thread completes two turns, the app-server restarts, then the thread rolls back its latest turn and starts another turn.",
+      runs: [
+        {
+          name: "rollback-after-restart",
+          description:
+            "Two completed turns, a fresh app-server that has not loaded the thread, thread/revert before the second turn, then a post-rollback turn.",
           steps: [
             {
               type: "turn",
@@ -1359,6 +1449,52 @@ function runReplaySession({
           }),
         ),
       );
+      return;
+    }
+
+    if (scenario.name === "thread_rollback_after_restart") {
+      const [first, second, rollback, after] = run.steps;
+      if (
+        first === undefined ||
+        second === undefined ||
+        rollback?.type !== "rollback" ||
+        after === undefined ||
+        first.type === "rollback" ||
+        first.type === "fork" ||
+        second.type === "rollback" ||
+        second.type === "fork" ||
+        after.type === "rollback" ||
+        after.type === "fork"
+      ) {
+        throw new Error(
+          "thread_rollback_after_restart replay recording requires turn, turn, rollback, turn.",
+        );
+      }
+
+      const threadId = yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const thread = yield* client.request("thread/start", threadRuntimeParams);
+        yield* runTurnStep(client, thread.thread.id, first);
+        yield* runTurnStep(client, thread.thread.id, second);
+        return thread.thread.id;
+      }).pipe(Effect.provide(makeCodexLayer({ recorder })));
+
+      yield* recorder.writeRecord({
+        type: "runtime_exit",
+        status: "success",
+      });
+
+      yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const resumeParams = { threadId, excludeTurns: true, ...threadRuntimeParams };
+        // Like the adapter: the fresh app-server reports the thread notLoaded,
+        // so it is resumed before thread/revert, and the next turn resumes it again.
+        yield* client.request("thread/read", { threadId, includeTurns: false });
+        yield* client.request("thread/resume", resumeParams);
+        yield* revertCodexThread(client, threadId, rollback.numTurns);
+        yield* client.request("thread/resume", resumeParams);
+        yield* runTurnStep(client, threadId, after);
+      }).pipe(Effect.provide(makeCodexLayer({ recorder })));
       return;
     }
 

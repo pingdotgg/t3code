@@ -3,6 +3,7 @@ import {
   ModelSelection,
   type OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   ProviderInstanceId,
   ProviderTurnId,
@@ -202,6 +203,7 @@ export interface CommandPolicyV2Shape {
     input: CapabilityCheckInput & {
       readonly sameProvider: boolean;
       readonly hasStrongNativeSource: boolean;
+      readonly sourceRunStatus: OrchestrationV2Run["status"];
       readonly fromSpecificTurn: boolean;
     },
   ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
@@ -361,7 +363,10 @@ const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (inpu
 };
 
 const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input) => {
+  // Unsuccessful runs may have no native turn or assistant cursor. Forking
+  // those at native head can include later turns, so use the bounded transcript.
   const canForkNatively =
+    (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
     input.hasStrongNativeSource &&
     input.capabilities.threads.canForkThread &&

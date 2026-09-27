@@ -14,7 +14,9 @@ import {
 
 const cursorSdkMock = vi.hoisted(() => {
   const closeExecutionOrder: Array<string> = [];
+  const runOperations: Array<string> = [];
   let agentCloseFailure: unknown;
+  let staleRunActive = false;
   const runWait = vi.fn(async () => ({
     id: "run-cursor-agent-sdk-test",
     requestId: "request-cursor-agent-sdk-test",
@@ -35,6 +37,10 @@ const cursorSdkMock = vi.hoisted(() => {
       _message: unknown,
       options: { readonly onDelta?: (input: { readonly update: unknown }) => Promise<void> },
     ) => {
+      runOperations.push("run.start");
+      if (staleRunActive) {
+        throw new Error("Agent agent-cursor-agent-sdk-test already has active run");
+      }
       await options.onDelta?.({
         update: {
           type: "assistant-message-chunk",
@@ -54,16 +60,38 @@ const cursorSdkMock = vi.hoisted(() => {
     send,
     close: agentClose,
   }));
+  const resume = vi.fn(async () => ({
+    agentId: "agent-cursor-agent-sdk-test",
+    send,
+    close: agentClose,
+  }));
+  const listRuns = vi.fn(async () => {
+    runOperations.push("agent.listRuns");
+    return {
+      items: staleRunActive ? [{ id: "run-stale", status: "running" }] : [],
+    };
+  });
+  const cancelRun = vi.fn(async () => {
+    runOperations.push("agent.cancelRun");
+    staleRunActive = false;
+  });
 
   return {
     agentClose,
+    cancelRun,
     closeExecutionOrder,
     create,
+    listRuns,
+    resume,
+    runOperations,
     runCancel,
     runWait,
     send,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
+    },
+    setStaleRunActive: (active: boolean) => {
+      staleRunActive = active;
     },
   };
 });
@@ -71,7 +99,9 @@ const cursorSdkMock = vi.hoisted(() => {
 vi.mock("../../provider/cursorSdk.ts", () => ({
   Agent: {
     create: cursorSdkMock.create,
-    resume: vi.fn(),
+    resume: cursorSdkMock.resume,
+    listRuns: cursorSdkMock.listRuns,
+    cancelRun: cursorSdkMock.cancelRun,
     messages: {
       list: vi.fn(async () => []),
     },
@@ -102,6 +132,69 @@ const testLayer = cursorAgentSdkRunnerLiveLayer.pipe(
 );
 
 describe("CursorAgentSdkRunner", () => {
+  it.effect("leaves a resumed agent alone when its next send succeeds", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.runOperations.length = 0;
+      cursorSdkMock.setStaleRunActive(false);
+
+      const runner = yield* CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "resume",
+        agentId: "agent-cursor-agent-sdk-test",
+        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+        threadId: ThreadId.make("thread-cursor-agent-sdk-normal-resume-test"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-cursor-agent-sdk-normal-resume-test",
+        ),
+      });
+      const run = yield* session.send({ message: "continue" });
+      yield* run.wait;
+
+      assert.deepStrictEqual(cursorSdkMock.runOperations, ["run.start"]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("retries a resumed send after cancelling its abandoned local run", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.runOperations.length = 0;
+      cursorSdkMock.listRuns.mockClear();
+      cursorSdkMock.cancelRun.mockClear();
+      cursorSdkMock.setStaleRunActive(true);
+
+      const runner = yield* CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "resume",
+        agentId: "agent-cursor-agent-sdk-test",
+        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+        threadId: ThreadId.make("thread-cursor-agent-sdk-stale-run-test"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-cursor-agent-sdk-stale-run-test",
+        ),
+      });
+      assert.deepStrictEqual(cursorSdkMock.runOperations, []);
+      const run = yield* session.send({ message: "continue" });
+      yield* run.wait;
+
+      assert.deepStrictEqual(cursorSdkMock.runOperations, [
+        "run.start",
+        "agent.listRuns",
+        "agent.cancelRun",
+        "run.start",
+      ]);
+      assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
+        "agent-cursor-agent-sdk-test",
+        { runtime: "local", cwd: process.cwd(), limit: 1 },
+      ]);
+      assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
+        "run-stale",
+        {
+          runtime: "local",
+          cwd: process.cwd(),
+        },
+      ]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("logs agent.close before invoking the Cursor SDK", () =>
     Effect.gen(function* () {
       cursorSdkMock.agentClose.mockClear();

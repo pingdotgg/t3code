@@ -428,8 +428,6 @@ describe("orchestration v2 provider switching", () => {
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
           const reasoningScenario = scenario.includes("reasoning-change");
           const turnUsageScenario = reasoningScenario || scenario.includes("turn-usage");
-          const incompatibleTurnUsage =
-            scenario.includes("turn-usage") && scenario.includes("-change-");
           const modelScenario =
             scenario.includes("model") || scenario.includes("option-change") || reasoningScenario;
           const failStartOnce = yield* Ref.make(false);
@@ -706,10 +704,10 @@ describe("orchestration v2 provider switching", () => {
               const failedUsage = failed.providerThreads.find(
                 (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
               )!.contextUsage;
-              if (reasoningScenario) {
+              if (reasoningScenario || scenario.includes("turn-usage")) {
                 assert.deepEqual(failedUsage, { usedTokens: 37_321, maxTokens: 258_400 });
               } else {
-                assert.isNull(failedUsage);
+                assert.deepEqual(failedUsage, { usedTokens: 30_000, maxTokens: 1_000_000 });
               }
               if (reasoningScenario) {
                 const target = failed.providerThreads.find(
@@ -725,17 +723,6 @@ describe("orchestration v2 provider switching", () => {
               }
               yield* dispatch(targetOrdinal + 1, current, targetSelection);
               yield* wait(targetOrdinal + 1);
-            }
-            if (incompatibleTurnUsage) {
-              const invalidated = yield* orchestrator.getThreadProjection(threadId);
-              assert.equal(invalidated.runs.at(-1)?.status, "failed");
-              assert.isNull(
-                invalidated.providerThreads.find(
-                  (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
-                )!.contextUsage,
-              );
-              assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CODEX_DRIVER);
-              return;
             }
             if (reasoningScenario && replaceNative) {
               const replaced = yield* orchestrator.getThreadProjection(threadId);
@@ -819,7 +806,7 @@ describe("orchestration v2 provider switching", () => {
                     .filter(
                       (record) =>
                         record.targetRunId ===
-                        (reasoningScenario && scenario.includes("retry")
+                        (scenario.includes("retry")
                           ? projection.runs.find((run) => run.ordinal === targetOrdinal)!.id
                           : projection.runs.at(-1)!.id),
                     )

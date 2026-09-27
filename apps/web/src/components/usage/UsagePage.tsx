@@ -1,7 +1,7 @@
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageProviderKind,
@@ -25,7 +25,10 @@ import {
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
-import { serverEnvironment } from "../../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { isModelPickerOpen } from "../../modelPickerVisibility";
+import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -41,6 +44,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
   Menu,
   MenuCheckboxItem,
@@ -54,6 +58,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -63,8 +68,15 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
-import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageProviderChart } from "./UsageProviderChart";
 import { sortModelsByTokens } from "./usageBreakdown";
+import {
+  METRIC_OPTIONS,
+  WINDOW_OPTIONS,
+  resolveUsageShortcut,
+  type UsageMetric,
+} from "./usageShortcuts";
+import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import {
   readUsagePagePreferences,
@@ -72,23 +84,9 @@ import {
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 
-type UsageMetric = UsageChartMetric | "limits";
-const METRIC_OPTIONS = [
-  { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
-  { value: "limits", label: "Limits" },
-] as const satisfies readonly { value: UsageMetric; label: string }[];
-
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
 }
-
-const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
-] as const;
 
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
@@ -96,6 +94,16 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
 
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  useEscapeToGoBack();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const shortcutTitle = (
+    option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
+  ) => {
+    const shortcut = shortcutLabelForCommand(keybindings, option.command, {
+      context: { usagePageOpen: true },
+    });
+    return shortcut ? `${option.label} (${shortcut})` : option.label;
+  };
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
     window: makeWindow(
@@ -119,6 +127,25 @@ export function UsagePage() {
     selectedEnvironmentIds,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const cursorAccessEnvironments = selectedEnvironments.filter(
+    (environment) => environment.needsCursorKeychainAccess,
+  );
+  const sourceMessages = [
+    ...new Set(
+      selectedEnvironments.flatMap(
+        (environment) =>
+          environment.summary?.sources.flatMap((source) =>
+            source.message &&
+            !source.action &&
+            (source.status === "partial" ||
+              source.status === "failed" ||
+              source.fingerprint.provider === "cursor")
+              ? [source.message]
+              : [],
+          ) ?? [],
+      ),
+    ),
+  ];
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -148,6 +175,17 @@ export function UsagePage() {
     [breakdown, merged.models, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
+  const summaryRows: Array<
+    | { readonly kind: "usage"; readonly provider: UsageProviderKind }
+    | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
+  > = activeProviders.map((provider) => ({ kind: "usage", provider }));
+  const cursorInsertAt =
+    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+  summaryRows.splice(
+    cursorInsertAt,
+    0,
+    ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
+  );
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
@@ -166,7 +204,7 @@ export function UsagePage() {
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
   };
-  const refreshLimits = async (automatic = false) => {
+  const refreshLimits = async (automatic = false, afterPending = false) => {
     try {
       await Promise.all(
         Array.from(presentations, ([environmentId, presentation]) => {
@@ -176,6 +214,7 @@ export function UsagePage() {
               environmentId,
               () => refreshProviders({ environmentId, input: {} }),
               automatic,
+              afterPending,
             );
           }
         }),
@@ -184,6 +223,32 @@ export function UsagePage() {
       setLimitsNow(Date.now());
     }
   };
+  const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.repeat ||
+      event.isComposing ||
+      isCommandPaletteOpen() ||
+      isModelPickerOpen()
+    )
+      return;
+
+    const command = resolveUsageShortcut(event, keybindings);
+    const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
+    const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
+    if (!metricOption && !periodOption) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    if (metricOption) selectMetric(metricOption.value);
+    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+  });
+
+  useEffect(() => {
+    globalThis.window.addEventListener("keydown", onUsageKeyDown, true);
+    return () => globalThis.window.removeEventListener("keydown", onUsageKeyDown, true);
+  }, []);
+
   const refreshWindow = () => {
     if (refreshingRef.current) return;
 
@@ -269,7 +334,7 @@ export function UsagePage() {
           }}
         >
           {METRIC_OPTIONS.map((option) => (
-            <Toggle key={option.value} value={option.value}>
+            <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
               {option.label}
             </Toggle>
           ))}
@@ -287,7 +352,7 @@ export function UsagePage() {
           }}
         >
           {WINDOW_OPTIONS.map((option) => (
-            <Toggle key={option.days} value={String(option.days)}>
+            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
               {option.label}
             </Toggle>
           ))}
@@ -322,7 +387,7 @@ export function UsagePage() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {METRIC_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
+              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
                 {option.label}
               </SelectItem>
             ))}
@@ -345,7 +410,11 @@ export function UsagePage() {
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {WINDOW_OPTIONS.map((option) => (
-              <SelectItem key={option.days} value={String(option.days)}>
+              <SelectItem
+                key={option.days}
+                value={String(option.days)}
+                title={shortcutTitle(option)}
+              >
                 {option.label}
               </SelectItem>
             ))}
@@ -381,11 +450,30 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} now={limitsNow} />
+              <UsageLimitsSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                now={limitsNow}
+                cursorPrompt={
+                  cursorAccessEnvironments.length > 0 ? (
+                    <CursorEnableLimits
+                      environments={cursorAccessEnvironments}
+                      onEnabled={() => {
+                        void refresh();
+                        void refreshLimits(false, true);
+                      }}
+                    />
+                  ) : null
+                }
+              />
             ) : isPending ? (
               <UsageSkeleton />
             ) : (
               <>
+                {sourceMessages.map((message) => (
+                  <p key={message} className="mb-4 text-sm text-muted-foreground">
+                    {message}
+                  </p>
+                ))}
                 <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-col gap-5">
                     <div className="flex flex-col gap-1">
@@ -405,7 +493,22 @@ export function UsagePage() {
                       </span>
                     </div>
 
-                    {activeProviders.map((provider) => {
+                    {summaryRows.map((row) => {
+                      if (row.kind === "enable") {
+                        return (
+                          <CursorEnableRow
+                            key={`enable:${row.environment.environmentId}`}
+                            environmentId={row.environment.environmentId}
+                            label={row.environment.label}
+                            showEnvironment={selectedEnvironments.length > 1}
+                            onEnabled={() => {
+                              void refresh();
+                              void refreshLimits(false, true);
+                            }}
+                          />
+                        );
+                      }
+                      const provider = row.provider;
                       const totals = merged.providers.find((entry) => entry.provider === provider);
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
@@ -634,6 +737,137 @@ export function UsagePage() {
         </ScrollArea>
       </div>
     </SidebarInset>
+  );
+}
+
+const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+
+function CursorEnableButton({
+  environmentId,
+  label,
+  onEnabled,
+  tooltip,
+  buttonText = "Enable",
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly onEnabled: () => void;
+  readonly tooltip: boolean;
+  readonly buttonText?: string;
+}) {
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "enable Cursor account usage",
+  });
+  const [pending, setPending] = useState(false);
+  const enable = async () => {
+    setPending(true);
+    try {
+      const result = await updateSettings({
+        environmentId,
+        input: { patch: { cursorKeychainUsageEnabled: true } },
+      });
+      if (result._tag === "Success") onEnabled();
+    } finally {
+      setPending(false);
+    }
+  };
+  const button = tooltip ? (
+    <InlineButton
+      disabled={pending}
+      aria-busy={pending}
+      aria-label={`Enable Cursor usage from ${label}`}
+      onClick={() => void enable()}
+    >
+      {buttonText}
+    </InlineButton>
+  ) : (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={pending}
+      aria-busy={pending}
+      aria-label={`Enable Cursor usage from ${label}`}
+      onClick={() => void enable()}
+    >
+      {buttonText}
+    </Button>
+  );
+  if (!tooltip) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipPopup>{CURSOR_KEYCHAIN_COPY}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function CursorEnableRow({
+  environmentId,
+  label,
+  showEnvironment,
+  onEnabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly showEnvironment: boolean;
+  readonly onEnabled: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
+      <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+        <span
+          aria-hidden
+          className="size-2 shrink-0 rounded-full"
+          style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
+        />
+        <ProviderMark provider="cursor" className="size-4" />
+        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
+      </span>
+      <CursorEnableButton
+        environmentId={environmentId}
+        label={label}
+        onEnabled={onEnabled}
+        tooltip
+      />
+    </div>
+  );
+}
+
+function CursorEnableLimits({
+  environments,
+  onEnabled,
+}: {
+  readonly environments: readonly EnvironmentUsageStatus[];
+  readonly onEnabled: () => void;
+}) {
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <ProviderInstanceIcon
+          driverKind={ProviderDriverKind.make("cursor")}
+          displayName="Cursor"
+          indicatorBackground="var(--background)"
+          className="size-5"
+          iconClassName="size-4 text-foreground/80"
+        />
+        Cursor
+      </h2>
+      <div className="flex flex-col items-start gap-3 rounded-lg border border-border/60 p-4">
+        <p className="text-xs text-muted-foreground">{CURSOR_KEYCHAIN_COPY}</p>
+        <div className="flex flex-wrap gap-2">
+          {environments.map((environment) => (
+            <CursorEnableButton
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
+              onEnabled={onEnabled}
+              tooltip={false}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 

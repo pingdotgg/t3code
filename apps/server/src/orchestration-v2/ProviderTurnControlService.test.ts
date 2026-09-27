@@ -219,6 +219,7 @@ it.effect(
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
+          getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
           getThreadProjection: () => Effect.die("control effects must not load transcript"),
           getTurnStartContext: () => Effect.die("unused"),
           getTurnStartHistory: () => Effect.die("unused"),

@@ -8,6 +8,7 @@ import type {
   SettingSource,
   ToolCall,
 } from "@cursor/sdk";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   CursorSettings,
@@ -442,7 +443,6 @@ function cursorToolSearchPattern(toolCall: ToolCall): string | undefined {
       return toolCall.args.pattern;
     case "semSearch":
       return toolCall.args.query;
-    case "read":
     case "ls":
       return toolCall.args.path;
     case "readLints":
@@ -480,13 +480,6 @@ function cursorToolSearchResults(
     return [];
   }
   switch (toolCall.type) {
-    case "read":
-      return [
-        {
-          fileName: toolCall.args.path,
-          preview: toolCall.result.value.content,
-        },
-      ];
     case "glob":
       return toolCall.result.value.files.map((fileName) => ({ fileName }));
     case "grep":
@@ -858,6 +851,8 @@ interface ActiveCursorTurn {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
+  // Item ordinals allocated in this turn. No later turn looks items up here.
+  readonly itemOrdinals: Map<string, number>;
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly subagents: Map<string, ActiveCursorSubagent>;
   readonly assistant: ActiveCursorTextStream;
@@ -908,35 +903,21 @@ export function makeCursorAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const liveAgent = yield* Ref.make<CursorLiveAgent | null>(null);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
-        const itemOrdinals = yield* Ref.make(new Map<string, number>());
-        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        const resolveItemOrdinal = Effect.fnUntraced(function* (
-          context: ActiveCursorTurn,
-          nativeItemId: string,
-        ) {
-          const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
-          if (existing !== undefined) {
-            return existing;
-          }
-          const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-            const next = (current.get(context.run.runId) ?? 0) + 1;
-            const updated = new Map(current);
-            updated.set(context.run.runId, next);
-            return [next, updated];
+        const resolveItemOrdinal = (context: ActiveCursorTurn, nativeItemId: string) =>
+          Effect.sync(() => {
+            const existing = context.itemOrdinals.get(nativeItemId);
+            if (existing !== undefined) {
+              return existing;
+            }
+            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
+            context.itemOrdinals.set(nativeItemId, ordinal);
+            return ordinal;
           });
-          const ordinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
-          yield* Ref.update(itemOrdinals, (current) => {
-            const updated = new Map(current);
-            updated.set(nativeItemId, ordinal);
-            return updated;
-          });
-          return ordinal;
-        });
 
         const resolvePlanId = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
@@ -1165,12 +1146,16 @@ export function makeCursorAdapterV2(
         const emitToolArtifacts = Effect.fnUntraced(function* (input: {
           readonly active: ActiveCursorToolCall;
           readonly completed: boolean;
+          /** Terminal status for a tool the turn ended before Cursor completed it. */
+          readonly unfinishedStatus?: "interrupted" | "failed" | "cancelled";
         }) {
           const { active } = input;
           const toolCall = active.toolCall;
           const now = yield* DateTime.now;
           const failed = input.completed && cursorToolFailed(toolCall);
-          const status = input.completed ? (failed ? "failed" : "completed") : "running";
+          const status = !input.completed
+            ? "running"
+            : (input.unfinishedStatus ?? (failed ? "failed" : "completed"));
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CURSOR_PROVIDER,
             nativeItemId: active.callId,
@@ -1273,19 +1258,34 @@ export function makeCursorAdapterV2(
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
               };
               break;
+            case "read":
+              turnItem = {
+                ...base,
+                title: formatReadToolLabel(toolCall.args.path),
+                type: "dynamic_tool",
+                toolName: "Read",
+                input: toolCall.args,
+                ...(cursorToolOutput(toolCall) === undefined
+                  ? {}
+                  : { output: cursorToolOutput(toolCall) }),
+              };
+              break;
             case "glob":
             case "grep":
-            case "read":
             case "ls":
             case "readLints":
             case "semSearch": {
               const results = cursorToolSearchResults(toolCall, path);
+              const pattern = cursorToolSearchPattern(toolCall);
               turnItem = {
                 ...base,
+                title:
+                  formatSearchToolLabel({
+                    input: toolCall.args,
+                    ...(pattern === undefined ? {} : { pattern }),
+                  }) ?? null,
                 type: "file_search",
-                ...(cursorToolSearchPattern(toolCall) === undefined
-                  ? {}
-                  : { pattern: cursorToolSearchPattern(toolCall) }),
+                ...(pattern === undefined ? {} : { pattern }),
                 ...(results.length === 0 ? {} : { results: [...results] }),
               };
               break;
@@ -1968,8 +1968,14 @@ export function makeCursorAdapterV2(
           }
           input.context.finalized = true;
           const completedAt = yield* DateTime.now;
+          // Tools still here never got a tool-call-completed. A stopped or
+          // failed turn cut them short, so they end with the turn's status.
           for (const tool of input.context.tools.values()) {
-            yield* emitToolArtifacts({ active: tool, completed: true });
+            yield* emitToolArtifacts({
+              active: tool,
+              completed: true,
+              ...(input.status === "completed" ? {} : { unfinishedStatus: input.status }),
+            });
           }
           input.context.tools.clear();
           // This interaction stops delivering updates at finalization. Tasks
@@ -2232,6 +2238,7 @@ export function makeCursorAdapterV2(
               providerTurnId,
               startedAt,
               completed,
+              itemOrdinals: new Map(),
               tools: new Map(),
               subagents: new Map(),
               assistant: {

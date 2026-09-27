@@ -61,14 +61,14 @@ describe("grokAcpSpawnArgs", () => {
     expect(grokAcpSpawnArgs("full-access")).toEqual(["agent", "--always-approve", "stdio"]);
   });
 
-  it("maps Auto-accept edits and Auto onto Grok permission modes", () => {
+  it("launches Auto on Grok's classifier and a mode Grok does not offer asking", () => {
+    expect(grokAcpSpawnArgs("auto")).toEqual(["--permission-mode", "auto", "agent", "stdio"]);
     expect(grokAcpSpawnArgs("auto-accept-edits")).toEqual([
       "--permission-mode",
-      "acceptEdits",
+      "default",
       "agent",
       "stdio",
     ]);
-    expect(grokAcpSpawnArgs("auto")).toEqual(["--permission-mode", "auto", "agent", "stdio"]);
   });
 });
 

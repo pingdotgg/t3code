@@ -23,6 +23,7 @@ import {
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
+  type ChatWidth,
   type DiffLayout,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
@@ -185,6 +186,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
+  comfortable: "Comfortable",
+  wide: "Wide",
+  full: "Full",
+};
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -521,6 +528,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
         ? ["Diff colors"]
         : []),
+      ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -640,6 +648,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserAutoShowFloatingPreview,
       settings.appearanceContrast,
       settings.diffColorScheme,
+      settings.chatWidth,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -754,6 +763,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
+      chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1377,6 +1387,39 @@ export function AppearanceSettingsPanel() {
               }
               aria-label="Keep composer context visible in active threads"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("chat-width")}
+          description="Set how wide messages and the composer can grow on large screens."
+          resetAction={
+            settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
+              <SettingResetButton
+                label="chat width"
+                onClick={() => updateSettings({ chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth })}
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.chatWidth}
+                onValueChange={(value) => {
+                  if (value === "comfortable" || value === "wide" || value === "full")
+                    updateSettings({ chatWidth: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
+                  <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="comfortable">Comfortable (default)</SelectItem>
+                  <SelectItem value="wide">Wide</SelectItem>
+                  <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
       </SettingsSection>

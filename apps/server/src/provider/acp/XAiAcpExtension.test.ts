@@ -27,9 +27,11 @@ import {
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
   registerXAiBackgroundTaskTracking,
+  registerXAiSubagentFinished,
   resolveXAiAcpToolTitle,
   xAiBackgroundTaskLifecycleMutation,
   xAiPromptCompleteFromSessionUpdate,
+  xAiSubagentFinishedNotice,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -1453,6 +1455,113 @@ describe("XAiAcpExtension", () => {
         code: -32003,
         errorMessage: "Grok usage limit reached. Try again later.",
       });
+    }),
+  );
+
+  it("maps subagent_finished to a notice only for statuses Grok defines", () => {
+    // Recorded from Grok 1.0.41 (ids normalized); statuses per grok-build
+    // xai-grok-tools/.../task/types.rs `status()`.
+    const finished = (update: Record<string, unknown>) =>
+      xAiSubagentFinishedNotice({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "subagent_finished",
+          subagent_id: "child-session",
+          child_session_id: "child-session",
+          tool_calls: 2,
+          turns: 1,
+          duration_ms: 23734,
+          ...update,
+        } as never,
+      });
+    expect(finished({ status: "completed", output: "SUBAGENT_DONE", will_wake: true })).toEqual({
+      sessionId: "root-session",
+      childSessionId: "child-session",
+      status: "completed",
+      result: "SUBAGENT_DONE",
+    });
+    expect(finished({ status: "failed", error: "tool crashed" })).toMatchObject({
+      status: "failed",
+      result: "tool crashed",
+    });
+    expect(
+      finished({ status: "cancelled", error: "interrupted by process restart" }),
+    ).toMatchObject({ status: "cancelled", result: "interrupted by process restart" });
+    // A failed subagent's error is its result; `output` only accompanies success.
+    expect(finished({ status: "failed", output: "partial" })).toMatchObject({ result: null });
+    expect(finished({ status: "timed_out" })).toBeNull();
+    expect(finished({})).toBeNull();
+    expect(finished({ status: "completed", child_session_id: undefined })).toBeNull();
+  });
+
+  it.effect("settles prompts and finishes subagents from the same session notifications", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      let capturedMeta: Record<string, unknown> | null | undefined;
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: (payload: { readonly _meta?: Record<string, unknown> | null }) => {
+          capturedMeta = payload._meta ?? null;
+          return Deferred.await(hungPrompt);
+        },
+        cancel: Effect.void,
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const notices: Array<unknown> = [];
+      // Registered after the wrapper, as the adapter does: it must not replace
+      // the wrapper's prompt completion on the shared method.
+      yield* registerXAiSubagentFinished(runtime, (notice) =>
+        Effect.sync(() => notices.push(notice)),
+      );
+      const sessionNotification = handlers.get("_x.ai/session_notification")!;
+      yield* sessionNotification({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "subagent_finished",
+          child_session_id: "child-session",
+          status: "completed",
+          output: "SUBAGENT_DONE",
+        },
+      });
+      expect(notices).toEqual([
+        {
+          sessionId: "root-session",
+          childSessionId: "child-session",
+          status: "completed",
+          result: "SUBAGENT_DONE",
+        },
+      ]);
+
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* sessionNotification({
+        sessionId: "root-session",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: capturedMeta?.promptId,
+          stop_reason: "end_turn",
+        },
+      });
+      const response = yield* Fiber.join(promptFiber);
+      expect(response.stopReason).toBe("end_turn");
+      expect(notices).toHaveLength(1);
     }),
   );
 

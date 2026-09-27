@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -53,6 +54,8 @@ export class AgentAwarenessRelay extends Context.Service<
   {
     readonly publishThread: (threadId: ThreadId) => Effect.Effect<void>;
     readonly drain: Effect.Effect<void>;
+    /** Retries a pending catch-up publish now. Call after this process links or enables publishing. */
+    readonly requestCatchUp: () => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/relay/AgentAwarenessRelay") {}
@@ -357,6 +360,8 @@ export const make = Effect.gen(function* () {
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const activeSnapshotPublishedRef = yield* Ref.make(false);
+  // Holds at most one pending wake, so a burst of requests costs one retry.
+  const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
 
   const readSecretString = (name: string) =>
@@ -670,18 +675,29 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // Publishes the active threads once. Returns why it did not, so the retry
+  // knows whether it is waiting on a link or on the publish setting.
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
+    // One secret read settles the common never-linked case; the full link
+    // config is read only once publishing is on.
+    const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (!relayUrl) {
+      yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
+      return "unlinked" as const;
+    }
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
     );
     if (!publishAgentActivity) {
       yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
-      return false;
+      return "disabled" as const;
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
     if (!relayConfig) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
-      return false;
+      return "unlinked" as const;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const [projectSnapshot, shellSnapshot] = yield* Effect.all([
@@ -696,21 +712,30 @@ export const make = Effect.gen(function* () {
     });
     if (activeThreadIds.length === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
-      return true;
+      return "published" as const;
     }
     yield* Effect.logInfo("publishing active agent activity snapshot", {
       count: activeThreadIds.length,
     });
     yield* Effect.forEach(activeThreadIds, enqueueThreadPublish, { discard: true });
     yield* worker.drain;
-    return true;
+    return "published" as const;
   });
 
+  // Publishes the catch-up snapshot of active threads once the environment is
+  // linked and publishing is enabled. Many environments never link, so while
+  // unlinked the retry backs off from 5 s to 60 s. Only this process writes
+  // the link, and it calls `requestCatchUp`, which ends the wait early. A
+  // linked environment keeps the 5 s retry, because `t3 connect publish` can
+  // turn publishing on from another process.
   const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
     Effect.gen(function* () {
+      let unlinkedRetryDelayMs = 5_000;
       while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
-        const published = yield* publishActiveThreadsUnsafe.pipe(Effect.orElseSucceed(() => false));
-        if (published) {
+        const result = yield* publishActiveThreadsUnsafe.pipe(
+          Effect.orElseSucceed(() => "failed" as const),
+        );
+        if (result === "published") {
           yield* Ref.set(activeSnapshotPublishedRef, true);
           if (logEnabledWhenReady) {
             const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
@@ -720,7 +745,11 @@ export const make = Effect.gen(function* () {
           }
           return;
         }
-        yield* Effect.sleep("5 seconds");
+        const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
+        yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
+        if (result === "unlinked") {
+          unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
+        }
       }
     });
 
@@ -786,6 +815,7 @@ export const make = Effect.gen(function* () {
   return AgentAwarenessRelay.of({
     publishThread,
     drain: worker.drain,
+    requestCatchUp: () => Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid),
     start,
   });
 });

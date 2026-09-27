@@ -5,6 +5,7 @@ import {
   type AssetCreateUrlInput,
   type AssetCreateUrlResult,
   type ChatFileAttachment,
+  type CommandId,
   type EnvironmentId,
   isProviderDriverKind,
   ProjectId,
@@ -1115,10 +1116,16 @@ export async function waitForStartedServerThread(
   });
 }
 
+/**
+ * Runs `revert` (the rollback command `requestId`) and resolves once the
+ * message's run is rolled back. Rejects with the server's reason as soon as
+ * the thread records that this rollback failed.
+ */
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
   messageId: MessageId,
   turnCount: number,
+  requestId: CommandId,
   revert: () => Promise<void>,
   timeoutMs = 120_000,
 ): Promise<void> {
@@ -1145,6 +1152,11 @@ export async function waitForRevertedMessage(
     const inspect = () => {
       const thread = readProjection();
       if (!thread) return;
+      const failure = thread.thread.rollbackFailure;
+      if (failure?.requestId === requestId) {
+        finish(new Error(failure.message));
+        return;
+      }
       if (
         accepted &&
         thread.runs.some(

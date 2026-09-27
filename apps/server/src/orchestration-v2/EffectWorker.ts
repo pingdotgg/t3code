@@ -23,7 +23,10 @@ import {
   REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
   type OrchestrationEffectV2,
 } from "./EffectOutbox.ts";
-import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
+import {
+  CheckpointRollbackServiceV2,
+  ROLLBACK_FAILED_MESSAGE,
+} from "./CheckpointRollbackService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
 import { ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
@@ -350,6 +353,31 @@ export const executorLayer: Layer.Layer<
                   : { restoreFiles: effect.request.restoreFiles }),
               })
               .pipe(
+                // The last failed attempt tells waiting clients why, instead of
+                // leaving them to time out.
+                Effect.tapCause((cause) =>
+                  willRetry || Cause.hasInterruptsOnly(cause)
+                    ? Effect.void
+                    : threads
+                        .dispatch({
+                          type: "checkpoint.rollback.fail",
+                          commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
+                          threadId: effect.threadId,
+                          requestId: effect.commandId,
+                          message: Option.match(Cause.findErrorOption(cause), {
+                            onNone: () => ROLLBACK_FAILED_MESSAGE,
+                            onSome: (error) => error.message,
+                          }),
+                        })
+                        .pipe(
+                          Effect.catchCause((recordCause) =>
+                            Effect.logWarning("Failed to record rollback failure", {
+                              effectId: effect.id,
+                              cause: recordCause,
+                            }),
+                          ),
+                        ),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

@@ -122,36 +122,24 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options,
 ): AcpAdapterV2Flavor {
+  // The attachments dir grant lets the agent read pasted files at the paths
+  // the turn text references. It is a leaf directory of uploads. A session
+  // without a workspace gets no workspace root rather than the server's cwd.
+  const antigravityClientFileRoots = (cwd: string | null) =>
+    cwd === null
+      ? [options.serverConfig.attachmentsDir]
+      : [cwd, options.serverConfig.attachmentsDir];
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
       // process by closing it, and the adapter respawns on the next turn.
       const scope = yield* Effect.scope;
-      // The attachments dir grant lets the agent read pasted files at the
-      // paths the turn text references. It is a leaf directory of uploads.
-      const allowedRoots = [input.cwd, options.serverConfig.attachmentsDir];
       const runtime = yield* options.withProcess(
         Scope.close(scope, Exit.void),
         options.makeRuntime({
           ...input,
           clientFileSystem: true,
           additionalDirectories: [options.serverConfig.attachmentsDir],
-        }),
-      );
-      yield* runtime.handleReadTextFile((request) =>
-        readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots,
-          request,
-        }),
-      );
-      yield* runtime.handleWriteTextFile((request) =>
-        writeAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots,
-          request,
         }),
       );
       return {
@@ -196,6 +184,22 @@ export function makeAntigravityAcpAdapterFlavor(
         });
       }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    clientFileSystem: {
+      readTextFile: (request, cwd) =>
+        readAntigravityClientTextFile({
+          fileSystem: options.fileSystem,
+          path: options.path,
+          allowedRoots: antigravityClientFileRoots(cwd),
+          request,
+        }),
+      writeTextFile: (request, cwd) =>
+        writeAntigravityClientTextFile({
+          fileSystem: options.fileSystem,
+          path: options.path,
+          allowedRoots: antigravityClientFileRoots(cwd),
+          request,
+        }),
+    },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);

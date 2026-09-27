@@ -15,7 +15,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import { layer, ThreadForkServiceV2 } from "./ThreadForkService.ts";
+import {
+  forkableSourceRunStatusError,
+  isForkableSourceRunStatus,
+  layer,
+  ThreadForkServiceV2,
+} from "./ThreadForkService.ts";
 
 const sourceThreadId = ThreadId.make("thread:fork-snoozed-source");
 const targetThreadId = ThreadId.make("thread:fork-awake-target");
@@ -62,7 +67,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
   };
 }
 
-function makeCompletedSourceRun(): OrchestrationV2Run {
+function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run {
   return {
     id: sourceRunId,
     threadId: sourceThreadId,
@@ -73,7 +78,7 @@ function makeCompletedSourceRun(): OrchestrationV2Run {
     userMessageId: MessageId.make("message:fork-snoozed-source"),
     rootNodeId: null,
     activeAttemptId: null,
-    status: "completed",
+    status,
     queuePosition: null,
     requestedAt: sourceCreatedAt,
     startedAt: sourceCreatedAt,
@@ -83,33 +88,34 @@ function makeCompletedSourceRun(): OrchestrationV2Run {
   };
 }
 
-it.effect("keeps a fork awake when its source thread is snoozed", () =>
+function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2ThreadProjection {
+  return {
+    thread: makeSourceThread(),
+    runs: [sourceRun],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    plans: [],
+    turnItems: [],
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems: [],
+    updatedAt: snoozedAt,
+  };
+}
+
+const planFork = (sourceRun: OrchestrationV2Run) =>
   Effect.gen(function* () {
-    const sourceThread = makeSourceThread();
-    const sourceRun = makeCompletedSourceRun();
-    const sourceProjection: OrchestrationV2ThreadProjection = {
-      thread: sourceThread,
-      runs: [sourceRun],
-      attempts: [],
-      nodes: [],
-      subagents: [],
-      providerSessions: [],
-      providerThreads: [],
-      providerTurns: [],
-      runtimeRequests: [],
-      messages: [],
-      plans: [],
-      turnItems: [],
-      checkpointScopes: [],
-      checkpoints: [],
-      contextHandoffs: [],
-      contextTransfers: [],
-      visibleTurnItems: [],
-      updatedAt: snoozedAt,
-    };
     const service = yield* ThreadForkServiceV2;
-    const result = yield* service.plan({
-      sourceProjection,
+    return yield* service.plan({
+      sourceProjection: makeSourceProjection(sourceRun),
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -123,6 +129,26 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       creationSource: "mobile",
       createdAt: forkCreatedAt,
     });
+  }).pipe(Effect.provide(layer));
+
+it("treats usage-limited and other provider-finished runs as forkable", () => {
+  assert.isTrue(isForkableSourceRunStatus("completed"));
+  assert.isTrue(isForkableSourceRunStatus("waiting"));
+  assert.isTrue(isForkableSourceRunStatus("failed"));
+  assert.isTrue(isForkableSourceRunStatus("interrupted"));
+  assert.isTrue(isForkableSourceRunStatus("cancelled"));
+  assert.isFalse(isForkableSourceRunStatus("running"));
+  assert.isFalse(isForkableSourceRunStatus("starting"));
+  assert.isFalse(isForkableSourceRunStatus("queued"));
+  assert.isFalse(isForkableSourceRunStatus("preparing"));
+  assert.isFalse(isForkableSourceRunStatus("rolled_back"));
+});
+
+it.effect("keeps a fork awake when its source thread is snoozed", () =>
+  Effect.gen(function* () {
+    const sourceThread = makeSourceThread();
+    const sourceRun = makeSourceRun("completed");
+    const result = yield* planFork(sourceRun);
 
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);
@@ -144,5 +170,29 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       threadId: sourceThreadId,
       runId: sourceRunId,
     });
-  }).pipe(Effect.provide(layer)),
+  }),
+);
+
+it.effect("forks from a usage-limited failed run", () =>
+  Effect.gen(function* () {
+    const result = yield* planFork(makeSourceRun("failed"));
+    assert.deepEqual(result.targetThread.forkedFrom, {
+      type: "run",
+      threadId: sourceThreadId,
+      runId: sourceRunId,
+    });
+  }),
+);
+
+it.effect("rejects in-progress and rolled-back fork sources", () =>
+  Effect.gen(function* () {
+    for (const status of ["running", "rolled_back"] as const) {
+      const sourceRun = makeSourceRun(status);
+      const error = yield* planFork(sourceRun).pipe(Effect.flip);
+      assert.equal(error._tag, "ThreadForkPlanError");
+      assert.equal(error.sourceThreadId, sourceThreadId);
+      assert.equal(error.targetThreadId, targetThreadId);
+      assert.equal(error.cause, forkableSourceRunStatusError(sourceRun));
+    }
+  }),
 );

@@ -30,6 +30,7 @@ import {
   handoffTokenCapConfig,
   handoffBudget,
   attachmentTokenAllowance,
+  contextUsageForHandoff,
   historicalMessage,
   latestNativeContextUsage,
 } from "./ContextHandoffBudget.ts";
@@ -749,26 +750,24 @@ export const layer: Layer.Layer<
       const previousUsage = measuredContext
         ? { ...threadUsage, ...measuredContext.usage }
         : threadUsage;
-      const compatibleUsage =
-        previousSelection !== undefined &&
-        session.canReuseContextUsage?.(previousSelection, run.modelSelection) &&
-        previousUsage != null
-          ? {
-              usedTokens: previousUsage.usedTokens,
-              ...(previousUsage.maxTokens === undefined
-                ? {}
-                : { maxTokens: previousUsage.maxTokens }),
-            }
-          : null;
+      const reuseTelemetry =
+        sameSelection ||
+        (previousSelection !== undefined &&
+          session.canReuseContextUsage?.(previousSelection, run.modelSelection) === true);
+      const knownModelWindow = session.getModelContextWindow?.(run.modelSelection);
+      // Persist before delivery. Keep this native transcript's measured
+      // occupancy. A different model drops compaction telemetry and uses the
+      // new window when that window is known.
+      const handoffUsage = contextUsageForHandoff({
+        sameNativeThread,
+        sameSelection,
+        reuseTelemetry,
+        previousUsage,
+        knownModelWindow,
+      });
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
-        // Persist invalidation before delivery: a failed start must not let the next
-        // attempt mistake old-model telemetry for usage of the new selection.
-        contextUsage: sameNativeThread
-          ? sameSelection
-            ? (previousUsage ?? null)
-            : compatibleUsage
-          : null,
+        contextUsage: handoffUsage,
         id: providerThread.id,
         driver: session.driver,
         providerInstanceId: run.providerInstanceId,
@@ -982,14 +981,13 @@ export const layer: Layer.Layer<
             }, 0)
           : 0;
       });
-      const reportedUsage = sameSelection ? previousUsage : compatibleUsage;
       const modelContextWindow =
-        session.getModelContextWindow?.(run.modelSelection) ?? reportedUsage?.maxTokens;
+        knownModelWindow ??
+        (handoffUsage !== null || reuseTelemetry ? previousUsage?.maxTokens : undefined);
       // Replacing a native thread clears its usage, not the selected model's capacity.
-      // Model/options changes invalidate old window and compaction telemetry.
       const budgetProviderThread = {
         ...runningProviderThread,
-        contextUsage: sameNativeThread ? (reportedUsage ?? null) : null,
+        contextUsage: handoffUsage,
       };
       const missedRuns = projection.runs.filter(
         (source) =>

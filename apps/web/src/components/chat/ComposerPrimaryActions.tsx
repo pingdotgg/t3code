@@ -5,6 +5,7 @@ import {
   ChevronLeftIcon,
   CornerUpRightIcon,
   ListPlusIcon,
+  PlayIcon,
 } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
@@ -42,9 +43,11 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  canResume?: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage?: boolean;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
+  onResume?: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -91,9 +94,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  canResume = false,
   preserveComposerFocusOnPointerDown = false,
   isEditingQueuedMessage = false,
   onSubmitMessage,
+  onResume,
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
@@ -189,7 +194,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  if (showPlanFollowUpPrompt) {
+  if (showPlanFollowUpPrompt && (promptHasText || !canResume)) {
     if (promptHasText) {
       return (
         <button
@@ -247,13 +252,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return renderStopGenerationButton(false);
   }
 
-  const submitLabel = isEditingQueuedMessage
-    ? "Update queued message"
-    : isQueuing
-      ? "Queue message"
-      : isRunning
-        ? "Steer message"
-        : "Submit message";
+  const showResume = canResume && !hasSendableContent && !isEditingQueuedMessage;
+  const submitLabel = showResume
+    ? "Resume thread"
+    : isEditingQueuedMessage
+      ? "Update queued message"
+      : isQueuing
+        ? "Queue message"
+        : isRunning
+          ? "Steer message"
+          : "Submit message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
@@ -274,7 +282,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   const sendButton = (
     <button
-      type="submit"
+      type={showResume ? "button" : "submit"}
       className={cn(
         "relative isolate flex h-9 w-9 items-center justify-center overflow-hidden rounded-full shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-control-highlight hover:scale-105 active:inset-shadow-control-pressed active:shadow-none disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none disabled:hover:scale-100 sm:h-8 sm:w-8 [&_svg]:pointer-events-none",
         stageBackdropVariant
@@ -282,13 +290,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           : "bg-message-action text-message-action-foreground enabled:shadow-message-action/24 hover:bg-message-action-hover",
       )}
       {...pointerFocusProps}
-      onClick={onSubmitMessage}
+      onClick={showResume ? onResume : onSubmitMessage}
       disabled={
         isSendBusy ||
         isSendDisabled ||
         isConnecting ||
         isEnvironmentUnavailable ||
-        !hasSendableContent
+        (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
     >
@@ -299,6 +307,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : null}
       {isConnecting || isSendBusy ? (
         <Spinner size="sm" aria-hidden="true" />
+      ) : showResume ? (
+        <PlayIcon className="size-4 fill-current" aria-hidden="true" />
       ) : isEditingQueuedMessage ? (
         <CheckIcon className="size-4" aria-hidden="true" />
       ) : isQueuing ? (

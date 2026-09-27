@@ -16,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { Agent } from "../../provider/cursorSdk.ts";
+import { Agent, createAgentPlatform } from "../../provider/cursorSdk.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 
@@ -206,6 +206,10 @@ function runnerError(cause: unknown, method: string): CursorAgentSdkRunnerError 
     : new CursorAgentSdkRunnerError({ method, cause });
 }
 
+function isActiveRunConflict(cause: unknown): boolean {
+  return cause instanceof Error && /already has active run/i.test(cause.message);
+}
+
 export function isCursorCancellationError(cause: unknown): boolean {
   let current = cause;
   const seen = new Set<object>();
@@ -296,6 +300,36 @@ function makeCursorAgentSdkProtocolLogger(input: {
 }
 
 /**
+ * The Cursor SDK decides once per process whether local sandboxing works, and
+ * caches the answer the first time any run starts. Only sandboxed runs point
+ * it at its `cursorsandbox` helper first, so after an unsandboxed (Full access)
+ * run it caches "unsupported" and rejects every later sandboxed run until the
+ * server restarts. Warming a bare sandboxed executor before the first
+ * unsandboxed agent opens lets the SDK find the helper and cache the real
+ * answer. Warming is best effort: on a machine without sandbox support it
+ * fails, the SDK caches "unsupported", and sandboxed runs report that as
+ * before.
+ */
+let cursorSandboxSupportPrime: Promise<void> | undefined;
+
+function primeCursorSandboxSupport(options: AgentOptions): Promise<void> {
+  cursorSandboxSupportPrime ??= (async () => {
+    const cwd = typeof options.local?.cwd === "string" ? options.local.cwd : undefined;
+    const platform = await createAgentPlatform(cwd === undefined ? {} : { workspaceRef: cwd });
+    const release = await platform.prewarmLocalWorkspace({
+      ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+      local: {
+        ...(cwd === undefined ? {} : { cwd }),
+        settingSources: [],
+        sandboxOptions: { enabled: true },
+      },
+    });
+    await release();
+  })().catch(() => undefined);
+  return cursorSandboxSupportPrime;
+}
+
+/**
  * Runs agents through the Cursor SDK, logging every frame to the protocol
  * logger chosen for each opened agent. The live layer writes the native
  * provider event log; the replay recorder turns the same frames into a
@@ -306,6 +340,9 @@ export function makeCursorAgentSdkRunner(
 ): CursorAgentSdkRunnerShape {
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
+      if (input.options.local?.sandboxOptions?.enabled === false) {
+        yield* Effect.promise(() => primeCursorSandboxSupport(input.options));
+      }
       const protocolLogger = protocolLoggerFor(input);
       const log = (event: CursorAgentSdkProtocolLogEvent) =>
         protocolLogger === undefined ? Effect.void : protocolLogger(event);
@@ -342,6 +379,12 @@ export function makeCursorAgentSdkRunner(
         typeof input.options.local?.cwd === "string"
           ? input.options.local.cwd
           : input.options.local?.cwd?.[0];
+      const runOptions = {
+        runtime: "local" as const,
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+      };
+      let abandonedRunRecoveryAvailable = input.operation === "resume";
 
       return {
         agentId: agent.agentId,
@@ -386,20 +429,51 @@ export function makeCursorAgentSdkRunner(
             return callbackChain;
           };
 
-          const run = yield* Effect.tryPromise({
-            try: () =>
-              agent.send(sendInput.message, {
-                ...sendInput.options,
-                onDelta: async ({ update }) => {
-                  if (!callbacksReady) {
-                    pendingUpdates.push(update);
-                    return;
+          const startRun = () =>
+            Effect.tryPromise({
+              try: () =>
+                agent.send(sendInput.message, {
+                  ...sendInput.options,
+                  onDelta: async ({ update }) => {
+                    if (!callbacksReady) {
+                      pendingUpdates.push(update);
+                      return;
+                    }
+                    await dispatchUpdate(update);
+                  },
+                }),
+              catch: (cause) => runnerError(cause, "run.start"),
+            });
+          const run = yield* startRun().pipe(
+            Effect.catchIf(
+              (error) => abandonedRunRecoveryAvailable && isActiveRunConflict(error.cause),
+              (error) =>
+                Effect.gen(function* () {
+                  abandonedRunRecoveryAvailable = false;
+                  const latestRun = yield* Effect.tryPromise({
+                    try: () => Agent.listRuns(agent.agentId, { ...runOptions, limit: 1 }),
+                    catch: (cause) => runnerError(cause, "agent.listRuns"),
+                  });
+                  const activeRun = latestRun.items.find(
+                    (candidate) => candidate.status === "running",
+                  );
+                  if (activeRun === undefined) {
+                    return yield* error;
                   }
-                  await dispatchUpdate(update);
-                },
-              }),
-            catch: (cause) => runnerError(cause, "run.start"),
-          });
+                  yield* log({
+                    direction: "outgoing",
+                    stage: "decoded",
+                    payload: { type: "run.cancel", runId: activeRun.id },
+                  });
+                  yield* Effect.tryPromise({
+                    try: () => Agent.cancelRun(activeRun.id, runOptions),
+                    catch: (cause) => runnerError(cause, "agent.cancelRun"),
+                  });
+                  return yield* startRun();
+                }),
+            ),
+          );
+          abandonedRunRecoveryAvailable = false;
           runId = run.id;
           yield* log({
             direction: "incoming",

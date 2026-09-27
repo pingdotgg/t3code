@@ -19,8 +19,7 @@ Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
 50 MiB each, subject to the environment's upload support and limit. The agent
 receives them on the environment's machine. Provider and model limits still
 apply, including images already in the conversation. A video attachment gives
-the agent a file path; it does not enable native video input. Antigravity does
-not accept video attachments.
+the agent a file path; it does not enable native video input.
 
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
@@ -162,9 +161,9 @@ Queued messages appear above the composer. Rows show a thumbnail of any attached
 the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
 to a steer, or remove it.
 
-If the server restarts, saved queued messages keep their order and are held. Choose
-**Resume queue** above the composer on web or desktop, or in the queue sheet on mobile,
-to continue. You can edit, reorder, or remove held messages without starting them.
+If the server restarts, saved queued messages keep their order and are held. Press
+**Resume** in an empty composer on web or desktop, or **Resume queue** in the queue
+sheet on mobile, to continue. You can edit, reorder, or remove held messages without starting them.
 
 The pencil on a queued row opens that message in the composer for editing. The original message
 stays in the queue until you save, and its row is highlighted while you edit. The message's

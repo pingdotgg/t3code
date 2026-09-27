@@ -711,6 +711,83 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("titles OpenCode reads and searches from their input", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-search";
+      const harness = yield* makeOpenCodeRuntimeHarness("search-projection", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      for (const [tool, input] of [
+        ["read", { filePath: "src/env.ts" }],
+        ["grep", { pattern: "TODO", path: "apps/web" }],
+        ["websearch", { query: "OpenCode documentation" }],
+      ] as const) {
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: {
+              sessionID: nativeSessionId,
+              part: {
+                id: `part-${tool}`,
+                sessionID: nativeSessionId,
+                messageID: "assistant-search",
+                type: "tool",
+                callID: `call-${tool}`,
+                tool,
+                state: {
+                  status: "completed",
+                  input,
+                  output: "---\nfile body",
+                  title: tool,
+                  metadata: {},
+                  time: { start: 1, end: 2 },
+                },
+              },
+            },
+          }),
+        );
+      }
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.compacted",
+          properties: { sessionID: nativeSessionId },
+        }),
+      );
+      const items = (yield* Fiber.join(received)).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const read = items.find((item) => item.type === "dynamic_tool");
+      assert.equal(read?.title, "Read src/env.ts");
+      const grep = items.find((item) => item.type === "file_search");
+      assert.equal(grep?.title, "Searched TODO in web");
+      assert.equal(grep?.type === "file_search" ? grep.pattern : null, "TODO");
+      const webSearch = items.find((item) => item.type === "web_search");
+      assert.deepEqual(webSearch?.type === "web_search" ? webSearch.patterns : null, [
+        "OpenCode documentation",
+      ]);
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("admits a native command on its user receipt before generation completes", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -1944,6 +2021,7 @@ describe("OpenCodeAdapterV2", () => {
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
       let createCount = 0;
+      const createInputs: Array<unknown> = [];
       const fakeClient = {
         event: {
           subscribe: async (_input?: unknown, options?: { readonly signal?: AbortSignal }) => ({
@@ -1961,8 +2039,9 @@ describe("OpenCodeAdapterV2", () => {
           }),
         },
         session: {
-          create: async () => {
+          create: async (input: unknown) => {
             createCount += 1;
+            createInputs.push(input);
             return { data: { id: `ses_native_${createCount}`, time: { created: 1, updated: 1 } } };
           },
         },
@@ -2038,6 +2117,11 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.notEqual(minted.id, placeholder.id);
       assert.equal(minted.nativeThreadRef?.nativeId, "ses_native_2");
+      // OpenCode names a session from its first prompt only when create
+      // leaves the title unset, so the adapter never sends one.
+      for (const input of createInputs) {
+        assert.notProperty(input, "title");
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -2066,7 +2150,7 @@ describe("OpenCodeAdapterV2", () => {
   it("maps OpenCode tools to semantic turn-item families", () => {
     assert.equal(openCodeToolProjectionKind("bash"), "command_execution");
     assert.equal(openCodeToolProjectionKind("edit"), "file_change");
-    assert.equal(openCodeToolProjectionKind("read"), "file_search");
+    assert.equal(openCodeToolProjectionKind("read"), "dynamic_tool");
     assert.equal(openCodeToolProjectionKind("lsp"), "file_search");
     assert.equal(openCodeToolProjectionKind("websearch"), "web_search");
     assert.equal(openCodeToolProjectionKind("codesearch"), "web_search");

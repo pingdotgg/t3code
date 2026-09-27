@@ -39,7 +39,7 @@ import {
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
   type RunAttemptId,
-  type RunId,
+  RunId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import {
@@ -50,6 +50,12 @@ import {
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import {
+  collectToolFilePaths,
+  formatReadToolLabel,
+  formatSearchToolLabel,
+} from "@t3tools/shared/toolActivity";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -74,29 +80,77 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
   if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
-  const command = entry.command?.trim();
-  if (command) return commandDisplayText(command);
   const item = entry.structuredPayload;
   const title =
     item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
-  const heading = normalizeCompactToolLabel(title || entry.toolTitle || entry.label);
-  return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
+  if (title) return title;
+  // A lone web search keeps its heading; the query stays in its detail.
+  if (entry.itemType === "web_search") return entry.toolTitle ?? "Web search";
+  return workEntryDisplayLabel(entry, undefined);
+}
+
+function workEntryToolDataRecord(entry: WorkLogEntry): Record<string, unknown> | undefined {
+  return entry.toolData !== null &&
+    typeof entry.toolData === "object" &&
+    !Array.isArray(entry.toolData)
+    ? (entry.toolData as Record<string, unknown>)
+    : undefined;
+}
+
+function workEntryReadRawPaths(entry: WorkLogEntry): readonly string[] {
+  const fromChanged = entry.changedFiles ?? [];
+  if (fromChanged.length > 0) return fromChanged;
+  const structured = entry.structuredPayload;
+  if (structured?.type === "dynamic_tool") {
+    const structuredPaths = collectToolFilePaths({ input: structured.input });
+    if (structuredPaths.length > 0) return structuredPaths;
+  }
+  return collectToolFilePaths(workEntryToolDataRecord(entry));
+}
+
+function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefined): string[] {
+  return workEntryReadRawPaths(entry).map((filePath) =>
+    formatWorkspaceRelativePath(filePath, workspaceRoot),
+  );
 }
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
   if (entry.itemType === "system_notice") return entry.label;
+  if (entry.itemType === "reasoning" || entry.tone === "thinking") {
+    const thought = entry.detail?.trim().replace(/\s+/g, " ");
+    return thought || entry.label;
+  }
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return commandDisplayText(entry.command);
+  const action = toolGroupAction(entry);
+  if (action === "code-search" || action === "search") {
+    // Adapters title file searches with their target; the item keeps only the pattern.
+    const searchLabel =
+      entry.itemType === "file_search"
+        ? entry.label
+        : formatSearchToolLabel(workEntryToolDataRecord(entry));
+    if (searchLabel) return searchLabel;
+  }
+  const readPaths = action === "read" ? workEntryReadPaths(entry, workspaceRoot) : [];
+  if (action === "read" && readPaths[0]) {
+    return formatReadToolLabel(readPaths[0], readPaths.length - 1);
+  }
   // Retrying providers keep their progress label; other diagnostics expose
-  // the retained message instead of a generic error heading.
+  // the retained message instead of a generic error heading. File bodies
+  // are never a compact read label.
   const providerRetry =
     entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
   const item = entry.structuredPayload;
   const title =
     item?.type === "dynamic_tool" ? computerUseToolTitle(item.toolName, item.input) : null;
   if (title) return title;
-  if (entry.detail && !providerRetry) return entry.detail;
+  const compactDetail = entry.detail?.trim();
+  const detailIsSearchOutput =
+    (action === "code-search" || action === "search") && /[\r\n]/.test(compactDetail ?? "");
+  if (compactDetail && !providerRetry && action !== "read" && !detailIsSearchOutput) {
+    return compactDetail;
+  }
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
@@ -104,8 +158,40 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
       ? path
       : `${path} +${entry.changedFiles!.length - 1} more`;
   }
+  if (action === "read" && !entry.viewedImagePath) {
+    return "Read file";
+  }
   const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
+}
+
+/** Inspectable read-file output is the path when we have one, otherwise nothing. */
+export function workEntryReadOutput(
+  entry: Pick<
+    WorkLogEntry,
+    "changedFiles" | "detail" | "viewedImagePath" | "structuredPayload" | "toolData"
+  >,
+  workspaceRoot: string | undefined,
+): string | null {
+  const paths = [
+    ...new Set(
+      workEntryReadRawPaths(entry as WorkLogEntry)
+        .map((path) => {
+          const trimmed = path.trim().replaceAll("\\", "/");
+          if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
+            return trimmed;
+          }
+          const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+          const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
+          return `${root}/${relative}`;
+        })
+        .filter((path) => path.length > 0),
+    ),
+  ];
+  if (paths.length > 0) {
+    return paths.join("\n");
+  }
+  return null;
 }
 
 export function liveWorkEntryLabel(
@@ -151,13 +237,14 @@ export function workEntryIsVisibleInGroup(
     (expandedToolGroupEntry &&
       (entry.toolLifecycleStatus === "inProgress" ||
         entry.sourceActivityKind === "task.progress")) ||
+    // A stopped call is an outcome ("Stopped sleep"), not an empty row.
+    entry.toolLifecycleStatus === "stopped" ||
     !workEntryIndicatesToolNeutralStatus(entry)
   );
 }
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
-const TIMELINE_CONTENT_MAX_WIDTH = 768;
 const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
 export interface WorkGroupScrollAnchor {
@@ -282,14 +369,25 @@ export function resolveTimelineMinimapCurrentIndex(input: {
   return precedingIndex;
 }
 
-export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number): boolean {
-  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
-    return false;
+/**
+ * Side gutter between the viewport edge and the centered content column.
+ * `contentWidth` is the rendered column width, which follows the Chat width
+ * setting, so callers measure it rather than assume a fixed maximum.
+ */
+function resolveTimelineSideGutter(viewportWidth: number, contentWidth: number): number {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(contentWidth)) {
+    return 0;
   }
+  return Math.max(0, (viewportWidth - Math.min(viewportWidth, contentWidth)) / 2);
+}
 
-  const contentWidth = Math.min(viewportWidth, TIMELINE_CONTENT_MAX_WIDTH);
-  const sideGutter = Math.max(0, (viewportWidth - contentWidth) / 2);
-  return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
+export function resolveTimelineMinimapHasPersistentGutter(
+  viewportWidth: number,
+  contentWidth: number,
+): boolean {
+  return (
+    resolveTimelineSideGutter(viewportWidth, contentWidth) >= TIMELINE_MINIMAP_PERSISTENT_GUTTER
+  );
 }
 
 const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
@@ -298,18 +396,16 @@ const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
 
 /**
  * The minimap overlays the viewport's left edge while the content column is
- * centered, so the side gutter between them shrinks under browser zoom or a
- * narrow pane. A fixed-width hover strip would then sit on top of the message
+ * centered, so the side gutter between them shrinks under browser zoom, a
+ * narrow pane, or a wider Chat width setting. A fixed-width hover strip would then sit on top of the message
  * text and swallow its pointer events. Cap the strip's width so it never
  * extends past the gutter into the content column; 0 disables the strip.
  */
-export function resolveTimelineMinimapHitStripWidth(viewportWidth: number): number {
-  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
-    return 0;
-  }
-
-  const contentWidth = Math.min(viewportWidth, TIMELINE_CONTENT_MAX_WIDTH);
-  const sideGutter = Math.max(0, (viewportWidth - contentWidth) / 2);
+export function resolveTimelineMinimapHitStripWidth(
+  viewportWidth: number,
+  contentWidth: number,
+): number {
+  const sideGutter = resolveTimelineSideGutter(viewportWidth, contentWidth);
   return Math.max(
     0,
     Math.min(
@@ -317,6 +413,19 @@ export function resolveTimelineMinimapHitStripWidth(viewportWidth: number): numb
       Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
     ),
   );
+}
+
+// The prev/next buttons are centered 4px into the strip and 20px wide, so
+// their hitbox reaches 14px past the strip's left edge.
+const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
+
+/**
+ * The prev/next buttons hang outside the strip's height, so the strip's own
+ * width cap does not cover them. Keep them inert to the pointer unless the
+ * gutter can hold them; keyboard focus still reaches them.
+ */
+export function resolveTimelineMinimapNavigationInteractive(collapsedWidth: number): boolean {
+  return collapsedWidth >= TIMELINE_MINIMAP_NAVIGATION_REACH;
 }
 
 /**
@@ -647,19 +756,20 @@ function deriveUnsettledRunId(
   return isSettled ? null : latestRun.runId;
 }
 
-function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
+/** `runlessKey` stands in for the run of entries that have none. */
+function timelineEntryFoldRunId(entry: TimelineEntry, runlessKey: RunId | null): RunId | null {
   if (entry.kind === "work" && entry.entry.itemType === "system_notice") return null;
   if (entry.kind === "message" && entry.message.role === "assistant") {
-    return entry.message.runId ?? null;
+    return entry.message.runId ?? runlessKey;
   }
   if (entry.kind === "work") {
-    return entry.entry.runId ?? null;
+    return entry.entry.runId ?? runlessKey;
   }
   if (
     entry.kind === "event" &&
     (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
   ) {
-    return entry.projectedItem.item.runId;
+    return entry.projectedItem.item.runId ?? runlessKey;
   }
   return null;
 }
@@ -714,6 +824,18 @@ function deriveActiveVisualResponseRunIds(input: {
   return runIds;
 }
 
+function timelineEntryFailedItem(entry: TimelineEntry) {
+  const item =
+    entry.kind === "event"
+      ? entry.projectedItem.item
+      : entry.kind === "work"
+        ? entry.entry.projectedItem?.item
+        : null;
+  return item?.type === "error" && item.status === "failed" && item.parentItemId === null
+    ? item
+    : null;
+}
+
 function failedTimelineRunIds(
   entries: ReadonlyArray<TimelineEntry>,
   latestRun: TimelineLatestRun | null,
@@ -721,19 +843,8 @@ function failedTimelineRunIds(
   const failed = new Set<RunId>();
   if (latestRun?.status === "failed") failed.add(latestRun.runId);
   for (const entry of entries) {
-    const item =
-      entry.kind === "event"
-        ? entry.projectedItem.item
-        : entry.kind === "work"
-          ? entry.entry.projectedItem?.item
-          : null;
-    if (
-      item?.type === "error" &&
-      item.status === "failed" &&
-      item.parentItemId === null &&
-      item.runId !== null
-    )
-      failed.add(item.runId);
+    const runId = timelineEntryFailedItem(entry)?.runId;
+    if (runId) failed.add(runId);
   }
   return failed;
 }
@@ -741,13 +852,15 @@ function failedTimelineRunIds(
 /**
  * Settled turns fold activity before their terminal assistant message behind
  * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures
- * and work still in progress stay visible.
+ * and work still in progress stay visible. A thread without runs (a
+ * provider-native subagent) folds each prompt's response the same way.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
+  isWorking: boolean;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   for (const entry of input.timelineEntries) {
@@ -775,7 +888,11 @@ function deriveTurnFolds(input: {
     anchorEntryId: string;
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
+  const runlessFailedKeys = new Set<RunId>();
 
+  // Fold state is keyed by run, so each prompt of a runless thread lends its
+  // response a stable key of its own.
+  let runlessKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -783,11 +900,15 @@ function deriveTurnFolds(input: {
       pendingBoundary = nextEntry
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
         : null;
+      runlessKey = input.latestRun === null ? RunId.make(`runless:${entry.id}`) : null;
       continue;
     }
-    const runId = timelineEntryFoldRunId(entry);
+    const runId = timelineEntryFoldRunId(entry, runlessKey);
     if (!runId) {
       continue;
+    }
+    if (runId === runlessKey && timelineEntryFailedItem(entry) !== null) {
+      runlessFailedKeys.add(runId);
     }
     let group = groupsByRunId.get(runId);
     if (!group) {
@@ -817,7 +938,12 @@ function deriveTurnFolds(input: {
 
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
-    if (input.unfoldedRunIds.has(runId) || interruptedRunIds.has(runId)) {
+    if (
+      input.unfoldedRunIds.has(runId) ||
+      interruptedRunIds.has(runId) ||
+      runlessFailedKeys.has(runId) ||
+      (input.isWorking && runId === runlessKey)
+    ) {
       continue;
     }
     if (group.hasStreamingMessage) {
@@ -1039,6 +1165,11 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  /**
+   * The live work has no app run (a provider-native subagent thread), so
+   * runless entries are the current response instead of settled history.
+   */
+  runlessWorkActive?: boolean;
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
@@ -1081,6 +1212,7 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
+    isWorking: input.isWorking,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1098,11 +1230,13 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
+  const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
+  const runIdIsActiveResponse = (runId: RunId | null | undefined) =>
+    runId == null ? runlessWorkActive : activeVisualResponseRunIds.has(runId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
     input.isWorking &&
-    unsettledRunId !== null &&
     entry.toolLifecycleStatus === "inProgress" &&
-    entry.runId === unsettledRunId;
+    (entry.runId == null ? runlessWorkActive : entry.runId === unsettledRunId);
 
   // A steer continues the current turn. Keep its elapsed-time header below
   // the initiating prompt (or automatic wake), rather than moving it down.
@@ -1115,7 +1249,7 @@ export function deriveMessagesTimelineRows(input: {
   // and once everything settles it keeps the latest tool in past tense
   // instead of vanishing (#8984).
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
-  if (input.isWorking && unsettledRunId !== null) {
+  if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
@@ -1125,8 +1259,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
-        entry.entry.runId == null ||
-        !activeVisualResponseRunIds.has(entry.entry.runId) ||
+        !runIdIsActiveResponse(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||
         collapsedEntryIds.has(entry.id) ||
         collapsedSupersededEntryIds.has(entry.id) ||
@@ -1469,9 +1602,7 @@ export function deriveMessagesTimelineRows(input: {
 
     const assistantResponseStillInProgress =
       timelineEntry.message.role === "assistant" &&
-      timelineEntry.message.runId !== null &&
-      timelineEntry.message.runId !== undefined &&
-      activeVisualResponseRunIds.has(timelineEntry.message.runId);
+      runIdIsActiveResponse(timelineEntry.message.runId);
 
     const durationStart =
       durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt;
