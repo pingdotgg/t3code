@@ -9,6 +9,45 @@ import { render } from "vitest-browser-react";
 
 const scrollToEndSpy = vi.fn();
 const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
+const createAssetUrlMock = vi.hoisted(() =>
+  vi.fn(async () => ({ relativeUrl: "/assets/signed/abc123" })),
+);
+
+vi.mock("~/environmentApi", () => ({
+  readEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
+  ensureEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
+}));
+
+vi.mock("~/environments/runtime", () => ({
+  getEnvironmentHttpBaseUrl: vi.fn(() => "http://localhost:3773"),
+  getSavedEnvironmentRecord: vi.fn(() => null),
+  getSavedEnvironmentRuntimeState: vi.fn(() => null),
+  hasSavedEnvironmentRegistryHydrated: vi.fn(() => true),
+  listSavedEnvironmentRecords: vi.fn(() => []),
+  readSavedEnvironmentBearerToken: vi.fn(() => null),
+  resetSavedEnvironmentRegistryStoreForTests: vi.fn(),
+  resetSavedEnvironmentRuntimeStoreForTests: vi.fn(),
+  resolveEnvironmentHttpUrl: vi.fn((_environmentId: unknown, path: string) => path),
+  useSavedEnvironmentRegistryStore: (
+    selector: (state: { byId: Record<string, never> }) => unknown,
+  ) => selector({ byId: {} }),
+  useSavedEnvironmentRuntimeStore: (selector: (state: object) => unknown) => selector({}),
+  waitForSavedEnvironmentRegistryHydration: vi.fn(async () => undefined),
+  addSavedEnvironment: vi.fn(),
+  disconnectSavedEnvironment: vi.fn(),
+  ensureEnvironmentConnectionBootstrapped: vi.fn(),
+  getPrimaryEnvironmentConnection: vi.fn(() => null),
+  readEnvironmentConnection: vi.fn(() => null),
+  reconnectSavedEnvironment: vi.fn(),
+  setSavedEnvironmentEnabled: vi.fn(),
+  removeSavedEnvironment: vi.fn(),
+  requireEnvironmentConnection: vi.fn(() => {
+    throw new Error("environment unavailable");
+  }),
+  resetEnvironmentServiceForTests: vi.fn(),
+  startEnvironmentConnectionService: vi.fn(),
+  subscribeEnvironmentConnections: vi.fn(() => () => undefined),
+}));
 
 vi.mock("@legendapp/list/react", async () => {
   const React = await import("react");
@@ -1043,6 +1082,58 @@ describe("MessagesTimeline", () => {
       await expect
         .element(page.getByRole("button", { name: "Expand Tool Calls (1)", exact: true }))
         .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("opens message attachments staged outside the workspace", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "user-1",
+            kind: "message",
+            createdAt: "2026-09-08T10:00:00.000Z",
+            message: {
+              id: MessageId.make("user-message-1"),
+              role: "user",
+              text: "Look at this",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-1-abc123",
+                  name: "shot.png",
+                  mimeType: "image/png",
+                  sizeBytes: 42,
+                },
+              ],
+              createdAt: "2026-09-08T10:00:00.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+    try {
+      await page.getByRole("button", { name: "Open shot.png" }).click();
+      await vi.waitFor(() => {
+        expect(createAssetUrlMock).toHaveBeenCalledWith({
+          resource: {
+            _tag: "attachment",
+            attachmentId: "thread-1-abc123",
+            fileName: "shot.png",
+            mimeType: "image/png",
+            disposition: "inline",
+          },
+        });
+      });
+      expect(props.onImageExpand).toHaveBeenCalledWith({
+        images: [{ src: "http://localhost:3773/assets/signed/abc123", name: "shot.png" }],
+        index: 0,
+      });
     } finally {
       await screen.unmount();
     }
