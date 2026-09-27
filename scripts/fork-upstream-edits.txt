@@ -90,3 +90,6 @@ apps/web/src/lib/openPullRequestLink.ts
 # Interrupted environment reads are read again (#52)
 packages/client-runtime/src/state/runtime.test.ts
 packages/client-runtime/src/state/runtime.ts
+
+# Tool instructions for agents (#46)
+apps/server/src/provider/RuntimeInstructions.ts

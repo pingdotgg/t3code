@@ -521,3 +521,26 @@ for per-match decisions and the absorption PR record.
   "keywords": ["createEnvironmentQueryAtomFamily", "retryInterruptedRead", "hasInterruptsOnly"]
 }
 ```
+
+## Tool instructions for agents
+
+```json
+{
+  "id": "tool-instructions",
+  "purpose": "Tell agents when to reach for the t3-code tools, including prism_submit versus spawn_thread, even when harnesses defer tool schemas.",
+  "issues": ["https://github.com/toolboxmd/t3code/issues/46"],
+  "prs": ["https://github.com/toolboxmd/t3code/pull/53"],
+  "newFiles": [
+    "apps/server/src/mcp/toolInstructions.test.ts",
+    "apps/server/src/mcp/toolInstructions.ts"
+  ],
+  "upstreamFiles": ["apps/server/src/provider/RuntimeInstructions.ts"],
+  "sharedFiles": [],
+  "keywords": [
+    "t3_code_tool_use",
+    "buildRuntimeInstructions",
+    "McpServer.layerHttp",
+    "instructions:"
+  ]
+}
+```
