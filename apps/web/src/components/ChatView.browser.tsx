@@ -6830,7 +6830,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("runs the Sidebar V2 top actions", async () => {
+  it("runs the Sidebar V2 top and footer actions", async () => {
     localStorage.setItem(
       "t3code:client-settings:v1",
       JSON.stringify({
@@ -6860,7 +6860,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      await page.getByText("Skills", { exact: true }).click();
+      await page.getByTestId("sidebar-footer-skills").click();
       await waitForURL(
         mounted.router,
         (path) => path === "/skills",

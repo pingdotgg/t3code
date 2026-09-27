@@ -1,5 +1,4 @@
-import { GitPullRequestIcon, PlusIcon, SearchIcon, SparklesIcon } from "lucide-react";
-import { useNavigate } from "@tanstack/react-router";
+import { PlusIcon, SearchIcon } from "lucide-react";
 
 import { CommandDialogTrigger } from "./ui/command";
 import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "./ui/sidebar";
@@ -17,15 +16,12 @@ export function SidebarTopActions({
   commandPaletteShortcutLabel,
   newThread,
 }: SidebarTopActionsProps) {
-  const navigate = useNavigate();
   const showSearch = useSettings((s) => s.sidebarShowSearch);
-  const showPullRequests = useSettings((s) => s.sidebarShowPullRequests);
-  const showSkills = useSettings((s) => s.sidebarShowSkills);
   const showNewThread = useSettings((s) => s.sidebarShowNewThread);
   const searchShowShortcut = useSettings((s) => s.sidebarSearchShowShortcut);
   const newThreadConfirm = useSettings((s) => s.sidebarNewThreadConfirm);
 
-  if (!showSearch && !showPullRequests && !showSkills && !(showNewThread && newThread)) {
+  if (!showSearch && !(showNewThread && newThread)) {
     return null;
   }
 
@@ -60,32 +56,6 @@ export function SidebarTopActions({
               <SearchIcon className="size-3.5" />
               <span className="flex-1 truncate text-left">Search</span>
             </CommandDialogTrigger>
-          </SidebarMenuItem>
-        ) : null}
-        {showPullRequests ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-1 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
-              onClick={() =>
-                void navigate({ to: "/pull-requests", search: { involvement: "all" } })
-              }
-            >
-              <GitPullRequestIcon className="size-3.5" />
-              <span className="flex-1 truncate text-left">Pull Requests</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : null}
-        {showSkills ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              className="gap-2 px-2 py-1 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
-              onClick={() => void navigate({ to: "/skills" })}
-            >
-              <SparklesIcon className="size-3.5" />
-              <span className="flex-1 truncate text-left">Skills</span>
-            </SidebarMenuButton>
           </SidebarMenuItem>
         ) : null}
         {showNewThread && newThread ? (

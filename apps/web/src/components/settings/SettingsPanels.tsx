@@ -376,12 +376,12 @@ const SIDEBAR_VISIBILITY_ROWS: ReadonlyArray<{
   {
     key: "sidebarShowPullRequests",
     title: "Pull requests",
-    description: "Show Pull Requests in the sidebar top actions.",
+    description: "Show Pull Requests in the sidebar footer.",
   },
   {
     key: "sidebarShowSkills",
     title: "Skills",
-    description: "Show Skills in the sidebar top actions.",
+    description: "Show Skills in the sidebar footer.",
   },
   {
     key: "sidebarShowNewThread",
