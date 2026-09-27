@@ -19,7 +19,9 @@ import { type MouseEvent, type ReactNode, useState } from "react";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
+import { useTheme } from "~/hooks/useTheme";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
+import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import {
   Menu,
   MenuItem,
@@ -51,6 +53,7 @@ type Props = {
   readonly onAddInsights: () => void;
   readonly onAddDevice?: () => void;
   readonly onAddPullRequests?: () => void;
+  readonly dirtyFilePaths?: ReadonlySet<string>;
   readonly showAddSurface?: boolean;
   readonly maximized?: boolean;
   readonly onToggleMaximize?: () => void;
@@ -117,9 +120,11 @@ function PreviewIcon({ url }: { readonly url: string | null }) {
 function Icon({
   surface,
   sessions,
+  theme,
 }: {
   readonly surface: RightPanelSurface;
   readonly sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
+  readonly theme: "light" | "dark";
 }) {
   switch (surface.kind) {
     case "plan":
@@ -127,8 +132,16 @@ function Icon({
     case "diff":
       return <FileDiff className="size-3.5" />;
     case "files":
-    case "file":
       return <Files className="size-3.5" />;
+    case "file":
+      return (
+        <VscodeEntryIcon
+          pathValue={surface.relativePath}
+          kind="file"
+          theme={theme}
+          className="size-3.5"
+        />
+      );
     case "insights":
       return <Activity className="size-3.5" />;
     case "terminal":
@@ -167,12 +180,14 @@ export function RightPanelTabs({
   onAddInsights,
   onAddDevice,
   onAddPullRequests,
+  dirtyFilePaths,
   showAddSurface = true,
   maximized = false,
   onToggleMaximize,
   children,
 }: Props) {
   const browserProfiles = useBrowserDefaults().profiles;
+  const { resolvedTheme } = useTheme();
   const activeSurface = surfaces.find((surface) => surface.id === activeSurfaceId);
   const closeOnMiddleClick = (event: MouseEvent, surface: RightPanelSurface) => {
     if (event.button !== 1) return;
@@ -192,12 +207,15 @@ export function RightPanelTabs({
         >
           {surfaces.map((surface) => {
             const title = titleFor(surface, previewSessions, terminalLabels);
+            const fullTitle = surface.kind === "file" ? surface.relativePath : title;
+            const dirty =
+              surface.kind === "file" && (dirtyFilePaths?.has(surface.relativePath) ?? false);
             const active = surface.id === activeSurfaceId;
             return (
               <div
                 key={surface.id}
                 className={cn(
-                  "group flex h-6 min-w-20 max-w-40 shrink-0 items-center rounded-md border",
+                  "group flex h-6 min-w-0 max-w-44 shrink-0 items-center rounded-md border",
                   surface.kind === "preview" ? "text-[10px]" : "text-[11px]",
                   active
                     ? "border-border/70 bg-background text-foreground shadow-xs/5"
@@ -206,14 +224,22 @@ export function RightPanelTabs({
               >
                 <button
                   type="button"
-                  title={title}
+                  title={fullTitle}
                   onClick={() => onActivate(surface)}
                   onAuxClick={(event) => closeOnMiddleClick(event, surface)}
                   className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 pl-1.5"
                 >
-                  <Icon surface={surface} sessions={previewSessions} />
+                  <Icon surface={surface} sessions={previewSessions} theme={resolvedTheme} />
                   <span className="min-w-0 flex-1 truncate text-left">{title}</span>
                 </button>
+                {dirty ? (
+                  <span
+                    role="img"
+                    aria-label="Unsaved changes"
+                    title="Unsaved changes"
+                    className="size-1.5 shrink-0 rounded-full bg-amber-500"
+                  />
+                ) : null}
                 <Menu>
                   <MenuTrigger
                     render={
