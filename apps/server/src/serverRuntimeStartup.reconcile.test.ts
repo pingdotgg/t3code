@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
@@ -24,6 +25,7 @@ import {
 } from "./provider/Errors.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
+import * as ProjectionThreadActivityRepository from "./persistence/Services/ProjectionThreadActivities.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -83,13 +85,14 @@ const runReconciliation = (input: {
   readonly continueAfterRestart?: boolean;
   readonly liveThreadIds?: ReadonlyArray<ThreadId>;
   readonly providerService?: ProviderService.ProviderService["Service"];
+  readonly query?: ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
   readonly directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
   readonly dispatch: OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"];
 }) =>
   ServerRuntimeStartup.reconcileProviderSessions.pipe(
     Effect.provideService(
       ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-      queryWithThreads(input.threads),
+      input.query ?? queryWithThreads(input.threads),
     ),
     Effect.provideService(
       ProviderService.ProviderService,
@@ -438,6 +441,206 @@ it.effect("does not continue archived or deleted marked sessions", () => {
   );
 });
 
+it.effect("resumes a stopped session that was checkpointed before shutdown", () =>
+  Effect.gen(function* () {
+    const turnId = TurnId.make("turn-clean-shutdown");
+    const thread = makeThread("thread-clean-shutdown", "stopped");
+    const continued = yield* Deferred.make<void>();
+    const sends: ProviderSendTurnInput[] = [];
+    const dispatched: OrchestrationCommand[] = [];
+    const binding = {
+      threadId: thread.id,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId,
+      status: "stopped" as const,
+      resumeCursor: { threadId: thread.id },
+      runtimePayload: {
+        activeTurnId: null,
+        continueAfterServerUpdate: turnId,
+      },
+    };
+
+    yield* runReconciliation({
+      threads: [thread],
+      providerService: {
+        ...makeProviderService(),
+        getCapabilities: () =>
+          Effect.succeed({
+            sessionModelSwitch: "in-session" as const,
+            promptlessTurnContinuation: true,
+          }),
+        sendTurn: (input) =>
+          Effect.gen(function* () {
+            sends.push(input);
+            yield* Deferred.succeed(continued, undefined);
+            return { threadId: input.threadId, turnId: TurnId.make("turn-resumed") };
+          }),
+      },
+      directory: {
+        getBinding: () => Effect.succeedSome(binding),
+        upsert: () => Effect.void,
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([{ ...binding, lastSeenAt: updatedAt }]),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => dispatched.push(command)).pipe(
+          Effect.as({ sequence: dispatched.length }),
+        ),
+    });
+    yield* Deferred.await(continued);
+    assert.deepStrictEqual(sends, [
+      { threadId: thread.id, continuation: true, interactionMode: "default" },
+    ]);
+    assert.deepStrictEqual(
+      dispatched.map((command) => command.type === "thread.session.set" && command.session.status),
+      ["starting"],
+    );
+  }),
+);
+
+it.effect("resends a checkpointed unsent message instead of failing the thread", () => {
+  const thread = makeThread("thread-unsent-message", "stopped");
+  const messageId = MessageId.make("message-unsent");
+  const dispatched: OrchestrationCommand[] = [];
+  const binding = {
+    threadId: thread.id,
+    provider: ProviderDriverKind.make("codex"),
+    providerInstanceId,
+    status: "stopped" as const,
+    runtimePayload: {
+      activeTurnId: null,
+      continueAfterServerUpdatePendingMessageId: messageId,
+    },
+  };
+
+  return runReconciliation({
+    threads: [thread],
+    query: {
+      ...queryWithThreads([thread]),
+      getTurnStartMessage: () =>
+        Effect.succeedSome({
+          message: {
+            id: messageId,
+            role: "user" as const,
+            text: "Finish the migration",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: updatedAt,
+            updatedAt,
+          },
+          hasOtherUserMessages: false,
+        }),
+    },
+    directory: {
+      getBinding: () => Effect.succeedSome(binding),
+      upsert: () => Effect.void,
+      recordImportedTranscript: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([{ ...binding, lastSeenAt: updatedAt }]),
+    },
+    dispatch: (command) =>
+      Effect.sync(() => dispatched.push(command)).pipe(Effect.as({ sequence: dispatched.length })),
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(
+          dispatched.map((command) => command.type),
+          ["thread.turn.start", "thread.session.set"],
+        );
+        const turnStart = dispatched[0];
+        assert(turnStart?.type === "thread.turn.start");
+        assert.equal(turnStart.message.text, "Finish the migration");
+        assert.equal(turnStart.message.messageId, messageId);
+        const sessionSet = dispatched[1];
+        assert(sessionSet?.type === "thread.session.set");
+        assert.equal(sessionSet.session.status, "starting");
+        assert.equal(sessionSet.session.lastError, null);
+      }),
+    ),
+  );
+});
+
+it.effect("tells a resumed agent which tasks were still open", () =>
+  Effect.gen(function* () {
+    const turnId = TurnId.make("turn-open-tasks");
+    const thread = makeThread("thread-open-tasks", "running", turnId);
+    const continued = yield* Deferred.make<void>();
+    const sends: ProviderSendTurnInput[] = [];
+    const binding = {
+      threadId: thread.id,
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      status: "running" as const,
+      resumeCursor: { threadId: thread.id },
+      runtimePayload: { activeTurnId: turnId, continueAfterServerUpdate: turnId },
+    };
+    yield* runReconciliation({
+      threads: [thread],
+      providerService: {
+        ...makeProviderService(),
+        getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" as const }),
+        sendTurn: (input) =>
+          Effect.gen(function* () {
+            sends.push(input);
+            yield* Deferred.succeed(continued, undefined);
+            return { threadId: input.threadId, turnId: TurnId.make("turn-continued") };
+          }),
+      },
+      directory: {
+        getBinding: () => Effect.succeedSome(binding),
+        upsert: () => Effect.void,
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: () => Effect.succeed({ sequence: 1 }),
+    }).pipe(
+      Effect.provideService(ProjectionThreadActivityRepository.ProjectionThreadActivityRepository, {
+        upsert: () => Effect.die("unused"),
+        listByThreadId: () =>
+          Effect.succeed([
+            {
+              activityId: "activity-open" as never,
+              threadId: thread.id,
+              turnId,
+              tone: "info" as const,
+              kind: "task.started",
+              summary: "Task started",
+              payload: { taskId: "task-open", detail: "Write the resume checkpoint" },
+              createdAt: updatedAt,
+            },
+            {
+              activityId: "activity-done" as never,
+              threadId: thread.id,
+              turnId,
+              tone: "info" as const,
+              kind: "task.completed",
+              summary: "Task completed",
+              payload: { taskId: "task-done", status: "completed", title: "Already finished" },
+              createdAt: updatedAt,
+            },
+          ]),
+        listUserInputLifecycleByThreadId: () => Effect.die("unused"),
+        getLatestTaskActivity: () => Effect.die("unused"),
+        deleteByThreadId: () => Effect.die("unused"),
+      }),
+    );
+    yield* Deferred.await(continued);
+    assert.deepStrictEqual(sends, [
+      {
+        threadId: thread.id,
+        input: "Continue where you left off.\n\nUnfinished tasks:\n- Write the resume checkpoint",
+        interactionMode: "default",
+      },
+    ]);
+  }),
+);
+
 it.effect("retries continuation preparation before settling a persistent failure", () => {
   const thread = makeThread(
     "thread-continuation-preparation-failure",
@@ -729,7 +932,6 @@ for (const scenario of [
   "stopped binding",
   "missing cursor",
   "marked without cursor",
-  "marked stopped projection",
   "marked superseded turn",
 ] as const) {
   it.effect(`does not recover an interrupted session with ${scenario}`, () => {

@@ -162,7 +162,7 @@ describe("ServerUpdateAction", () => {
     });
   });
 
-  it("leaves thread continuation off by default", async () => {
+  it("omits thread continuation when the preference is off", async () => {
     testState.updateServer.mockResolvedValue(
       AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
     );

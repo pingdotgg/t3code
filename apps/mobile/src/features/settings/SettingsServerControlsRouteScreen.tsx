@@ -441,7 +441,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         label="Continue after restart"
                         subtitle={
                           supportsContinuation
-                            ? "Resume interrupted threads after an update or restart."
+                            ? "On by default. Resume agents and unsent messages after a quit, update, or restart."
                             : "Update older servers to control restart continuation."
                         }
                         value={uniform("continueThreadsAfterServerUpdate")}

@@ -2806,7 +2806,7 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped
           settingKeys={["continueThreadsAfterServerUpdate"]}
-          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments. Update older servers first."
+          description="On by default. Saves in-progress agents and unsent messages, then resumes them after a quit, update, crash, or machine restart. Turn this off to leave that work stopped. Update older servers first."
           status={
             !supportsRestartContinuation
               ? "All selected connected environments must support restart continuation."

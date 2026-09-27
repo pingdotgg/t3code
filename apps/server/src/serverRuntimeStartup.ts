@@ -4,10 +4,13 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  MessageId,
   type ServerSettings as ServerSettingsValue,
   type ModelSelection,
   type OrchestrationProjectShell,
+  type OrchestrationSession,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -44,6 +47,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as ProjectionThreadActivityRepository from "./persistence/Services/ProjectionThreadActivities.ts";
+import * as ProjectionTurnRepository from "./persistence/Services/ProjectionTurns.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
@@ -344,7 +349,110 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
 const ORPHANED_PROVIDER_SESSION_ERROR =
   "Provider session did not survive a server restart. Send a new message to continue.";
 const SERVER_UPDATE_CONTINUATION_KEY = "continueAfterServerUpdate";
+const SERVER_UPDATE_PENDING_MESSAGE_KEY = "continueAfterServerUpdatePendingMessageId";
 const SERVER_UPDATE_CONTINUATION_PROMPT = "Continue where you left off.";
+const UNFINISHED_TASK_ACTIVITY_KINDS = [
+  "task.started",
+  "task.progress",
+  "task.updated",
+  "task.completed",
+] as const;
+const TERMINAL_TASK_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "canceled",
+  "interrupted",
+  "stopped",
+]);
+
+function payloadRecord(payload: unknown): Record<string, unknown> | null {
+  return payload !== null && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : null;
+}
+
+function taskIdOf(payload: unknown): string | null {
+  const record = payloadRecord(payload);
+  const taskId = record?.taskId;
+  return typeof taskId === "string" && taskId.length > 0 ? taskId : null;
+}
+
+function taskTitleOf(activity: {
+  readonly summary: string;
+  readonly payload: unknown;
+}): string | null {
+  const record = payloadRecord(activity.payload);
+  for (const key of ["title", "summary", "detail"] as const) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  const summary = activity.summary.trim();
+  return summary.length > 0 ? summary : null;
+}
+
+function isTerminalTaskActivity(activity: {
+  readonly kind: string;
+  readonly payload: unknown;
+}): boolean {
+  if (activity.kind === "task.completed") return true;
+  if (activity.kind !== "task.updated") return false;
+  const status = payloadRecord(activity.payload)?.status;
+  return typeof status === "string" && TERMINAL_TASK_STATUSES.has(status);
+}
+
+function unfinishedTaskLines(
+  activities: ReadonlyArray<{
+    readonly kind: string;
+    readonly summary: string;
+    readonly payload: unknown;
+  }>,
+): Array<string> {
+  const open = new Map<string, string>();
+  for (const activity of activities) {
+    const taskId = taskIdOf(activity.payload);
+    if (taskId === null) continue;
+    if (isTerminalTaskActivity(activity)) {
+      open.delete(taskId);
+      continue;
+    }
+    if (
+      activity.kind !== "task.started" &&
+      activity.kind !== "task.progress" &&
+      activity.kind !== "task.updated"
+    ) {
+      continue;
+    }
+    const title = taskTitleOf(activity);
+    if (title !== null) open.set(taskId, title);
+  }
+  return [...open.values()].slice(0, 20);
+}
+
+function continuationPrompt(tasks: ReadonlyArray<string>): string {
+  if (tasks.length === 0) return SERVER_UPDATE_CONTINUATION_PROMPT;
+  return `${SERVER_UPDATE_CONTINUATION_PROMPT}\n\nUnfinished tasks:\n${tasks
+    .map((task) => `- ${task}`)
+    .join("\n")}`;
+}
+
+const readUnfinishedTaskTitles = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const activities = yield* Effect.serviceOption(
+      ProjectionThreadActivityRepository.ProjectionThreadActivityRepository,
+    );
+    if (Option.isNone(activities)) return [];
+    const rows = yield* activities.value
+      .listByThreadId({
+        threadId,
+        activityKinds: [...UNFINISHED_TASK_ACTIVITY_KINDS],
+        limit: 200,
+      })
+      .pipe(Effect.orElseSucceed(() => []));
+    return unfinishedTaskLines(rows);
+  });
 
 class ProviderSessionContinuationError extends Schema.TaggedError<ProviderSessionContinuationError>()(
   "ProviderSessionContinuationError",
@@ -397,6 +505,31 @@ function readServerUpdateContinuationTurnId(runtimePayload: unknown): TurnId | n
   return typeof value === "string" && value.length > 0 ? TurnId.make(value) : null;
 }
 
+function readPendingContinuationMessageId(runtimePayload: unknown): MessageId | null {
+  const value = readRuntimePayload(runtimePayload)[SERVER_UPDATE_PENDING_MESSAGE_KEY];
+  return typeof value === "string" && value.length > 0 ? MessageId.make(value) : null;
+}
+
+function clearedContinuationPayload(runtimePayload: unknown): Record<string, null> {
+  const payload = readRuntimePayload(runtimePayload);
+  return {
+    [SERVER_UPDATE_CONTINUATION_KEY]: null,
+    continueAfterServerUpdatePrepared: null,
+    ...(SERVER_UPDATE_PENDING_MESSAGE_KEY in payload
+      ? { [SERVER_UPDATE_PENDING_MESSAGE_KEY]: null }
+      : {}),
+  };
+}
+
+function checkpointCanResume(status: OrchestrationSession["status"]): boolean {
+  return (
+    status === "running" ||
+    status === "starting" ||
+    status === "stopped" ||
+    status === "interrupted"
+  );
+}
+
 const toServerUpdateThreadContinuationError = (cause: unknown) =>
   isServerUpdateThreadContinuationError(cause)
     ? cause
@@ -438,6 +571,54 @@ export const markRunningProviderSessionsForContinuation = Effect.gen(function* (
       });
       marked.push(thread.id);
     }
+
+    // A message can be saved before a provider turn exists. Keep its id on the
+    // binding: shutdown deletes the pending-turn row when the session stops.
+    const turns = yield* Effect.serviceOption(ProjectionTurnRepository.ProjectionTurnRepository);
+    if (Option.isSome(turns)) {
+      const starting = threads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          thread.deletedAt === null &&
+          thread.session?.status === "starting" &&
+          thread.session.activeTurnId === null,
+      );
+      for (const thread of starting) {
+        const session = thread.session;
+        if (session === null) continue;
+        const pending = yield* turns.value
+          .getPendingTurnStartByThreadId({ threadId: thread.id })
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(pending)) continue;
+        const binding = yield* directory
+          .getBinding(thread.id)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isSome(binding)) {
+          yield* directory.upsert({
+            ...binding.value,
+            runtimePayload: {
+              ...readRuntimePayload(binding.value.runtimePayload),
+              [SERVER_UPDATE_PENDING_MESSAGE_KEY]: pending.value.messageId,
+            },
+          });
+        } else if (session.providerName !== null && session.providerInstanceId !== undefined) {
+          yield* directory.upsert({
+            threadId: thread.id,
+            provider: ProviderDriverKind.make(session.providerName),
+            providerInstanceId: session.providerInstanceId,
+            runtimeMode: session.runtimeMode,
+            status: "starting",
+            runtimePayload: {
+              activeTurnId: null,
+              [SERVER_UPDATE_PENDING_MESSAGE_KEY]: pending.value.messageId,
+            },
+          });
+        } else {
+          continue;
+        }
+        marked.push(thread.id);
+      }
+    }
     return marked;
   }).pipe(
     Effect.catchCause((cause) =>
@@ -462,8 +643,7 @@ const clearContinuationMarkers = (
                 ...binding,
                 runtimePayload: {
                   ...readRuntimePayload(binding.runtimePayload),
-                  [SERVER_UPDATE_CONTINUATION_KEY]: null,
-                  continueAfterServerUpdatePrepared: null,
+                  ...clearedContinuationPayload(binding.runtimePayload),
                 },
               }),
           }),
@@ -504,26 +684,34 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   );
   const { threads } = yield* query.getCommandReadModel();
   // Provider startup can report ready before the continuation is submitted.
-  // Find those markers in one read rather than querying every idle thread.
-  const preparedThreadIds = new Set(
-    (yield* directory.listBindings().pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("failed to read prepared provider continuations", { cause }).pipe(
-          Effect.andThen(
-            Effect.forEach(
-              threads.filter(
-                (thread) => thread.session?.status === "ready" && !liveThreadIds.has(thread.id),
-              ),
+  // A clean quit also stops the projection before the next boot, so the
+  // checkpoint lives on the binding rather than on a still-running session.
+  const persistedBindings = yield* directory.listBindings().pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to read prepared provider continuations", { cause }).pipe(
+        Effect.andThen(
+          Effect.forEach(
+            threads.filter(
               (thread) =>
-                directory.getBinding(thread.id).pipe(Effect.orElseSucceed(() => Option.none())),
+                !liveThreadIds.has(thread.id) &&
+                (thread.session?.status === "ready" ||
+                  thread.session?.status === "starting" ||
+                  thread.session?.status === "running" ||
+                  thread.session?.status === "stopped" ||
+                  thread.session?.status === "interrupted"),
             ),
-          ),
-          Effect.map((bindings) =>
-            bindings.flatMap((binding) => (Option.isSome(binding) ? [binding.value] : [])),
+            (thread) =>
+              directory.getBinding(thread.id).pipe(Effect.orElseSucceed(() => Option.none())),
           ),
         ),
+        Effect.map((bindings) =>
+          bindings.flatMap((binding) => (Option.isSome(binding) ? [binding.value] : [])),
+        ),
       ),
-    ))
+    ),
+  );
+  const preparedThreadIds = new Set(
+    persistedBindings
       .filter(
         (binding) =>
           readServerUpdateContinuationTurnId(binding.runtimePayload) !== null &&
@@ -532,13 +720,26 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       )
       .map((binding) => binding.threadId),
   );
+  const pendingMessageThreadIds = new Set(
+    persistedBindings
+      .filter((binding) => readPendingContinuationMessageId(binding.runtimePayload) !== null)
+      .map((binding) => binding.threadId),
+  );
+  const continuationCheckpointThreadIds = new Set(
+    persistedBindings
+      .filter((binding) => readServerUpdateContinuationTurnId(binding.runtimePayload) !== null)
+      .map((binding) => binding.threadId),
+  );
   const orphanedThreads = threads.filter(
     (thread) =>
       thread.session !== null &&
       (thread.session.status === "starting" ||
         thread.session.status === "running" ||
         thread.session.activeTurnId !== null ||
-        (thread.session.status === "ready" && preparedThreadIds.has(thread.id))) &&
+        (thread.session.status === "ready" && preparedThreadIds.has(thread.id)) ||
+        pendingMessageThreadIds.has(thread.id) ||
+        ((thread.session.status === "stopped" || thread.session.status === "interrupted") &&
+          continuationCheckpointThreadIds.has(thread.id))) &&
       !liveThreadIds.has(thread.id),
   );
 
@@ -595,11 +796,10 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               runtimePayload: {
                 ...readRuntimePayload(binding.value.runtimePayload),
                 activeTurnId: null,
-                ...(continuationMarkerPresent || interruptedByRestart
-                  ? {
-                      [SERVER_UPDATE_CONTINUATION_KEY]: null,
-                      continueAfterServerUpdatePrepared: null,
-                    }
+                ...(continuationMarkerPresent ||
+                interruptedByRestart ||
+                readPendingContinuationMessageId(binding.value.runtimePayload) !== null
+                  ? clearedContinuationPayload(binding.value.runtimePayload)
                   : {}),
               },
             });
@@ -646,7 +846,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     if (
       Option.isSome(binding) &&
       (continuationMarked || interruptedByRestart) &&
-      (session.status === "running" || session.status === "starting" || preparedWhileReady) &&
+      (checkpointCanResume(session.status) || preparedWhileReady) &&
       binding.value.resumeCursor != null &&
       thread.archivedAt === null &&
       thread.deletedAt === null
@@ -700,11 +900,15 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               });
             }
             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
+            const unfinishedTasks =
+              capabilities.promptlessTurnContinuation === true
+                ? []
+                : yield* readUnfinishedTaskTitles(thread.id);
             yield* providerService.sendTurn({
               threadId: thread.id,
               ...(capabilities.promptlessTurnContinuation === true
                 ? { continuation: true }
-                : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+                : { input: continuationPrompt(unfinishedTasks) }),
               interactionMode: thread.interactionMode,
             });
           });
@@ -732,6 +936,107 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           ).pipe(Effect.ignoreCause);
         }),
       );
+      continue;
+    }
+
+    // Shutdown stops the provider before the pending row can be adopted, and a
+    // crash can leave that row behind. Send the saved message again instead of
+    // marking the thread failed.
+    const unsentMessage = yield* Effect.exit(
+      Effect.gen(function* () {
+        if (thread.archivedAt !== null || thread.deletedAt !== null) return false;
+        const checkpointMessageId = Option.isSome(binding)
+          ? readPendingContinuationMessageId(binding.value.runtimePayload)
+          : null;
+        // A saved message id is a shutdown checkpoint. Without one, only an
+        // opted-in environment should pick the pending row back up.
+        if (checkpointMessageId === null && !continueAfterRestartFor(thread.projectId)) {
+          return false;
+        }
+        if (
+          checkpointMessageId === null &&
+          session.status !== "starting" &&
+          session.status !== "stopped" &&
+          session.status !== "interrupted"
+        ) {
+          return false;
+        }
+        const turns = yield* Effect.serviceOption(
+          ProjectionTurnRepository.ProjectionTurnRepository,
+        );
+        const durablePending =
+          checkpointMessageId === null && Option.isSome(turns)
+            ? yield* turns.value
+                .getPendingTurnStartByThreadId({ threadId: thread.id })
+                .pipe(Effect.orElseSucceed(() => Option.none()))
+            : Option.none();
+        const messageId =
+          checkpointMessageId ??
+          (Option.isSome(durablePending) ? durablePending.value.messageId : null);
+        if (messageId === null) return false;
+        const loaded = yield* query
+          .getTurnStartMessage({ threadId: thread.id, messageId })
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (
+          Option.isNone(loaded) ||
+          loaded.value.message.role !== "user" ||
+          loaded.value.message.turnId !== null
+        ) {
+          return false;
+        }
+        const createdAt = DateTime.formatIso(yield* DateTime.now);
+        const sourcePlan =
+          Option.isSome(durablePending) &&
+          durablePending.value.sourceProposedPlanThreadId !== null &&
+          durablePending.value.sourceProposedPlanId !== null
+            ? {
+                threadId: durablePending.value.sourceProposedPlanThreadId,
+                planId: durablePending.value.sourceProposedPlanId,
+              }
+            : undefined;
+        yield* orchestrationEngine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId: thread.id,
+          message: {
+            messageId,
+            role: "user",
+            text: loaded.value.message.text,
+            attachments: loaded.value.message.attachments ?? [],
+            ...(loaded.value.message.context !== undefined
+              ? { context: loaded.value.message.context }
+              : {}),
+          },
+          runtimeMode: session.runtimeMode,
+          interactionMode: thread.interactionMode,
+          ...(sourcePlan !== undefined ? { sourceProposedPlan: sourcePlan } : {}),
+          createdAt,
+        });
+        yield* orchestrationEngine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId: thread.id,
+          session: {
+            ...session,
+            status: "starting",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        return true;
+      }),
+    );
+    if (Exit.isFailure(unsentMessage)) {
+      if (Cause.hasInterrupts(unsentMessage.cause)) {
+        return yield* Effect.failCause(unsentMessage.cause);
+      }
+      yield* Effect.logWarning("failed to resume an unsent message after server restart", {
+        threadId: thread.id,
+        cause: unsentMessage.cause,
+      });
+    } else if (unsentMessage.value) {
       continue;
     }
 

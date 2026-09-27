@@ -77,6 +77,17 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ServerSettings restart continuation", () => {
+  it("resumes threads after a restart unless the environment opted out", () => {
+    expect(decodeServerSettings({}).continueThreadsAfterServerUpdate).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.continueThreadsAfterServerUpdate).toBe(true);
+    expect(
+      decodeServerSettings({ continueThreadsAfterServerUpdate: false })
+        .continueThreadsAfterServerUpdate,
+    ).toBe(false);
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");

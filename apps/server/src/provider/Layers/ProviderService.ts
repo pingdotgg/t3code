@@ -78,6 +78,7 @@ import {
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
+import * as ProjectionTurnRepository from "../../persistence/Services/ProjectionTurns.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
@@ -385,6 +386,7 @@ function toRuntimePayloadFromSession(
   extra?: {
     readonly modelSelection?: unknown;
     readonly continueAfterServerUpdate?: TurnId;
+    readonly continueAfterServerUpdatePendingMessageId?: MessageId;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
@@ -396,6 +398,12 @@ function toRuntimePayloadFromSession(
     lastError: session.lastError ?? null,
     ...(extra?.continueAfterServerUpdate !== undefined
       ? { continueAfterServerUpdate: extra.continueAfterServerUpdate }
+      : {}),
+    ...(extra?.continueAfterServerUpdatePendingMessageId !== undefined
+      ? {
+          continueAfterServerUpdatePendingMessageId:
+            extra.continueAfterServerUpdatePendingMessageId,
+        }
       : {}),
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
@@ -1064,6 +1072,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     extra?: {
       readonly modelSelection?: unknown;
       readonly continueAfterServerUpdate?: TurnId;
+      readonly continueAfterServerUpdatePendingMessageId?: MessageId;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
     },
@@ -1770,6 +1779,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           // Admission and marker consumption must survive the same restart.
           continueAfterServerUpdate: null,
           continueAfterServerUpdatePrepared: null,
+          continueAfterServerUpdatePendingMessageId: null,
           lastRuntimeEvent: "provider.sendTurn",
           lastRuntimeEventAt: yield* nowIso,
         },
@@ -2087,6 +2097,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             activeTurnId: null,
             continueAfterServerUpdate: null,
             continueAfterServerUpdatePrepared: null,
+            continueAfterServerUpdatePendingMessageId: null,
           },
         });
         yield* analytics.record("provider.session.stopped", {
@@ -2329,6 +2340,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       return resolveProjectSettings(settings, thread.value.projectId).settings
         .continueThreadsAfterServerUpdate;
     });
+    const turns = yield* Effect.serviceOption(ProjectionTurnRepository.ProjectionTurnRepository);
     const properties = yield* Ref.modify(turnAnalytics, (state) => {
       const completed: Array<Readonly<Record<string, unknown>>> = [];
       for (const [sessionKey, session] of state.sessions) {
@@ -2354,14 +2366,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ).pipe(Effect.map((sessionsByAdapter) => sessionsByAdapter.flatMap((sessions) => sessions)));
     yield* Effect.forEach(activeSessions, (session) =>
       Effect.gen(function* () {
-        const continueAfterRestart =
-          session.status === "running" && session.activeTurnId
-            ? yield* continueAfterRestartFor(session.threadId)
-            : false;
+        const continueAfterRestart = yield* continueAfterRestartFor(session.threadId);
+        const pendingMessageId =
+          continueAfterRestart && !session.activeTurnId && Option.isSome(turns)
+            ? Option.getOrNull(
+                yield* turns.value
+                  .getPendingTurnStartByThreadId({ threadId: session.threadId })
+                  .pipe(Effect.orElseSucceed(() => Option.none())),
+              )?.messageId
+            : undefined;
         const lastRuntimeEventAt = yield* nowIso;
         yield* upsertSessionBinding(session, session.threadId, {
-          ...(continueAfterRestart && session.activeTurnId
+          ...(continueAfterRestart && session.status === "running" && session.activeTurnId
             ? { continueAfterServerUpdate: session.activeTurnId }
+            : {}),
+          ...(pendingMessageId !== undefined
+            ? { continueAfterServerUpdatePendingMessageId: pendingMessageId }
             : {}),
           lastRuntimeEvent: "provider.stopAll",
           lastRuntimeEventAt,

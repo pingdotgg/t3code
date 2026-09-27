@@ -10,16 +10,16 @@ notice.
 Server updates restart the connection and can interrupt active agents and
 terminal commands. Saved threads, settings, and project files remain.
 
-**Settings → General → Continue threads after restarts** is off by default.
-Enable it to resume supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
-update older servers first. If a supported environment was offline or has a
-different value, use **Apply to all** in Settings after it connects.
-T3 Code must start again on that machine;
-the setting does not enable automatic startup. Terminal commands may still be
-interrupted, and threads without saved provider resume state need a new message.
-If you previously enabled continuation for updates, enable this setting once
-to allow recovery without a connected client.
+**Settings → General → Continue threads after restarts** is on by default.
+Quit, update, crash, and machine restart save in-progress agents and unsent
+messages, then resume that work when T3 Code is open again. Threads come back
+where they left off; a restart is not a failure. Turn the setting off to leave
+that work stopped instead. Changes are saved to connected environments that
+support this setting; update older servers first. If a supported environment
+was offline or has a different value, use **Apply to all** in Settings after
+it connects. T3 Code must start again on that machine; the setting does not
+enable automatic startup. Terminal commands may still be interrupted, and a
+thread with no saved provider resume state needs a new message.
 
 ## Update a connected server
 
