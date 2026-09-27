@@ -28,14 +28,14 @@ export function PullRequestBody({
 
   if (segments.length === 1 && segments[0]?.kind === "markdown") {
     return (
-      <div data-image-gallery onClickCapture={handleImageClick}>
+      <div className="pull-request-body" data-image-gallery onClickCapture={handleImageClick}>
         <ChatMarkdown cwd={cwd} text={toRenderablePullRequestMarkdown(segments[0].text)} />
       </div>
     );
   }
 
   return (
-    <div className="space-y-3" data-image-gallery>
+    <div className="pull-request-body space-y-3" data-image-gallery>
       {segments.map((segment) =>
         segment.kind === "markdown" ? (
           <div key={segment.id} onClickCapture={handleImageClick}>

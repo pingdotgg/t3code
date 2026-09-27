@@ -1,29 +1,15 @@
 import type {
-  EnvironmentId,
   PullRequestActivity,
   PullRequestComment,
   PullRequestDetail,
-  PullRequestRef,
   PullRequestReviewThread,
 } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowDownUpIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  TagIcon,
-  UsersIcon,
-} from "lucide-react";
+import { ArrowDownUpIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { toastManager } from "../ui/toast";
-import {
-  pullRequestRequestReviewersMutationOptions,
-  pullRequestReviewerCandidatesQueryOptions,
-} from "~/lib/pullRequestReactQuery";
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { PullRequestBody } from "./PullRequestBody";
@@ -32,15 +18,10 @@ import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
-  pullRequestLabelColor,
   pullRequestReviewVerdictPresentation,
 } from "./pullRequestPresentation";
 
 type PullRequestDetailView = PullRequestDetail & PullRequestActivity;
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "The request could not be completed.";
-}
 
 /**
  * Which review states are a verdict. Copied from upstream's
@@ -105,7 +86,7 @@ function Section({
   return (
     <section aria-label={title}>
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="sticky top-0 z-10 flex w-full items-center bg-background pr-4">
+        <div className="sticky top-0 z-10 flex w-full items-center bg-chat-background pr-4">
           <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
             <span>{title}</span>
             <ChevronRightIcon
@@ -126,26 +107,6 @@ function Section({
   );
 }
 
-function MetaRow({
-  icon,
-  label,
-  children,
-}: {
-  readonly icon: ReactNode;
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-xs sm:min-h-6">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
-  );
-}
-
 function CommentCard({
   comment,
   detail,
@@ -160,27 +121,28 @@ function CommentCard({
   const body = visibleBody(comment.body);
   const outcome = pullRequestReviewOutcome(comment.reviewState);
   return (
-    <article className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]">
-      <div className="flex flex-wrap items-start gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <PullRequestActorLabel actor={comment.author} className="font-medium text-foreground" />
-          <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
-          {outcome !== null || comment.reviewState ? (
-            <ReviewVerdictBadge reviewState={comment.reviewState} />
-          ) : null}
-        </div>
+    <article className="rounded-xl border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]">
+      <div className="flex min-w-0 items-center gap-2 px-3 pt-2.5 text-xs">
+        <PullRequestActorLabel
+          actor={comment.author}
+          className="min-w-0 font-medium text-foreground"
+        />
+        {outcome !== null || comment.reviewState ? (
+          <ReviewVerdictBadge reviewState={comment.reviewState} />
+        ) : null}
+        <span className="ml-auto shrink-0 text-muted-foreground">
+          {formatRelativeTimeLabel(comment.createdAt)}
+        </span>
       </div>
       {(thread?.path ?? comment.path) ? (
-        <div className="px-3 pt-2 text-xs text-muted-foreground">
-          <span className="truncate font-mono text-[10px]">
-            {thread?.path ?? comment.path}
-            {thread?.line ? `:${thread.line}` : ""}
-            {thread?.isOutdated ? " · outdated" : ""}
-          </span>
+        <div className="truncate px-3 pt-1.5 font-mono text-[10px] text-muted-foreground">
+          {thread?.path ?? comment.path}
+          {thread?.line ? `:${thread.line}` : ""}
+          {thread?.isOutdated ? " · outdated" : ""}
         </div>
       ) : null}
       {body === null ? null : (
-        <div className="px-3 py-3 text-sm">
+        <div className="px-3 pt-1.5 pb-3 text-sm">
           <PullRequestBody body={comment.body} cwd={detail.workspaceRoot} onPreview={onPreview} />
         </div>
       )}
@@ -188,7 +150,7 @@ function CommentCard({
   );
 }
 
-function CollapsedFinishedComment({
+function FinishedCommentRow({
   comment,
   detail,
   thread,
@@ -204,25 +166,27 @@ function CollapsedFinishedComment({
   const label = thread?.isResolved ? "Resolved" : "Review dismissed";
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <article className="group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]">
-        <div className="flex flex-wrap items-center gap-2 p-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-            <PullRequestActorLabel actor={comment.author} className="max-w-full" />
-            <span className="text-muted-foreground">
-              {formatRelativeTimeLabel(comment.createdAt)}
-            </span>
-          </div>
-          <CollapsibleTrigger className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
-            {label}
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-3.5 transition-transform", open && "rotate-180")}
-            />
-          </CollapsibleTrigger>
-        </div>
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-background [contain-intrinsic-block-size:44px] [content-visibility:auto]">
+        <CollapsibleTrigger
+          aria-label={`${comment.author?.login ?? "ghost"} ${label}`}
+          className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+        >
+          <PullRequestActorLabel actor={comment.author} className="min-w-0 text-xs" />
+          <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+            {formatRelativeTimeLabel(comment.createdAt)}
+          </span>
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          />
+        </CollapsibleTrigger>
         <CollapsiblePanel>
           {open && body !== null ? (
-            <div className="px-3 pb-3">
+            <div className="border-t border-border/60 px-3 py-3 text-sm">
               <PullRequestBody
                 body={comment.body}
                 cwd={detail.workspaceRoot}
@@ -231,22 +195,15 @@ function CollapsedFinishedComment({
             </div>
           ) : null}
         </CollapsiblePanel>
-      </article>
+      </div>
     </Collapsible>
   );
-}
-
-/** One reviewer row, however a host happened to case their login this time. */
-function reviewerKey(login: string): string {
-  return login.toLowerCase();
 }
 
 const COMMENT_PAGE = 10;
 
 export function PullRequestSummaryTab({
   detail,
-  environmentId,
-  reference,
   activityPending,
   activityError,
   onRetryActivity,
@@ -254,29 +211,15 @@ export function PullRequestSummaryTab({
   onOpenUrl,
 }: {
   readonly detail: PullRequestDetailView;
-  readonly environmentId: EnvironmentId;
-  readonly reference: PullRequestRef;
   readonly activityPending: boolean;
   readonly activityError: string | null;
   readonly onRetryActivity: () => void;
   readonly onPreviewMedia: (preview: PullRequestMediaPreview) => void;
   readonly onOpenUrl: (url: string) => void;
 }) {
-  const queryClient = useQueryClient();
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
-
-  const reviewersQuery = useQuery(
-    pullRequestReviewerCandidatesQueryOptions({
-      environmentId,
-      reference,
-      enabled: detail.capabilities.reviewers.listCandidates === true,
-    }),
-  );
-  const requestReviewers = useMutation(
-    pullRequestRequestReviewersMutationOptions({ environmentId, queryClient }),
-  );
 
   const threadByCommentId = useMemo(
     () =>
@@ -308,92 +251,6 @@ export function PullRequestSummaryTab({
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
-      <section className="px-4 pt-2.5 pb-1">
-        <div className="space-y-2">
-          <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
-            {detail.reviewers.length > 0 ? (
-              <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {detail.reviewers.map((reviewer) => (
-                  <PullRequestActorLabel
-                    actor={reviewer}
-                    className="rounded-full bg-muted/40 px-1.5 py-0.5"
-                    key={reviewer.login}
-                  />
-                ))}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">None</span>
-            )}
-          </MetaRow>
-          <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
-            {detail.labels.length > 0 ? (
-              <span className="flex min-w-0 flex-wrap items-center gap-1">
-                {detail.labels.map((label) => {
-                  const dot = pullRequestLabelColor(label.color);
-                  return (
-                    <span
-                      className="inline-flex max-w-48 min-w-0 items-center gap-1.5 rounded-full bg-muted/40 py-0.5 pr-2 pl-1.5 text-xs"
-                      key={label.name}
-                    >
-                      <span
-                        aria-hidden
-                        className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                        {...(dot ? { style: { backgroundColor: dot } } : {})}
-                      />
-                      <span className="truncate">{label.name}</span>
-                    </span>
-                  );
-                })}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">None</span>
-            )}
-          </MetaRow>
-          {detail.capabilities.reviewers.listCandidates ? (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {reviewersQuery.data?.candidates.map((candidate) => (
-                <Button
-                  disabled={
-                    !detail.capabilities.reviewers.request ||
-                    !detail.viewerPermissions.requestReviewers ||
-                    requestReviewers.isPending
-                  }
-                  key={`${candidate.kind}:${candidate.id}`}
-                  size="xs"
-                  variant={candidate.isRequested ? "secondary" : "outline"}
-                  onClick={() =>
-                    void requestReviewers
-                      .mutateAsync({
-                        ...reference,
-                        requested: !candidate.isRequested,
-                        reviewers: [{ id: candidate.id, kind: candidate.kind }],
-                      })
-                      .catch((error) =>
-                        toastManager.add({
-                          type: "error",
-                          title: "Could not update reviewer",
-                          description: errorMessage(error),
-                        }),
-                      )
-                  }
-                >
-                  {candidate.isRequested ? "Requested: " : "Request: "}
-                  {candidate.login}
-                </Button>
-              ))}
-              {reviewersQuery.isPending ? (
-                <span className="text-xs text-muted-foreground">Loading reviewers…</span>
-              ) : null}
-              {reviewersQuery.error ? (
-                <span className="text-xs text-destructive">
-                  Could not load reviewer suggestions.
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </section>
-
       <Section key={`description:${detail.url}`} title="Description">
         <PullRequestBody
           body={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
@@ -516,54 +373,15 @@ export function PullRequestSummaryTab({
                 Show only {COMMENT_PAGE} recent comments
               </Button>
             ) : null}
-            {finishedComments.length > 0 ? (
-              <Collapsible>
-                <div className="overflow-hidden rounded-lg border border-border bg-background">
-                  <div className="flex items-center gap-3 pl-3">
-                    <CollapsibleTrigger
-                      aria-label={`${finishedComments.length} resolved or dismissed comments`}
-                      className="group flex min-w-0 flex-1 items-center gap-3 rounded-md py-3 pr-3 text-left hover:bg-muted/30"
-                    >
-                      <span className="min-w-0 flex-1 space-y-1">
-                        <span className="block text-xs font-medium text-foreground/90">
-                          {finishedComments.length} resolved or dismissed comment
-                          {finishedComments.length === 1 ? "" : "s"}
-                        </span>
-                        <span className="flex flex-wrap gap-x-1.5 text-[11px] text-muted-foreground">
-                          <span>
-                            {
-                              new Set(
-                                finishedComments.map((comment) =>
-                                  reviewerKey(comment.author?.login ?? "ghost"),
-                                ),
-                              ).size
-                            }{" "}
-                            authors
-                          </span>
-                        </span>
-                      </span>
-                      <ChevronRightIcon
-                        aria-hidden
-                        className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90"
-                      />
-                    </CollapsibleTrigger>
-                  </div>
-                  <CollapsiblePanel>
-                    <div className="space-y-2 border-t border-border/60 px-3 pb-3 pt-2">
-                      {orderComments(finishedComments, commentOrder).map((comment) => (
-                        <CollapsedFinishedComment
-                          comment={comment}
-                          detail={detail}
-                          key={comment.id}
-                          thread={threadByCommentId.get(comment.id)}
-                          onPreview={onPreviewMedia}
-                        />
-                      ))}
-                    </div>
-                  </CollapsiblePanel>
-                </div>
-              </Collapsible>
-            ) : null}
+            {orderComments(finishedComments, commentOrder).map((comment) => (
+              <FinishedCommentRow
+                comment={comment}
+                detail={detail}
+                key={comment.id}
+                thread={threadByCommentId.get(comment.id)}
+                onPreview={onPreviewMedia}
+              />
+            ))}
           </div>
         )}
       </Section>

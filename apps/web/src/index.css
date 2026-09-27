@@ -570,6 +570,31 @@ label:has(> select#reasoning-effort) select {
   margin: 0.65rem 0;
 }
 
+/* Pull request bodies and comments keep GitHub-style section headings:
+   Tailwind preflight leaves headings at body size, which buries the
+   Problem / What Changed structure authors write. Scoped to PR surfaces
+   so chat messages are untouched. */
+.pull-request-body .chat-markdown h1 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.1rem 0 0.6rem;
+}
+
+.pull-request-body .chat-markdown h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 1rem 0 0.5rem;
+}
+
+.pull-request-body .chat-markdown h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0.9rem 0 0.45rem;
+}
+
 .chat-markdown ul {
   padding-left: 1.25rem;
   list-style-type: disc;
