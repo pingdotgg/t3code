@@ -168,6 +168,7 @@ import { ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAut
 import { rpcAuthorizationLayer } from "./auth/RpcAuthorization.ts";
 import { PreviewManager } from "./preview/Manager.ts";
 import { PortDiscovery } from "./preview/PortScanner.ts";
+import { PullRequestCreationAutomation } from "./pullRequestMonitor/PullRequestCreationAutomation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { PreviewAutomationBroker } from "./mcp/PreviewAutomationBroker.ts";
 import {
@@ -283,6 +284,7 @@ const makeWsRpcLayer = (
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
+      const pullRequestCreationAutomation = yield* PullRequestCreationAutomation;
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const diffStateQuery = yield* DiffStateQuery;
       const keybindings = yield* Keybindings;
@@ -2346,8 +2348,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "git" },
           ),
-        [WS_METHODS.gitRunStackedAction]: (input) =>
-          observeRpcStream(
+        [WS_METHODS.gitRunStackedAction]: (input) => {
+          const projectId = input.projectId;
+          const threadId = input.threadId;
+          return observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
               gitManager
@@ -2356,6 +2360,18 @@ const makeWsRpcLayer = (
                   progressReporter: {
                     publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
                   },
+                  ...(threadId !== undefined && projectId !== undefined
+                    ? {
+                        onPullRequestCreateIntent: (context) =>
+                          pullRequestCreationAutomation.recordIntent({
+                            actionId: input.actionId,
+                            threadId,
+                            projectId,
+                            cwd: input.cwd,
+                            ...context,
+                          }),
+                      }
+                    : {}),
                 })
                 .pipe(
                   Effect.matchCauseEffect({
@@ -2363,8 +2379,19 @@ const makeWsRpcLayer = (
                     onSuccess: (result) =>
                       Effect.gen(function* () {
                         const createdPrNumber = result.pr.number;
-                        const projectId = input.projectId;
-                        const threadId = input.threadId;
+                        if (
+                          result.pr.status === "created" &&
+                          projectId !== undefined &&
+                          threadId !== undefined
+                        ) {
+                          yield* pullRequestCreationAutomation.handleCreatedResult({
+                            actionId: input.actionId,
+                            threadId,
+                            projectId,
+                            cwd: input.cwd,
+                            pullRequest: result.pr,
+                          });
+                        }
                         if (
                           result.pr.status === "created" &&
                           typeof createdPrNumber === "number" &&
@@ -2394,7 +2421,8 @@ const makeWsRpcLayer = (
                 ),
             ),
             { "rpc.aggregate": "git" },
-          ),
+          );
+        },
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           observeRpcEffect(WS_METHODS.gitResolvePullRequest, gitManager.resolvePullRequest(input), {
             "rpc.aggregate": "git",

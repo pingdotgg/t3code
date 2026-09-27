@@ -35,7 +35,12 @@ function repositoryKeyFromPullRequestUrl(url: string): string | null {
   }
 }
 
-function repositoryKeyFromPullRequestHead(pullRequest: GitResolvedPullRequest): string | null {
+function repositoryKeyFromPullRequestHead(
+  pullRequest: Pick<
+    GitResolvedPullRequest,
+    "url" | "isCrossRepository" | "headRepositoryNameWithOwner"
+  >,
+): string | null {
   const baseKey = repositoryKeyFromPullRequestUrl(pullRequest.url);
   if (!baseKey) return null;
 
@@ -56,15 +61,8 @@ export function pullRequestAssociationBlockReason(input: {
   readonly localStatus: GitStatusLocalResult;
   readonly pullRequest: GitResolvedPullRequest;
 }): PullRequestAssociationBlockReason | null {
-  const repositoryKey = repositoryKeyFromPullRequestHead(input.pullRequest);
-  if (
-    !repositoryKey ||
-    !input.project ||
-    input.project.id !== input.thread.projectId ||
-    input.project.repositoryIdentity?.canonicalKey.toLowerCase() !== repositoryKey
-  ) {
-    return "repository-mismatch";
-  }
+  const repositoryBlockReason = pullRequestAssociationRepositoryBlockReason(input);
+  if (repositoryBlockReason) return repositoryBlockReason;
 
   if (
     !input.localStatus.isRepo ||
@@ -77,4 +75,24 @@ export function pullRequestAssociationBlockReason(input: {
   }
 
   return input.pullRequest.headBranch === input.thread.branch ? null : "head-mismatch";
+}
+
+export function pullRequestAssociationRepositoryBlockReason(input: {
+  readonly thread: Pick<OrchestrationThread, "projectId">;
+  readonly project: Pick<OrchestrationProject, "id" | "repositoryIdentity"> | undefined;
+  readonly pullRequest: Pick<
+    GitResolvedPullRequest,
+    "url" | "isCrossRepository" | "headRepositoryNameWithOwner"
+  >;
+}): Extract<PullRequestAssociationBlockReason, "repository-mismatch"> | null {
+  const repositoryKey = repositoryKeyFromPullRequestHead(input.pullRequest);
+  if (
+    !repositoryKey ||
+    !input.project ||
+    input.project.id !== input.thread.projectId ||
+    input.project.repositoryIdentity?.canonicalKey.toLowerCase() !== repositoryKey
+  ) {
+    return "repository-mismatch";
+  }
+  return null;
 }

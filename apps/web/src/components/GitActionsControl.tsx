@@ -319,9 +319,14 @@ export default function GitActionsControl({
     ],
   );
 
-  const persistThreadPullRequestAssociation = useCallback(
-    async (result: GitRunStackedActionResult) => {
-      if (result.pr.status !== "created" && result.pr.status !== "opened_existing") {
+  const persistDraftPullRequestAssociation = useCallback(
+    (result: GitRunStackedActionResult) => {
+      if (
+        result.pr.status !== "created" ||
+        !activeThreadRef ||
+        !activeDraftThread ||
+        activeServerThread
+      ) {
         return;
       }
       if (
@@ -331,16 +336,12 @@ export default function GitActionsControl({
       ) {
         return;
       }
-      if (!activeThreadRef) {
-        return;
-      }
 
       const headBranch =
         result.pr.headBranch ??
         result.push.branch ??
         result.branch.name ??
-        activeServerThread?.branch ??
-        activeDraftThread?.branch ??
+        activeDraftThread.branch ??
         null;
       if (headBranch === null) {
         return;
@@ -355,40 +356,11 @@ export default function GitActionsControl({
         state: "open" as const,
       };
 
-      if (activeServerThread) {
-        const api = readEnvironmentApi(activeThreadRef.environmentId);
-        if (!api) {
-          return;
-        }
-        try {
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: activeThreadRef.threadId,
-            pullRequest,
-            pullRequestSource: "created",
-          });
-        } catch {
-          // Keep local association unset when durable write fails so reload
-          // cannot disagree with optimistic UI.
-          return;
-        }
-        setThreadBranch(
-          activeThreadRef,
-          activeServerThread.branch,
-          activeServerThread.worktreePath,
-          pullRequest,
-        );
-        return;
-      }
-
-      if (activeDraftThread) {
-        setDraftThreadContext(draftId ?? activeThreadRef, {
-          branch: activeDraftThread.branch,
-          worktreePath: activeDraftThread.worktreePath,
-          pullRequest,
-        });
-      }
+      setDraftThreadContext(draftId ?? activeThreadRef, {
+        branch: activeDraftThread.branch,
+        worktreePath: activeDraftThread.worktreePath,
+        pullRequest,
+      });
     },
     [
       activeDraftThread,
@@ -406,9 +378,9 @@ export default function GitActionsControl({
       if (branchUpdate) {
         persistThreadBranchSync(branchUpdate.branch);
       }
-      await persistThreadPullRequestAssociation(result);
+      persistDraftPullRequestAssociation(result);
     },
-    [persistThreadBranchSync, persistThreadPullRequestAssociation],
+    [persistDraftPullRequestAssociation, persistThreadBranchSync],
   );
 
   const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
