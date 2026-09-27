@@ -40,7 +40,9 @@ function ConfigurationRow({
       description={description}
       status={
         hasOverride
-          ? "Repository override"
+          ? entry.scope === "worktree"
+            ? "Worktree override"
+            : "Repository override"
           : entry.effective
             ? `Inherited: ${entry.effective}`
             : "Unset"
@@ -136,6 +138,12 @@ export function VcsConfigurationSettingsSection() {
       {member === null ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">
           Choose one Git checkout to edit its repository configuration.
+        </p>
+      ) : status.error ? (
+        <p className="px-4 py-3 text-sm text-destructive">{status.error}</p>
+      ) : status.data?.isRepo === false ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">
+          The selected checkout is not a Git repository.
         </p>
       ) : configuration.error ? (
         <p className="px-4 py-3 text-sm text-destructive">{configuration.error}</p>

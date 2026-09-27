@@ -197,6 +197,7 @@ export type VcsConfigurationInput = typeof VcsConfigurationInput.Type;
 const VcsConfigurationValue = Schema.Struct({
   effective: Schema.NullOr(Schema.String),
   repository: Schema.NullOr(Schema.String),
+  scope: Schema.NullOr(Schema.Literals(["local", "worktree"])),
 });
 
 export const VcsConfigurationResult = Schema.Struct({

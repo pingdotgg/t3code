@@ -72,11 +72,17 @@ export const make = Effect.gen(function* () {
   const readValue = Effect.fn("VcsConfigurationService.readValue")(function* (
     handle: Handle,
     cwd: string,
-    setting: Setting,
-    repositoryOnly: boolean,
+    key: string,
+    scope: "effective" | "local" | "worktree",
+    booleanValue = false,
   ) {
-    const key = CONFIG_KEYS[setting];
-    const args = ["config", ...(repositoryOnly ? ["--local"] : []), "--get", key];
+    const args = [
+      "config",
+      ...(scope === "effective" ? [] : [`--${scope}`]),
+      ...(booleanValue ? ["--bool"] : []),
+      "--get",
+      key,
+    ];
     const result = yield* handle.driver.execute({
       operation: "VcsConfigurationService.read",
       cwd,
@@ -94,7 +100,6 @@ export const make = Effect.gen(function* () {
         detail: result.stderr.trim() || "Could not read repository configuration.",
       });
     }
-    if (result.stdout.trim() === "") return null;
     return result.stdout.trim();
   });
 
@@ -109,11 +114,23 @@ export const make = Effect.gen(function* () {
         detail: "Repository configuration is available for Git only.",
       });
     }
+    const worktreeConfigEnabled =
+      (yield* readValue(handle, input.cwd, "extensions.worktreeConfig", "local", true)) === "true";
     const entry = (setting: Setting) =>
       Effect.all({
-        effective: readValue(handle, input.cwd, setting, false),
-        repository: readValue(handle, input.cwd, setting, true),
-      });
+        effective: readValue(handle, input.cwd, CONFIG_KEYS[setting], "effective"),
+        local: readValue(handle, input.cwd, CONFIG_KEYS[setting], "local"),
+        worktree: worktreeConfigEnabled
+          ? readValue(handle, input.cwd, CONFIG_KEYS[setting], "worktree")
+          : Effect.succeed(null),
+      }).pipe(
+        Effect.map(({ effective, local, worktree }) => ({
+          effective: effective ?? (setting === "largeFile" ? "512m" : null),
+          repository: worktree ?? local,
+          scope:
+            worktree !== null ? ("worktree" as const) : local !== null ? ("local" as const) : null,
+        })),
+      );
     const values = yield* Effect.all({
       userName: entry("userName"),
       userEmail: entry("userEmail"),
@@ -134,16 +151,19 @@ export const make = Effect.gen(function* () {
       });
     }
     const key = CONFIG_KEYS[input.setting];
-    if (
-      input.value === null &&
-      (yield* readValue(handle, input.cwd, input.setting, true)) === null
-    ) {
+    const worktreeConfigEnabled =
+      (yield* readValue(handle, input.cwd, "extensions.worktreeConfig", "local", true)) === "true";
+    const worktreeValue = worktreeConfigEnabled
+      ? yield* readValue(handle, input.cwd, key, "worktree")
+      : null;
+    const scope = worktreeValue !== null ? "worktree" : "local";
+    if (input.value === null && (yield* readValue(handle, input.cwd, key, scope)) === null) {
       return;
     }
     const value = input.value === null ? null : yield* validateValue(input.setting, input.value);
     const args = [
       "config",
-      "--local",
+      `--${scope}`,
       value === null ? "--unset-all" : "--replace-all",
       key,
       ...(value === null ? [] : [value]),

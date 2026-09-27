@@ -94,7 +94,9 @@ function ConfigurationField({
       />
       <Text className="text-xs text-foreground-muted">
         {entry.repository !== null
-          ? "Repository override"
+          ? entry.scope === "worktree"
+            ? "Worktree override"
+            : "Repository override"
           : entry.effective !== null
             ? `Inherited: ${entry.effective}`
             : "Unset"}
@@ -423,7 +425,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
               onPress={() => setConfigurationOpen((open) => !open)}
             />
             {configurationOpen ? (
-              configuration.error ? (
+              gitStatus.error ? (
+                <Text className="px-4 py-3 text-sm text-destructive">{gitStatus.error}</Text>
+              ) : configuration.error ? (
                 <Text className="px-4 py-3 text-sm text-destructive">{configuration.error}</Text>
               ) : configuration.data ? (
                 <>
