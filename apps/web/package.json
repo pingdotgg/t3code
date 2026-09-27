@@ -41,6 +41,7 @@
     "class-variance-authority": "^0.7.1",
     "culori": "^4.0.2",
     "effect": "catalog:",
+    "github-slugger": "2.0.0",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "heic-to": "^1.5.2",

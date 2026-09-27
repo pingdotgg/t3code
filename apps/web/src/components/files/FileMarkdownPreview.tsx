@@ -26,6 +26,7 @@ export function FileMarkdownPreview(props: {
       text={props.text}
       cwd={props.cwd}
       imageBaseDir={imageBaseDir}
+      headingIds
       threadRef={props.threadRef}
       className="mx-auto max-w-4xl px-6 py-5"
       onTaskListChange={props.onTaskListChange}
