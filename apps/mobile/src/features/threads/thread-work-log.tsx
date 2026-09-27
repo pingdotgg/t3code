@@ -64,6 +64,7 @@ import {
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import Animated, {
   cancelAnimation,
@@ -856,7 +857,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   // A subagent's notification opens its thread, like the subagent's own row.
   const notifiedSubagentThreadId =
     row.projectedItem.item.type === "notification"
-      ? row.projectedItem.item.childThreadId
+      ? notificationChildThreadId(row.projectedItem.item.source)
       : undefined;
   const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;

@@ -7,16 +7,14 @@ import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   type ModelSelection,
-  type OrchestrationV2BackgroundWorkKind,
+  type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
+  type ThreadId,
 } from "@t3tools/contracts";
-import {
-  derivePendingBackgroundWork,
-  pendingBackgroundTaskKind,
-} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
@@ -249,27 +247,26 @@ export function threadRuntimeHasInterruptibleRun(
   );
 }
 
-const BACKGROUND_WORK_NOUNS: Record<OrchestrationV2BackgroundWorkKind, readonly [string, string]> =
-  {
-    subagent: ["subagent", "subagents"],
-    command: ["command", "commands"],
-    monitor: ["monitor", "monitors"],
-    task: ["background task", "background tasks"],
-  };
-// Order the groups by how a reader thinks about them: agents first, loose tasks last.
-const BACKGROUND_WORK_ORDER: ReadonlyArray<OrchestrationV2BackgroundWorkKind> = [
-  "subagent",
-  "command",
-  "monitor",
-  "task",
-];
+type BackgroundWorkKind = OrchestrationV2PendingBackgroundTask["kind"];
+
+// `order` groups work the way a reader thinks about it: agents first, loose tasks last.
+const BACKGROUND_WORK_KINDS: Record<
+  BackgroundWorkKind,
+  { readonly order: number; readonly singular: string; readonly plural: string }
+> = {
+  subagent: { order: 0, singular: "subagent", plural: "subagents" },
+  command: { order: 1, singular: "command", plural: "commands" },
+  monitor: { order: 2, singular: "monitor", plural: "monitors" },
+  background_task: { order: 3, singular: "background task", plural: "background tasks" },
+};
 
 export interface PendingBackgroundWorkItem {
   readonly taskId: string;
-  readonly kind: OrchestrationV2BackgroundWorkKind;
+  readonly kind: BackgroundWorkKind;
   /** The work's name, or its noun when the provider gave none. */
   readonly label: string;
-  readonly childThreadId: OrchestrationV2PendingBackgroundTask["childThreadId"];
+  /** A subagent's own thread, when it has one. */
+  readonly childThreadId: ThreadId | undefined;
 }
 
 export interface PendingBackgroundWorkPresentation {
@@ -290,37 +287,53 @@ export function presentPendingBackgroundWork(
   if (tasks.length === 0) return null;
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
-      const kind = pendingBackgroundTaskKind(task);
       const description = task.description?.trim();
       return {
         taskId: task.taskId,
-        kind,
+        kind: task.kind,
         label:
           description === undefined || description.length === 0
-            ? BACKGROUND_WORK_NOUNS[kind][0]
+            ? BACKGROUND_WORK_KINDS[task.kind].singular
             : description,
-        childThreadId: task.childThreadId,
+        childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
       };
     })
     // `map` returned a new array; Hermes has no `toSorted`.
     .sort(
       (left, right) =>
-        BACKGROUND_WORK_ORDER.indexOf(left.kind) - BACKGROUND_WORK_ORDER.indexOf(right.kind),
+        BACKGROUND_WORK_KINDS[left.kind].order - BACKGROUND_WORK_KINDS[right.kind].order,
     );
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
-    const named = only.label !== BACKGROUND_WORK_NOUNS[only.kind][0];
+    const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     return {
-      title: named
-        ? `Waiting on ${BACKGROUND_WORK_NOUNS[only.kind][0]} ${only.label}`
-        : `Waiting on a ${BACKGROUND_WORK_NOUNS[only.kind][0]}`,
+      title: only.label === noun ? `Waiting on a ${noun}` : `Waiting on ${noun} ${only.label}`,
       items,
     };
   }
-  const groups = BACKGROUND_WORK_ORDER.flatMap((kind) => {
-    const count = items.filter((item) => item.kind === kind).length;
-    if (count === 0) return [];
-    return [`${count} ${BACKGROUND_WORK_NOUNS[kind][count === 1 ? 0 : 1]}`];
+  const counts = new Map<BackgroundWorkKind, number>();
+  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  const groups = Array.from(counts, ([kind, count]) => {
+    const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
+    return `${count} ${count === 1 ? singular : plural}`;
   });
   return { title: `Waiting on ${joinWithAnd(groups)}`, items };
+}
+
+/** The thread a notification row opens: that of the one subagent or delegated task it reports. */
+export function notificationChildThreadId(
+  source: OrchestrationV2NotificationSource,
+): ThreadId | undefined {
+  switch (source.kind) {
+    case "subagent":
+    case "delegated_task":
+      return source.childThreadId;
+    case "command":
+    case "monitor":
+    case "background_task":
+      return undefined;
+    default:
+      source satisfies never;
+      return undefined;
+  }
 }

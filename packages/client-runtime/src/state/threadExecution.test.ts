@@ -483,13 +483,16 @@ describe("presentPendingBackgroundWork", () => {
     ]);
   });
 
-  it("names work from a server that predates kinds by its task type", () => {
+  it("names generic work, including rosters from servers that predate kinds", () => {
     expect(
       presentPendingBackgroundWork([
-        { taskId: "bash", taskType: "local_bash", description: "Background sleep" },
-        { taskId: "watch", taskType: "monitor" },
-        { taskId: "other" },
+        { taskId: "bash", kind: "command", description: "Background sleep" },
+        { taskId: "watch", kind: "monitor" },
+        { taskId: "other", kind: "background_task" },
       ])?.title,
     ).toBe("Waiting on 1 command, 1 monitor and 1 background task");
+    expect(presentPendingBackgroundWork([{ taskId: "old", kind: "background_task" }])?.title).toBe(
+      "Waiting on a background task",
+    );
   });
 });

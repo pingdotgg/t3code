@@ -35,6 +35,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   resolveWorkEntryToolPresentation,
@@ -4824,14 +4825,19 @@ const toolCallExpandedBodyClassName =
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (workEntry.structuredPayload?.type === "notification") {
     if (workEntry.structuredPayload.outcome === "failed") return "circle-alert";
-    switch (workEntry.structuredPayload.workKind) {
+    const source = workEntry.structuredPayload.source;
+    switch (source.kind) {
       case "subagent":
+      case "delegated_task":
         return "bot";
       case "command":
         return "terminal";
       case "monitor":
         return "eye";
+      case "background_task":
+        return "zap";
       default:
+        source satisfies never;
         return "zap";
     }
   }
@@ -4919,7 +4925,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       : undefined;
   const notifiedSubagentThreadId =
     workEntry.projectedItem?.item.type === "notification"
-      ? workEntry.projectedItem.item.childThreadId
+      ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
