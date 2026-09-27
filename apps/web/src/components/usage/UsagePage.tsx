@@ -65,6 +65,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -494,19 +495,20 @@ export function UsagePage() {
                             {merged.costQuality.unpricedShare > 0 && (
                               <>
                                 {" "}
-                                <Tooltip>
-                                  <TooltipTrigger
+                                <Popover>
+                                  <PopoverTrigger
+                                    openOnHover
                                     render={<InlineButton tone="muted" />}
                                     aria-label="Unpriced usage details"
                                   >
                                     <InfoIcon className="size-3" aria-hidden />
-                                  </TooltipTrigger>
-                                  <TooltipPopup>
+                                  </PopoverTrigger>
+                                  <PopoverPopup side="top" tooltipStyle>
                                     API estimate excludes{" "}
                                     {formatPercent(merged.costQuality.unpricedShare)} unpriced
                                     records.
-                                  </TooltipPopup>
-                                </Tooltip>
+                                  </PopoverPopup>
+                                </Popover>
                               </>
                             )}
                           </>
