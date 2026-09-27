@@ -10,12 +10,22 @@ import { MAX_PULL_REQUEST_INLINE_REVIEW_COMMENTS } from "@t3tools/contracts";
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { CheckIcon, CircleIcon, FileDiffIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  CircleIcon,
+  Columns2Icon,
+  Rows3Icon,
+  TextWrapIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
+import { Toggle } from "../ui/toggle";
+import { ToggleGroup } from "../ui/toggle-group";
 import { pullRequestDiffInfiniteQueryOptions } from "~/lib/pullRequestReactQuery";
 import { buildPatchCacheKey, resolveDiffThemeName } from "~/lib/diffRendering";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -165,6 +175,8 @@ export function PullRequestCodeTab({
   detail,
   reference,
   environmentId,
+  commit,
+  onCommitChange,
   onReply,
   onResolve,
   pending,
@@ -172,12 +184,17 @@ export function PullRequestCodeTab({
   readonly detail: PullRequestDetailView;
   readonly reference: PullRequestRef;
   readonly environmentId: EnvironmentId;
+  readonly commit: string | null;
+  readonly onCommitChange: (commit: string | null) => void;
   readonly onReply: (threadId: string, body: string) => Promise<void>;
   readonly onResolve: (threadId: string, resolved: boolean) => void;
   readonly pending: boolean;
 }) {
   const diffQuery = useInfiniteQuery(
-    pullRequestDiffInfiniteQueryOptions({ environmentId, request: reference }),
+    pullRequestDiffInfiniteQueryOptions({
+      environmentId,
+      request: { ...reference, ...(commit ? { commit } : {}) },
+    }),
   );
   const [inlineCommentBody, setInlineCommentBody] = useState("");
   const [inlineComment, setInlineComment] = useState<{
@@ -194,7 +211,10 @@ export function PullRequestCodeTab({
   );
   const { resolvedTheme } = useTheme();
   const pullRequestsCodeFontSize = useSettings((state) => state.pullRequestsCodeFontSize);
-  const diffWordWrap = useSettings((state) => state.diffWordWrap);
+  const defaultWordWrap = useSettings((state) => state.diffWordWrap);
+  const [diffWordWrap, setDiffWordWrap] = useState(defaultWordWrap);
+  const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
+  const [collapsedFiles, setCollapsedFiles] = useState<ReadonlySet<string>>(() => new Set());
   const parsedPatchCache = useRef(new Map<string, RenderablePullRequestPatch>());
   const diffTextStyle = useMemo<CSSProperties>(
     () =>
@@ -206,13 +226,14 @@ export function PullRequestCodeTab({
   );
   const diffOptions = useMemo(
     () => ({
-      diffStyle: "unified" as const,
-      lineDiffType: "none" as const,
+      diffStyle,
+      lineDiffType: "word" as const,
+      hunkSeparators: "line-info" as const,
       overflow: diffWordWrap ? ("wrap" as const) : ("scroll" as const),
       theme: resolveDiffThemeName(resolvedTheme),
       themeType: resolvedTheme,
     }),
-    [diffWordWrap, resolvedTheme],
+    [diffStyle, diffWordWrap, resolvedTheme],
   );
   useEffect(() => {
     parsedPatchCache.current.clear();
@@ -260,7 +281,8 @@ export function PullRequestCodeTab({
       }, {}),
     [detail.reviewThreads],
   );
-  const canComment = detail.capabilities.review.inlineComment && detail.viewerPermissions.comment;
+  const canComment =
+    commit === null && detail.capabilities.review.inlineComment && detail.viewerPermissions.comment;
 
   const dismissInlineComment = useCallback(() => {
     setInlineComment(null);
@@ -292,100 +314,164 @@ export function PullRequestCodeTab({
     };
   }, [dismissInlineComment, inlineComment]);
 
-  if (diffQuery.isPending) {
-    return <p className="p-4 text-sm text-muted-foreground">Loading diff…</p>;
-  }
-  if (diffQuery.error) {
-    return (
-      <div className="space-y-2 p-4 text-sm text-destructive">
-        <p>{errorMessage(diffQuery.error)}</p>
-        <Button size="xs" variant="outline" onClick={() => void diffQuery.refetch()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-full bg-background">
-      <div className="sticky top-0 z-10 flex min-w-0 items-center gap-2 border-b border-border/60 bg-background px-4 py-2">
-        <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-          <FileDiffIcon className="size-3.5 text-muted-foreground" />
-          {files.length} {files.length === 1 ? "file" : "files"}
-        </span>
-        <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400">
-          +{detail.additions}
-        </span>
-        <span className="font-mono text-[11px] text-red-600 dark:text-red-400">
-          -{detail.deletions}
-        </span>
-        {diffQuery.hasNextPage ? (
-          <span className="ml-auto text-[11px] text-muted-foreground">More files available</span>
-        ) : null}
-      </div>
-      <div className="min-h-full">
-        <div>
-          {files.length > 0 ? (
-            <Virtualizer
-              className="max-h-[calc(100dvh-23rem)] overflow-auto"
-              config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
-            >
-              {files.map(({ file, index, pageIndex, path: filePath }) => (
-                <section
-                  className="border-b border-border/70 last:border-b-0"
-                  key={`${pageIndex}:${index}:${filePath}`}
-                >
-                  <div
-                    onPointerUp={(event) => {
-                      const selection = window.getSelection();
-                      const anchor = pullRequestInlineReviewSelection(
-                        selection,
-                        event.currentTarget,
-                      );
-                      if (!canComment || !anchor || !selection || selection.rangeCount === 0) {
-                        dismissInlineComment();
-                        return;
-                      }
-                      const rect = selection.getRangeAt(0).getBoundingClientRect();
-                      const popupWidth = Math.min(352, window.innerWidth - 16);
-                      const popupHeight = 176;
-                      const top =
-                        rect.bottom + popupHeight + 8 <= window.innerHeight
-                          ? rect.bottom + 8
-                          : Math.max(8, rect.top - popupHeight - 8);
-                      const left = Math.max(
-                        8,
-                        Math.min(rect.left, window.innerWidth - popupWidth - 8),
-                      );
-                      setInlineCommentBody("");
-                      setInlineComment({
-                        ...anchor,
-                        path: filePath,
-                        top,
-                        left,
-                      });
-                    }}
-                  >
-                    <FileDiff fileDiff={file} style={diffTextStyle} options={diffOptions} />
-                  </div>
-                  {threadByPath[filePath]?.length ? (
-                    <div className="space-y-2 border-t border-border/70 p-3">
-                      {threadByPath[filePath].map((thread) => (
-                        <ReviewThread
-                          detail={detail}
-                          key={thread.id}
-                          pending={pending}
-                          thread={thread}
-                          onReply={onReply}
-                          onResolve={onResolve}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                </section>
-              ))}
-            </Virtualizer>
+    <div className="flex min-h-0 flex-1 flex-col bg-chat-background">
+      <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-3">
+        <select
+          aria-label="Commit selection"
+          className="h-7 min-w-0 max-w-[55%] rounded-sm bg-muted/40 px-2 text-xs"
+          value={commit ?? ""}
+          onChange={(event) => onCommitChange(event.currentTarget.value || null)}
+        >
+          <option value="">All commits</option>
+          {commit && !detail.commits.some((entry) => entry.oid === commit) ? (
+            <option value={commit}>{commit.slice(0, 7)}</option>
           ) : null}
+          {detail.commits.map((entry) => (
+            <option key={entry.oid} value={entry.oid}>
+              {entry.oid.slice(0, 7)} {entry.messageHeadline}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-muted-foreground">
+          {diffQuery.isPending
+            ? "Loading…"
+            : `${files.length}${diffQuery.hasNextPage ? "+" : ""} ${files.length === 1 ? "file" : "files"}`}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <ToggleGroup
+            size="xs"
+            value={[diffStyle]}
+            onValueChange={(value) => {
+              const next = value[0];
+              if (next === "unified" || next === "split") setDiffStyle(next);
+            }}
+          >
+            <Toggle aria-label="Unified diff view" size="xs" value="unified">
+              <Rows3Icon className="size-3" />
+            </Toggle>
+            <Toggle aria-label="Split diff view" size="xs" value="split">
+              <Columns2Icon className="size-3" />
+            </Toggle>
+          </ToggleGroup>
+          <Toggle
+            size="xs"
+            aria-label="Wrap diff lines"
+            pressed={diffWordWrap}
+            onPressedChange={setDiffWordWrap}
+          >
+            <TextWrapIcon className="size-3" />
+          </Toggle>
+        </div>
+      </div>
+      {commit ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
+          <span>Historical diff. Add line comments on the current PR diff.</span>
+          <Button size="xs" variant="ghost" onClick={() => onCommitChange(null)}>
+            Return to all commits
+          </Button>
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Virtualizer
+          className="min-h-0 flex-1 overflow-auto overscroll-contain"
+          config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
+        >
+          {diffQuery.isPending ? (
+            <p className="p-4 text-sm text-muted-foreground">Loading diff…</p>
+          ) : null}
+          {diffQuery.error ? (
+            <div role="alert" className="space-y-2 p-4 text-sm text-destructive">
+              <p>{errorMessage(diffQuery.error)}</p>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  void (diffQuery.isFetchNextPageError
+                    ? diffQuery.fetchNextPage()
+                    : diffQuery.refetch())
+                }
+              >
+                Retry
+              </Button>
+            </div>
+          ) : null}
+          {files.map(({ file, index, pageIndex, path: filePath }) => (
+            <section
+              className="border-b border-border/70 last:border-b-0"
+              key={`${pageIndex}:${index}:${filePath}`}
+            >
+              <div
+                onPointerUp={(event) => {
+                  const selection = window.getSelection();
+                  const anchor = pullRequestInlineReviewSelection(selection, event.currentTarget);
+                  if (!canComment || !anchor || !selection || selection.rangeCount === 0) {
+                    dismissInlineComment();
+                    return;
+                  }
+                  const rect = selection.getRangeAt(0).getBoundingClientRect();
+                  const popupWidth = Math.min(352, window.innerWidth - 16);
+                  const popupHeight = 176;
+                  const top =
+                    rect.bottom + popupHeight + 8 <= window.innerHeight
+                      ? rect.bottom + 8
+                      : Math.max(8, rect.top - popupHeight - 8);
+                  const left = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
+                  setInlineCommentBody("");
+                  setInlineComment({
+                    ...anchor,
+                    path: filePath,
+                    top,
+                    left,
+                  });
+                }}
+              >
+                <FileDiff
+                  fileDiff={file}
+                  style={diffTextStyle}
+                  options={{ ...diffOptions, collapsed: collapsedFiles.has(filePath) }}
+                  renderHeaderPrefix={() => (
+                    <button
+                      aria-label={`${collapsedFiles.has(filePath) ? "Expand" : "Collapse"} ${filePath}`}
+                      aria-expanded={!collapsedFiles.has(filePath)}
+                      className="inline-flex size-5 items-center justify-center rounded-sm hover:bg-foreground/10 focus-visible:outline-2 focus-visible:outline-ring"
+                      type="button"
+                      onClick={() =>
+                        setCollapsedFiles((current) => {
+                          const next = new Set(current);
+                          if (next.has(filePath)) next.delete(filePath);
+                          else next.add(filePath);
+                          return next;
+                        })
+                      }
+                    >
+                      {collapsedFiles.has(filePath) ? (
+                        <ChevronRightIcon className="size-4" />
+                      ) : (
+                        <ChevronDownIcon className="size-4" />
+                      )}
+                    </button>
+                  )}
+                />
+              </div>
+              {commit === null &&
+              !collapsedFiles.has(filePath) &&
+              threadByPath[filePath]?.length ? (
+                <div className="space-y-2 border-t border-border/70 p-3">
+                  {threadByPath[filePath].map((thread) => (
+                    <ReviewThread
+                      detail={detail}
+                      key={thread.id}
+                      pending={pending}
+                      thread={thread}
+                      onReply={onReply}
+                      onResolve={onResolve}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ))}
           {renderablePages
             .filter((page) => page.kind === "raw")
             .map((page) => (
@@ -408,16 +494,19 @@ export function PullRequestCodeTab({
                 </pre>
               </section>
             ))}
-          {renderablePages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No diff available.</p>
+          {!diffQuery.isPending &&
+          !diffQuery.error &&
+          files.length === 0 &&
+          !renderablePages.some((page) => page.kind === "raw") ? (
+            <p className="p-4 text-sm text-muted-foreground">No diff available.</p>
           ) : null}
           {renderablePages.some((page) => page.truncated) ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="p-4 text-xs text-muted-foreground">
               Some files could not be rendered by GitHub.
             </p>
           ) : null}
           {diffQuery.hasNextPage ? (
-            <div className="flex justify-center">
+            <div className="flex justify-center p-4">
               <Button
                 disabled={diffQuery.isFetchingNextPage}
                 size="sm"
@@ -428,7 +517,7 @@ export function PullRequestCodeTab({
               </Button>
             </div>
           ) : null}
-        </div>
+        </Virtualizer>
         {canComment && inlineComment ? (
           <section
             aria-label={`Comment on ${inlineComment.path}:${inlineComment.line}`}

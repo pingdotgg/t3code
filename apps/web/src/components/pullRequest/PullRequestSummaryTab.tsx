@@ -86,8 +86,8 @@ function Section({
   return (
     <section aria-label={title}>
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="sticky top-0 z-10 flex w-full items-center bg-chat-background pr-4">
-          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
+        <div className="sticky top-0 z-10 flex w-full items-center bg-chat-background pr-6">
+          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-6 py-3 text-left text-xs text-muted-foreground hover:text-foreground">
             <span>{title}</span>
             <ChevronRightIcon
               aria-hidden
@@ -100,14 +100,14 @@ function Section({
           {actions}
         </div>
         <CollapsiblePanel>
-          <div className="px-4 pb-4">{children}</div>
+          <div className="px-6 pb-6">{children}</div>
         </CollapsiblePanel>
       </Collapsible>
     </section>
   );
 }
 
-function CommentCard({
+export function PullRequestCommentCard({
   comment,
   detail,
   thread,
@@ -118,31 +118,38 @@ function CommentCard({
   readonly thread: PullRequestReviewThread | undefined;
   readonly onPreview: (preview: PullRequestMediaPreview) => void;
 }) {
+  const [open, setOpen] = useState(true);
   const body = visibleBody(comment.body);
   const outcome = pullRequestReviewOutcome(comment.reviewState);
   return (
-    <article className="rounded-xl border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]">
-      <div className="flex min-w-0 items-center gap-2 px-3 pt-2.5 text-xs">
-        <PullRequestActorLabel
-          actor={comment.author}
-          className="min-w-0 font-medium text-foreground"
-        />
+    <article className="rounded-lg border border-border bg-chat-background [contain-intrinsic-block-size:160px] [content-visibility:auto]">
+      <div className="flex min-w-0 items-center gap-2 px-5 py-3 text-xs">
+        <PullRequestActorLabel actor={comment.author} className="min-w-0 text-muted-foreground" />
         {outcome !== null || comment.reviewState ? (
           <ReviewVerdictBadge reviewState={comment.reviewState} />
         ) : null}
         <span className="ml-auto shrink-0 text-muted-foreground">
           {formatRelativeTimeLabel(comment.createdAt)}
         </span>
+        <Button
+          aria-label={`${open ? "Collapse" : "Expand"} comment by ${comment.author?.login ?? "ghost"}`}
+          aria-expanded={open}
+          size="icon-xs"
+          variant="ghost"
+          onClick={() => setOpen(!open)}
+        >
+          <ChevronRightIcon className={cn("size-3", open && "rotate-90")} />
+        </Button>
       </div>
-      {(thread?.path ?? comment.path) ? (
-        <div className="truncate px-3 pt-1.5 font-mono text-[10px] text-muted-foreground">
+      {open && (thread?.path ?? comment.path) ? (
+        <div className="truncate px-5 pb-2 font-mono text-[11px] text-muted-foreground">
           {thread?.path ?? comment.path}
           {thread?.line ? `:${thread.line}` : ""}
           {thread?.isOutdated ? " · outdated" : ""}
         </div>
       ) : null}
-      {body === null ? null : (
-        <div className="px-3 pt-1.5 pb-3 text-sm">
+      {!open || body === null ? null : (
+        <div className="px-5 pb-5 text-sm">
           <PullRequestBody body={comment.body} cwd={detail.workspaceRoot} onPreview={onPreview} />
         </div>
       )}
@@ -166,10 +173,10 @@ function FinishedCommentRow({
   const label = thread?.isResolved ? "Resolved" : "Review dismissed";
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="overflow-hidden rounded-xl border border-border/60 bg-background [contain-intrinsic-block-size:44px] [content-visibility:auto]">
+      <div className="overflow-hidden rounded-lg border border-border bg-chat-background [contain-intrinsic-block-size:44px] [content-visibility:auto]">
         <CollapsibleTrigger
           aria-label={`${comment.author?.login ?? "ghost"} ${label}`}
-          className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+          className="flex w-full items-center gap-2 px-5 py-3 text-left"
         >
           <PullRequestActorLabel actor={comment.author} className="min-w-0 text-xs" />
           <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
@@ -186,7 +193,7 @@ function FinishedCommentRow({
         </CollapsibleTrigger>
         <CollapsiblePanel>
           {open && body !== null ? (
-            <div className="border-t border-border/60 px-3 py-3 text-sm">
+            <div className="border-t border-border/60 px-5 py-3 text-sm">
               <PullRequestBody
                 body={comment.body}
                 cwd={detail.workspaceRoot}
@@ -250,7 +257,7 @@ export function PullRequestSummaryTab({
   );
 
   return (
-    <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+    <div data-pull-request-summary-scroll>
       <Section key={`description:${detail.url}`} title="Description">
         <PullRequestBody
           body={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
@@ -259,11 +266,7 @@ export function PullRequestSummaryTab({
         />
       </Section>
 
-      <Section
-        key={`checks:${detail.url}`}
-        title={`Checks (${detail.checks.length})`}
-        defaultOpen={false}
-      >
+      <Section key={`checks:${detail.url}`} title="Checks">
         {detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (
@@ -274,7 +277,7 @@ export function PullRequestSummaryTab({
               <li key={`${index}:${check.name}`}>
                 <button
                   className={cn(
-                    "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
+                    "flex w-full min-w-0 items-start gap-3 rounded-md px-5 py-2 text-left text-sm leading-5 [&>svg]:mt-0.5",
                     check.url ? "cursor-pointer hover:bg-accent/60" : "cursor-default",
                   )}
                   disabled={!check.url}
@@ -295,7 +298,7 @@ export function PullRequestSummaryTab({
 
       <Section
         key={`comments:${detail.url}`}
-        title={`Comments (${detail.commentCount})`}
+        title="Comments"
         actions={
           <Button
             aria-label={
@@ -344,7 +347,7 @@ export function PullRequestSummaryTab({
               </Button>
             ) : null}
             {visibleComments.map((comment) => (
-              <CommentCard
+              <PullRequestCommentCard
                 comment={comment}
                 detail={detail}
                 key={`${detail.url}:${comment.id}`}
