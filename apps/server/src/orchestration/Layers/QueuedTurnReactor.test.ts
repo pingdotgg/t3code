@@ -846,6 +846,42 @@ describe("QueuedTurnReactor", () => {
     expect(settlementCommands(commands)).toHaveLength(1);
   });
 
+  it("settles a completed delegated turn without insights after its grace", async () => {
+    const state = delegatedReadModel();
+    const child = state.threads[1]!;
+    const completedAt = new Date().toISOString();
+    const completedWithoutInsights: OrchestrationReadModel = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id
+          ? thread
+          : {
+              ...thread,
+              updatedAt: completedAt,
+              latestTurn: { ...thread.latestTurn!, completedAt },
+              activities: thread.activities.filter(
+                (activity) =>
+                  activity.kind !== "insights.turn.completed" ||
+                  activity.turnId !== thread.latestTurn?.turnId,
+              ),
+            },
+      ),
+    };
+    const beforeGrace = await runReactor(completedWithoutInsights, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1,
+      waitAfterStartMs: 50,
+    });
+    const afterGrace = await runReactor(completedWithoutInsights, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1,
+      waitAfterStartMs: 2_200,
+    });
+
+    expect(settlementCommands(beforeGrace)).toEqual([]);
+    expect(delegationStallCommands(beforeGrace)).toEqual([]);
+    expect(settlementCommands(afterGrace)).toHaveLength(1);
+    expect(delegationStallCommands(afterGrace)).toEqual([]);
+  });
+
   it("does not settle an interrupted steer after its continuation is persisted", async () => {
     const state = delegatedReadModel();
     const child = state.threads[1]!;

@@ -32,6 +32,7 @@ import { childWaitIsSatisfied, evaluateChildFollowUp } from "@t3tools/shared/chi
 import {
   delegationSettlementNotBefore,
   delegationStallEpisode,
+  indexDelegationChildren,
   settleDelegation,
   type DelegationChildrenByParent,
 } from "../delegationSettlement.ts";
@@ -139,17 +140,8 @@ function indexReadModel(readModel: OrchestrationReadModel): ThreadReadModelIndex
     ThreadId,
     Array<{ readonly parentThreadId: ThreadId; readonly assignmentId: MessageId }>
   >();
-  const childrenByParentId = new Map<ThreadId, OrchestrationThread[]>();
   for (const thread of readModel.threads) {
     threadsById.set(thread.id, thread);
-    if (thread.parentThreadId != null) {
-      const children = childrenByParentId.get(thread.parentThreadId);
-      if (children) {
-        children.push(thread);
-      } else {
-        childrenByParentId.set(thread.parentThreadId, [thread]);
-      }
-    }
     if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
     for (const assignment of thread.nudging?.wait?.assignments ?? []) {
       if (assignment.outcome !== undefined) continue;
@@ -168,7 +160,7 @@ function indexReadModel(readModel: OrchestrationReadModel): ThreadReadModelIndex
   return {
     readModel,
     threadsById,
-    childrenByParentId,
+    childrenByParentId: indexDelegationChildren(readModel.threads),
     waitingParentsByChildId,
   };
 }
@@ -567,12 +559,19 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
 
   const settleThreadIfReady = (index: ThreadReadModelIndex, thread: OrchestrationThread) =>
     Effect.gen(function* () {
-      if (settleDelegation(index.readModel, thread, index.childrenByParentId)) {
-        const notBefore = delegationSettlementNotBefore(thread);
-        if (notBefore !== null && Date.parse(notBefore) > Date.now()) {
-          yield* scheduleDelegationSettlementWake(thread.id, notBefore);
-          return true;
-        }
+      const settlement = settleDelegation(index.readModel, thread, index.childrenByParentId);
+      const notBefore = delegationSettlementNotBefore(thread);
+      if (
+        notBefore !== null &&
+        Date.parse(notBefore) > Date.now() &&
+        (settlement !== null ||
+          (thread.nudging?.delegation?.completedAt === null &&
+            thread.latestTurn?.state === "completed"))
+      ) {
+        yield* scheduleDelegationSettlementWake(thread.id, notBefore);
+        return settlement !== null;
+      }
+      if (settlement) {
         yield* orchestrationEngine.dispatch({
           type: "thread.delegation.settle",
           commandId: serverCommandId("delegation.settle"),

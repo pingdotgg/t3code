@@ -1147,13 +1147,71 @@ describe("child nudging", () => {
     expect((await apply(model(child), finish("child"))).events).toHaveLength(1);
   });
 
-  it("reports missing completion evidence as unconfirmed, not successful", async () => {
+  it("waits for completed-turn insights before settling a delegated result", async () => {
+    const child = thread("child", true);
+    const completion = child.activities[0]!;
+    child.activities = [];
+    const completedAt = new Date().toISOString();
+    child.latestTurn = { ...child.latestTurn!, completedAt };
+    child.updatedAt = completedAt;
+    const settle: OrchestrationCommand = {
+      type: "thread.delegation.settle",
+      commandId: CommandId.make("settle-before-insights"),
+      threadId: child.id,
+    };
+
+    const beforeInsights = await apply(model(child), settle);
+    expect(beforeInsights.events).toEqual([]);
+    expect(beforeInsights.readModel.threads[1]!.nudging?.delegation?.completedAt).toBeNull();
+
+    const withInsights = await apply(beforeInsights.readModel, {
+      type: "thread.activity.append",
+      commandId: CommandId.make("append-completion-insights"),
+      threadId: child.id,
+      activity: { ...completion, createdAt: completedAt },
+      createdAt: completedAt,
+    });
+    const settled = await apply(withInsights.readModel, {
+      ...settle,
+      commandId: CommandId.make("settle-after-insights"),
+    });
+    expect(settled.readModel.threads[1]!.nudging?.delegation).toMatchObject({
+      outcome: "result-available",
+    });
+    expect(settled.readModel.threads[0]!.queuedTurns![0]!.origin).toMatchObject({
+      kind: "child-nudge",
+      updates: [{ kind: "result-available" }],
+    });
+    expect(
+      (
+        await apply(settled.readModel, {
+          ...settle,
+          commandId: CommandId.make("settle-after-insights-again"),
+        })
+      ).events,
+    ).toEqual([]);
+  });
+
+  it("settles a completed delegated turn from its turn state after the insights grace", async () => {
     const child = thread("child", true);
     child.activities = [];
-    const result = await apply(model(child), finish("child"));
-    expect(result.readModel.threads[0]!.queuedTurns![0]!.origin).toMatchObject({
+    const completedAt = new Date(Date.now() - 3_000).toISOString();
+    child.latestTurn = { ...child.latestTurn!, completedAt };
+    child.updatedAt = completedAt;
+
+    const settled = await apply(model(child), {
+      type: "thread.delegation.settle",
+      commandId: CommandId.make("settle-after-insights-grace"),
+      threadId: child.id,
+    });
+
+    expect(settled.readModel.threads[1]!.nudging?.delegation).toMatchObject({
+      completedAt,
+      outcome: "result-available",
+    });
+    expect(settled.readModel.threads[0]!.queuedTurns![0]!.origin).toMatchObject({
       kind: "child-nudge",
-      updates: [{ kind: "blocked", summary: expect.stringContaining("unconfirmed") }],
+      updates: [{ kind: "result-available" }],
     });
   });
 

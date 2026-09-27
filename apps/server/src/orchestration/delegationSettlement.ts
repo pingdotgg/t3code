@@ -10,8 +10,8 @@ import type {
 import { childWakeReason } from "./childNudging.ts";
 import { threadHasInFlightTurn, threadHasPendingInteraction } from "./commandInvariants.ts";
 
-// Steering projects an interrupted idle turn before its continuation can reach the server.
-const INTERRUPTED_SETTLEMENT_GRACE_MS = 2_000;
+// Allow terminal-turn projections to settle before treating incomplete lifecycle evidence as final.
+const SETTLEMENT_GRACE_MS = 2_000;
 const MAX_STALL_SUMMARY_LENGTH = 1_000;
 
 export interface DelegationSettlement {
@@ -274,6 +274,10 @@ export function delegationStallEpisode(
     };
   }
 
+  const settlementNotBefore = delegationSettlementNotBefore(child);
+  if (settlementNotBefore !== null && Date.parse(settlementNotBefore) > Date.now()) {
+    return null;
+  }
   if (settleDelegation(readModel, child, indexedChildren) !== null) return null;
 
   return {
@@ -288,16 +292,29 @@ export function delegationStallEpisode(
 }
 
 export function delegationSettlementNotBefore(child: OrchestrationThread): string | null {
-  if (child.latestTurn?.state !== "interrupted") {
+  const latestTurn = child.latestTurn;
+  if (!latestTurn) {
     return null;
   }
-  const interruptedAt = child.latestTurn.completedAt ?? child.session?.updatedAt;
-  if (interruptedAt === null || interruptedAt === undefined) {
+  const awaitingCompletionEvidence =
+    latestTurn.state === "completed" &&
+    !child.activities.some(
+      (activity) =>
+        activity.kind === "insights.turn.completed" && activity.turnId === latestTurn.turnId,
+    );
+  if (latestTurn.state !== "interrupted" && !awaitingCompletionEvidence) {
     return null;
   }
-  const timestamp = Date.parse(interruptedAt);
+  const settledAt =
+    latestTurn.state === "interrupted"
+      ? (latestTurn.completedAt ?? child.session?.updatedAt)
+      : latestTurn.completedAt;
+  if (settledAt === null || settledAt === undefined) {
+    return null;
+  }
+  const timestamp = Date.parse(settledAt);
   return Number.isFinite(timestamp)
-    ? new Date(timestamp + INTERRUPTED_SETTLEMENT_GRACE_MS).toISOString()
+    ? new Date(timestamp + SETTLEMENT_GRACE_MS).toISOString()
     : null;
 }
 
@@ -345,6 +362,13 @@ export function settleDelegation(
     (activity) =>
       activity.kind === "insights.turn.completed" && activity.turnId === latestTurn.turnId,
   );
+  if (
+    latestTurn.state === "completed" &&
+    completion === undefined &&
+    Date.parse(delegationSettlementNotBefore(child) ?? "") > Date.now()
+  ) {
+    return null;
+  }
   const completionState =
     completion?.payload !== null &&
     typeof completion?.payload === "object" &&
@@ -355,7 +379,8 @@ export function settleDelegation(
   const outcome =
     completionState === "failed" || latestTurn.state === "error"
       ? "failed"
-      : completionState === "completed" && latestTurn.state === "completed"
+      : latestTurn.state === "completed" &&
+          (completionState === "completed" || completion === undefined)
         ? "result-available"
         : "blocked";
   const resultMessage = child.messages.findLast(
