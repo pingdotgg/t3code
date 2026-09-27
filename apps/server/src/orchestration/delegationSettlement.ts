@@ -3,6 +3,7 @@ import type {
   ChildNudgeUpdate,
   OrchestrationReadModel,
   OrchestrationThread,
+  ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 
@@ -26,10 +27,28 @@ export interface DelegationStallEpisode {
   readonly summary: string;
 }
 
+export type DelegationChildrenByParent = ReadonlyMap<ThreadId, ReadonlyArray<OrchestrationThread>>;
+
 interface PendingInteraction {
   readonly kind: "approval" | "input";
   readonly requestId: string;
   readonly createdAt: string;
+}
+
+export function indexDelegationChildren(
+  threads: ReadonlyArray<OrchestrationThread>,
+): DelegationChildrenByParent {
+  const childrenByParent = new Map<ThreadId, OrchestrationThread[]>();
+  for (const thread of threads) {
+    if (thread.parentThreadId == null) continue;
+    const children = childrenByParent.get(thread.parentThreadId);
+    if (children) {
+      children.push(thread);
+    } else {
+      childrenByParent.set(thread.parentThreadId, [thread]);
+    }
+  }
+  return childrenByParent;
 }
 
 function requestId(payload: unknown): string | null {
@@ -107,6 +126,27 @@ function queuedTurnFailureSummary(failureMessage: string | null): string {
   return `${boundedDetail} Inspect the child for full details`;
 }
 
+function unsettledDelegationSummary(child: OrchestrationThread): string {
+  const delegation = child.nudging!.delegation!;
+  const latestTurn = child.latestTurn;
+  const reason = !latestTurn
+    ? "no turn is available to settle"
+    : latestTurn.state !== "completed" &&
+        latestTurn.state !== "error" &&
+        latestTurn.state !== "interrupted"
+      ? "the latest turn is not complete"
+      : delegation.dispatchId !== undefined && delegation.dispatchTurnId == null
+        ? "the dispatch turn is not bound"
+        : delegation.dispatchTurnId != null && delegation.dispatchTurnId !== latestTurn.turnId
+          ? "the dispatch turn fence does not match the latest turn"
+          : delegation.assignedAt !== undefined && latestTurn.requestedAt < delegation.assignedAt
+            ? "the latest turn predates the assignment"
+            : delegation.pendingResponse != null || threadHasPendingInteraction(child)
+              ? "a pending response is blocking settlement"
+              : "settlement preconditions are not satisfied";
+  return boundedStallSummary(`Delegation is idle but cannot settle because ${reason}.`);
+}
+
 function latestThreadActivityAt(thread: OrchestrationThread): string | undefined {
   return latestTimestamp(
     thread.updatedAt,
@@ -122,6 +162,7 @@ function latestThreadActivityAt(thread: OrchestrationThread): string | undefined
 export function delegationStallEpisode(
   readModel: OrchestrationReadModel,
   child: OrchestrationThread,
+  childrenByParent?: DelegationChildrenByParent,
 ): DelegationStallEpisode | null {
   const delegation = child.nudging?.delegation;
   if (
@@ -190,10 +231,11 @@ export function delegationStallEpisode(
     };
   }
 
-  const unfinishedGrandchildren = readModel.threads
+  const indexedChildren = childrenByParent ?? indexDelegationChildren(readModel.threads);
+  const children = indexedChildren.get(child.id) ?? [];
+  const unfinishedGrandchildren = children
     .filter(
       (descendant) =>
-        descendant.parentThreadId === child.id &&
         descendant.deletedAt === null &&
         descendant.archivedAt === null &&
         descendant.nudging?.delegation?.followUp === "automatic" &&
@@ -232,7 +274,17 @@ export function delegationStallEpisode(
     };
   }
 
-  return null;
+  if (settleDelegation(readModel, child, indexedChildren) !== null) return null;
+
+  return {
+    id: stallId(child, [
+      "unsettled",
+      child.latestTurn?.turnId ?? null,
+      delegation.dispatchTurnId ?? null,
+    ]),
+    stalledSince: latestThreadActivityAt(child) ?? idleSince,
+    summary: unsettledDelegationSummary(child),
+  };
 }
 
 export function delegationSettlementNotBefore(child: OrchestrationThread): string | null {
@@ -252,9 +304,12 @@ export function delegationSettlementNotBefore(child: OrchestrationThread): strin
 export function settleDelegation(
   readModel: OrchestrationReadModel,
   child: OrchestrationThread,
+  childrenByParent?: DelegationChildrenByParent,
 ): DelegationSettlement | null {
   const delegation = child.nudging?.delegation;
   const latestTurn = child.latestTurn;
+  const childrenByParentIndex = childrenByParent ?? indexDelegationChildren(readModel.threads);
+  const children = childrenByParentIndex.get(child.id) ?? [];
   if (
     !delegation ||
     delegation.completedAt !== null ||
@@ -275,9 +330,8 @@ export function settleDelegation(
     (delegation.dispatchId !== undefined && delegation.dispatchTurnId == null) ||
     (delegation.dispatchTurnId != null && delegation.dispatchTurnId !== latestTurn.turnId) ||
     (delegation.assignedAt !== undefined && latestTurn.requestedAt < delegation.assignedAt) ||
-    readModel.threads.some(
+    children.some(
       (descendant) =>
-        descendant.parentThreadId === child.id &&
         descendant.deletedAt === null &&
         descendant.archivedAt === null &&
         descendant.nudging?.delegation?.followUp === "automatic" &&

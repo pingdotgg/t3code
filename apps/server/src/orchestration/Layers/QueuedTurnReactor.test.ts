@@ -948,6 +948,66 @@ describe("QueuedTurnReactor", () => {
     expect(settlementCommands(first)).toEqual([]);
   });
 
+  it("reports an idle delegation with a stale dispatch-turn fence and leaves it settleable", async () => {
+    const state = delegatedReadModel();
+    const child = state.threads[1]!;
+    const staleFence = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id || !thread.nudging?.delegation
+          ? thread
+          : {
+              ...thread,
+              nudging: {
+                ...thread.nudging,
+                delegation: {
+                  ...thread.nudging.delegation,
+                  dispatchTurnId: TurnId.make("stale-dispatch-turn"),
+                },
+              },
+            },
+      ),
+    };
+    const first = await runReactor(staleFence, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1_000,
+    });
+    const second = await runReactor(staleFence, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1_000,
+    });
+
+    expect(delegationStallCommands(first)).toHaveLength(1);
+    expect(delegationStallCommands(first)[0]).toMatchObject({
+      threadId: child.id,
+      summary: expect.stringContaining("settle"),
+    });
+    expect(delegationStallCommands(second)).toHaveLength(1);
+    expect(delegationStallCommands(second)[0]?.commandId).toBe(
+      delegationStallCommands(first)[0]?.commandId,
+    );
+    expect(settlementCommands(first)).toEqual([]);
+    expect(staleFence.threads[1]!.nudging?.delegation?.completedAt).toBeNull();
+
+    const validFence = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id || !thread.nudging?.delegation
+          ? thread
+          : {
+              ...thread,
+              nudging: {
+                ...thread.nudging,
+                delegation: {
+                  ...thread.nudging.delegation,
+                  dispatchTurnId: child.latestTurn!.turnId,
+                },
+              },
+            },
+      ),
+    };
+    const laterSettlement = await runReactor(validFence, monitorSnapshot("head"));
+    expect(settlementCommands(laterSettlement)).toHaveLength(1);
+  });
+
   it.each([
     {
       name: "queued retry",
@@ -1278,7 +1338,11 @@ describe("QueuedTurnReactor", () => {
       { delegationIdleStallThresholdMs: 1_000 },
     );
 
-    expect(delegationStallCommands(commands)).toEqual([
+    expect(
+      delegationStallCommands(commands).filter(
+        (command) => "threadId" in command && command.threadId === child.id,
+      ),
+    ).toEqual([
       expect.objectContaining({
         type: "thread.delegation.stall",
         summary: expect.stringContaining("unfinished grandchildren"),
