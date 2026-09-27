@@ -74,6 +74,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   input: {
     enabled?: boolean;
     stopFailures?: number;
+    failingInstance?: ProviderInstanceId;
     logoutError?: ProviderSetupError;
     sharedCredentials?: boolean;
     sharedBusy?: boolean;
@@ -205,7 +206,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
               actions.push(`close-instance:${id}`);
               yield* input.beforeStop?.(id) ?? Effect.void;
               closeAttempts += 1;
-              if (closeAttempts <= (input.stopFailures ?? 0)) {
+              if (closeAttempts <= (input.stopFailures ?? 0) || id === input.failingInstance) {
                 return yield* Effect.fail(
                   new ProviderSessionCloseError({
                     providerSessionId: ProviderSessionId.make(
@@ -336,6 +337,21 @@ describe("ProviderAuthService", () => {
         assert.isBelow(actions.indexOf("invalidate-shared"), actions.indexOf("native-logout"));
       }),
   );
+  it.effect("does not invalidate shared credentials when a peer fails to close", () =>
+    Effect.gen(function* () {
+      const { service, actions, closedInstances } = yield* makeHarness({
+        sharedCredentials: true,
+        failingInstance: otherInstanceId,
+      });
+      const error = yield* service.logout({ instanceId }).pipe(Effect.flip);
+      assert.strictEqual(error.operation, "stopSessions");
+      assert.instanceOf(error.cause, ProviderSessionCloseError);
+      assert.deepStrictEqual(closedInstances, [instanceId]);
+      assert.notInclude(actions, "invalidate-shared");
+      assert.notInclude(actions, "native-logout");
+    }),
+  );
+
   it.effect("rejects overlapping changes to a shared sign-in", () =>
     Effect.gen(function* () {
       const { service, actions } = yield* makeHarness({

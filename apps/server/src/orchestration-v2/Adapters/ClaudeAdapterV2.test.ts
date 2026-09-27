@@ -7147,6 +7147,7 @@ describe("ClaudeAdapterV2 session cleanup", () => {
               ),
             }),
           forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
       });
@@ -7221,6 +7222,7 @@ describe("ClaudeAdapterV2 session cleanup", () => {
               ),
             }),
           forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
       });
