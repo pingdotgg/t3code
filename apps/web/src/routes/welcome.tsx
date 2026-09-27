@@ -35,15 +35,15 @@ function WelcomeRouteView() {
       {isWelcomeRoute && !dismissed ? (
         <WelcomeWizard
           localAvailable={localAvailable}
-          onDone={(projectRef) => {
+          onDone={async (projectRef) => {
             setDismissed(true);
             if (projectRef !== undefined) {
-              void openNewThread(projectRef, { replace: true }).catch(() => {
-                void navigate({ to: "/", replace: true });
-              });
+              await openNewThread(projectRef, { replace: true }).catch(() =>
+                navigate({ to: "/", replace: true }),
+              );
               return;
             }
-            void navigate({ to: "/", replace: true });
+            await navigate({ to: "/", replace: true });
           }}
         />
       ) : null}
