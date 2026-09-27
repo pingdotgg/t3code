@@ -114,9 +114,18 @@ public struct ThreadDetailView: View {
         .task(id: thread.id) {
             // A cached thread can already show its composer while the server
             // is catching up. Local drafts must not wait for that request.
-            await model.checkRewindRecovery(for: currentThread)
-            guard !didRestoreDraft else { return }
-            await restoreDraft(from: composerDraft, key: draftKey)
+            // When a thread is reopened in the compact split view, SwiftUI can
+            // report this view as disappeared right after it appears while it
+            // stays on screen. That cancels this task and it never re-runs, so
+            // the composer would stay busy. Finish the restore outside the
+            // view's task lifetime; each thread has its own view identity, so
+            // a late restore cannot reach another thread's composer.
+            let restore = Task { @MainActor in
+                await model.checkRewindRecovery(for: currentThread)
+                guard !didRestoreDraft else { return }
+                await restoreDraft(from: composerDraft, key: draftKey)
+            }
+            await restore.value
         }
         .task(id: pullRequestObservationID) {
             await observeThreadPullRequest()
