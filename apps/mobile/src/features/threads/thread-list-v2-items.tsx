@@ -887,6 +887,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
+  // Static rather than spinning: the regeneration can take a while and a
+  // looping animation would repaint every row that shows it.
+  const titleRegenerationIcon =
+    thread.titleRegeneration != null ? (
+      <View accessible accessibilityLabel="Regenerating title">
+        <SymbolView
+          name="arrow.clockwise"
+          size={11}
+          tintColorClassName={rowAppearance.mutedIconTintClassName}
+          type="monochrome"
+        />
+      </View>
+    ) : null;
+
   // Sidebar rows use navigation foregrounds on their active and idle surfaces.
   const cardContent = (
     <>
@@ -912,6 +926,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         >
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
+        {titleRegenerationIcon}
         {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
         {pinnedRow ? (
           <SymbolView
@@ -1156,6 +1171,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {titleRegenerationIcon}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(

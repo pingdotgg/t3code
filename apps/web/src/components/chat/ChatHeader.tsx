@@ -11,7 +11,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, EllipsisIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, RefreshCwIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -60,6 +60,7 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
+  isRegeneratingTitle: boolean;
   activeProject: EnvironmentProject | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -129,6 +130,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   isServerThread,
+  isRegeneratingTitle,
   activeProject,
   openInCwd,
   activeProjectScripts,
@@ -457,6 +459,7 @@ export const ChatHeader = memo(function ChatHeader({
                     type="button"
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
+                    aria-busy={isRegeneratingTitle || undefined}
                     onClick={openMenuFromTitle}
                     onDoubleClick={handleTitleDoubleClick}
                     onBlur={cancelPendingTitleMenu}
@@ -464,9 +467,20 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                <h2 className="min-w-0">
+                <h2 className={cn("min-w-0", isRegeneratingTitle && "opacity-55")}>
                   <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
                 </h2>
+                {isRegeneratingTitle ? (
+                  <>
+                    <RefreshCwIcon
+                      aria-hidden
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                    <span role="status" className="sr-only">
+                      Regenerating title
+                    </span>
+                  </>
+                ) : null}
                 <ChevronDownIcon
                   aria-hidden
                   data-thread-title-chevron

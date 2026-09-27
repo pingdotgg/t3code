@@ -1,4 +1,5 @@
 import {
+  CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -225,6 +226,10 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Current thread",
+      titleRegeneration: {
+        requestId: CommandId.make("regenerate-title"),
+        startedAt: "2026-03-09T12:00:00.000Z",
+      },
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
@@ -235,6 +240,7 @@ describe("environment entity projections", () => {
 
     expect(merged).toMatchObject({
       title: "Current thread",
+      titleRegeneration: shell.titleRegeneration,
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
