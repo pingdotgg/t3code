@@ -5595,9 +5595,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
+        // Rejected credentials cannot hydrate; stop the quiet shell reads too.
+        shellReconciliationTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
         configurationTask = nil
+        shellReconciliationTask = nil
+        activeStreamIsAuthoritative = false
         if activeEnvironment?.kind == .managedDPoP {
             emitConnection(.disconnected, detail: detail)
         } else {
