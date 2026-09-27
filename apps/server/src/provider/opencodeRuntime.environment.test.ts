@@ -5,6 +5,7 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessPlatform,
+  HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -16,6 +17,7 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canonicalizeOpenCodeDirectory,
   OpenCodeRuntime,
   OpenCodeRuntimeError,
   OpenCodeRuntimeLive,
@@ -80,6 +82,28 @@ describe("resolveOpenCodeServerPassword", () => {
         { OPENCODE_SERVER_PASSWORD: "inherited-secret" },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("canonicalizeOpenCodeDirectory", () => {
+  it("leaves non-Windows paths untouched", () => {
+    expect(canonicalizeOpenCodeDirectory("/some/Path", "linux")).toBe("/some/Path");
+    expect(canonicalizeOpenCodeDirectory("/some/Path", "darwin")).toBe("/some/Path");
+  });
+
+  it("spells an existing Windows path with its on-disk casing", () => {
+    if (HostProcessPlatform.defaultValue() !== "win32") return;
+    const cwd = HostProcessWorkingDirectory.defaultValue();
+    const alteredDrive = cwd.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
+    expect(canonicalizeOpenCodeDirectory(alteredDrive, "win32")).toBe(
+      canonicalizeOpenCodeDirectory(cwd, "win32"),
+    );
+  });
+
+  it("passes a missing Windows path through unchanged", () => {
+    expect(canonicalizeOpenCodeDirectory("/__t3_missing_opencode_dir__", "win32")).toBe(
+      "/__t3_missing_opencode_dir__",
+    );
   });
 });
 

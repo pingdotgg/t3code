@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
@@ -229,6 +231,27 @@ function openCodeNextAuthHeaders(serverPassword: string | undefined): Record<str
       };
 }
 
+/**
+ * Windows paths are case-insensitive, but OpenCode 2 compares the session
+ * directory against its git-resolved project root as literal strings while it
+ * walks instruction files. When a drive letter or folder is spelled with
+ * different casing than the on-disk name, the walk never reaches its stop
+ * directory, overruns the stack, and every turn fails with "Instruction
+ * initialization blocked by unavailable sources: core/instructions". Hand
+ * OpenCode the real on-disk casing instead.
+ */
+export const canonicalizeOpenCodeDirectory = (
+  directory: string,
+  platform: NodeJS.Platform,
+): string => {
+  if (platform !== "win32") return directory;
+  try {
+    return NodeFS.realpathSync.native(directory);
+  } catch {
+    return directory;
+  }
+};
+
 export const createOpenCodeNextClient = (input: {
   readonly baseUrl: string;
   readonly serverPassword?: string;
@@ -276,7 +299,10 @@ export const loadOpenCodeInventoryNext = (input: {
 }): Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError> =>
   Effect.gen(function* () {
     const client = createOpenCodeNextClient(input);
-    const location = { location: { directory: input.directory } };
+    const platform = yield* HostProcessPlatform;
+    const location = {
+      location: { directory: canonicalizeOpenCodeDirectory(input.directory, platform) },
+    };
     const loadCore = Effect.all(
       [
         runOpenCodeSdk("provider.list", (signal) => client.provider.list(location, { signal })),
@@ -786,7 +812,10 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             baseUrl: input.baseUrl,
             ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
           }),
-          directory: input.directory,
+          directory: canonicalizeOpenCodeDirectory(
+            input.directory,
+            HostProcessPlatform.defaultValue(),
+          ),
         })
       : createOpencodeClient({
           baseUrl: input.baseUrl,

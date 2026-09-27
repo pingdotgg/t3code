@@ -26,7 +26,8 @@ import type { OpenCodeNextClient } from "./opencodeRuntime.ts";
  * The mapping is intentionally lossy where V2 changed semantics:
  * - model/agent/reasoning are session state in V2, applied with
  *   `session.switchModel`/`session.switchAgent` before a prompt;
- * - the T3 runtime instructions are stored as a session instruction entry;
+ * - the T3 runtime instructions ride as a prefix on the prompt text; V2 has no
+ *   `system` field, and its instruction-entry API blocked instruction init;
  * - questions are OpenCode 2 forms, permissions use the V2 ruleset shape;
  * - fork-to-directory has no V2 equivalent and degrades to `session.move`.
  */
