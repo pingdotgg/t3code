@@ -10,6 +10,7 @@ import {
   CircleAlertIcon,
   ChevronDownIcon,
   CircleDashedIcon,
+  InfoIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -490,7 +491,24 @@ export function UsagePage() {
                         {metric === "cost" && (
                           <>
                             {" · API estimate"}
-                            {merged.costQuality.unpricedShare > 0 && <sup>*</sup>}
+                            {merged.costQuality.unpricedShare > 0 && (
+                              <>
+                                {" "}
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={<InlineButton tone="muted" />}
+                                    aria-label="Unpriced usage details"
+                                  >
+                                    <InfoIcon className="size-3" aria-hidden />
+                                  </TooltipTrigger>
+                                  <TooltipPopup>
+                                    API estimate excludes{" "}
+                                    {formatPercent(merged.costQuality.unpricedShare)} unpriced
+                                    records.
+                                  </TooltipPopup>
+                                </Tooltip>
+                              </>
+                            )}
                           </>
                         )}
                       </span>
@@ -734,13 +752,6 @@ export function UsagePage() {
                     </table>
                   )}
                 </section>
-
-                {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    * API estimate excludes {formatPercent(merged.costQuality.unpricedShare)}{" "}
-                    unpriced records.
-                  </p>
-                )}
               </>
             )}
           </WorkspacePageContainer>
