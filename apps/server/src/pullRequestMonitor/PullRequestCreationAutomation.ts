@@ -5,7 +5,6 @@ import {
   type GitPullRequestAssociation,
   type OrchestrationProject,
   type OrchestrationReadModel,
-  type OrchestrationThread,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -80,23 +79,38 @@ function sameIntentBinding(
   );
 }
 
-function workspaceMatchesIntent(input: {
-  readonly intent: Pick<PullRequestCreationIntent, "cwd">;
-  readonly thread: OrchestrationThread;
-  readonly project: OrchestrationProject;
+function resolveIntentProject(input: {
+  readonly intent: Pick<PullRequestCreationIntent, "threadId" | "projectId" | "cwd">;
   readonly readModel: OrchestrationReadModel;
-}): boolean {
+}): OrchestrationProject | null {
+  const thread = input.readModel.threads.find(
+    (candidate) => candidate.id === input.intent.threadId,
+  );
+  const project = input.readModel.projects.find(
+    (candidate) => candidate.id === input.intent.projectId,
+  );
+  if (
+    !thread ||
+    thread.deletedAt !== null ||
+    thread.archivedAt !== null ||
+    thread.projectId !== input.intent.projectId ||
+    !project
+  ) {
+    return null;
+  }
+
   const boundCwd = resolveThreadWorkspaceCwd({
-    thread: input.thread,
+    thread,
     projects: input.readModel.projects,
   });
-  if (boundCwd !== undefined) return boundCwd === input.intent.cwd;
-
-  return (
-    input.thread.worktreePath === null &&
-    input.thread.workspaceBinding == null &&
-    input.project.workspaceRoot === input.intent.cwd
-  );
+  if (boundCwd !== undefined) {
+    return boundCwd === input.intent.cwd ? project : null;
+  }
+  return thread.worktreePath === null &&
+    thread.workspaceBinding == null &&
+    project.workspaceRoot === input.intent.cwd
+    ? project
+    : null;
 }
 
 function pullRequestFromCreatedResult(
@@ -190,6 +204,43 @@ export const makePullRequestCreationAutomation = () =>
         yield* deleteIntent(intent.actionId, "deleteCreatedPullRequestIntent");
       });
 
+    const persistAndDispatchCreatedLink = (
+      intent: PullRequestCreationIntent,
+      project: OrchestrationProject,
+      pullRequest: GitPullRequestAssociation,
+    ) =>
+      Effect.gen(function* () {
+        if (project.repositoryIdentity == null) {
+          yield* Effect.logWarning(
+            "created PR association is waiting for project repository identity",
+            { actionId: intent.actionId },
+          );
+          return;
+        }
+        if (
+          pullRequestAssociationRepositoryBlockReason({
+            thread: { projectId: intent.projectId },
+            project,
+            pullRequest,
+          })
+        ) {
+          yield* deleteIntent(intent.actionId, "discardMismatchedCreatedPullRequest");
+          yield* Effect.logWarning("discarded created PR because its repository did not match", {
+            actionId: intent.actionId,
+          });
+          return;
+        }
+
+        const observedAt = yield* Clock.currentTimeMillis;
+        const observed = {
+          ...intent,
+          nextAttemptAt: new Date(observedAt).toISOString(),
+          pullRequest,
+        };
+        yield* save(observed, "saveCreatedPullRequest");
+        yield* dispatchCreatedLink(observed);
+      });
+
     const recordIntent: PullRequestCreationAutomationShape["recordIntent"] = Effect.fn(
       "recordPullRequestCreationIntent",
     )(function* (input) {
@@ -198,16 +249,7 @@ export const makePullRequestCreationAutomation = () =>
         .pipe(
           Effect.mapError((cause) => gitManagerError("validatePullRequestCreationIntent", cause)),
         );
-      const thread = readModel.threads.find((candidate) => candidate.id === input.threadId);
-      const project = readModel.projects.find((candidate) => candidate.id === input.projectId);
-      if (
-        !thread ||
-        thread.deletedAt !== null ||
-        thread.archivedAt !== null ||
-        thread.projectId !== input.projectId ||
-        !project ||
-        !workspaceMatchesIntent({ intent: input, thread, project, readModel })
-      ) {
+      if (resolveIntentProject({ intent: input, readModel }) === null) {
         return yield* failGitManager(
           "recordPullRequestCreationIntent",
           "The thread workspace changed before PR creation could be tracked.",
@@ -290,43 +332,16 @@ export const makePullRequestCreationAutomation = () =>
         const readModel = yield* engine
           .getReadModel()
           .pipe(Effect.mapError((cause) => gitManagerError("validateCreatedPullRequest", cause)));
-        const project = readModel.projects.find((candidate) => candidate.id === intent.projectId);
-        if (!project) {
-          yield* deleteIntent(intent.actionId, "discardCreatedPullRequestWithoutProject");
-          yield* Effect.logWarning("discarded created PR because its project no longer exists", {
-            actionId: intent.actionId,
-          });
-          return;
-        }
-        if (project.repositoryIdentity == null) {
+        const project = resolveIntentProject({ intent, readModel });
+        if (project === null) {
+          yield* deleteIntent(intent.actionId, "discardCreatedPullRequestForChangedWorkspace");
           yield* Effect.logWarning(
-            "created PR association is waiting for project repository identity",
+            "discarded created PR because its thread or project workspace changed",
             { actionId: intent.actionId },
           );
           return;
         }
-        if (
-          pullRequestAssociationRepositoryBlockReason({
-            thread: { projectId: intent.projectId },
-            project,
-            pullRequest,
-          })
-        ) {
-          yield* deleteIntent(intent.actionId, "discardMismatchedCreatedPullRequest");
-          yield* Effect.logWarning("discarded created PR because its repository did not match", {
-            actionId: intent.actionId,
-          });
-          return;
-        }
-
-        const observedAt = yield* Clock.currentTimeMillis;
-        const observed = {
-          ...intent,
-          nextAttemptAt: new Date(observedAt).toISOString(),
-          pullRequest,
-        };
-        yield* save(observed, "saveCreatedPullRequestResult");
-        yield* dispatchCreatedLink(observed);
+        yield* persistAndDispatchCreatedLink(intent, project, pullRequest);
       });
 
     const retry = (intent: PullRequestCreationIntent, cause?: unknown) =>
@@ -361,16 +376,8 @@ export const makePullRequestCreationAutomation = () =>
     const recoverOne = (intent: PullRequestCreationIntent) =>
       Effect.gen(function* () {
         const readModel = yield* engine.getReadModel();
-        const thread = readModel.threads.find((candidate) => candidate.id === intent.threadId);
-        const project = readModel.projects.find((candidate) => candidate.id === intent.projectId);
-        if (
-          !thread ||
-          thread.deletedAt !== null ||
-          thread.archivedAt !== null ||
-          thread.projectId !== intent.projectId ||
-          !project ||
-          !workspaceMatchesIntent({ intent, thread, project, readModel })
-        ) {
+        const project = resolveIntentProject({ intent, readModel });
+        if (project === null) {
           yield* discard(intent, "thread-or-workspace-changed");
           return;
         }
@@ -413,25 +420,7 @@ export const makePullRequestCreationAutomation = () =>
         }
 
         const pullRequest = pullRequestFromGitHubSummary(summary);
-        if (
-          pullRequestAssociationRepositoryBlockReason({
-            thread: { projectId: intent.projectId },
-            project,
-            pullRequest,
-          })
-        ) {
-          yield* discard(intent, "repository-mismatch");
-          return;
-        }
-
-        const observedAt = yield* Clock.currentTimeMillis;
-        const observed = {
-          ...intent,
-          nextAttemptAt: new Date(observedAt).toISOString(),
-          pullRequest,
-        };
-        yield* save(observed, "saveRecoveredCreatedPullRequest");
-        yield* dispatchCreatedLink(observed);
+        yield* persistAndDispatchCreatedLink(intent, project, pullRequest);
       });
 
     const recoverSafely = (intent: PullRequestCreationIntent) =>

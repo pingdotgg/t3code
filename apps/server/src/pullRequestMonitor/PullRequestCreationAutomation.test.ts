@@ -305,3 +305,25 @@ it.effect("discards pending creation intents when their thread has been archived
       }),
   ),
 );
+
+it.effect("discards a completed creation when its thread was archived during PR creation", () =>
+  makeHarness([], ({ automation, repository, commands, archiveThread }) =>
+    Effect.gen(function* () {
+      yield* automation.recordIntent(creationIntent);
+      yield* archiveThread();
+      yield* automation.handleCreatedResult({
+        actionId: creationIntent.actionId,
+        threadId,
+        projectId,
+        cwd,
+        pullRequest: createdPullRequest,
+      });
+
+      assert.deepStrictEqual(commands, []);
+      assert.deepStrictEqual(
+        Option.getOrNull(yield* repository.getByActionId({ actionId: creationIntent.actionId })),
+        null,
+      );
+    }),
+  ),
+);

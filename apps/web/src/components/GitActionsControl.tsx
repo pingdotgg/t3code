@@ -326,9 +326,7 @@ export default function GitActionsControl({
         return;
       }
       if (
-        activeServerThread
-          ? result.pr.status !== "opened_existing"
-          : result.pr.status !== "created"
+        activeServerThread ? result.pr.status !== "opened_existing" : result.pr.status !== "created"
       ) {
         return;
       }
