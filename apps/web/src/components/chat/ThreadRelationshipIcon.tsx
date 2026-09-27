@@ -25,9 +25,7 @@ export function ThreadRelationshipIcon({
       ref={pulse && running ? observeVisibleAnimation : undefined}
       className={cn(
         "relative inline-flex size-4 shrink-0 items-center justify-center",
-        pulse &&
-          running &&
-          "motion-safe:animate-status-pulse [animation-play-state:var(--visible-animation-state,paused)]",
+        pulse && running && "motion-safe:visible-animate-status-pulse",
       )}
     >
       {driver ? (

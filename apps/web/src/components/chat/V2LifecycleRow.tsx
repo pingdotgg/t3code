@@ -306,8 +306,7 @@ export function SubagentAvatar({
       ref={breathing ? observeVisibleAnimation : undefined}
       className={cn(
         "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
-        breathing &&
-          "motion-safe:animate-status-pulse [animation-play-state:var(--visible-animation-state,paused)]",
+        breathing && "motion-safe:visible-animate-status-pulse",
         className,
       )}
     >

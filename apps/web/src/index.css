@@ -525,6 +525,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   will-change: var(--visible-animation-will-change, auto);
 }
 
+@utility visible-animate-status-pulse {
+  animation: var(--animate-status-pulse);
+  animation-play-state: var(--visible-animation-state, paused);
+}
+
 @keyframes live-activity-focus {
   from {
     transform: translateX(0);
