@@ -424,6 +424,9 @@ function useComposerRestingTransition(
   const animationFromHeightRef = useRef<number | null>(null);
   const animationTargetHeightRef = useRef<number | null>(null);
   const contentAnimationsRef = useRef<Animation[]>([]);
+  // Where each content slide started, so a same-destination retarget can
+  // rebuild it on the height animation's clock instead of a fresh curve.
+  const contentFromOffsetsRef = useRef(new Map<HTMLElement, number>());
   const stateChangeAnimationsRef = useRef<Animation[]>([]);
   const pinnedOverlayRef = useRef<HTMLElement | null>(null);
   const transitionCleanupTimeoutRef = useRef<number | null>(null);
@@ -626,18 +629,29 @@ function useComposerRestingTransition(
           previousTop: number | null,
         ) => {
           if (!content || previousTop === null) return;
-          const offset = previousTop - content.getBoundingClientRect().top;
+          const keptStartTime = typeof timing.startTime === "number" ? timing.startTime : null;
+          const originalOffset =
+            keptStartTime === null ? undefined : contentFromOffsetsRef.current.get(content);
+          const offset = originalOffset ?? previousTop - content.getBoundingClientRect().top;
           if (Math.abs(offset) < 0.5) return;
           const contentAnimation = content.animate(
             [{ transform: `translateY(${String(offset)}px)` }, { transform: "none" }],
             {
-              duration: remainingDuration,
+              duration: originalOffset === undefined ? remainingDuration : timing.durationMs,
               easing: COMPOSER_RESTING_TRANSITION_EASING,
             },
           );
-          // Retargets recreate these from the current position every frame;
-          // starting them now instead of pending lets them actually advance.
-          if (timing.startTime !== null) contentAnimation.startTime = document.timeline.currentTime;
+          if (originalOffset !== undefined && keptStartTime !== null) {
+            // Same destination: replay the original slide on the height's clock.
+            contentAnimation.startTime = keptStartTime;
+          } else {
+            // Retargets recreate these from the current position; starting them
+            // now instead of pending lets them actually advance.
+            if (timing.startTime !== null) {
+              contentAnimation.startTime = document.timeline.currentTime;
+            }
+            contentFromOffsetsRef.current.set(content, offset);
+          }
           contentAnimations.push(contentAnimation);
         };
         animateContentPosition(prompt, previousPromptTop);
@@ -734,6 +748,7 @@ function useComposerRestingTransition(
           }
           animationRef.current = null;
           animationFromHeightRef.current = null;
+          contentFromOffsetsRef.current.clear();
           animationTargetHeightRef.current = null;
           contentAnimationsRef.current = [];
           stateChangeAnimationsRef.current = [];
@@ -845,6 +860,7 @@ function useComposerRestingTransition(
       animationRef.current = null;
       for (const animation of contentAnimationsRef.current) animation.cancel();
       contentAnimationsRef.current = [];
+      contentFromOffsetsRef.current.clear();
       for (const animation of stateChangeAnimationsRef.current) animation.cancel();
       stateChangeAnimationsRef.current = [];
       clearTransitionStyles();

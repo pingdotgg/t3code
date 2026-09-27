@@ -9350,9 +9350,13 @@ export default function ChatView(props: ChatViewProps) {
     })();
   }, [cancelWorktreeSetup, draftId, routeThreadRef.environmentId, worktreeSetup]);
   const onSendRef = useRef(onSend);
-  onSendRef.current = onSend;
   const onCompactContextRef = useRef(onCompactContext);
-  onCompactContextRef.current = onCompactContext;
+  // Mirror the committed handlers only, so an abandoned render can't leave
+  // the stable callbacks below pointing at uncommitted state.
+  useLayoutEffect(() => {
+    onSendRef.current = onSend;
+    onCompactContextRef.current = onCompactContext;
+  });
   // Stable identities for the memoized composer. Both handlers close over
   // most of this view, so passing them directly re-rendered the whole
   // composer on every timeline scroll and streamed message.
