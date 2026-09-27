@@ -67,6 +67,7 @@ import {
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
+import { cursorSubagentTaskEvents, type CursorSubagentRecord } from "../acp/CursorSubagents.ts";
 import { CursorTransportFailure } from "../acp/CursorTransportFailure.ts";
 import {
   CursorAskQuestionRequest,
@@ -142,6 +143,8 @@ interface CursorSessionContext {
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
+  /** Task tool calls projected onto task.* so the Agents panel can list them. */
+  readonly subagents: Map<string, CursorSubagentRecord>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
   cursorSkillNames: ReadonlySet<string> | undefined;
@@ -797,6 +800,7 @@ export function makeCursorAdapter(
             pendingApprovals,
             pendingUserInputs,
             turns: [],
+            subagents: new Map(),
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             cursorSkillNames: undefined,
@@ -876,6 +880,22 @@ export function makeCursorAdapter(
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    // cursor-agent reports a subagent as a tool named "task".
+                    // The Agents panel only reads task.* events, so project
+                    // that lifecycle here. Ingestion stamps agentKind and
+                    // keeps the thread working until the task completes.
+                    for (const taskEvent of cursorSubagentTaskEvents({
+                      tasks: ctx.subagents,
+                      toolCall: event.toolCall,
+                      turnId: ctx.activeTurnId,
+                    })) {
+                      yield* offerRuntimeEvent({
+                        ...taskEvent,
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                      });
+                    }
                     return;
                   case "ThoughtDelta":
                     // Thoughts are narration, not the reply: they stay out of
