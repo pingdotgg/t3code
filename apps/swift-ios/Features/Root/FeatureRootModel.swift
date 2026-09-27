@@ -1454,15 +1454,18 @@ public final class FeatureRootModel {
         }
     }
 
+    /// `isServerTranscript` is false for details built locally, such as a
+    /// restored outbox or a pending creation; they cannot confirm delivery.
     private func store(
         _ incoming: FeatureThreadDetail,
-        invalidatesInFlightLoad: Bool = true
+        invalidatesInFlightLoad: Bool = true,
+        isServerTranscript: Bool = true
     ) {
         var incoming = retainingLocalAttachmentPreviews(in: incoming)
         incoming.thread = retainingPendingSettlement(in: incoming.thread)
         let id = incoming.thread.id
         acknowledgeDeliveredMessages(incoming.messages)
-        let prepared = addingPendingMessages(to: incoming)
+        let prepared = addingPendingMessages(to: incoming, isServerTranscript: isServerTranscript)
         let next = details[id].map { current in
             FeatureThreadDetail(
                 thread: prepared.thread,
@@ -1489,7 +1492,7 @@ public final class FeatureRootModel {
         incoming.thread = retainingPendingSettlement(in: incoming.thread)
         let id = incoming.thread.id
         acknowledgeDeliveredMessages(incoming.messages)
-        let next = addingPendingMessages(to: incoming)
+        let next = addingPendingMessages(to: incoming, isServerTranscript: true)
         details[id] = next
         markDetailRecentlyUsed(id)
         bumpDetailLoadRevision(id: id)
@@ -1533,8 +1536,13 @@ public final class FeatureRootModel {
         serverMessageIDs[threadID] = nil
     }
 
-    private func removeDetail(id: String) {
-        forgetDeliveredMessages(threadID: id)
+    private func removeDetail(id: String, forgettingDeliveredMessages: Bool = true) {
+        if forgettingDeliveredMessages {
+            forgetDeliveredMessages(threadID: id)
+        } else {
+            // The next server transcript records these again; keep the cache bounded.
+            serverMessageIDs[id] = nil
+        }
         if details.removeValue(forKey: id) != nil {
             detailRecency.removeAll { $0 == id }
         }
@@ -1584,7 +1592,8 @@ public final class FeatureRootModel {
         while details.count > Self.maximumRetainedThreadDetails,
               let candidate = detailRecency.first(where: { !protected.contains($0) }) {
             detailRecency.removeAll { $0 == candidate }
-            removeDetail(id: candidate)
+            // Eviction only drops the cache; accepted messages must survive a reopen.
+            removeDetail(id: candidate, forgettingDeliveredMessages: false)
         }
     }
 
@@ -1627,7 +1636,7 @@ public final class FeatureRootModel {
                 if snapshot.threads.contains(where: { $0.id == submission.threadID }) {
                     pendingSubmissionsByID[submission.id] = submission
                     if let detail = details[submission.threadID] {
-                        store(addingPendingMessages(to: detail))
+                        store(detail, isServerTranscript: false)
                     }
                     continue
                 }
@@ -1658,7 +1667,7 @@ public final class FeatureRootModel {
             }
             pendingSubmissionsByID[submission.id] = submission
             if let detail = details[submission.threadID] {
-                store(addingPendingMessages(to: detail))
+                store(detail, isServerTranscript: false)
             }
         }
     }
@@ -1721,7 +1730,7 @@ public final class FeatureRootModel {
         store(FeatureThreadDetail(
             thread: thread,
             messages: [queuedMessage(for: submission)]
-        ))
+        ), isServerTranscript: false)
     }
 
     private func provider(id: String?, environmentID: String) -> FeatureProvider? {
@@ -1750,14 +1759,19 @@ public final class FeatureRootModel {
         )
     }
 
-    private func addingPendingMessages(to incoming: FeatureThreadDetail) -> FeatureThreadDetail {
+    private func addingPendingMessages(
+        to incoming: FeatureThreadDetail,
+        isServerTranscript: Bool
+    ) -> FeatureThreadDetail {
         let existing = Set(incoming.messages.map(\.id))
-        serverMessageIDs[incoming.thread.id] = existing
         // A delivered message stays visible until a server transcript includes it.
         // Its refresh no longer blocks the send, so an older read can arrive first.
-        for (id, delivered) in deliveredAwaitingDetail
-        where delivered.threadID == incoming.thread.id && existing.contains(id) {
-            deliveredAwaitingDetail.removeValue(forKey: id)
+        if isServerTranscript {
+            serverMessageIDs[incoming.thread.id] = existing
+            for (id, delivered) in deliveredAwaitingDetail
+            where delivered.threadID == incoming.thread.id && existing.contains(id) {
+                deliveredAwaitingDetail.removeValue(forKey: id)
+            }
         }
         let queued = pendingSubmissionsByID.values
             .filter { $0.threadID == incoming.thread.id }
@@ -1768,7 +1782,7 @@ public final class FeatureRootModel {
             .sorted { $0.createdAt < $1.createdAt }
         guard !queued.isEmpty || !delivered.isEmpty else { return incoming }
         var result = incoming
-        result.messages.append(contentsOf: delivered)
+        result.messages.append(contentsOf: delivered.filter { !existing.contains($0.id) })
         result.messages.append(contentsOf: queued.lazy
             .filter { !existing.contains($0.identity.messageID) }
             .map(queuedMessage(for:)))

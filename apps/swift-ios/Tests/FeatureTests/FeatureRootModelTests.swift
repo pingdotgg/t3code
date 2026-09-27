@@ -1773,6 +1773,55 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func evictedDetailKeepsItsDeliveredMessageOnReopen() async throws {
+        let (client, model, thread) = await deliveredMessageModel()
+        #expect(await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "ship it", selection: nil)))
+        let id = try #require(model.details[thread.id]?.messages.last?.id)
+        client.loadThreadHandler = { id in
+            FeatureThreadDetail(thread: FeatureThread(
+                id: id, projectID: "project-1", environmentID: "environment-1", title: id
+            ))
+        }
+        // Opening and closing other threads evicts this detail from the bounded cache.
+        for index in 0..<6 { _ = await model.detail(for: "other-\(index)") }
+        model.releaseThread("other-5")
+        #expect(model.details[thread.id] == nil)
+        // The server transcript has not caught up yet.
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.messages.contains { $0.id == id } == true)
+    }
+
+    @Test
+    func startedTaskKeepsItsPromptUntilTheServerIncludesIt() async throws {
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1", name: "Studio", endpoint: "https://studio.example",
+                    isActive: true, connectionState: .connected
+                ),
+            ],
+            projects: [.init(id: "project-1", environmentID: "environment-1", name: "Native", path: "/native")]
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+        // The server creates the thread under the ID the app queued it with.
+        client.beforeStartTask = { @MainActor in
+            if let pending = model.snapshot.threads.first { client.createdThread = pending }
+        }
+        let thread = try #require(await model.startTask(NewTaskRequest(
+            projectID: "project-1", prompt: "Ship it", selection: nil,
+            runtimeMode: .fullAccess, interactionMode: .standard
+        )))
+        let id = try #require(model.details[thread.id]?.messages.last?.id)
+        // An older read that does not include the accepted prompt yet.
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.messages.contains { $0.id == id } == true)
+    }
+
+    @Test
     func sendPreservesTheThreadAutomaticPermission() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(
