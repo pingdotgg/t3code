@@ -41,6 +41,7 @@ import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSele
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ComposerControl } from "./chat/ComposerControl";
+import { ResumeSessionPicker } from "./ResumeSessionPicker";
 import {
   Menu,
   MenuGroup,
@@ -691,6 +692,13 @@ export const BranchToolbar = memo(function BranchToolbar({
             />
           ) : null}
         </div>
+      ) : null}
+
+      {draftThread && !serverThread && !envLocked && activeProjectRef ? (
+        <ResumeSessionPicker
+          key={`${activeProjectRef.environmentId}:${activeProjectRef.projectId}`}
+          projectRef={activeProjectRef}
+        />
       ) : null}
 
       {composerControlsHostRef ? (

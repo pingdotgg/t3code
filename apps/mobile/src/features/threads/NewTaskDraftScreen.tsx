@@ -61,6 +61,7 @@ import {
 } from "../../state/composer-attachment-uploads";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { ResumeSessionPicker } from "./ResumeSessionPicker";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
@@ -1549,6 +1550,24 @@ export function NewTaskDraftScreen(props: {
         maxWidth={190}
         onPress={() => openContextPicker("NewTaskBranch")}
       />
+      {!flow.editingPendingTask ? (
+        <ResumeSessionPicker
+          key={`${selectedProject.environmentId}:${selectedProject.id}`}
+          projectRef={{
+            environmentId: selectedProject.environmentId,
+            projectId: selectedProject.id,
+          }}
+          disabled={isComposerInteractionLocked || !environmentConnected}
+          onResume={(threadId) =>
+            setSubmitNavigationAction(
+              StackActions.replace("Thread", {
+                environmentId: String(selectedProject.environmentId),
+                threadId: String(threadId),
+              }),
+            )
+          }
+        />
+      ) : null}
     </View>
   );
 

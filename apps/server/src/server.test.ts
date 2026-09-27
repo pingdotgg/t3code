@@ -6198,6 +6198,110 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect(
+    "lists only external CLI sessions over websocket RPC, excluding native and imported T3 sessions",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-resume-rpc-" });
+        const workspaceRoot = path.join(base, "workspace");
+        const codexHome = path.join(base, "codex");
+        const transcripts = path.join(codexHome, "sessions", "2026", "09", "26");
+        yield* fs.makeDirectory(workspaceRoot);
+        yield* fs.makeDirectory(transcripts, { recursive: true });
+        const ids = [
+          "01a0d940-6480-7831-b253-569ae0ea6be1",
+          "01a0d940-6480-7831-b253-569ae0ea6be2",
+          "01a0d940-6480-7831-b253-569ae0ea6be3",
+          "01a0d940-6480-7831-b253-569ae0ea6be4",
+        ] as const;
+        for (const id of ids)
+          yield* fs.writeFileString(
+            path.join(transcripts, `rollout-${id}.jsonl`),
+            [
+              encodeTestJson({ type: "session_meta", payload: { id, cwd: workspaceRoot } }),
+              encodeTestJson({
+                type: "event_msg",
+                payload: { type: "user_message", message: `Task ${id}` },
+              }),
+            ].join("\n"),
+          );
+        const projectId = ProjectId.make("resume-rpc-project");
+        yield* buildAppUnderTest({
+          layers: {
+            serverSettings: {
+              getSettings: Effect.succeed({
+                ...DEFAULT_SERVER_SETTINGS,
+                providerInstances: {
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: { homePath: codexHome },
+                  },
+                  [ProviderInstanceId.make("claudeAgent")]: {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    enabled: false,
+                    config: {},
+                  },
+                },
+              }),
+            },
+            projectionSnapshotQuery: {
+              getThreadDetailById: () => Effect.succeedNone,
+              getImportedAgentSessionSources: () =>
+                Effect.succeed([
+                  {
+                    threadId: ThreadId.make(`import:codex:${ids[1]}`),
+                    source: {
+                      provider: "codex",
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                      providerSessionId: ids[1],
+                      filePath: path.join(transcripts, `rollout-${ids[1]}.jsonl`),
+                      size: 0,
+                      mtimeMs: null,
+                      device: 0,
+                      inode: null,
+                      birthtimeMs: null,
+                    },
+                  },
+                ]),
+              getProjectShellById: () =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "Resume",
+                  workspaceRoot,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-09-26T12:00:00.000Z",
+                  updatedAt: "2026-09-26T12:00:00.000Z",
+                }),
+            },
+            providerSessionDirectory: {
+              listBindings: () =>
+                Effect.succeed(
+                  [ids[0], ids[3]].map((id, index) => ({
+                    threadId: ThreadId.make(index === 0 ? "native-thread" : `import:codex:${id}`),
+                    provider: ProviderDriverKind.make("codex"),
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    resumeCursor: { threadId: id },
+                    lastSeenAt: "2026-09-26T12:00:00.000Z",
+                  })),
+                ),
+            },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[WS_METHODS.agentSessionsList]({ projectId })),
+        );
+        assert.deepEqual(result.sessions.map((session) => session.sessionId).sort(), [
+          ids[2],
+          ids[3],
+        ]);
+        assert.equal(result.sessions[0]?.cwd, workspaceRoot);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("returns scanner skip counts over websocket rpc", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

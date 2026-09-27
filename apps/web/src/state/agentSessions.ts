@@ -1,4 +1,5 @@
 import { WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
@@ -22,4 +23,20 @@ export const agentSessionScan = createEnvironmentRpcQueryAtomFamily(connectionAt
 export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
+});
+
+export const agentSessionList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:list",
+  tag: WS_METHODS.agentSessionsList,
+  staleTimeMs: 0,
+  idleTtlMs: 30_000,
+});
+
+export const agentSessionAttach = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:attach",
+  tag: WS_METHODS.agentSessionsAttach,
+  onSuccess: ({ environmentId, input }, registry) =>
+    Effect.sync(() => {
+      registry.refresh(agentSessionList({ environmentId, input: { projectId: input.projectId } }));
+    }),
 });

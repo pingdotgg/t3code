@@ -17,6 +17,7 @@ import * as NodeOS from "node:os";
 
 import {
   AgentSessionScanError,
+  AgentSessionResumeError,
   ClaudeSettings,
   CodexSettings,
   ProviderDriverKind,
@@ -27,6 +28,8 @@ import {
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
+  type ResumableAgentSession,
+  type AgentSessionListResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -193,6 +196,22 @@ export class AgentSessionScanner extends Context.Service<
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
+    readonly listSessions: (
+      workspaceRoot: string,
+      excludedSessions?: ReadonlySet<string>,
+    ) => Effect.Effect<AgentSessionListResult, AgentSessionScanError>;
+    readonly readSession: (
+      workspaceRoot: string,
+      providerInstanceId: ProviderInstanceId,
+      sessionId: string,
+    ) => Effect.Effect<
+      {
+        session: ResumableAgentSession;
+        thread: AgentSessionThread;
+        source: AgentSessionImportSource;
+      },
+      AgentSessionScanError | AgentSessionResumeError
+    >;
   }
 >()("t3/project/AgentSessionScanner") {}
 
@@ -1489,7 +1508,246 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  // Match linked worktrees by the common Git directory, not origin URL: another
+  // clone of the same repository is a different workspace. This path deliberately
+  // includes T3 worktrees, which project discovery above must exclude.
+  const checkoutIdentity = Effect.fn("AgentSessionScanner.checkoutIdentity")(function* (
+    cwd: string,
+  ) {
+    const stats = yield* statOption(cwd);
+    if (Option.isNone(stats) || stats.value.type !== "Directory") return null;
+    let root = path.resolve(cwd);
+    while (true) {
+      const dotGit = path.join(root, ".git");
+      const gitStats = yield* statOption(dotGit);
+      if (Option.isSome(gitStats)) {
+        let gitDir = dotGit;
+        if (gitStats.value.type !== "Directory") {
+          const pointer = yield* fileSystem
+            .readFileString(dotGit)
+            .pipe(Effect.orElseSucceed(() => ""));
+          const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+          if (!target) return null;
+          gitDir = path.resolve(root, target);
+        }
+        const common = yield* fileSystem
+          .readFileString(path.join(gitDir, "commondir"))
+          .pipe(Effect.orElseSucceed(() => ""));
+        const commonDir = common.trim() ? path.resolve(gitDir, common.trim()) : gitDir;
+        const head = yield* fileSystem
+          .readFileString(path.join(gitDir, "HEAD"))
+          .pipe(Effect.orElseSucceed(() => ""));
+        return {
+          common: yield* directoryIdentity(commonDir),
+          branch: /^ref: refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null,
+        };
+      }
+      const parent = path.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
+  });
+
+  const belongsToProject = Effect.fn("AgentSessionScanner.belongsToProject")(function* (
+    workspaceRoot: string,
+    cwd: string,
+  ) {
+    const stats = yield* statOption(cwd);
+    if (Option.isNone(stats) || stats.value.type !== "Directory") return false;
+    if ((yield* directoryIdentity(cwd)) === (yield* directoryIdentity(workspaceRoot))) return true;
+    const project = yield* checkoutIdentity(workspaceRoot);
+    const candidate = yield* checkoutIdentity(cwd);
+    return project !== null && candidate !== null && project.common === candidate.common;
+  });
+
+  const discoverSessions = Effect.fn("AgentSessionScanner.discoverSessions")(function* (
+    workspaceRoot: string,
+    excludedSessions: ReadonlySet<string> = new Set(),
+    selectedSession?: { providerInstanceId: ProviderInstanceId; sessionId: string },
+  ) {
+    const collected = yield* collectCandidates();
+    const eligible: Array<{
+      candidate: RawCandidate;
+      transcript: RawCandidate["transcripts"][number];
+      branch: string | null;
+    }> = [];
+    for (const candidate of collected.candidates) {
+      if (selectedSession && candidate.providerInstanceId !== selectedSession.providerInstanceId)
+        continue;
+      if (
+        !path.isAbsolute(candidate.cwd) ||
+        !(yield* belongsToProject(workspaceRoot, candidate.cwd))
+      )
+        continue;
+      const checkout = yield* checkoutIdentity(candidate.cwd);
+      for (const transcript of candidate.transcripts) {
+        // Both providers name their transcript with the native session ID.
+        // Selection must not be limited by the picker's recent-summary budget.
+        if (selectedSession && !transcript.filePath.endsWith(`${selectedSession.sessionId}.jsonl`))
+          continue;
+        const fileSessionId =
+          /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(
+            transcript.filePath,
+          )?.[1];
+        if (fileSessionId && excludedSessions.has(`${candidate.source}:${fileSessionId}`)) continue;
+        eligible.push({ candidate, transcript, branch: checkout?.branch ?? null });
+      }
+    }
+    eligible.sort(
+      (a, b) =>
+        (b.transcript.mtimeMs ?? 0) - (a.transcript.mtimeMs ?? 0) ||
+        a.transcript.filePath.localeCompare(b.transcript.filePath),
+    );
+    const sessions: Array<{ session: ResumableAgentSession; filePath: string }> = [];
+    const seen = new Set<string>();
+    // The picker reads only prefixes, never complete histories. Full history is
+    // read once a session is selected. Keep the aggregate read budget bounded.
+    const limit = 200;
+    for (const { candidate, transcript, branch } of eligible.slice(0, limit)) {
+      const prefix = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const file = yield* fileSystem.open(transcript.filePath, { flag: "r" });
+          const bytes = yield* file.readAlloc(256 * 1024);
+          if (Option.isNone(bytes)) return "";
+          const text = new TextDecoder().decode(bytes.value);
+          const size = Number((yield* file.stat).size);
+          return bytes.value.byteLength >= size ? text : text.slice(0, text.lastIndexOf("\n") + 1);
+        }),
+      ).pipe(Effect.orElseSucceed(() => ""));
+      const prefixRecords = prefix
+        .split("\n", MAX_METADATA_RECORDS_PER_TRANSCRIPT)
+        .flatMap((line) => Option.toArray(decodeTranscriptRecord(line)));
+      const parsed = parseAgentSessionRecords(
+        {
+          source: candidate.source,
+          providerInstanceId: candidate.providerInstanceId,
+          fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
+          lastActiveAtMs: transcript.mtimeMs ?? 0,
+        },
+        prefixRecords,
+      );
+      if (parsed === null) continue;
+      if (!transcript.filePath.endsWith(`${parsed.providerSessionId}.jsonl`)) continue;
+      if (excludedSessions.has(`${parsed.source}:${parsed.providerSessionId}`)) continue;
+      if (
+        parsed.source === "claudeAgent" &&
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          parsed.providerSessionId,
+        )
+      )
+        continue;
+      const canonicalPrompt = prefixRecords.find(
+        (record) => record.type === "event_msg" && record.payload?.type === "user_message",
+      )?.payload?.message;
+      const prompt =
+        canonicalPrompt ??
+        parsed.messages.find(
+          (message) =>
+            message.role === "user" &&
+            !/^(?:# AGENTS\.md|<(?:environment_context|permissions instructions|recommended_plugins|skills_instructions|turn_aborted|INSTRUCTIONS)\b)/.test(
+              message.text.trim(),
+            ),
+        )?.text;
+      const title =
+        parsed.source === "claudeAgent"
+          ? parsed.title
+          : prompt?.trim().split("\n")[0]?.slice(0, 100).trim() ||
+            `Codex session ${parsed.providerSessionId.slice(0, 8)}`;
+      const key = `${parsed.providerInstanceId}\0${parsed.providerSessionId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      sessions.push({
+        filePath: transcript.filePath,
+        session: {
+          provider: parsed.source,
+          providerInstanceId: parsed.providerInstanceId,
+          sessionId: parsed.providerSessionId,
+          title,
+          cwd: candidate.cwd,
+          branch,
+          updatedAt: DateTime.formatIso(DateTime.makeUnsafe(transcript.mtimeMs ?? 0)),
+        },
+      });
+    }
+    return { sessions, truncated: collected.truncated || eligible.length > limit };
+  });
+
+  const listSessions: AgentSessionScanner["Service"]["listSessions"] = (
+    workspaceRoot,
+    excludedSessions,
+  ) =>
+    discoverSessions(workspaceRoot, excludedSessions).pipe(
+      Effect.map(({ sessions, truncated }) => ({
+        sessions: sessions.map(({ session }) => session),
+        truncated,
+      })),
+    );
+
+  const readSession: AgentSessionScanner["Service"]["readSession"] = Effect.fn(
+    "AgentSessionScanner.readSession",
+  )(function* (workspaceRoot, providerInstanceId, sessionId) {
+    const { sessions } = yield* discoverSessions(workspaceRoot, new Set(), {
+      providerInstanceId,
+      sessionId,
+    });
+    const selected = sessions.find(
+      ({ session }) =>
+        session.providerInstanceId === providerInstanceId && session.sessionId === sessionId,
+    );
+    if (!selected)
+      return yield* new AgentSessionResumeError({
+        message: "This session is no longer available in this project. Refresh the session list.",
+      });
+    const stats = yield* statOption(selected.filePath);
+    if (Option.isNone(stats) || stats.value.type !== "File")
+      return yield* new AgentSessionResumeError({
+        message: "The session transcript is no longer available.",
+      });
+    const identity = transcriptIdentity(selected.filePath, stats.value);
+    const snapshot = yield* readTranscript(
+      selected.filePath,
+      identity,
+      MAX_IMPORT_RECORDS,
+      selected.session.provider,
+    ).pipe(importReadLock.withPermits(1));
+    const cwd = snapshot?.records.map(extractDecodedCwd).find((value) => value !== null);
+    if (
+      !snapshot ||
+      !cwd ||
+      !(yield* belongsToProject(workspaceRoot, cwd)) ||
+      (yield* directoryIdentity(cwd)) !== (yield* directoryIdentity(selected.session.cwd))
+    ) {
+      return yield* new AgentSessionResumeError({
+        message:
+          "The session changed or its history could not be read. Refresh the session list and try again.",
+      });
+    }
+    const thread = parseAgentSessionRecords(
+      {
+        source: selected.session.provider,
+        providerInstanceId,
+        fallbackSessionId: sessionId,
+        lastActiveAtMs: identity.mtimeMs ?? 0,
+      },
+      snapshot.records,
+    );
+    if (!thread || thread.providerSessionId !== sessionId)
+      return yield* new AgentSessionResumeError({
+        message: "The session transcript could not be resumed.",
+      });
+    return {
+      session: selected.session,
+      thread,
+      source: {
+        ...identity,
+        provider: thread.source,
+        providerInstanceId,
+        providerSessionId: sessionId,
+      },
+    };
+  });
+
+  return AgentSessionScanner.of({ scan, recentThreads, listSessions, readSession });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make);

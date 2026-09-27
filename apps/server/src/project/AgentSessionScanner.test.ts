@@ -181,6 +181,226 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
 }
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
+  it.effect(
+    "lists and reads sessions across linked worktrees, including T3 worktrees, without importing another clone",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* makeTempDir("t3code-resume-");
+        const repo = path.join(base, "repo");
+        const worktree = path.join(base, ".t3", "worktrees", "repo", "feature");
+        const clone = path.join(base, "other-clone");
+        const claudeHomePath = path.join(base, "claude");
+        const codexHomePath = path.join(base, "codex");
+        const common = path.join(repo, ".git");
+        const linked = path.join(common, "worktrees", "feature");
+        for (const dir of [linked, worktree, path.join(clone, ".git")])
+          yield* fs.makeDirectory(dir, { recursive: true });
+        yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${linked}\n`);
+        yield* fs.writeFileString(path.join(linked, "commondir"), "../..\n");
+        yield* fs.writeFileString(path.join(linked, "HEAD"), "ref: refs/heads/feature\n");
+        yield* fs.writeFileString(path.join(common, "HEAD"), "ref: refs/heads/main\n");
+        const claudeId = "5c119ee3-f063-4999-87ce-a062d004c37c";
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "worktree", `${claudeId}.jsonl`),
+          contents: encodeTranscriptRecord({
+            type: "user",
+            sessionId: claudeId,
+            cwd: worktree,
+            message: { content: "Continue the worktree task" },
+          }),
+          mtimeMs: Date.parse("2026-08-24T12:00:00Z"),
+        });
+        for (const [cwd, id] of [
+          [repo, "root-session"],
+          [clone, "other-session"],
+        ]) {
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "01",
+              "01",
+              `rollout-${id}.jsonl`,
+            ),
+            contents: [
+              encodeTranscriptRecord({ type: "session_meta", payload: { id, cwd } }),
+              encodeTranscriptRecord({
+                type: "response_item",
+                payload: {
+                  type: "message",
+                  role: "user",
+                  content: [
+                    {
+                      type: "input_text",
+                      text: "<recommended_plugins>Injected setup</recommended_plugins>",
+                    },
+                  ],
+                },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: "Actual Codex task" },
+              }),
+            ].join("\n"),
+            mtimeMs: Date.parse("2026-01-01T12:00:00Z"),
+          });
+        }
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const result = yield* scanner.listSessions(repo);
+          expect(result.sessions.map((session) => session.sessionId)).toEqual([
+            claudeId,
+            "root-session",
+          ]);
+          expect(result.sessions[0]).toMatchObject({
+            cwd: worktree,
+            branch: "feature",
+            title: "Continue the worktree task",
+          });
+          expect(result.sessions[1]?.title).toBe("Actual Codex task");
+          expect(
+            (yield* scanner.listSessions(
+              repo,
+              new Set([`claudeAgent:${claudeId}`, "codex:root-session"]),
+            )).sessions,
+          ).toEqual([]);
+          expect((yield* scanner.listSessions(worktree)).sessions).toEqual(result.sessions);
+          const selected = yield* scanner.readSession(
+            repo,
+            ProviderInstanceId.make("claudeAgent"),
+            claudeId,
+          );
+          expect(selected.session.cwd).toBe(worktree);
+          expect(selected.thread.providerSessionId).toBe(claudeId);
+          expect(selected.thread.messages[0]?.text).toBe("Continue the worktree task");
+          const unrelated = yield* scanner
+            .readSession(repo, ProviderInstanceId.make("codex"), "other-session")
+            .pipe(Effect.flip);
+          expect(unrelated._tag).toBe("AgentSessionResumeError");
+          yield* fs.remove(worktree, { recursive: true });
+          expect(
+            (yield* scanner.listSessions(repo)).sessions.map((session) => session.sessionId),
+          ).toEqual(["root-session"]);
+        }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+      }),
+  );
+
+  it.effect(
+    "refreshes sessions created after the first scan and reads full history only on selection",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const base = yield* makeTempDir("t3code-resume-refresh-");
+        const workspace = path.join(base, "workspace");
+        yield* fs.makeDirectory(workspace);
+        const claudeHomePath = path.join(base, "claude");
+        const codexHomePath = path.join(base, "codex");
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          expect((yield* scanner.listSessions(workspace)).sessions).toEqual([]);
+          const filePath = path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            "rollout-session.jsonl",
+          );
+          yield* writeTranscript({
+            filePath,
+            mtimeMs: Date.parse("2026-08-24T12:00:00Z"),
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id: "session", cwd: workspace },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: "First prompt" },
+              }),
+              encodeTranscriptRecord({
+                type: "response_item",
+                payload: { type: "function_call_output", output: "x".repeat(300_000) },
+              }),
+              encodeTranscriptRecord({
+                type: "response_item",
+                payload: {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "Final response beyond the prefix" }],
+                },
+              }),
+            ].join("\n"),
+          });
+          expect((yield* scanner.listSessions(workspace)).sessions[0]?.title).toBe("First prompt");
+          const selected = yield* scanner.readSession(
+            workspace,
+            ProviderInstanceId.make("codex"),
+            "session",
+          );
+          expect(selected.thread.messages.at(-1)?.text).toBe("Final response beyond the prefix");
+        }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+      }),
+  );
+
+  it.effect(
+    "can select an external session older than the picker's budget of T3-native sessions",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const base = yield* makeTempDir("t3code-resume-excluded-");
+        const workspaceRoot = path.join(base, "workspace");
+        yield* fs.makeDirectory(workspaceRoot);
+        const claudeHomePath = path.join(base, "claude");
+        const codexHomePath = path.join(base, "codex");
+        const excluded = new Set<string>();
+        const externalId = "01a0d940-6480-7831-b253-569ae0ea6be1";
+        for (let index = 0; index <= 200; index++) {
+          const id =
+            index === 0 ? externalId : `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+          if (index > 0) excluded.add(`codex:${id}`);
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "08",
+              "24",
+              `rollout-${id}.jsonl`,
+            ),
+            contents: [
+              encodeTranscriptRecord({ type: "session_meta", payload: { id, cwd: workspaceRoot } }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: "A task" },
+              }),
+            ].join("\n"),
+            mtimeMs: Date.parse("2026-08-24T12:00:00Z") + index * 1000,
+          });
+        }
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          expect(
+            (yield* scanner.listSessions(workspaceRoot, excluded)).sessions.map(
+              (session) => session.sessionId,
+            ),
+          ).toEqual([externalId]);
+          expect(
+            (yield* scanner.readSession(
+              workspaceRoot,
+              ProviderInstanceId.make("codex"),
+              externalId,
+            )).thread.providerSessionId,
+          ).toBe(externalId);
+        }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+      }),
+  );
+
   describe("scan", () => {
     it.effect("reads Claude project cwds from transcripts, newest first", () =>
       Effect.gen(function* () {
