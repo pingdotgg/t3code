@@ -360,13 +360,16 @@ export default function GitActionsControl({
         if (!api) {
           return;
         }
+        // Only a confirmed creation carries `created` provenance for automatic
+        // review. Re-opening an existing PR is an explicit manual association.
+        const pullRequestSource = result.pr.status === "created" ? "created" : "manual";
         try {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: activeThreadRef.threadId,
             pullRequest,
-            pullRequestSource: "created",
+            pullRequestSource,
           });
         } catch {
           // Keep local association unset when durable write fails so reload

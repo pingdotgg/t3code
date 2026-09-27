@@ -47,6 +47,7 @@ it("keys pull requests by repository and number", () => {
     cwd: "/repo",
     scope: "pull-request",
     pullRequestNumber: 7,
+    pullRequestRepository: "owner/repo",
   });
   expect(key).not.toBeNull();
   expect(key).not.toBe(
@@ -54,6 +55,14 @@ it("keys pull requests by repository and number", () => {
   );
   expect(key).not.toBe(
     reviewContextPrewarmKey({ cwd: "/other", scope: "pull-request", pullRequestNumber: 7 }),
+  );
+  expect(key).not.toBe(
+    reviewContextPrewarmKey({
+      cwd: "/repo",
+      scope: "pull-request",
+      pullRequestNumber: 7,
+      pullRequestRepository: "owner/other",
+    }),
   );
 });
 

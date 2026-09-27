@@ -163,7 +163,11 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
     readonly workflowId: string;
     readonly idempotencyKey: string;
   };
-  readonly pullRequestNumber: number;
+  readonly pullRequest: {
+    readonly repository: string;
+    readonly number: number;
+  };
+  readonly observationState?: "open" | "closed" | "merged";
   readonly readCurrentThread: () => Effect.Effect<OrchestrationThread | null>;
   readonly cancelLegacySelfReview: (
     thread: OrchestrationThread,
@@ -182,8 +186,17 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
         new Error(`Unsupported automatic review workflow '${input.request.workflowId}'.`),
       );
     }
+    if (input.observationState !== undefined && input.observationState !== "open") return;
+    const expectedNumber = input.pullRequest.number;
+    const expectedRepository = input.pullRequest.repository.toLowerCase();
     const refreshedThread = yield* input.readCurrentThread();
     if (refreshedThread === null || !creatorIsInactive(refreshedThread)) return;
+    const stillLinked = createdPullRequestLinks(refreshedThread).some((link) => {
+      if (link.pullRequest.number !== expectedNumber) return false;
+      const linkRepository = repositoryFromPullRequestUrl(link.pullRequest.url);
+      return linkRepository !== null && linkRepository.toLowerCase() === expectedRepository;
+    });
+    if (!stillLinked) return;
     yield* Effect.forEach(
       (refreshedThread.collaborationRequests ?? []).filter(
         (candidate) =>
@@ -199,7 +212,7 @@ export const dispatchAutomaticReviewWorkflow = <CancelError, WorkflowError>(inpu
     );
     yield* input.runWorkflow({
       thread: refreshedThread,
-      pullRequestNumber: input.pullRequestNumber,
+      pullRequestNumber: expectedNumber,
       headSha: input.request.headSha,
       idempotencyKey: input.request.idempotencyKey,
     });
@@ -279,7 +292,11 @@ const makeReactor = Effect.gen(function* () {
             if (request === null) return;
             yield* dispatchAutomaticReviewWorkflow({
               request,
-              pullRequestNumber: observation.number,
+              pullRequest: {
+                repository: observation.repository,
+                number: observation.number,
+              },
+              observationState: observation.state,
               readCurrentThread: () => currentThread(latestThread.id),
               cancelLegacySelfReview,
               runWorkflow: ({ thread, pullRequestNumber, headSha, idempotencyKey }) =>
@@ -303,7 +320,10 @@ const makeReactor = Effect.gen(function* () {
                     trigger: "after-assistant-turn-completes",
                     idempotencyKey,
                   },
-                  { expectedHeadSha: headSha },
+                  {
+                    expectedHeadSha: headSha,
+                    expectedPullRequest: { repository: observation.repository },
+                  },
                 ),
             });
           }),

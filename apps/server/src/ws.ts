@@ -184,6 +184,7 @@ import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { repositoryFromPullRequestUrl } from "./pullRequestMonitor/PullRequestMonitorAssociationReactor.ts";
+import { buildCreatedPullRequestLink } from "./pullRequestMonitor/createdPullRequestHandoff.ts";
 import * as PullRequestMonitors from "./pullRequestMonitor/PullRequestMonitorService.ts";
 import { CollaborativeAcceptanceCoordinator } from "./collaborativeAcceptance/Coordinator.ts";
 import { acceptanceAuthorityForThread } from "./collaborativeAcceptance/authority.ts";
@@ -2362,26 +2363,45 @@ const makeWsRpcLayer = (
                     onFailure: (cause) => Queue.failCause(queue, cause),
                     onSuccess: (result) =>
                       Effect.gen(function* () {
-                        const createdPrNumber = result.pr.number;
                         const projectId = input.projectId;
                         const threadId = input.threadId;
+                        const createdLink =
+                          projectId !== undefined && threadId !== undefined
+                            ? buildCreatedPullRequestLink({
+                                status: result.pr.status,
+                                url: result.pr.url,
+                                number: result.pr.number,
+                                title: result.pr.title,
+                                baseBranch: result.pr.baseBranch,
+                                headBranch: result.pr.headBranch,
+                              })
+                            : null;
                         if (
-                          result.pr.status === "created" &&
-                          typeof createdPrNumber === "number" &&
+                          createdLink !== null &&
                           projectId !== undefined &&
                           threadId !== undefined
                         ) {
+                          yield* orchestrationEngine
+                            .dispatch({
+                              type: "thread.pull-request.link",
+                              commandId: CommandId.make(
+                                `server:created-pr:${threadId}:${createdLink.pullRequest.number}:${crypto.randomUUID()}`,
+                              ),
+                              threadId,
+                              pullRequest: createdLink.pullRequest,
+                              source: "created",
+                            })
+                            .pipe(Effect.ignore({ log: true }));
                           const settingsResult = yield* Effect.result(serverSettings.getSettings);
                           const enabled =
                             Result.isSuccess(settingsResult) &&
                             settingsResult.success.autoMonitorPullRequestsOnCreate === true;
-                          const repository = repositoryFromPullRequestUrl(result.pr.url);
-                          if (enabled && repository) {
+                          if (enabled) {
                             yield* withPullRequestMonitors((service) =>
                               service.start({
                                 projectId,
-                                repository,
-                                number: createdPrNumber,
+                                repository: createdLink.repository,
+                                number: createdLink.pullRequest.number,
                                 ownerThreadId: threadId,
                               }),
                             ).pipe(Effect.ignore({ log: true }));

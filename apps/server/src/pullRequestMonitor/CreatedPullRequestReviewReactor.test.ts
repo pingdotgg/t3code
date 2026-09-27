@@ -255,7 +255,7 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "acceptance-review:case-42:candidate-42:review-changes:1",
         },
-        pullRequestNumber: 42,
+        pullRequest: { repository: "owner/repo", number: 42 },
         readCurrentThread: () => Effect.succeed(current),
         cancelLegacySelfReview: () =>
           Effect.sync(() => {
@@ -291,8 +291,87 @@ describe("created pull-request review reconciliation", () => {
           workflowId: "review-changes",
           idempotencyKey: "review-42",
         },
-        pullRequestNumber: 42,
+        pullRequest: { repository: "owner/repo", number: 42 },
         readCurrentThread: () => Effect.succeed(active),
+        cancelLegacySelfReview: () => Effect.void,
+        runWorkflow: () =>
+          Effect.sync(() => {
+            launched = true;
+          }),
+      }),
+    );
+
+    assert.isFalse(launched);
+  });
+
+  it("does not launch when the PR link was removed before dispatch", async () => {
+    let launched = false;
+    const unlinked = thread([]);
+
+    await Effect.runPromise(
+      dispatchAutomaticReviewWorkflow({
+        request: {
+          caseId: CollaborativeAcceptanceCaseId.make("case-42"),
+          candidateId: CollaborativeAcceptanceCandidateId.make("candidate-42"),
+          headSha: "head-42",
+          workflowId: "review-changes",
+          idempotencyKey: "review-42",
+        },
+        pullRequest: { repository: "owner/repo", number: 42 },
+        readCurrentThread: () => Effect.succeed(unlinked),
+        cancelLegacySelfReview: () => Effect.void,
+        runWorkflow: () =>
+          Effect.sync(() => {
+            launched = true;
+          }),
+      }),
+    );
+
+    assert.isFalse(launched);
+  });
+
+  it("does not launch when the observed PR is no longer open", async () => {
+    let launched = false;
+    const current = thread([link("created")]);
+
+    await Effect.runPromise(
+      dispatchAutomaticReviewWorkflow({
+        request: {
+          caseId: CollaborativeAcceptanceCaseId.make("case-42"),
+          candidateId: CollaborativeAcceptanceCandidateId.make("candidate-42"),
+          headSha: "head-42",
+          workflowId: "review-changes",
+          idempotencyKey: "review-42",
+        },
+        pullRequest: { repository: "owner/repo", number: 42 },
+        observationState: "closed",
+        readCurrentThread: () => Effect.succeed(current),
+        cancelLegacySelfReview: () => Effect.void,
+        runWorkflow: () =>
+          Effect.sync(() => {
+            launched = true;
+          }),
+      }),
+    );
+
+    assert.isFalse(launched);
+  });
+
+  it("does not launch on repository mismatch at the dispatch boundary", async () => {
+    let launched = false;
+    const current = thread([link("created")]);
+
+    await Effect.runPromise(
+      dispatchAutomaticReviewWorkflow({
+        request: {
+          caseId: CollaborativeAcceptanceCaseId.make("case-42"),
+          candidateId: CollaborativeAcceptanceCandidateId.make("candidate-42"),
+          headSha: "head-42",
+          workflowId: "review-changes",
+          idempotencyKey: "review-42",
+        },
+        pullRequest: { repository: "owner/other", number: 42 },
+        readCurrentThread: () => Effect.succeed(current),
         cancelLegacySelfReview: () => Effect.void,
         runWorkflow: () =>
           Effect.sync(() => {
