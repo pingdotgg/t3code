@@ -19,6 +19,7 @@ import {
   EnvironmentId,
   EventId,
   GitCommandError,
+  GitManagerError,
   type GitRunStackedActionResult,
   KeybindingRule,
   MessageId,
@@ -5834,6 +5835,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       };
       const actionResults = [createdResult, existingResult];
       const automationCalls: Array<{ readonly type: string; readonly input: unknown }> = [];
+      const handoffFailure = Effect.fail(
+        new GitManagerError({
+          operation: "linkCreatedPullRequest",
+          detail: "The durable handoff will retry.",
+        }),
+      );
       let resultIndex = 0;
 
       yield* buildAppUnderTest({
@@ -5849,10 +5856,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.sync(() => {
                 automationCalls.push({ type: "intent", input });
               }),
-            handleCreatedResult: (input) =>
-              Effect.sync(() => {
-                automationCalls.push({ type: "created", input });
-              }),
+            handleCreatedResult: (input) => {
+              automationCalls.push({ type: "created", input });
+              return input.actionId === "handoff-failure-action" ? handoffFailure : Effect.void;
+            },
           },
           gitManager: {
             invalidateLocalStatus: () => Effect.void,
@@ -5920,7 +5927,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-      for (const actionId of ["created-action", "existing-action"]) {
+      for (const actionId of ["handoff-failure-action", "existing-action"]) {
         yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             client[WS_METHODS.gitRunStackedAction]({
@@ -5939,7 +5946,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ["intent", "created"],
       );
       assert.deepStrictEqual(automationCalls[0]?.input, {
-        actionId: "created-action",
+        actionId: "handoff-failure-action",
         threadId,
         projectId,
         cwd: "/tmp/repo",
@@ -5950,7 +5957,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         headSha: "0123456789abcdef",
       });
       assert.deepStrictEqual(automationCalls[1]?.input, {
-        actionId: "created-action",
+        actionId: "handoff-failure-action",
         threadId,
         projectId,
         cwd: "/tmp/repo",

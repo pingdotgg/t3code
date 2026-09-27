@@ -131,21 +131,22 @@ const makeHarness = (
     readonly commands: ReadonlyArray<OrchestrationCommand>;
     readonly lookups: ReadonlyArray<{ cwd: string; headSelector: string }>;
     readonly advanceTime: () => Effect.Effect<void>;
+    readonly archiveThread: () => Effect.Effect<void>;
   }) => Effect.Effect<void, unknown>,
 ) =>
   Effect.gen(function* () {
-    const model = yield* makeReadModel();
+    let readModel = yield* makeReadModel();
     const commands: OrchestrationCommand[] = [];
     const lookups: Array<{ cwd: string; headSelector: string }> = [];
     const layer = Layer.mergeAll(
       PullRequestCreationIntentRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
       SqlitePersistenceMemory,
       Layer.mock(OrchestrationEngineService)({
-        getReadModel: () => Effect.succeed(model),
+        getReadModel: () => Effect.succeed(readModel),
         dispatch: (command) =>
           Effect.sync(() => {
             commands.push(command);
-            return { sequence: model.snapshotSequence + commands.length };
+            return { sequence: readModel.snapshotSequence + commands.length };
           }),
       }),
       Layer.mock(GitHubCli)({
@@ -166,6 +167,16 @@ const makeHarness = (
         commands,
         lookups,
         advanceTime: () => TestClock.adjust("31 seconds"),
+        archiveThread: () =>
+          Effect.sync(() => {
+            readModel = {
+              ...readModel,
+              threads: readModel.threads.map((thread) => ({
+                ...thread,
+                archivedAt: now,
+              })),
+            };
+          }),
       });
     }).pipe(Effect.provide(layer));
   });
@@ -272,6 +283,25 @@ it.effect("keeps a same-branch PR unassociated when its head differs from the in
           assert.equal(stored.value.attemptCount, 1);
           assert.equal(stored.value.nextAttemptAt, "1970-01-01T00:01:01.000Z");
         }
+      }),
+  ),
+);
+
+it.effect("discards pending creation intents when their thread has been archived", () =>
+  makeHarness(
+    [githubSummary()],
+    ({ automation, repository, commands, advanceTime, archiveThread }) =>
+      Effect.gen(function* () {
+        yield* automation.recordIntent(creationIntent);
+        yield* archiveThread();
+        yield* advanceTime();
+        yield* automation.recoverPending();
+
+        assert.deepStrictEqual(commands, []);
+        assert.deepStrictEqual(
+          Option.getOrNull(yield* repository.getByActionId({ actionId: creationIntent.actionId })),
+          null,
+        );
       }),
   ),
 );

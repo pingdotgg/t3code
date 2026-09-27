@@ -366,6 +366,7 @@ export const makePullRequestCreationAutomation = () =>
         if (
           !thread ||
           thread.deletedAt !== null ||
+          thread.archivedAt !== null ||
           thread.projectId !== intent.projectId ||
           !project ||
           !workspaceMatchesIntent({ intent, thread, project, readModel })

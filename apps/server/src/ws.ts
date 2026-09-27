@@ -2384,13 +2384,25 @@ const makeWsRpcLayer = (
                           projectId !== undefined &&
                           threadId !== undefined
                         ) {
-                          yield* pullRequestCreationAutomation.handleCreatedResult({
-                            actionId: input.actionId,
-                            threadId,
-                            projectId,
-                            cwd: input.cwd,
-                            pullRequest: result.pr,
-                          });
+                          const handoffResult = yield* Effect.result(
+                            pullRequestCreationAutomation.handleCreatedResult({
+                              actionId: input.actionId,
+                              threadId,
+                              projectId,
+                              cwd: input.cwd,
+                              pullRequest: result.pr,
+                            }),
+                          );
+                          if (Result.isFailure(handoffResult)) {
+                            yield* Effect.logWarning(
+                              "created PR handoff failed; durable recovery will retry",
+                              {
+                                actionId: input.actionId,
+                                operation: handoffResult.failure.operation,
+                                detail: handoffResult.failure.detail,
+                              },
+                            );
+                          }
                         }
                         if (
                           result.pr.status === "created" &&
