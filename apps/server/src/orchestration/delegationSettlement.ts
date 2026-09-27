@@ -169,6 +169,7 @@ function completionState(activity: OrchestrationThread["activities"][number] | u
 export function delegationStallEpisode(
   readModel: OrchestrationReadModel,
   child: OrchestrationThread,
+  now: string,
   childrenByParent?: DelegationChildrenByParent,
 ): DelegationStallEpisode | null {
   const delegation = child.nudging?.delegation;
@@ -282,10 +283,10 @@ export function delegationStallEpisode(
   }
 
   const settlementNotBefore = delegationSettlementNotBefore(child);
-  if (settlementNotBefore !== null && Date.parse(settlementNotBefore) > Date.now()) {
+  if (settlementNotBefore !== null && Date.parse(now) < settlementNotBefore) {
     return null;
   }
-  if (settleDelegation(readModel, child, indexedChildren) !== null) return null;
+  if (settleDelegation(readModel, child, now, indexedChildren) !== null) return null;
 
   return {
     id: stallId(child, [
@@ -298,7 +299,7 @@ export function delegationStallEpisode(
   };
 }
 
-export function delegationSettlementNotBefore(child: OrchestrationThread): string | null {
+export function delegationSettlementNotBefore(child: OrchestrationThread): number | null {
   const latestTurn = child.latestTurn;
   if (!latestTurn) {
     return null;
@@ -324,14 +325,13 @@ export function delegationSettlementNotBefore(child: OrchestrationThread): strin
     return null;
   }
   const timestamp = Date.parse(settledAt);
-  return Number.isFinite(timestamp)
-    ? new Date(timestamp + SETTLEMENT_GRACE_MS).toISOString()
-    : null;
+  return Number.isFinite(timestamp) ? timestamp + SETTLEMENT_GRACE_MS : null;
 }
 
 export function settleDelegation(
   readModel: OrchestrationReadModel,
   child: OrchestrationThread,
+  now: string,
   childrenByParent?: DelegationChildrenByParent,
 ): DelegationSettlement | null {
   const delegation = child.nudging?.delegation;
@@ -373,12 +373,11 @@ export function settleDelegation(
     (activity) =>
       activity.kind === "insights.turn.completed" && activity.turnId === latestTurn.turnId,
   );
-  if (
-    latestTurn.state === "completed" &&
-    completion === undefined &&
-    Date.parse(delegationSettlementNotBefore(child) ?? "") > Date.now()
-  ) {
-    return null;
+  if (latestTurn.state === "completed" && completion === undefined) {
+    const settlementNotBefore = delegationSettlementNotBefore(child);
+    if (settlementNotBefore !== null && Date.parse(now) < settlementNotBefore) {
+      return null;
+    }
   }
   const state = completionState(completion);
   const outcome =

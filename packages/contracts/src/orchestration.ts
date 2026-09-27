@@ -2032,6 +2032,7 @@ const ThreadDelegationSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.delegation.settle"),
   commandId: CommandId,
   threadId: ThreadId,
+  settledAt: IsoDateTime,
 });
 
 const ThreadDelegationStallCommand = Schema.Struct({

@@ -4611,7 +4611,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const childrenByParent = indexDelegationChildren(readModel.threads);
-      const settlement = settleDelegation(readModel, child, childrenByParent);
+      const settlement = settleDelegation(readModel, child, command.settledAt, childrenByParent);
       if (!settlement) return [];
       return appendDelegationSettlement({
         readModel,
@@ -4628,7 +4628,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const childrenByParent = indexDelegationChildren(readModel.threads);
-      const episode = delegationStallEpisode(readModel, child, childrenByParent);
+      const episode = delegationStallEpisode(readModel, child, command.createdAt, childrenByParent);
       if (!episode || episode.id !== command.stallId || episode.summary !== command.summary) {
         return [];
       }

@@ -172,6 +172,7 @@ async function apply(
         type: "thread.delegation.settle",
         commandId: CommandId.make(`settle-${command.commandId}`),
         threadId: command.threadId,
+        settledAt: command.completedAt,
       },
       undefined,
       false,
@@ -1158,6 +1159,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-before-insights"),
       threadId: child.id,
+      settledAt: completedAt,
     };
 
     const beforeInsights = await apply(model(child), settle);
@@ -1195,16 +1197,26 @@ describe("child nudging", () => {
   it("settles a completed delegated turn from its turn state after the insights grace", async () => {
     const child = thread("child", true);
     child.activities = [];
-    const completedAt = new Date(Date.now() - 3_000).toISOString();
+    const completedAt = finished;
     child.latestTurn = { ...child.latestTurn!, completedAt };
     child.updatedAt = completedAt;
 
-    const settled = await apply(model(child), {
+    const beforeGrace = await apply(model(child), {
+      type: "thread.delegation.settle",
+      commandId: CommandId.make("settle-inside-insights-grace"),
+      threadId: child.id,
+      settledAt: "2026-09-09T00:01:01.000Z",
+    });
+
+    expect(beforeGrace.events).toEqual([]);
+    expect(beforeGrace.readModel.threads[1]!.nudging?.delegation?.completedAt).toBeNull();
+
+    const settled = await apply(beforeGrace.readModel, {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-after-insights-grace"),
       threadId: child.id,
+      settledAt: "2026-09-09T00:01:03.000Z",
     });
-
     expect(settled.readModel.threads[1]!.nudging?.delegation).toMatchObject({
       completedAt,
       outcome: "result-available",
@@ -1281,6 +1293,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-provider-completion"),
       threadId: child.id,
+      settledAt: finished,
     });
     expect(settled.readModel.threads[1]!.nudging?.delegation).toMatchObject({
       outcome: "result-available",
@@ -1295,6 +1308,7 @@ describe("child nudging", () => {
           type: "thread.delegation.settle",
           commandId: CommandId.make("settle-provider-completion-again"),
           threadId: child.id,
+          settledAt: finished,
         })
       ).events,
     ).toEqual([]);
@@ -1344,6 +1358,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-after-checkpoint"),
       threadId: child.id,
+      settledAt: finished,
     });
     expect(settled.readModel.threads[1]!.nudging?.delegation?.completedAt).toBe(finished);
     expect(settled.readModel.threads[0]!.queuedTurns![0]!.origin).toMatchObject({
@@ -1356,6 +1371,7 @@ describe("child nudging", () => {
           type: "thread.delegation.settle",
           commandId: CommandId.make("settle-after-checkpoint-again"),
           threadId: child.id,
+          settledAt: finished,
         })
       ).events,
     ).toEqual([]);
@@ -1374,6 +1390,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-child"),
       threadId: child.id,
+      settledAt: finished,
     };
     const first = await apply(model(child), settle);
     expect(first.readModel.threads[1]!.nudging?.delegation?.completedAt).toBe(finished);
@@ -1762,6 +1779,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-stop"),
       threadId: child.id,
+      settledAt: "2026-09-09T00:01:03.000Z",
     });
     expect(settlement.readModel.threads[1]!.nudging?.delegation).toMatchObject({
       completedAt: finished,
@@ -1771,6 +1789,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-stop-again"),
       threadId: child.id,
+      settledAt: "2026-09-09T00:01:03.000Z",
     });
     expect(duplicate.events).toEqual([]);
   });
@@ -1846,6 +1865,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("premature-steer-settlement"),
       threadId: child.id,
+      settledAt: "2026-09-09T00:01:01.000Z",
     });
     expect(premature.events).toEqual([]);
 
@@ -1910,6 +1930,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-steered-turn"),
       threadId: child.id,
+      settledAt: finished,
     });
     expect(settlement.readModel.threads[1]!.nudging?.delegation).toMatchObject({
       completedAt,
@@ -1932,6 +1953,7 @@ describe("child nudging", () => {
       type: "thread.delegation.settle",
       commandId: CommandId.make("settle-paused-child-assignment"),
       threadId: child.id,
+      settledAt: finished,
     });
 
     expect(settlement.readModel.threads[1]!.nudging?.delegation).toMatchObject({

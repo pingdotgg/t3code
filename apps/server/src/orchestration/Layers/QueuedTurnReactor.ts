@@ -559,16 +559,18 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
 
   const settleThreadIfReady = (index: ThreadReadModelIndex, thread: OrchestrationThread) =>
     Effect.gen(function* () {
-      const settlement = settleDelegation(index.readModel, thread, index.childrenByParentId);
+      const now = new Date().toISOString();
+      const nowMs = Date.parse(now);
+      const settlement = settleDelegation(index.readModel, thread, now, index.childrenByParentId);
       const notBefore = delegationSettlementNotBefore(thread);
       if (
         notBefore !== null &&
-        Date.parse(notBefore) > Date.now() &&
+        notBefore > nowMs &&
         (settlement !== null ||
           (thread.nudging?.delegation?.completedAt === null &&
             thread.latestTurn?.state === "completed"))
       ) {
-        yield* scheduleDelegationSettlementWake(thread.id, notBefore);
+        yield* scheduleDelegationSettlementWake(thread.id, new Date(notBefore).toISOString());
         return settlement !== null;
       }
       if (settlement) {
@@ -576,10 +578,11 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
           type: "thread.delegation.settle",
           commandId: serverCommandId("delegation.settle"),
           threadId: thread.id,
+          settledAt: now,
         });
         return true;
       }
-      const stall = delegationStallEpisode(index.readModel, thread, index.childrenByParentId);
+      const stall = delegationStallEpisode(index.readModel, thread, now, index.childrenByParentId);
       if (!stall) return false;
       const settings = yield* serverSettings.getSettings;
       const dueAt = new Date(
@@ -595,7 +598,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         threadId: thread.id,
         stallId: stall.id,
         summary: stall.summary,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
       });
       return false;
     }).pipe(
