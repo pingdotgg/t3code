@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - native inference needs a killable process, not an interruptible JS promise.
 import * as NodeChildProcess from "node:child_process";
-import * as Effect from "effect/Effect";
 import type { SpeechStreamText } from "@t3tools/contracts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
@@ -227,9 +226,20 @@ export async function loadNativeSpeechModel(
     reset: async () => {
       const inFlight = pending?.promise;
       if (inFlight) {
-        await Effect.runPromise(
-          Effect.promise(() => inFlight.catch(() => undefined)).pipe(Effect.timeout("1 second")),
-        );
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            inFlight.catch(() => undefined),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error("Speech stream reset timed out.")),
+                1_000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
       }
       await send({ kind: "reset" });
     },
