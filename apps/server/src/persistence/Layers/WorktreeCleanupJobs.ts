@@ -1,8 +1,10 @@
 import { Clock, Effect, Layer, Option, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { EventId } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
+import { redactAuditPayload } from "../../orchestration/auditRedaction.ts";
 import {
   WorktreeCleanupFailureResult,
   WorktreeCleanupIntent,
@@ -20,6 +22,81 @@ const ReservationByPathRequest = Schema.Struct({
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  const recordAuditTransition = (input: {
+    readonly threadId: WorktreeCleanupJob["threadId"];
+    readonly eventType:
+      | "cleanup.requested"
+      | "cleanup.queued"
+      | "cleanup.started"
+      | "cleanup.completed"
+      | "cleanup.failed"
+      | "cleanup.cancelled";
+    readonly suffix: string;
+    readonly occurredAt: string;
+    readonly payload: unknown;
+  }) =>
+    Effect.gen(function* () {
+      const linked = yield* sql<{
+        readonly operationId: string;
+        readonly attemptId: string;
+        readonly sourceThreadId: string;
+        readonly sourceTurnId: string | null;
+        readonly sourceMessageId: string | null;
+        readonly contextJson: string;
+      }>`
+        SELECT
+          operation_id AS "operationId",
+          attempt_id AS "attemptId",
+          source_thread_id AS "sourceThreadId",
+          source_turn_id AS "sourceTurnId",
+          source_message_id AS "sourceMessageId",
+          context_json AS "contextJson"
+        FROM delegation_audit_events
+        WHERE child_thread_id = ${input.threadId}
+          AND attempt_id IS NOT NULL
+        ORDER BY sequence DESC
+        LIMIT 1
+      `;
+      const attempt = linked[0];
+      if (!attempt) return;
+
+      const safe = redactAuditPayload(input.payload);
+      yield* sql`
+        INSERT OR IGNORE INTO delegation_audit_events (
+          event_id,
+          operation_id,
+          attempt_id,
+          source_thread_id,
+          source_turn_id,
+          source_message_id,
+          child_thread_id,
+          event_type,
+          occurred_at,
+          evidence_status,
+          redacted,
+          context_json,
+          payload_json
+        )
+        VALUES (
+          ${EventId.make(
+            `delegation-audit:${attempt.operationId}:${attempt.attemptId}:${input.eventType}:${input.suffix}`,
+          )},
+          ${attempt.operationId},
+          ${attempt.attemptId},
+          ${attempt.sourceThreadId},
+          ${attempt.sourceTurnId},
+          ${attempt.sourceMessageId},
+          ${input.threadId},
+          ${input.eventType},
+          ${input.occurredAt},
+          ${safe.evidenceStatus},
+          ${safe.redacted ? 1 : 0},
+          ${attempt.contextJson},
+          ${JSON.stringify(safe.payload)}
+        )
+      `;
+    });
 
   const getJobRow = SqlSchema.findOneOption({
     Request: ThreadRequest,
@@ -261,6 +338,17 @@ const make = Effect.gen(function* () {
           WHERE thread_id = ${input.threadId}
             AND status = 'waiting'
         `;
+        yield* recordAuditTransition({
+          threadId: input.threadId,
+          eventType: "cleanup.started",
+          suffix: `${eligibleJob.value.attemptCount}:${input.reservedAt}`,
+          occurredAt: input.reservedAt,
+          payload: {
+            jobId: input.threadId,
+            status: "removing",
+            attemptCount: eligibleJob.value.attemptCount,
+          },
+        });
 
         return Option.some({
           cleanup: { ...eligibleJob.value, status: "removing" as const },
@@ -298,7 +386,25 @@ const make = Effect.gen(function* () {
             last_error = ${input.error ?? null}
           WHERE thread_id = ${input.threadId}
         `;
-        return yield* getJobRow({ threadId: input.threadId });
+        const updated = yield* getJobRow({ threadId: input.threadId });
+        if (Option.isSome(updated) && current.value.status !== updated.value.status) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId: input.threadId,
+            eventType: "cleanup.failed",
+            suffix: `${updated.value.status}:${updated.value.attemptCount}:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: input.threadId,
+              status: updated.value.status,
+              attemptCount: updated.value.attemptCount,
+              reason: updated.value.lastReason,
+              error: updated.value.lastError,
+              reconciliationRequired: true,
+            },
+          });
+        }
+        return updated;
       }),
     );
 
@@ -321,7 +427,23 @@ const make = Effect.gen(function* () {
             next_attempt_at = NULL
           WHERE thread_id = ${threadId}
         `;
-        return yield* getJobRow({ threadId });
+        const updated = yield* getJobRow({ threadId });
+        if (Option.isSome(updated)) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId,
+            eventType: "cleanup.completed",
+            suffix: `${updated.value.attemptCount}:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: threadId,
+              status: updated.value.status,
+              attemptCount: updated.value.attemptCount,
+              reason: updated.value.lastReason,
+            },
+          });
+        }
+        return updated;
       }),
     );
 
@@ -346,7 +468,23 @@ const make = Effect.gen(function* () {
           WHERE thread_id = ${threadId}
             AND status = 'waiting'
         `;
-        return yield* getJobRow({ threadId });
+        const updated = yield* getJobRow({ threadId });
+        if (Option.isSome(updated)) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId,
+            eventType: "cleanup.completed",
+            suffix: `${updated.value.attemptCount}:already-absent:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: threadId,
+              status: updated.value.status,
+              attemptCount: updated.value.attemptCount,
+              reason: updated.value.lastReason,
+            },
+          });
+        }
+        return updated;
       }),
     );
 
@@ -382,7 +520,26 @@ const make = Effect.gen(function* () {
           DELETE FROM worktree_cleanup_reservations
           WHERE thread_id = ${input.threadId}
         `;
-        return yield* getJobRow({ threadId: input.threadId });
+        const updated = yield* getJobRow({ threadId: input.threadId });
+        if (Option.isSome(updated)) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId: input.threadId,
+            eventType: "cleanup.queued",
+            suffix: `deferred:${updated.value.attemptCount}:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: input.threadId,
+              status: updated.value.status,
+              attemptCount: updated.value.attemptCount,
+              nextAttemptAt: updated.value.nextAttemptAt,
+              reason: updated.value.lastReason,
+              error: updated.value.lastError,
+              reconciliationRequired: true,
+            },
+          });
+        }
+        return updated;
       }),
     );
 
@@ -410,7 +567,25 @@ const make = Effect.gen(function* () {
           WHERE thread_id = ${input.threadId}
             AND status = 'needs-attention'
         `;
-        return yield* getJobRow({ threadId: input.threadId });
+        const updated = yield* getJobRow({ threadId: input.threadId });
+        if (Option.isSome(updated)) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId: input.threadId,
+            eventType: "cleanup.queued",
+            suffix: `retry:${updated.value.attemptCount}:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: input.threadId,
+              status: updated.value.status,
+              attemptCount: updated.value.attemptCount,
+              nextAttemptAt: updated.value.nextAttemptAt,
+              reason: updated.value.lastReason,
+              reconciliationRequired: false,
+            },
+          });
+        }
+        return updated;
       }),
     );
 
@@ -440,13 +615,33 @@ const make = Effect.gen(function* () {
           WHERE thread_id = ${input.threadId}
             AND status = 'removing'
         `;
-        return yield* getJobRow({ threadId: input.threadId });
+        const updated = yield* getJobRow({ threadId: input.threadId });
+        if (Option.isSome(updated)) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId: input.threadId,
+            eventType: "cleanup.queued",
+            suffix: `recovered:${updated.value.attemptCount}:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: input.threadId,
+              status: updated.value.status,
+              attemptCount: updated.value.attemptCount,
+              nextAttemptAt: updated.value.nextAttemptAt,
+              reason: input.reason,
+              reconciliationRequired: true,
+              priorStatus: "removing",
+            },
+          });
+        }
+        return updated;
       }),
     );
 
   const cancelJob = (threadId: WorktreeCleanupJob["threadId"]) =>
     sql.withTransaction(
       Effect.gen(function* () {
+        const current = yield* getJobRow({ threadId });
         yield* sql`
           DELETE FROM worktree_cleanup_reservations
           WHERE thread_id = ${threadId}
@@ -466,6 +661,25 @@ const make = Effect.gen(function* () {
           WHERE thread_id = ${threadId}
             AND status IN ('waiting', 'needs-attention')
         `;
+        if (
+          Option.isSome(current) &&
+          (current.value.status === "waiting" || current.value.status === "needs-attention")
+        ) {
+          const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* recordAuditTransition({
+            threadId,
+            eventType: "cleanup.cancelled",
+            suffix: `${current.value.attemptCount}:${occurredAt}`,
+            occurredAt,
+            payload: {
+              jobId: threadId,
+              status: "cancelled",
+              attemptCount: current.value.attemptCount,
+              reason: current.value.lastReason ?? "explicitly-cancelled",
+              reconciliationRequired: false,
+            },
+          });
+        }
       }),
     );
 
@@ -509,6 +723,24 @@ const make = Effect.gen(function* () {
           `;
 
           const updated = yield* getJobRow({ threadId: input.threadId });
+          if (Option.isSome(updated)) {
+            const job = updated.value;
+            yield* recordAuditTransition({
+              threadId: input.threadId,
+              eventType: "cleanup.failed",
+              suffix: `${job.status}:${job.attemptCount}:${now}`,
+              occurredAt: now,
+              payload: {
+                jobId: input.threadId,
+                status: job.status,
+                attemptCount: job.attemptCount,
+                nextAttemptAt: job.nextAttemptAt,
+                reason: job.lastReason,
+                error: job.lastError,
+                reconciliationRequired: job.status === "needs-attention",
+              },
+            });
+          }
           return Option.map(updated, (job) => ({
             attemptCount: job.attemptCount,
             status: job.status,
@@ -522,19 +754,64 @@ const make = Effect.gen(function* () {
 
   return {
     enqueue: (intent) =>
-      enqueueJob(intent).pipe(
-        Effect.flatMap(() => getJobRow({ threadId: intent.threadId })),
-        Effect.flatMap((job) =>
-          Option.isSome(job)
-            ? Effect.succeed(job.value)
-            : Effect.die(
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const previous = yield* getJobRow({ threadId: intent.threadId });
+            yield* enqueueJob(intent);
+            const job = yield* getJobRow({ threadId: intent.threadId });
+            if (Option.isNone(job)) {
+              return yield* Effect.die(
                 new Error(
                   `Worktree cleanup intent disappeared while enqueueing ${intent.threadId}`,
                 ),
-              ),
-        ),
-        Effect.mapError(toPersistenceSqlError("WorktreeCleanupJobRepository.enqueue:query")),
-      ),
+              );
+            }
+            const previousIsTerminal =
+              Option.isSome(previous) &&
+              ["cancelled", "completed", "needs-attention"].includes(previous.value.status);
+            const isNewIntent =
+              Option.isNone(previous) ||
+              (intent.allowTerminalReset && previousIsTerminal) ||
+              (intent.allowTerminalReset &&
+                Option.isSome(previous) &&
+                previous.value.status === "waiting" &&
+                previous.value.requestedAt !== intent.requestedAt);
+            if (job.value.status === "waiting" && isNewIntent) {
+              yield* recordAuditTransition({
+                threadId: intent.threadId,
+                eventType: "cleanup.requested",
+                suffix: `requested:${intent.requestedAt}`,
+                occurredAt: intent.requestedAt,
+                payload: {
+                  jobId: intent.threadId,
+                  status: "pending-enqueue",
+                  worktreePath: job.value.worktreePath,
+                  canonicalWorktreePath: job.value.canonicalWorktreePath,
+                  requestedAt: job.value.requestedAt,
+                },
+              });
+              yield* recordAuditTransition({
+                threadId: intent.threadId,
+                eventType: "cleanup.queued",
+                suffix: `queued:${job.value.attemptCount}:${job.value.requestedAt}`,
+                occurredAt: intent.requestedAt,
+                payload: {
+                  jobId: intent.threadId,
+                  status: job.value.status,
+                  attemptCount: job.value.attemptCount,
+                  nextAttemptAt: job.value.nextAttemptAt,
+                  worktreePath: job.value.worktreePath,
+                  canonicalWorktreePath: job.value.canonicalWorktreePath,
+                  reason: job.value.lastReason,
+                  reconciliationRequired: false,
+                },
+              });
+            }
+            return job.value;
+          }),
+        )
+        .pipe(Effect.mapError(toPersistenceSqlError("WorktreeCleanupJobRepository.enqueue:query"))),
     list: () =>
       listJobs(undefined).pipe(
         Effect.mapError(toPersistenceSqlError("WorktreeCleanupJobRepository.list:query")),

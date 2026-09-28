@@ -1,6 +1,7 @@
 import {
   CheckpointRef,
   CommandId,
+  DelegationAuditAppendInput,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -24,10 +25,15 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { WorktreeCleanupJobRepository } from "../../persistence/Services/WorktreeCleanupJobs.ts";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
 import {
+  DelegationAuditRepository,
+  type DelegationAuditRepositoryShape,
+} from "../../persistence/Services/DelegationAudit.ts";
+import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { issueCrossThreadDispatchCapability } from "../CrossThreadDispatchCapability.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -60,6 +66,30 @@ async function createOrchestrationSystem(
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
+  const delegationAuditEvents: DelegationAuditAppendInput[] = [];
+  const delegationAuditRepository: DelegationAuditRepositoryShape = {
+    begin: (input) =>
+      Effect.succeed({
+        operationId: input.operationId,
+        sourceThreadId: input.sourceThreadId,
+        sourceTurnId: input.sourceTurnId,
+        sourceMessageId: input.sourceMessageId,
+        initiatingMessageId: input.initiatingMessageId,
+      }),
+    append: (input) => Effect.sync(() => delegationAuditEvents.push(input)),
+    page: (input) =>
+      Effect.succeed({
+        sourceThreadId: input.sourceThreadId ?? ThreadId.make("missing-source"),
+        events: [],
+        cleanupStates: [],
+        nextBeforeSequence: null,
+        hasMore: false,
+        warnings: [],
+      }),
+    getOperationSource: () => Effect.succeed(Option.none()),
+    getAttemptForChild: () => Effect.succeed(Option.none()),
+    deleteBySourceThreadId: () => Effect.void,
+  };
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(
@@ -79,6 +109,7 @@ async function createOrchestrationSystem(
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolverLive),
     Layer.provide(dbPath ? makeSqlitePersistenceLive(dbPath) : SqlitePersistenceMemory),
+    Layer.provideMerge(Layer.succeed(DelegationAuditRepository, delegationAuditRepository)),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -141,6 +172,7 @@ async function createOrchestrationSystem(
     coordinator,
     workspaceOwnership,
     worktreeCleanupJobs,
+    delegationAuditEvents,
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: async () => {
       if (dbPath === undefined) {
@@ -2087,6 +2119,166 @@ describe("OrchestrationEngine", () => {
       ),
     ).rejects.toThrow("Thread 'thread-missing' does not exist");
 
+    await system.dispose();
+  });
+
+  it("distinguishes requests after turn end beyond the recent transition window", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+    const sourceThreadId = ThreadId.make("thread-audit-source");
+    const childThreadId = ThreadId.make("thread-audit-child");
+    const sourceMessageId = MessageId.make("message-audit-source");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-audit-source"),
+        projectId: asProjectId("project-audit-source"),
+        title: "Audit source",
+        workspaceRoot: "/tmp/project-audit-source",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    for (const [threadId, commandId, title] of [
+      [sourceThreadId, "cmd-thread-audit-source", "Audit source"],
+      [childThreadId, "cmd-thread-audit-child", "Audit child"],
+    ] as const) {
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(commandId),
+          threadId,
+          projectId: asProjectId("project-audit-source"),
+          title,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+    }
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-source-message-audit"),
+        threadId: sourceThreadId,
+        message: {
+          messageId: sourceMessageId,
+          role: "user",
+          text: "source turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-source-populate-active-message"),
+        threadId: sourceThreadId,
+        createdAt,
+        session: {
+          threadId: sourceThreadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: TurnId.make("source-turn-audit"),
+          activeMessageId: sourceMessageId,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+      }),
+    );
+    for (const commandId of [
+      "cmd-source-end-turn",
+      "cmd-source-idle-update-1",
+      "cmd-source-idle-update-2",
+    ]) {
+      await system.run(
+        engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(commandId),
+          threadId: sourceThreadId,
+          createdAt,
+          session: {
+            threadId: sourceThreadId,
+            status: "stopped",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+    }
+
+    for (const commandId of [
+      "cmd-reject-cleared-message-child",
+      "cmd-retry-reject-cleared-message-child",
+    ]) {
+      await expect(
+        system.run(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(commandId),
+            threadId: childThreadId,
+            message: {
+              messageId: MessageId.make("message-audit-child"),
+              role: "user",
+              text: "child request",
+              attachments: [],
+            },
+            crossThreadSourceThreadId: sourceThreadId,
+            crossThreadDispatchCapability: issueCrossThreadDispatchCapability(sourceThreadId),
+            delegationAudit: {
+              operationId: "operation-audit-clear",
+              attemptId: "attempt-audit-clear",
+              initiatingMessageId: sourceMessageId,
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt,
+          }),
+        ),
+      ).rejects.toThrow("has no active turn");
+    }
+
+    const rejections = system.delegationAuditEvents.filter(
+      (event) => event.eventType === "turn.start.rejected",
+    );
+    expect(rejections).toHaveLength(2);
+    expect(new Set(rejections.map((event) => event.eventId)).size).toBe(2);
+    const rejection = rejections[0];
+    expect(rejection?.payload).toMatchObject({
+      code: "CROSS_THREAD_INVARIANT_REJECTED",
+      expectedInitiatingMessageId: sourceMessageId,
+      actualActiveTurnId: null,
+      actualActiveMessageId: null,
+      evidenceState: "request-after-turn-end",
+      precedingSessionTransition: {
+        command_id: "cmd-source-idle-update-2",
+        active_turn_id: null,
+        active_message_id: null,
+      },
+      lastActiveTurnTransition: {
+        command_id: "cmd-source-populate-active-message",
+        active_turn_id: "source-turn-audit",
+        active_message_id: sourceMessageId,
+      },
+    });
     await system.dispose();
   });
 

@@ -31,6 +31,7 @@ import {
   OrchestrationReadThreadResult,
   OrchestrationShellStreamItem,
   OrchestrationReadThreadInputError,
+  OrchestrationDispatchCommandError,
   ORCHESTRATION_WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -113,9 +114,34 @@ const decodeDispatchResult = HttpClientResponse.schemaBodyJson(DispatchResult);
 const decodeWsToken = HttpClientResponse.schemaBodyJson(AuthWebSocketTokenResult);
 const makeWsRpcClient = RpcClient.make(WsRpcGroup).pipe(Effect.map(withRpcDeadlines));
 const isCliRpcError = Schema.is(CliRpcError);
+const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isOrchestrationReadThreadInputError = Schema.is(OrchestrationReadThreadInputError);
-export const isDefinitiveCommandRejectionError = (error: unknown): boolean =>
-  isCliRpcError(error) && error.definitiveCommandRejection === true;
+export const isDefinitiveCommandRejectionError = (error: unknown): boolean => {
+  if (isCliRpcError(error)) {
+    return error.definitiveCommandRejection === true;
+  }
+  if (!isOrchestrationDispatchCommandError(error)) return false;
+
+  const cause = error.cause;
+  const isCommandRejection =
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    (cause._tag === "OrchestrationCommandInvariantError" ||
+      cause._tag === "OrchestrationCommandPreviouslyRejectedError");
+  if (!isCommandRejection) return false;
+
+  const detail =
+    typeof cause === "object" &&
+    cause !== null &&
+    "detail" in cause &&
+    typeof cause.detail === "string"
+      ? cause.detail
+      : "";
+  return !/delegation audit persistence (?:is not available|is unavailable)/iu.test(
+    `${error.message} ${detail}`,
+  );
+};
 const isCliLiveTargetError = Schema.is(CliLiveTargetError);
 const isCliPayloadError = Schema.is(CliPayloadError);
 

@@ -289,6 +289,18 @@ function createMockEnvironmentApi(input: {
       getThreadActivities: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getThreadActivities"],
+      getDelegationAuditPage: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["getDelegationAuditPage"],
+      beginDelegationAudit: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["beginDelegationAudit"],
+      appendDelegationAuditEvent: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["appendDelegationAuditEvent"],
+      getActivityEvidence: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["getActivityEvidence"],
       getTurnDiff: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getTurnDiff"],

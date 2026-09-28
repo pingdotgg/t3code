@@ -25,6 +25,7 @@ import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../Services/OrchestrationEventStore.ts";
+import { redactSensitiveValues } from "../../orchestration/auditRedaction.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
@@ -179,8 +180,35 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
-  const append: OrchestrationEventStoreShape["append"] = (event) =>
-    appendEventRow({
+  const redactActivityEvent = (
+    event: Omit<OrchestrationEvent, "sequence">,
+  ): Omit<OrchestrationEvent, "sequence"> => {
+    if (event.type !== "thread.activity-appended" || !("activity" in event.payload)) return event;
+    const activityPayload = event.payload.activity.payload;
+    const safe = redactSensitiveValues(activityPayload);
+    if (!safe.redacted) return event;
+    const payload =
+      safe.payload !== null && typeof safe.payload === "object" && !Array.isArray(safe.payload)
+        ? safe.payload
+        : { value: safe.payload };
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        activity: {
+          ...event.payload.activity,
+          payload: {
+            ...payload,
+            auditEvidence: { evidenceStatus: "redacted", redacted: true },
+          },
+        },
+      },
+    };
+  };
+
+  const append: OrchestrationEventStoreShape["append"] = (inputEvent) => {
+    const event = redactActivityEvent(inputEvent);
+    return appendEventRow({
       eventId: event.eventId,
       aggregateKind: event.aggregateKind,
       streamId: event.aggregateId,
@@ -205,6 +233,7 @@ const makeEventStore = Effect.gen(function* () {
         ),
       ),
     );
+  };
 
   const readFromSequence: OrchestrationEventStoreShape["readFromSequence"] = (
     sequenceExclusive,

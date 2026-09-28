@@ -108,6 +108,9 @@ import Migration0103 from "./Migrations/103_RepairActivityChronologyIndexes.ts";
 import Migration0104 from "./Migrations/104_StopTerminalPullRequestMonitors.ts";
 import Migration0105 from "./Migrations/105_ProjectionThreadPendingPullRequestAssociation.ts";
 import Migration0106 from "./Migrations/106_PullRequestCreationIntents.ts";
+import Migration0107 from "./Migrations/107_DelegationAudit.ts";
+import Migration0108 from "./Migrations/108_DelegationAuditLookupIndexes.ts";
+import Migration0109 from "./Migrations/109_DelegationAuditToolCallIndex.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -215,6 +218,9 @@ export const migrationEntries = [
   [104, "StopTerminalPullRequestMonitors", Migration0104],
   [105, "ProjectionThreadPendingPullRequestAssociation", Migration0105],
   [106, "PullRequestCreationIntents", Migration0106],
+  [107, "DelegationAudit", Migration0107],
+  [108, "DelegationAuditLookupIndexes", Migration0108],
+  [109, "DelegationAuditToolCallIndex", Migration0109],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

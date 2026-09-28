@@ -1,4 +1,4 @@
-import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -116,6 +116,59 @@ layer("OrchestrationEventStore", (it) => {
           ),
         );
       }
+    }),
+  );
+
+  it.effect("redacts MCP tool credentials before the orchestration event is persisted", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+      const threadId = ThreadId.make("thread-mcp-redaction");
+      const appended = yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-mcp-redaction"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: {
+          threadId,
+          activity: {
+            id: EventId.make("activity-mcp-redaction"),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Delegation completed",
+            payload: {
+              itemType: "mcp_tool_call",
+              data: {
+                rawInput: {
+                  toolName: "delegate_work",
+                  authorization: "Bearer never-persist-this",
+                  prompt: "Retain prompt evidence",
+                },
+                rawOutput: { content: "Retain result evidence" },
+              },
+            },
+            turnId: null,
+            createdAt: now,
+          },
+        },
+      });
+
+      const rows = yield* sql<{ readonly payloadJson: string }>`
+        SELECT payload_json AS "payloadJson"
+        FROM orchestration_events
+        WHERE event_id = ${appended.eventId}
+      `;
+      assert.equal(rows.length, 1);
+      assert.notInclude(rows[0]?.payloadJson ?? "", "never-persist-this");
+      assert.include(rows[0]?.payloadJson ?? "", "Retain prompt evidence");
+      assert.include(rows[0]?.payloadJson ?? "", "Retain result evidence");
+      assert.include(rows[0]?.payloadJson ?? "", "[REDACTED]");
     }),
   );
 });

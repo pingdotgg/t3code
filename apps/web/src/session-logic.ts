@@ -67,6 +67,7 @@ export const PROVIDER_OPTIONS: Array<{
 export interface WorkLogEntry {
   childReportId?: string;
   toolLifecycleStatus?: import("@t3tools/client-runtime/work-log/presentation").WorkLogToolLifecycleStatus;
+  toolCallId?: string;
   toolData?: unknown;
   turnId?: string;
   requestId?: string;
@@ -116,7 +117,6 @@ export interface AgentRun {
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
-  toolCallId?: string;
   turnId?: string;
 }
 
