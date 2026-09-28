@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import {
   HttpClient,
@@ -148,6 +149,43 @@ it.layer(
       expect(changed.status).toBe(200);
       expect(changed.headers["etag"]).not.toBe(etag);
       expect(yield* changed.text).toContain("next build");
+    }),
+  );
+
+  it.effect("serves static files when the platform cannot open file handles", () =>
+    Effect.gen(function* () {
+      const realFileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* realFileSystem.makeTempDirectoryScoped({
+        prefix: "t3-static-no-open-",
+      });
+      yield* realFileSystem.writeFileString(
+        path.join(staticDir, "index.html"),
+        "<html>asar</html>",
+      );
+      // Electron's asar layer stats and reads packed files but fails `open` with ENOENT.
+      const asarFileSystem = FileSystem.make({
+        ...realFileSystem,
+        open: (filePath, options) =>
+          filePath.startsWith(staticDir)
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: filePath,
+                }),
+              )
+            : realFileSystem.open(filePath, options),
+      });
+
+      const request = yield* makeStaticRequest(staticDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, asarFileSystem),
+      );
+
+      const response = yield* request("/");
+      expect(response.status).toBe(200);
+      expect(yield* response.text).toBe("<html>asar</html>");
     }),
   );
 
