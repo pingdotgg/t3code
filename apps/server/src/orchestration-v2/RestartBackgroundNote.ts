@@ -96,10 +96,15 @@ type ProviderTurnState = Pick<
  * instead resumes that turn, which Codex does natively without a prompt.
  */
 export function isRestartNoteSource(
-  source: Pick<OrchestrationV2Run, "activeAttemptId" | "restartCancelledBackgroundWork">,
+  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
 ): boolean {
   return (
+    // A failed or interrupted turn is never continued. Recovery cancels a
+    // waiting run it cannot checkpoint, so a cancelled one still qualifies.
+    (source.status === "completed" ||
+      source.status === "waiting" ||
+      source.status === "cancelled") &&
     (source.restartCancelledBackgroundWork?.length ?? 0) > 0 &&
     !providerTurns.some(
       (turn) => turn.runAttemptId === source.activeAttemptId && turn.status === "cancelled",

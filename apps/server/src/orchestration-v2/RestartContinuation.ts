@@ -3,6 +3,7 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Run,
+  type ProviderThreadId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -18,15 +19,15 @@ import {
 
 /**
  * The run a restart continuation resumes, if any: an unfinished root run, or a
- * settled one whose background work the restart cancelled (`cancelledWork`,
- * which recovery is about to record on the latest run).
+ * settled one whose own provider thread lost background work in the restart
+ * (`cancelledWorkProviderThreadIds`, which recovery records on that thread).
  */
 export function restartContinuationRun(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
     "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
   >,
-  cancelledWork = false,
+  cancelledWorkProviderThreadIds: ReadonlySet<ProviderThreadId> = new Set(),
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -38,7 +39,9 @@ export function restartContinuationRun(
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
   // Background work outlived this settled turn; the provider has no live turn.
   const settledWithCancelledWork =
-    cancelledWork && (run.status === "completed" || run.status === "waiting");
+    (run.status === "completed" || run.status === "waiting") &&
+    run.providerThreadId !== null &&
+    cancelledWorkProviderThreadIds.has(run.providerThreadId);
   if (run.status !== "running" && !preparedContinuation && !settledWithCancelledWork) return;
   const liveTurnRequired = !preparedContinuation && !settledWithCancelledWork;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
