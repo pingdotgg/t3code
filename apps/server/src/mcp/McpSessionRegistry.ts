@@ -2,6 +2,7 @@ import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -33,6 +34,13 @@ export interface McpSessionRegistryShape {
    * credential even when it goes a long time without touching an MCP tool.
    */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  /**
+   * Replaces the set of threads whose provider session is running. A
+   * credential bound to one of them, or issued within the last
+   * `RUNNING_SESSION_REPORT_INTERVAL`, counts as running and never expires;
+   * any other credential starts its liveness window.
+   */
+  readonly reportRunningThreads: (threadIds: ReadonlySet<ThreadId>) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -46,6 +54,7 @@ export class McpSessionRegistry extends Context.Service<
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpInvocationScope;
+  readonly running: boolean;
   readonly lastAliveAt: number;
 }
 
@@ -60,19 +69,23 @@ export interface McpSessionRegistryOptions {
 
 /**
  * How long a credential outlives the last sign of life from its provider
- * session.
+ * session once that session is no longer reported running.
  *
- * Liveness is refreshed both by MCP traffic and by `touch` on every provider
- * turn, so a session that is still doing work never expires no matter how long
- * it goes between browser tool calls. This window therefore only bounds
- * credentials whose session died without a clean stop — the normal paths
- * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
+ * A credential is issued running, and `ProviderService` reports the running
+ * sessions every `RUNNING_SESSION_REPORT_INTERVAL`. A running session therefore
+ * keeps its credential however long a turn waits on the user, and wall-clock
+ * time that passes while the host sleeps cannot expire it. This window only
+ * bounds credentials whose session died without a clean stop — the normal
+ * paths (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
  *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
  * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
+/** How often `ProviderService` reports which provider sessions are running. */
+export const RUNNING_SESSION_REPORT_INTERVAL = Duration.hours(1);
 
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -108,7 +121,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const pruneDead = (records: ReadonlyMap<string, CredentialRecord>, timestamp: number) => {
     const next = new Map(
       Array.from(records).filter(
-        ([, record]) => timestamp - record.lastAliveAt <= livenessWindowMs,
+        ([, record]) => record.running || timestamp - record.lastAliveAt <= livenessWindowMs,
       ),
     );
     return next.size === records.size ? records : next;
@@ -133,7 +146,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(pruneDead(records, issuedAt));
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        next.set(tokenHash, { tokenHash, scope, running: true, lastAliveAt: issuedAt });
         return { records: next };
       });
       return {
@@ -182,6 +195,27 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     },
   );
 
+  const reportRunningThreads: McpSessionRegistryShape["reportRunningThreads"] = Effect.fn(
+    "McpSessionRegistry.reportRunningThreads",
+  )(function* (threadIds) {
+    const timestamp = yield* currentTimeMillis;
+    yield* SynchronizedRef.update(state, ({ records }) => {
+      const next = new Map<string, CredentialRecord>();
+      for (const [tokenHash, record] of records) {
+        // A credential is issued before the adapter lists its session, so one
+        // issued since the previous report may belong to a session still starting.
+        const running =
+          threadIds.has(record.scope.threadId) ||
+          timestamp - record.scope.issuedAt < Duration.toMillis(RUNNING_SESSION_REPORT_INTERVAL);
+        next.set(
+          tokenHash,
+          running || record.running ? { ...record, running, lastAliveAt: timestamp } : record,
+        );
+      }
+      return { records: pruneDead(next, timestamp) };
+    });
+  });
+
   const revokeWhere = (predicate: (record: CredentialRecord) => boolean) =>
     SynchronizedRef.update(state, ({ records }) => ({
       records: new Map(Array.from(records).filter(([, record]) => !predicate(record))),
@@ -191,6 +225,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     touch,
+    reportRunningThreads,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);
@@ -238,6 +273,11 @@ export const issueActiveMcpCredential = (
  */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
+
+export const reportActiveMcpRunningThreads = (
+  threadIds: ReadonlySet<ThreadId>,
+): Effect.Effect<void> =>
+  activeMcpSessionRegistry ? activeMcpSessionRegistry.reportRunningThreads(threadIds) : Effect.void;
 
 export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;

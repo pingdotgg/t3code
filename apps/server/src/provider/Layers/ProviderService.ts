@@ -49,6 +49,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
@@ -1249,6 +1250,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     Stream.fromSubscription(instanceChanges),
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
+
+  // MCP credentials of running sessions never expire, however long a turn
+  // waits on the user. A session that died without a clean stop either drops
+  // out of `listSessions` or stays listed as closed or errored, so it leaves the
+  // report and its credential lapses.
+  yield* Effect.gen(function* () {
+    const running = new Set<ThreadId>();
+    for (const [, adapter] of yield* getAdapterEntries) {
+      for (const session of yield* adapter.listSessions()) {
+        if (session.status !== "closed" && session.status !== "error") {
+          running.add(session.threadId);
+        }
+      }
+    }
+    yield* McpSessionRegistry.reportActiveMcpRunningThreads(running);
+  }).pipe(
+    Effect.catchDefect((defect) =>
+      Effect.logWarning("failed to report running sessions to the MCP registry", { defect }),
+    ),
+    Effect.repeat(Schedule.spaced(McpSessionRegistry.RUNNING_SESSION_REPORT_INTERVAL)),
+    Effect.forkScoped,
+  );
 
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;

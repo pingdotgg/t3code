@@ -50,6 +50,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -68,6 +70,9 @@ import { makeProviderServiceLive } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import {
   makeSqlitePersistenceLive,
@@ -5358,4 +5363,116 @@ chatGptTelemetry.layer("ChatGPT connector turn analytics", (it) => {
       });
     }),
   );
+});
+
+describe("MCP credential liveness", () => {
+  const makeMcpHarness = () => {
+    const codex = makeFakeCodexAdapter();
+    const mcpRegistryLayer = McpSessionRegistry.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          HttpServer.HttpServer,
+          HttpServer.HttpServer.of({
+            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+            serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+          }),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ServerEnvironment.ServerEnvironment,
+          ServerEnvironment.ServerEnvironment.of({
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-mcp-liveness")),
+            getDescriptor: Effect.die("unused"),
+          }),
+        ),
+      ),
+    );
+    const layer = Layer.mergeAll(
+      makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistry,
+            makeStaticInstanceRegistry([[codexInstanceId, codex.adapter]]),
+          ),
+        ),
+        Layer.provide(
+          ProviderSessionDirectoryLive.pipe(
+            Layer.provide(
+              ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+            ),
+          ),
+        ),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+      mcpRegistryLayer,
+    ).pipe(Layer.provide(NodeServices.layer));
+    return { codex, layer };
+  };
+
+  const startSessionWithCredential = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("mcp-credential-liveness"),
+        runtimeMode: "full-access",
+      });
+      const config = McpProviderSession.readMcpProviderSession(threadId);
+      assert(config !== undefined);
+      return config.authorizationHeader.replace(/^Bearer\s+/, "");
+    });
+
+  // Hour by hour, so every timer due along the way fires at its own time.
+  const waitHours = (hours: number) =>
+    Effect.forEach(Array.from({ length: hours }), () => advanceTestClock(60 * 60 * 1_000), {
+      discard: true,
+    });
+
+  it.effect("keeps the credential of a live session that waits past the liveness window", () => {
+    const { layer } = makeMcpHarness();
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = asThreadId("thread-mcp-waiting-on-user");
+      const token = yield* startSessionWithCredential(threadId);
+      yield* provider.sendTurn({ threadId, input: "ask before opening the PR", attachments: [] });
+
+      // The turn waits on the user for longer than the window, with no MCP traffic.
+      yield* waitHours(44);
+
+      assert.equal((yield* registry.resolve(token))?.threadId, threadId);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("expires the credentials of sessions that died without a clean stop", () => {
+    const { codex, layer } = makeMcpHarness();
+    return Effect.gen(function* () {
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const goneThreadId = asThreadId("thread-mcp-gone");
+      const erroredThreadId = asThreadId("thread-mcp-errored");
+      const goneToken = yield* startSessionWithCredential(goneThreadId);
+      const erroredToken = yield* startSessionWithCredential(erroredThreadId);
+      // Both processes exit on their own and ProviderService never stops either
+      // session: one adapter forgets its session, the other keeps listing it.
+      yield* codex.adapter.stopSession(goneThreadId);
+      codex.updateSession(erroredThreadId, (session) => ({ ...session, status: "error" }));
+
+      // The next hourly report leaves both out; the window runs out a day later.
+      yield* waitHours(26);
+
+      assert.isUndefined(yield* registry.resolve(goneToken));
+      assert.isUndefined(yield* registry.resolve(erroredToken));
+    }).pipe(Effect.provide(layer));
+  });
 });

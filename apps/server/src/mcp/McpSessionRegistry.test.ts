@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
@@ -19,6 +20,9 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getEnvironmentId: Effect.succeed(environmentId),
   getDescriptor: Effect.die("unused"),
 });
+
+// Credentials count as running until a report after this long leaves them out.
+const reportIntervalMs = Duration.toMillis(McpSessionRegistry.RUNNING_SESSION_REPORT_INTERVAL);
 
 const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
   McpSessionRegistry.__testing
@@ -107,7 +111,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
   }),
 );
 
-it.effect("expires credentials once their session stops showing signs of life", () =>
+it.effect("expires credentials once their session stops running and showing signs of life", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;
     const registry = yield* makeRegistry(() => timestamp);
@@ -117,6 +121,11 @@ it.effect("expires credentials once their session stops showing signs of life", 
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    timestamp += reportIntervalMs;
+    yield* registry.reportRunningThreads(new Set());
+
+    timestamp += 100;
+    expect((yield* registry.resolve(token))?.threadId).toBe(ThreadId.make("thread-2"));
     timestamp += 101;
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
@@ -133,9 +142,11 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    timestamp += reportIntervalMs;
+    yield* registry.reportRunningThreads(new Set());
 
     // Well past the liveness window in total, but each turn reports in before
-    // it lapses — this is the long-session case that used to lose the toolkit.
+    // it lapses.
     for (let turn = 0; turn < 10; turn += 1) {
       timestamp += 99;
       yield* registry.touch(threadId);
@@ -155,11 +166,55 @@ it.effect("does not keep credentials of other threads alive", () =>
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    timestamp += reportIntervalMs;
+    yield* registry.reportRunningThreads(new Set([ThreadId.make("thread-unrelated")]));
 
     timestamp += 99;
     yield* registry.touch(ThreadId.make("thread-unrelated"));
     timestamp += 2;
 
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("keeps the credential of a running session however far the clock jumps", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-5");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      capabilities: new Set(),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    yield* registry.reportRunningThreads(new Set([threadId]));
+
+    // The host sleeps: wall-clock time moves far past the window while no
+    // timer fires and nothing reports in.
+    timestamp += 10_000;
+
+    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+  }),
+);
+
+it.effect("keeps a new credential running when a report misses its starting session", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const threadId = ThreadId.make("thread-6");
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    // The adapter lists the session only once it has started.
+    timestamp += 5;
+    yield* registry.reportRunningThreads(new Set());
+
+    timestamp += 10_000;
+
+    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
   }),
 );
