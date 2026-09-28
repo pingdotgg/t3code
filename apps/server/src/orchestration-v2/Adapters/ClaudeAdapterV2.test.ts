@@ -5057,6 +5057,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     return { childThreadId, toolThreadIds, assistantTexts };
   };
 
+  it.effect("a subagent re-run in the foreground does not join a later wake", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "task-foreground-rerun";
+        const toolUseId = "toolu_foreground_rerun";
+        const userTurn = (attempt: string, providerTurnOrdinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: "Go on.",
+              attachments: [],
+              providerTurnOrdinal,
+            }),
+          );
+        const result = (uuid: string) => makeResultFrame({ uuid, result: "Done." });
+        const ended = (uuid: string) =>
+          makeSubagentNotificationFrame({ taskId, toolUseId, summary: "AUDITED", uuid });
+
+        yield* userTurn("attempt-rerun-1", 1);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeSubagentTaskStartedFrame({
+            taskId,
+            toolUseId,
+            uuid: "00000000-0000-4000-8000-000000000901",
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, result("00000000-0000-4000-8000-000000000902"));
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        // The backgrounded subagent ends idle; its wake names it.
+        yield* Queue.offer(harness.sdkMessages, ended("00000000-0000-4000-8000-000000000903"));
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "subagent wake");
+        yield* Queue.offer(harness.sdkMessages, result("00000000-0000-4000-8000-000000000904"));
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-rerun-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "wake terminal");
+
+        // A later turn re-runs it in the foreground and starts a background command.
+        yield* userTurn("attempt-rerun-3", 3);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            ...makeSubagentTaskStartedFrame({
+              taskId,
+              toolUseId,
+              uuid: "00000000-0000-4000-8000-000000000905",
+            }),
+            is_backgrounded: false,
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, ended("00000000-0000-4000-8000-000000000906"));
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, result("00000000-0000-4000-8000-000000000907"));
+        yield* awaitUntil(() => harness.terminalEvents().length === 3, "third turn terminal");
+
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+        yield* awaitUntil(() => harness.continuationRequests.length === 2, "command wake");
+        assert.equal(
+          harness.continuationRequests[1]?.notification?.summary,
+          `Command "${WAKE_TASK_DESCRIPTION}" finished`,
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("keeps a subagent a queued wake turn launches with its continuation", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -5580,6 +5580,13 @@ export function makeClaudeAdapterV2(
                 });
               }
             }
+            // A resume starts the subagent again and says again whether it is backgrounded.
+            yield* Ref.update(backgroundedSubagentTaskIds, (current) => {
+              if (!current.has(message.task_id)) return current;
+              const updated = new Set(current);
+              updated.delete(message.task_id);
+              return updated;
+            });
             yield* applyBackgroundTaskRosterMessage({
               nativeThreadId: liveQuery.nativeThreadId,
               message,
