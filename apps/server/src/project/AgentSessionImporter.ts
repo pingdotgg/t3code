@@ -337,6 +337,13 @@ const readSessionProject = Effect.fn("readSessionProject")(function* (projectId:
   return project.value;
 });
 
+/** Maps each non-deleted thread holding a provider binding to whether it is archived. */
+const readBoundThreads = Effect.gen(function* () {
+  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const threads = yield* snapshots.getProviderBoundThreads();
+  return new Map(threads.map(({ threadId, archived }) => [threadId, archived]));
+});
+
 export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
   input: AgentSessionListInput,
 ) {
@@ -359,6 +366,9 @@ export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
     excludedSessions.add(
       `${source.provider}:${source.providerInstanceId}:${source.providerSessionId}`,
     );
+  const boundThreads = yield* readBoundThreads.pipe(
+    Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+  );
   const unfinishedImports = new Map<string, ThreadId>();
   for (const binding of bindings) {
     if (!Predicate.isObject(binding.resumeCursor)) continue;
@@ -369,7 +379,10 @@ export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
     if (typeof id !== "string") continue;
     const key = `${binding.provider}:${binding.providerInstanceId}:${id}`;
     if (excludedSessions.has(key)) continue;
-    if (binding.threadId.startsWith("import:")) {
+    // Deleting a thread keeps its binding, but the session is free to resume again.
+    const archived = boundThreads.get(binding.threadId);
+    if (archived === undefined) continue;
+    if (binding.threadId.startsWith("import:") && !archived) {
       unfinishedImports.set(key, binding.threadId);
       continue;
     }
@@ -416,7 +429,10 @@ export const attachAgentSession = Effect.fn("attachAgentSession")(function* (
     input.providerInstanceId,
     input.sessionId,
   );
-  const bindings = yield* directory.listBindings().pipe(
+  const [bindings, boundThreads] = yield* Effect.all([
+    directory.listBindings(),
+    readBoundThreads,
+  ]).pipe(
     Effect.mapError(
       () =>
         new AgentSessionResumeError({
@@ -425,6 +441,8 @@ export const attachAgentSession = Effect.fn("attachAgentSession")(function* (
     ),
   );
   // Native T3 threads and imported threads share the provider's session identity.
+  // An open thread wins even in another project: a second thread would fork the
+  // same provider session. Deleted threads release it.
   for (const binding of bindings) {
     if (
       binding.provider !== selected.thread.source ||
@@ -437,6 +455,14 @@ export const attachAgentSession = Effect.fn("attachAgentSession")(function* (
         ? binding.resumeCursor.resume
         : binding.resumeCursor.threadId;
     if (nativeId !== input.sessionId) continue;
+    const archived = boundThreads.get(binding.threadId);
+    if (archived === undefined) continue;
+    if (archived)
+      return yield* new AgentSessionResumeError({
+        message:
+          "This session already belongs to an archived T3 thread. Reopen that thread to continue.",
+      });
+    if (!binding.threadId.startsWith("import:")) return { threadId: binding.threadId };
     const existing = yield* snapshots
       .getThreadDetailById(binding.threadId)
       .pipe(
@@ -444,18 +470,9 @@ export const attachAgentSession = Effect.fn("attachAgentSession")(function* (
           () => new AgentSessionResumeError({ message: "Could not read the existing thread." }),
         ),
       );
-    if (
-      Option.isSome(existing) &&
-      existing.value.deletedAt === null &&
-      (!binding.threadId.startsWith("import:") || hasImportedHistory(existing.value))
-    ) {
-      if (existing.value.archivedAt !== null)
-        return yield* new AgentSessionResumeError({
-          message:
-            "This session already belongs to an archived T3 thread. Reopen that thread to continue.",
-        });
+    // An import that stopped before publishing its history is retried below.
+    if (Option.isSome(existing) && hasImportedHistory(existing.value))
       return { threadId: binding.threadId };
-    }
   }
   yield* importAgentThread({
     projectId: input.projectId,

@@ -175,11 +175,16 @@ const makeProjectedThread = (input: {
 const makeSnapshotsLayer = (input: {
   readonly project?: OrchestrationProjectShell;
   readonly getThread?: (threadId: ThreadId) => Option.Option<OrchestrationThread>;
+  readonly boundThreadIds?: ReadonlyArray<ThreadId>;
 }) =>
   Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getProjectShellById: () =>
       Effect.succeed(input.project === undefined ? Option.none() : Option.some(input.project)),
     getImportedAgentSessionSources: () => Effect.succeed([]),
+    getProviderBoundThreads: () =>
+      Effect.succeed(
+        (input.boundThreadIds ?? []).map((threadId) => ({ threadId, archived: false })),
+      ),
     getThreadDetailById: (threadId) => Effect.succeed(input.getThread?.(threadId) ?? Option.none()),
   });
 
@@ -224,7 +229,11 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         const result = yield* listAgentSessions({ projectId: PROJECT_ID }).pipe(
           Effect.provide(
             Layer.mergeAll(
-              makeSnapshotsLayer({ project: makeProject(), getThread: () => Option.some(thread) }),
+              makeSnapshotsLayer({
+                project: makeProject(),
+                getThread: () => Option.some(thread),
+                boundThreadIds: [thread.id],
+              }),
               Layer.mock(AgentSessionScanner.AgentSessionScanner)({
                 listSessions: () => Effect.succeed({ sessions: [session], truncated: false }),
               }),
@@ -797,6 +806,92 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         }),
     );
   }
+
+  it.effect("releases a deleted thread's session and keeps an archived thread's session", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const projectId = ProjectId.make("resume-deleted-native");
+      const thread = { ...makeThread("codex"), providerSessionId: "deleted-native-session" };
+      const session = {
+        provider: "codex" as const,
+        providerInstanceId: thread.providerInstanceId,
+        sessionId: thread.providerSessionId,
+        title: thread.title,
+        cwd: `${WORKSPACE_ROOT}-deleted-native`,
+        branch: null,
+        updatedAt: thread.updatedAt,
+      };
+      const scanner = AgentSessionScanner.AgentSessionScanner.of({
+        ...integrationScanner,
+        listSessions: (_root, excluded) =>
+          Effect.succeed({
+            sessions: excluded?.has(`codex:${thread.providerInstanceId}:${session.sessionId}`)
+              ? []
+              : [session],
+            truncated: false,
+          }),
+        readSession: () =>
+          Effect.succeed({ thread, source: makeThreadOutcome(thread).source, session }),
+      });
+      const withScanner = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(AgentSessionScanner.AgentSessionScanner, scanner));
+      const input = {
+        projectId,
+        providerInstanceId: thread.providerInstanceId,
+        sessionId: session.sessionId,
+      };
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make(`create-${projectId}`),
+        projectId,
+        title: "Resume",
+        workspaceRoot: session.cwd,
+        defaultModelSelection: null,
+        createdAt: "2026-08-24T09:00:00.000Z",
+      });
+      const nativeId = ThreadId.make("native-deleted");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-${nativeId}`),
+        threadId: nativeId,
+        projectId,
+        title: "Native thread",
+        modelSelection: { instanceId: thread.providerInstanceId, model: "default" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-08-24T09:00:00.000Z",
+      });
+      yield* directory.upsert({
+        threadId: nativeId,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: thread.providerInstanceId,
+        status: "stopped",
+        resumeCursor: { threadId: session.sessionId },
+      });
+      expect((yield* withScanner(listAgentSessions({ projectId }))).sessions).toEqual([]);
+
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`delete-${nativeId}`),
+        threadId: nativeId,
+      });
+      expect((yield* withScanner(listAgentSessions({ projectId }))).sessions).toEqual([session]);
+      const attached = yield* withScanner(attachAgentSession(input));
+      expect(attached.threadId).toBe(`import:${thread.providerInstanceId}:${session.sessionId}`);
+
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`archive-${attached.threadId}`),
+        threadId: attached.threadId,
+      });
+      expect((yield* withScanner(listAgentSessions({ projectId }))).sessions).toEqual([]);
+      const archived = yield* withScanner(attachAgentSession(input)).pipe(Effect.flip);
+      expect(archived.message).toContain("archived T3 thread");
+    }),
+  );
 
   it.effect("imports once after the real engine persists an old rejected receipt", () =>
     Effect.gen(function* () {

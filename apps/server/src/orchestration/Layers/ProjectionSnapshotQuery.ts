@@ -207,6 +207,10 @@ const ProjectionImportedAgentSessionSourcesRowSchema = Schema.Struct({
   threadId: ThreadId,
   runtimePayload: Schema.Unknown,
 });
+const ProjectionProviderBoundThreadRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  archived: Schema.Number,
+});
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -1264,6 +1268,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               AND messages.message_id GLOB 'import:*'
           )
         ORDER BY threads.thread_id ASC
+      `,
+  });
+
+  const listProviderBoundThreadRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionProviderBoundThreadRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          threads.thread_id AS "threadId",
+          threads.archived_at IS NOT NULL AS archived
+        FROM projection_threads AS threads
+        INNER JOIN provider_session_runtime AS runtime
+          ON runtime.thread_id = threads.thread_id
+        WHERE threads.deleted_at IS NULL
       `,
   });
 
@@ -3191,6 +3210,19 @@ pending_approval_requests AS (
       });
     });
 
+  const getProviderBoundThreads: ProjectionSnapshotQueryShape["getProviderBoundThreads"] = () =>
+    listProviderBoundThreadRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getProviderBoundThreads:query",
+          "ProjectionSnapshotQuery.getProviderBoundThreads:decodeRows",
+        ),
+      ),
+      Effect.map((rows) =>
+        rows.map((row) => ({ threadId: row.threadId, archived: row.archived !== 0 })),
+      ),
+    );
+
   const getThreadCheckpointContext: ProjectionSnapshotQueryShape["getThreadCheckpointContext"] = (
     threadId,
   ) =>
@@ -3854,6 +3886,7 @@ pending_approval_requests AS (
     getProjectShells,
     getFirstActiveThreadIdByProjectId,
     getImportedAgentSessionSources,
+    getProviderBoundThreads,
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,

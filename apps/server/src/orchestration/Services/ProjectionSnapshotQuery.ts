@@ -228,6 +228,15 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
+  /** Read non-deleted threads, archived included, that hold a provider session binding. */
+  readonly getProviderBoundThreads: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly archived: boolean;
+    }>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read the checkpoint context needed to resolve a single thread diff.
    */

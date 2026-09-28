@@ -452,6 +452,7 @@ describe("OrchestrationEngine", () => {
           getProjectShells: () => Effect.succeed([]),
           getFirstActiveThreadIdByProjectId: () => Effect.succeedNone,
           getImportedAgentSessionSources: () => Effect.die("unused"),
+          getProviderBoundThreads: () => Effect.die("unused"),
           getThreadCheckpointContext: () => Effect.succeedNone,
           getFullThreadDiffContext: () => Effect.succeedNone,
           getThreadRuntimeContext: () => Effect.die("unused"),
