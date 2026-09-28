@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
+  TerminalSessionSnapshot,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
@@ -28,6 +29,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -41,6 +43,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
+
+const decodeTerminalSessionSnapshot = Schema.decodeEffect(TerminalSessionSnapshot);
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
@@ -112,7 +116,7 @@ class FakePtyAdapter {
   readonly processes: FakePtyProcess[] = [];
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
-  private nextPid = 9000;
+  nextPid = 9000;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -419,6 +423,18 @@ it.layer(
       assert.equal(second.threadId, "thread-1");
       assert.equal(third.threadId, "thread-1");
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("reports a Windows ConPTY pid of 0 as unknown", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.nextPid = 0;
+
+      const snapshot = yield* manager.open(openInput());
+      assert.equal(snapshot.pid, null);
+      assert.equal(snapshot.status, "running");
+      yield* decodeTerminalSessionSnapshot(snapshot);
     }),
   );
 

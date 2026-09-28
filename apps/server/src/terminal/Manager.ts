@@ -366,6 +366,11 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
+// node-pty can report pid 0 for a Windows ConPTY shell; the wire contract only accepts real pids.
+function wirePid(pid: number | null): number | null {
+  return pid !== null && pid > 0 ? pid : null;
+}
+
 function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
   return {
     threadId: session.threadId,
@@ -373,7 +378,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     cwd: session.cwd,
     worktreePath: session.worktreePath,
     status: session.status,
-    pid: session.pid,
+    pid: wirePid(session.pid),
     history: session.history.value(),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
@@ -390,7 +395,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     cwd: session.cwd,
     worktreePath: session.worktreePath,
     status: session.status,
-    pid: session.pid,
+    pid: wirePid(session.pid),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
