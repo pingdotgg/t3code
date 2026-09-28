@@ -2127,7 +2127,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
               input.threadId,
             );
           }
-          yield* routed.adapter.stopSession(routed.threadId);
+          // A session that fails to stop can stay listed as running, which
+          // would keep its MCP credential alive.
+          yield* routed.adapter
+            .stopSession(routed.threadId)
+            .pipe(Effect.onError(() => clearMcpSession(input.threadId)));
         }
         const pendingCompaction = pendingCompactions.get(input.threadId);
         if (pendingCompaction !== undefined) {

@@ -5475,4 +5475,28 @@ describe("MCP credential liveness", () => {
       assert.isUndefined(yield* registry.resolve(erroredToken));
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("revokes the credential when stopping the session fails", () => {
+    const { codex, layer } = makeMcpHarness();
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = asThreadId("thread-mcp-stop-fails");
+      const token = yield* startSessionWithCredential(threadId);
+      // The adapter keeps listing a session it failed to stop.
+      codex.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: String(CODEX_DRIVER),
+            method: "stopSession",
+            detail: "simulated stopSession failure",
+          }),
+        ),
+      );
+
+      yield* Effect.flip(provider.stopSession({ threadId }));
+
+      assert.isUndefined(yield* registry.resolve(token));
+    }).pipe(Effect.provide(layer));
+  });
 });
