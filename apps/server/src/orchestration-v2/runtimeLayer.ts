@@ -1,8 +1,8 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
+import * as OrchestrationCommandReceipts from "../persistence/Layers/OrchestrationCommandReceipts.ts";
+import * as OrchestrationEventStore from "../persistence/Layers/OrchestrationEventStore.ts";
 import { layer as providerSessionRuntimeLayer } from "../persistence/ProviderSessionRuntime.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ProviderAuthServiceLive } from "../provider/Layers/ProviderAuthService.ts";
@@ -24,7 +24,7 @@ import {
 import { layerFromStores as eventSinkLayer } from "./EventSink.ts";
 import { layerFromOrchestrationEventStore as eventStoreLayer } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
-import { layer as legacyV1ThreadImporterLayer } from "./legacy/LegacyV1ThreadImporter.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import { layer as orchestratorLayer } from "./Orchestrator.ts";
 import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import { layer as projectionMaintenanceLayer } from "./ProjectionMaintenance.ts";
@@ -52,8 +52,8 @@ import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledT
 
 /** The shared application event log and its command receipts. */
 export const OrchestrationEventInfrastructureLayerLive = Layer.mergeAll(
-  OrchestrationEventStoreLive,
-  OrchestrationCommandReceiptRepositoryLive,
+  OrchestrationEventStore.OrchestrationEventStoreLive,
+  OrchestrationCommandReceipts.OrchestrationCommandReceiptRepositoryLive,
 );
 
 const runtimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
@@ -80,7 +80,7 @@ const storesLayer = Layer.mergeAll(
 export const OrchestrationV2EventSinkLayerLive = eventSinkLayer.pipe(Layer.provide(storesLayer));
 const eventSinkProvided = OrchestrationV2EventSinkLayerLive;
 const projectionMaintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesLayer));
-const legacyV1ThreadImporterProvided = legacyV1ThreadImporterLayer.pipe(
+const legacyV1ThreadImporterProvided = LegacyV1ThreadImporter.layer.pipe(
   Layer.provide(eventSinkProvided),
 );
 

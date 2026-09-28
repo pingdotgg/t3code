@@ -38,10 +38,7 @@ import {
   type OrchestratorV2DispatchResult,
   type OrchestratorV2Error,
 } from "./Orchestrator.ts";
-import {
-  LegacyV1ThreadImporter,
-  type LegacyV1ThreadImportError,
-} from "./legacy/LegacyV1ThreadImporter.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -279,7 +276,7 @@ type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
 export interface ThreadManagementServiceShape {
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
-  ) => Effect.Effect<void, LegacyV1ThreadImportError>;
+  ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -384,7 +381,7 @@ function latestSteerableRun(
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
-  const legacyImporter = yield* LegacyV1ThreadImporter;
+  const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -752,8 +749,8 @@ const make = Effect.gen(function* () {
 });
 
 const legacyV1ThreadImporterNoopLayer = Layer.succeed(
-  LegacyV1ThreadImporter,
-  LegacyV1ThreadImporter.of({
+  LegacyV1ThreadImporter.LegacyV1ThreadImporter,
+  LegacyV1ThreadImporter.LegacyV1ThreadImporter.of({
     pendingThreadCount: Effect.succeed(0),
     reconcileShells: Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
     ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
@@ -769,5 +766,5 @@ export const layer: Layer.Layer<ThreadManagementService, never, OrchestratorV2> 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
-  LegacyV1ThreadImporter | OrchestratorV2
+  LegacyV1ThreadImporter.LegacyV1ThreadImporter | OrchestratorV2
 > = Layer.effect(ThreadManagementService, make);

@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
-import { LegacyV1ThreadImporter } from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import {
   decodeProjectCommandRejection,
@@ -154,7 +154,7 @@ export const make = Effect.gen(function* () {
   const threadProjections = yield* ProjectionStoreV2;
   const eventSink = yield* EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const legacyImporter = yield* LegacyV1ThreadImporter;
+  const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor;
   // Commands for one project run in order. Commands that claim a workspace root
   // also hold that root, so two projects cannot both claim it.
