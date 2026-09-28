@@ -10,6 +10,7 @@ import {
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,
   updateEnvironmentSpeechLanguage,
+  updateEnvironmentSpeechTranslation,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -20,7 +21,15 @@ import type {
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { CheckIcon, DownloadIcon, GlobeIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  DownloadIcon,
+  GlobeIcon,
+  LanguagesIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
@@ -186,6 +195,12 @@ function ModelCard(props: {
             ) : null}
             {model.recommended ? <Badge variant="outline">Recommended</Badge> : null}
             {model.supportsStreaming ? <Badge variant="outline">Streaming</Badge> : null}
+            {model.supportsTranslation ? (
+              <Badge variant="outline">
+                <LanguagesIcon className="mr-1 size-3" />
+                Translate
+              </Badge>
+            ) : null}
           </div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
@@ -724,6 +739,43 @@ export function VoiceSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          title="Translate to English"
+          description={
+            !currentStatus?.supported || !currentStatus.supportsTranslation
+              ? "The active model does not support translation."
+              : currentStatus.effectiveLanguage === "en"
+                ? "English speech is transcribed without translation."
+                : "Convert speech in the selected or detected language directly into English text."
+          }
+          control={
+            <Switch
+              aria-label="Translate to English"
+              checked={currentStatus?.supported ? currentStatus.translateToEnglish : false}
+              disabled={
+                !prepared ||
+                !currentStatus?.supported ||
+                !currentStatus.supportsTranslation ||
+                operation !== null
+              }
+              onCheckedChange={(enabled) => {
+                if (!prepared) return;
+                setOperation("translation");
+                void runtime
+                  .runPromise(updateEnvironmentSpeechTranslation(prepared, enabled))
+                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update speech translation",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            />
           }
         />
         {currentStatus?.supported && prepared ? (

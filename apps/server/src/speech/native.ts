@@ -29,6 +29,7 @@ process.on("message", async (message) => {
         : { backend: message.acceleration });
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming,
+        supportsTranslation: model.capabilities.supportsTranslate,
         supportsInitialPrompt: model.supports("initial_prompt") });
     } else if (message.kind === "begin") {
       session = model.createSession();
@@ -72,6 +73,7 @@ type Reply = {
   readonly text?: string;
   readonly error?: string;
   readonly supportsStreaming?: boolean;
+  readonly supportsTranslation?: boolean;
   readonly supportsInitialPrompt?: boolean;
   readonly backend?: string;
   readonly revision?: number;
@@ -184,6 +186,7 @@ export async function loadNativeSpeechModel(
     await exited.promise;
   };
   let supportsStreaming: boolean;
+  let supportsTranslation: boolean;
   let supportsInitialPrompt: boolean;
   let backend: string;
   try {
@@ -195,6 +198,7 @@ export async function loadNativeSpeechModel(
       acceleration,
     });
     supportsStreaming = loaded.supportsStreaming === true;
+    supportsTranslation = loaded.supportsTranslation === true;
     supportsInitialPrompt = loaded.supportsInitialPrompt === true;
     backend = loaded.backend ?? "unknown";
   } catch (error) {
@@ -204,6 +208,7 @@ export async function loadNativeSpeechModel(
   return {
     backend,
     supportsStreaming,
+    supportsTranslation,
     supportsInitialPrompt,
     begin: async (language?: string) => {
       await send({ kind: "begin", language });
@@ -232,6 +237,8 @@ export async function loadNativeSpeechModel(
       pcm: Float32Array,
       options: {
         readonly timestamps: "none";
+        readonly task?: "translate";
+        readonly targetLanguage?: "en";
         readonly language?: string;
         readonly family?: { readonly kind: "whisper"; readonly initialPrompt: string };
       },

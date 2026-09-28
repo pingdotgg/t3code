@@ -7,6 +7,12 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   listModels: vi.fn(),
   saveWords: vi.fn(),
+  saveTranslation: vi.fn(),
+  speechStatus: {
+    supportsTranslation: false,
+    translateToEnglish: false,
+    effectiveLanguage: "en",
+  },
   customWords: [] as { term: string; aliases: string[] }[],
   connection: {},
   settings: {
@@ -20,12 +26,13 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
       supported: true,
       acceleration: "auto",
       language: "auto",
-      effectiveLanguage: "en",
+      ...mocks.speechStatus,
       gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
       customWords: mocks.customWords,
     }),
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
   updateEnvironmentSpeechCustomWords: mocks.saveWords,
+  updateEnvironmentSpeechTranslation: mocks.saveTranslation,
   getEnvironmentSpeechModels: () =>
     mocks.listModels() ??
     Promise.resolve({
@@ -35,6 +42,7 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
           name: "Model",
           languages: ["en"],
           supportsLanguageDetection: false,
+          supportsTranslation: false,
           state: "downloading",
           size: 100,
         },
@@ -99,10 +107,66 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   mocks.listModels.mockReset();
   mocks.saveWords.mockReset();
+  mocks.saveTranslation.mockReset();
+  mocks.speechStatus = {
+    supportsTranslation: false,
+    translateToEnglish: false,
+    effectiveLanguage: "en",
+  };
   mocks.customWords = [];
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
 });
+
+it("shows translation for capable models and updates the environment preference", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.speechStatus = {
+    supportsTranslation: true,
+    translateToEnglish: false,
+    effectiveLanguage: "fr",
+  };
+  mocks.saveTranslation.mockResolvedValue({
+    supported: true,
+    acceleration: "auto",
+    language: "fr",
+    gpuDevices: [],
+    customWords: [],
+    removeFillerWords: true,
+    ...mocks.speechStatus,
+    translateToEnglish: true,
+  });
+  mocks.listModels.mockResolvedValue({
+    models: [
+      {
+        id: "model",
+        name: "Translation Model",
+        description: "French speech",
+        languages: ["en", "fr"],
+        supportsLanguageDetection: false,
+        supportsTranslation: true,
+        supportsStreaming: false,
+        state: "installed",
+        active: true,
+        recommended: false,
+        size: 100,
+        accuracy: 90,
+        speed: 90,
+      },
+    ],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+  expect(root.root.findAllByType("span").some((node) => node.children.includes("Translate"))).toBe(
+    true,
+  );
+  const toggle = root.root.findByProps({ "aria-label": "Translate to English" });
+  await act(async () => toggle.props.onCheckedChange(true));
+  expect(mocks.saveTranslation).toHaveBeenCalledWith(mocks.connection, true);
+});
+
 it("ignores a previous environment model response", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
@@ -145,6 +209,7 @@ it("shows friendly labels for default voice options", async () => {
   );
   expect(labels).not.toContain("primary-environment");
   expect(labels).not.toContain("system-default");
+  expect(root.root.findByProps({ "aria-label": "Translate to English" }).props.disabled).toBe(true);
 });
 it("shows saved words as tags with misspelling controls in popovers", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

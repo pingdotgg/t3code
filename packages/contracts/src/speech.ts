@@ -59,6 +59,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
   recommended: Schema.Boolean,
   supportsStreaming: Schema.Boolean,
   supportsLanguageDetection: Schema.Boolean,
+  supportsTranslation: Schema.Boolean,
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
@@ -88,6 +89,8 @@ export const EnvironmentSpeechStatus = Schema.Union([
     model: Schema.String,
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
+    supportsTranslation: Schema.Boolean,
+    translateToEnglish: Schema.Boolean,
     language: SpeechLanguage,
     effectiveLanguage: SpeechLanguage,
     acceleration: SpeechAcceleration,
@@ -112,6 +115,7 @@ export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
   timeout: SpeechModelUnloadTimeout,
 });
 export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
+export const EnvironmentSpeechTranslationRequest = Schema.Struct({ enabled: Schema.Boolean });
 export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
   transcript: Schema.String.check(Schema.isMaxLength(100_000)),
 });

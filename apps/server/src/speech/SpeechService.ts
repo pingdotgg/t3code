@@ -176,6 +176,9 @@ export class SpeechService extends Context.Service<
     readonly updateLanguage: (
       language: SpeechLanguage,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateTranslation: (
+      enabled: boolean,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly startStream: Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
@@ -556,6 +559,8 @@ export const make = Effect.gen(function* () {
       model: definition.name,
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
+      supportsTranslation: definition.supportsTranslation,
+      translateToEnglish: settings.speechTranslateToEnglish,
       language: settings.speechLanguage,
       effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
       acceleration: settings.speechAcceleration,
@@ -584,6 +589,7 @@ export const make = Effect.gen(function* () {
             recommended: definition.recommended,
             supportsStreaming: definition.supportsStreaming,
             supportsLanguageDetection: definition.supportsLanguageDetection,
+            supportsTranslation: definition.supportsTranslation,
             active: ready && selected.id === definition.id,
             state: operation
               ? operation.verifying
@@ -840,6 +846,10 @@ export const make = Effect.gen(function* () {
       writeSettings("language update", { speechLanguage: language }).pipe(
         Effect.andThen(freshStatus("language update")),
       ),
+    updateTranslation: (enabled) =>
+      writeSettings("translation update", { speechTranslateToEnglish: enabled }).pipe(
+        Effect.andThen(freshStatus("translation update")),
+      ),
     transcribe: (pcmBytes) =>
       readSettings("transcription").pipe(
         Effect.flatMap((settings) =>
@@ -858,6 +868,10 @@ export const make = Effect.gen(function* () {
               return yield* Effect.gen(function* () {
                 const definition = selectedModel(settings);
                 const language = effectiveSpeechLanguage(definition, settings.speechLanguage);
+                const translateToEnglish =
+                  settings.speechTranslateToEnglish &&
+                  definition.supportsTranslation &&
+                  language !== "en";
                 const prepareStartedAt = performance.now();
                 yield* preemptOrphaned;
                 const loaded = yield* Effect.tryPromise({
@@ -875,10 +889,17 @@ export const make = Effect.gen(function* () {
                 const customWords = transcriptionCustomWords(settings);
                 const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
                 const removeFillerWords = settings.speechRemoveFillerWords;
-                const fillerWordLanguage = language === "auto" ? undefined : language;
+                const fillerWordLanguage = translateToEnglish
+                  ? "en"
+                  : language === "auto"
+                    ? undefined
+                    : language;
                 const options = {
                   timestamps: "none" as const,
                   ...(language === "auto" ? {} : { language }),
+                  ...(translateToEnglish
+                    ? { task: "translate" as const, targetLanguage: "en" as const }
+                    : {}),
                   ...(customWords.length > 0 && loaded.supportsInitialPrompt
                     ? {
                         family: {

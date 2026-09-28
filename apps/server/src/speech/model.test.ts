@@ -30,6 +30,18 @@ describe("speech model catalog", () => {
       expect(model.languages.length).toBeGreaterThan(0);
     }
   });
+
+  it("preserves Handy's translation capabilities without advertising streaming translation", () => {
+    expect(
+      SPEECH_MODELS.find((model) => model.name === "Whisper Medium")?.supportsTranslation,
+    ).toBe(true);
+    expect(
+      SPEECH_MODELS.find((model) => model.name === "Parakeet Unified EN 0.6B")?.supportsTranslation,
+    ).toBe(false);
+    expect(
+      SPEECH_MODELS.filter((model) => model.supportsStreaming && model.supportsTranslation),
+    ).toEqual([]);
+  });
 });
 
 it("resolves Auto only for models that can detect language", () => {

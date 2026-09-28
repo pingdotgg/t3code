@@ -123,6 +123,7 @@ export type SpeechModel = {
   readonly recommended: boolean;
   readonly supportsStreaming: boolean;
   readonly supportsLanguageDetection: boolean;
+  readonly supportsTranslation: boolean;
 };
 
 export const SPEECH_MODELS = [
@@ -140,6 +141,7 @@ export const SPEECH_MODELS = [
     recommended: false,
     supportsStreaming: true,
     supportsLanguageDetection: false,
+    supportsTranslation: false,
   },
   {
     id: "handy-computer/moonshine-streaming-small-gguf",
@@ -155,6 +157,7 @@ export const SPEECH_MODELS = [
     recommended: false,
     supportsStreaming: true,
     supportsLanguageDetection: false,
+    supportsTranslation: false,
   },
   {
     id: "handy-computer/canary-180m-flash-gguf",
@@ -170,6 +173,7 @@ export const SPEECH_MODELS = [
     recommended: true,
     supportsStreaming: false,
     supportsLanguageDetection: false,
+    supportsTranslation: true,
   },
   {
     id: "handy-computer/parakeet-unified-en-0.6b-gguf",
@@ -185,6 +189,7 @@ export const SPEECH_MODELS = [
     recommended: true,
     supportsStreaming: true,
     supportsLanguageDetection: false,
+    supportsTranslation: false,
   },
   {
     id: "handy-computer/moonshine-tiny-gguf",
@@ -200,6 +205,7 @@ export const SPEECH_MODELS = [
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: false,
+    supportsTranslation: false,
   },
   {
     id: "handy-computer/whisper-tiny-gguf",
@@ -215,6 +221,7 @@ export const SPEECH_MODELS = [
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: true,
+    supportsTranslation: true,
   },
   {
     id: "handy-computer/whisper-base-gguf",
@@ -230,6 +237,7 @@ export const SPEECH_MODELS = [
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: true,
+    supportsTranslation: true,
   },
   // Additional models from Handy's transcribe.cpp catalog (2026-08-17), one pinned GGUF each.
   ...catalog,

@@ -229,6 +229,18 @@ export const updateEnvironmentSpeechLanguage = (
     run: ({ client, headers }) => client.updateLanguage({ headers, payload: { language } }),
   });
 
+export const updateEnvironmentSpeechTranslation = (
+  prepared: PreparedConnection,
+  enabled: boolean,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.updateTranslation(),
+    run: ({ client, headers }) => client.updateTranslation({ headers, payload: { enabled } }),
+  });
+
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",

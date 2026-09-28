@@ -12,6 +12,8 @@ const readyStatus = {
   model: "Moonshine Tiny",
   size: 35_466_912,
   supportsStreaming: false,
+  supportsTranslation: true,
+  translateToEnglish: false,
   acceleration: "auto",
   language: "auto",
   effectiveLanguage: "auto",
@@ -38,6 +40,8 @@ describe("environment speech contracts", () => {
     "gpuDevices",
     "customWords",
     "removeFillerWords",
+    "supportsTranslation",
+    "translateToEnglish",
   ])("rejects a supported status missing %s", (field) => {
     const incomplete = Object.fromEntries(
       Object.entries(readyStatus).filter(([key]) => key !== field),

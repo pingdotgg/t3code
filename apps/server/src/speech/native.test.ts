@@ -79,6 +79,30 @@ it("returns transcription from an isolated process and disposes it", async () =>
   }
 });
 
+it("passes translation options to the native model", async () => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    fixture("async (_pcm, options) => ({ text: JSON.stringify(options) })"),
+  );
+  try {
+    const result = await model.transcribe(new Float32Array([0.25]), {
+      timestamps: "none",
+      language: "es",
+      task: "translate",
+      targetLanguage: "en",
+    });
+    expect(JSON.parse(result.text)).toEqual({
+      timestamps: "none",
+      language: "es",
+      task: "translate",
+      targetLanguage: "en",
+    });
+  } finally {
+    await model.dispose();
+  }
+});
+
 it("ignores IPC messages that do not belong to the speech protocol", async () => {
   const model = await loadNativeSpeechModel(
     "unused.gguf",

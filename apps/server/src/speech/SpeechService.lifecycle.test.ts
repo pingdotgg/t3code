@@ -15,6 +15,7 @@ import * as SpeechService from "./SpeechService.ts";
 const native = vi.hoisted(() => ({
   backend: "Vulkan0",
   supportsStreaming: true,
+  supportsTranslation: true,
   supportsInitialPrompt: false,
   begin: vi.fn(async (_language?: string) => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
@@ -55,6 +56,7 @@ const modelDefinitions = vi.hoisted(() => [
     recommended: true,
     supportsStreaming: true,
     supportsLanguageDetection: false,
+    supportsTranslation: true,
   },
   {
     id: "fallback-model",
@@ -67,6 +69,7 @@ const modelDefinitions = vi.hoisted(() => [
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: false,
+    supportsTranslation: false,
   },
 ]);
 vi.mock("./native.ts", () => ({
@@ -249,6 +252,23 @@ it.effect("applies the selected language to transcription and streaming", () =>
       yield* stream.finish;
     }).pipe(Effect.scoped);
     expect(native.begin).toHaveBeenCalledWith("fr");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("translates supported non-English batch transcription to English", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.updateLanguage("fr");
+    expect(yield* speech.updateTranslation(true)).toMatchObject({
+      supportsTranslation: true,
+      translateToEnglish: true,
+    });
+    yield* speech.transcribe(pcm());
+    expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
+      language: "fr",
+      task: "translate",
+      targetLanguage: "en",
+    });
   }).pipe(Effect.provide(layer)),
 );
 
