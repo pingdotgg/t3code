@@ -246,34 +246,124 @@ export async function checkLocalDevRebuildStaleness(input: {
 }
 
 /**
- * Fast-forward the checkout to its upstream before rebuilding, so the new
- * build actually contains the remote changes. Never merges or touches work
- * the fast-forward would overwrite: those cases fail with git's own message
- * and the rebuild is aborted before anything is built or restarted.
+ * Fast-forward the checkout to the remote default branch before rebuilding,
+ * so the new build actually contains the advertised remote changes. The
+ * branch is resolved fresh via ls-remote (never trusted from a stale poll),
+ * and the pull only runs when the checkout is on that branch: anything else
+ * (feature branch, detached HEAD, no default branch) aborts with an
+ * actionable message instead of updating the wrong ref. Never merges or
+ * touches work the fast-forward would overwrite: those cases fail with git's
+ * own message and the rebuild is aborted before anything is built or
+ * restarted.
  */
 export async function pullLatestCheckoutChanges(
   sourceRoot: string,
   runGit: GitRunner = defaultGitRunner,
 ): Promise<{ ok: boolean; message: string | null }> {
-  let pull: GitRunResult;
+  const fail = (message: string): { ok: boolean; message: string } => ({ ok: false, message });
+
+  let remote: GitRunResult;
+  let current: GitRunResult;
   try {
-    pull = await runGit(["pull", "--ff-only"], sourceRoot, { timeoutMs: PULL_GIT_TIMEOUT_MS });
+    [remote, current] = await Promise.all([
+      runGit(["ls-remote", "--symref", "origin", "HEAD"], sourceRoot),
+      runGit(["branch", "--show-current"], sourceRoot),
+    ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `Could not pull latest changes: ${message}` };
+    return fail(`Could not pull latest changes: ${message}`);
+  }
+  const parsed = remote.exitCode === 0 ? parseLsRemoteSymrefHead(remote.stdout) : null;
+  if (!parsed || !parsed.branch) {
+    return fail("Could not determine the remote default branch.");
+  }
+  const currentBranch = current.exitCode === 0 ? current.stdout.trim() || null : null;
+  if (currentBranch === null) {
+    return fail(`Checkout is detached; switch to '${parsed.branch}' to pull its latest changes.`);
+  }
+  if (currentBranch !== parsed.branch) {
+    return fail(
+      `Checkout is on '${currentBranch}'; switch to '${parsed.branch}' to pull its latest changes.`,
+    );
+  }
+
+  // Explicit remote + branch (not bare `git pull`): independent of whatever
+  // upstream the current branch happens to track.
+  let pull: GitRunResult;
+  try {
+    pull = await runGit(["pull", "--ff-only", "origin", parsed.branch], sourceRoot, {
+      timeoutMs: PULL_GIT_TIMEOUT_MS,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return fail(`Could not pull latest changes: ${message}`);
   }
   if (pull.exitCode !== 0) {
     const detail = [pull.stderr, pull.stdout]
       .map((output) => output?.trim())
       .find((output) => output && output.length > 0);
-    return {
-      ok: false,
-      message: detail
-        ? `Could not fast-forward the checkout: ${detail}`
-        : "Could not fast-forward the checkout to its upstream.",
-    };
+    return fail(
+      detail
+        ? `Could not fast-forward to origin/${parsed.branch}: ${detail}`
+        : `Could not fast-forward to origin/${parsed.branch}.`,
+    );
   }
   return { ok: true, message: null };
+}
+
+export interface LocalRebuildStartDeps {
+  readonly isStarted: () => boolean;
+  readonly setStarted: (started: boolean) => void;
+  readonly getState: () => DesktopLocalRebuildState;
+  readonly pullLatest: (sourceRoot: string) => Promise<{ ok: boolean; message: string | null }>;
+  readonly launch: (
+    state: DesktopLocalRebuildState,
+    onExit: () => void,
+  ) => Promise<DesktopLocalRebuildResult>;
+  readonly alreadyStartedLogPath: string;
+  readonly options: { readonly pullLatest?: unknown } | undefined;
+}
+
+/**
+ * Single-rebuild gate around an optional pull plus the installer spawn. The
+ * guard is set synchronously before the first await so concurrent invokes —
+ * double-clicks, two windows, a slow fetch — serialize on it instead of
+ * running overlapping pulls and installs. Every early return after the guard
+ * clears it; a launched rebuild clears it on child exit (via onExit) or when
+ * the launch itself is rejected.
+ */
+export async function runLocalRebuildStart(
+  deps: LocalRebuildStartDeps,
+): Promise<DesktopLocalRebuildResult> {
+  if (deps.isStarted()) {
+    return {
+      accepted: false,
+      logPath: deps.alreadyStartedLogPath,
+      message: "A local rebuild is already in progress.",
+    };
+  }
+  deps.setStarted(true);
+  const state = deps.getState();
+  if (deps.options?.pullLatest === true) {
+    if (!state.enabled || !state.sourceRoot) {
+      deps.setStarted(false);
+      return {
+        accepted: false,
+        logPath: null,
+        message: state.reason ?? "Local rebuilds are unavailable.",
+      };
+    }
+    const pull = await deps.pullLatest(state.sourceRoot);
+    if (!pull.ok) {
+      deps.setStarted(false);
+      return { accepted: false, logPath: null, message: pull.message };
+    }
+  }
+  const result = await deps.launch(state, () => deps.setStarted(false));
+  if (!result.accepted) {
+    deps.setStarted(false);
+  }
+  return result;
 }
 
 export function readEmbeddedDevSourceRoot(appRoot: string): string | null {

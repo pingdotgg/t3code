@@ -13,7 +13,9 @@ import {
   pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
+  runLocalRebuildStart,
   type GitRunner,
+  type LocalRebuildStartDeps,
 } from "./localDevRebuild.ts";
 
 function makeCheckout(): string {
@@ -370,24 +372,96 @@ describe("local Dev rebuild staleness", () => {
 });
 
 describe("local Dev rebuild pull", () => {
-  it("fast-forwards the checkout before rebuilding", async () => {
-    const calls: Array<{ args: readonly string[]; cwd: string }> = [];
-    const runner: GitRunner = async (args, cwd) => {
-      calls.push({ args, cwd });
-      return { stdout: "Already up to date.\n", exitCode: 0 };
+  const onDefaultBranch = (): Record<string, { stdout: string; exitCode: number }> => ({
+    "ls-remote --symref origin HEAD": {
+      stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+      exitCode: 0,
+    },
+    "branch --show-current": { stdout: "main\n", exitCode: 0 },
+  });
+
+  function trackingRunner(
+    scenarios: Record<string, { stdout: string; exitCode: number; stderr?: string }>,
+  ): { runner: GitRunner; calls: Array<readonly string[]> } {
+    const calls: Array<readonly string[]> = [];
+    const runner: GitRunner = async (args) => {
+      calls.push(args);
+      const hit = scenarios[args.join(" ")];
+      if (!hit) throw new Error(`unexpected git invocation: ${args.join(" ")}`);
+      return { stdout: hit.stdout, stderr: hit.stderr ?? "", exitCode: hit.exitCode };
     };
+    return { runner, calls };
+  }
+
+  it("pulls the advertised remote default branch before rebuilding", async () => {
+    const { runner, calls } = trackingRunner({
+      ...onDefaultBranch(),
+      "pull --ff-only origin main": { stdout: "Already up to date.\n", exitCode: 0 },
+    });
 
     const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
 
     expect(result).toEqual({ ok: true, message: null });
-    expect(calls).toEqual([{ args: ["pull", "--ff-only"], cwd: "/repo/t3code" }]);
+    expect(calls).toEqual([
+      ["ls-remote", "--symref", "origin", "HEAD"],
+      ["branch", "--show-current"],
+      ["pull", "--ff-only", "origin", "main"],
+    ]);
+  });
+
+  it("refuses to pull when the checkout is not on the advertised branch", async () => {
+    const { runner, calls } = trackingRunner({
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+      "branch --show-current": { stdout: "feature\n", exitCode: 0 },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("switch to 'main'");
+    expect(calls.some((args) => args[0] === "pull")).toBe(false);
+  });
+
+  it("refuses to pull a detached checkout", async () => {
+    const { runner, calls } = trackingRunner({
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+      "branch --show-current": { stdout: "", exitCode: 0 },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("detached");
+    expect(calls.some((args) => args[0] === "pull")).toBe(false);
+  });
+
+  it("aborts when the remote default branch cannot be determined", async () => {
+    const { runner, calls } = trackingRunner({
+      "ls-remote --symref origin HEAD": { stdout: "", exitCode: 128 },
+      "branch --show-current": { stdout: "main\n", exitCode: 0 },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("remote default branch");
+    expect(calls.some((args) => args[0] === "pull")).toBe(false);
   });
 
   it("refuses to pull when fast-forward is impossible and reports git's reason", async () => {
-    const runner: GitRunner = async () => ({
-      stdout: "",
-      stderr: "error: Your local changes would be overwritten by merge.\n",
-      exitCode: 1,
+    const { runner } = trackingRunner({
+      ...onDefaultBranch(),
+      "pull --ff-only origin main": {
+        stdout: "",
+        stderr: "error: Your local changes would be overwritten by merge.\n",
+        exitCode: 1,
+      },
     });
 
     const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
@@ -405,5 +479,99 @@ describe("local Dev rebuild pull", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("spawn git ENOENT");
+  });
+});
+
+describe("local Dev rebuild start", () => {
+  const enabledState = { enabled: true, sourceRoot: "/repo/t3code", reason: null };
+  const launched = { accepted: true, logPath: "/tmp/dev-rebuild.log", message: null };
+
+  function makeDeps(overrides?: {
+    readonly pull?: LocalRebuildStartDeps["pullLatest"];
+    readonly launch?: LocalRebuildStartDeps["launch"];
+  }) {
+    let started = false;
+    const pull =
+      overrides?.pull ?? (async () => ({ ok: true as const, message: null as string | null }));
+    const launch =
+      overrides?.launch ??
+      (async () => ({
+        accepted: true as const,
+        logPath: "/tmp/dev-rebuild.log",
+        message: null as string | null,
+      }));
+    return {
+      isStarted: () => started,
+      deps: {
+        isStarted: () => started,
+        setStarted: (next: boolean) => {
+          started = next;
+        },
+        getState: () => enabledState,
+        pullLatest: pull,
+        launch,
+        alreadyStartedLogPath: "/tmp/dev-rebuild.log",
+        options: undefined as { pullLatest?: unknown } | undefined,
+      },
+    };
+  }
+
+  it("serializes concurrent starts behind the guard, even during a slow pull", async () => {
+    let releasePull!: () => void;
+    const pullGate = new Promise<void>((resolve) => {
+      releasePull = resolve;
+    });
+    const pull = vi.fn(async () => {
+      await pullGate;
+      return { ok: true as const, message: null as string | null };
+    });
+    const launch = vi.fn(async () => launched);
+    const { isStarted, deps } = makeDeps({ pull, launch });
+
+    const first = runLocalRebuildStart({ ...deps, options: { pullLatest: true } });
+    // Let the first invoke reach the pull await before the second arrives.
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = runLocalRebuildStart({ ...deps, options: { pullLatest: true } });
+    const secondResult = await second;
+    releasePull();
+    const firstResult = await first;
+
+    expect(secondResult).toEqual({
+      accepted: false,
+      logPath: "/tmp/dev-rebuild.log",
+      message: "A local rebuild is already in progress.",
+    });
+    expect(firstResult).toEqual(launched);
+    expect(pull).toHaveBeenCalledOnce();
+    expect(launch).toHaveBeenCalledOnce();
+    expect(isStarted()).toBe(true);
+  });
+
+  it("clears the guard when the pull fails so a later start can proceed", async () => {
+    const pull = vi.fn(async () => ({ ok: false as const, message: "boom" }));
+    const launch = vi.fn(async () => launched);
+    const { isStarted, deps } = makeDeps({ pull, launch });
+
+    const failed = await runLocalRebuildStart({ ...deps, options: { pullLatest: true } });
+    expect(failed).toEqual({ accepted: false, logPath: null, message: "boom" });
+    expect(launch).not.toHaveBeenCalled();
+    expect(isStarted()).toBe(false);
+
+    const retried = await runLocalRebuildStart(deps);
+    expect(retried).toEqual(launched);
+    expect(launch).toHaveBeenCalledOnce();
+  });
+
+  it("rebuilds the current checkout when no pull is requested", async () => {
+    const pull = vi.fn();
+    const launch = vi.fn(async () => launched);
+    const { deps } = makeDeps({ pull, launch });
+
+    const result = await runLocalRebuildStart(deps);
+
+    expect(result).toEqual(launched);
+    expect(pull).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledOnce();
   });
 });

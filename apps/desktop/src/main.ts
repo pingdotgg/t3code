@@ -38,7 +38,6 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
-  DesktopLocalRebuildResult,
   DesktopLocalRebuildState,
 } from "@t3tools/contracts";
 import { DesktopNotificationRequest } from "@t3tools/contracts";
@@ -113,6 +112,7 @@ import {
   pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
+  runLocalRebuildStart,
 } from "./localDevRebuild.ts";
 
 const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
@@ -2099,42 +2099,19 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
-  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async (_event, options) => {
-    if (localRebuildStarted) {
-      return {
-        accepted: false,
-        logPath: Path.join(LOG_DIR, "dev-rebuild.log"),
-        message: "A local rebuild is already in progress.",
-      } satisfies DesktopLocalRebuildResult;
-    }
-    const rebuildState = getLocalDevRebuildState();
-    const pullLatest = (options as { pullLatest?: unknown } | undefined)?.pullLatest === true;
-    if (pullLatest) {
-      if (!rebuildState.enabled || !rebuildState.sourceRoot) {
-        return {
-          accepted: false,
-          logPath: null,
-          message: rebuildState.reason ?? "Local rebuilds are unavailable.",
-        } satisfies DesktopLocalRebuildResult;
-      }
-      const pull = await pullLatestCheckoutChanges(rebuildState.sourceRoot);
-      if (!pull.ok) {
-        return {
-          accepted: false,
-          logPath: null,
-          message: pull.message,
-        } satisfies DesktopLocalRebuildResult;
-      }
-    }
-    localRebuildStarted = true;
-    const result = await launchLocalDevRebuild(rebuildState, LOG_DIR, undefined, () => {
-      localRebuildStarted = false;
-    });
-    if (!result.accepted) {
-      localRebuildStarted = false;
-    }
-    return result satisfies DesktopLocalRebuildResult;
-  });
+  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async (_event, options) =>
+    runLocalRebuildStart({
+      isStarted: () => localRebuildStarted,
+      setStarted: (started) => {
+        localRebuildStarted = started;
+      },
+      getState: getLocalDevRebuildState,
+      pullLatest: (sourceRoot) => pullLatestCheckoutChanges(sourceRoot),
+      launch: (state, onExit) => launchLocalDevRebuild(state, LOG_DIR, undefined, onExit),
+      alreadyStartedLogPath: Path.join(LOG_DIR, "dev-rebuild.log"),
+      options: options as { pullLatest?: unknown } | undefined,
+    }),
+  );
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
