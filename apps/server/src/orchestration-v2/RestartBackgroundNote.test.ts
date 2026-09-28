@@ -12,6 +12,7 @@ import {
   cancelledTurnItemWork,
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
+  mergeRestartCancelledBackgroundWork,
 } from "./RestartBackgroundNote.ts";
 
 const claudeThread = ProviderThreadId.make("provider-thread:claude");
@@ -85,4 +86,14 @@ it("bounds roster task labels including a long task id", () => {
   assert.lengthOf(work.label, 160);
   const idOnly = cancelledRosterTaskWork({ taskId: "t".repeat(400) });
   assert.lengthOf(idOnly.label, 160);
+});
+
+it("keeps separate cancelled tasks that share a kind and label", () => {
+  const first = { kind: "shell" as const, label: "sleep 20", id: "item-1" };
+  const second = { kind: "shell" as const, label: "sleep 20", id: "item-2" };
+  const merged = mergeRestartCancelledBackgroundWork([first], [second, first]);
+  assert.deepEqual(merged, [first, second]);
+  // Rows recorded before ids existed still collapse by kind + label.
+  const legacy = { kind: "shell" as const, label: "sleep 20" };
+  assert.lengthOf(mergeRestartCancelledBackgroundWork([legacy], [legacy]), 1);
 });

@@ -492,6 +492,8 @@ export type OrchestrationV2DelegatedCompletionCohort =
 export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
   kind: Schema.Literals(["subagent", "shell", "monitor", "task"]),
   label: TrimmedNonEmptyString,
+  /** Stable identity (turn item or provider task id) so same-named work is not merged. */
+  id: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2RestartCancelledBackgroundWork =
   typeof OrchestrationV2RestartCancelledBackgroundWork.Type;

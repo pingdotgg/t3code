@@ -24,11 +24,13 @@ export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | und
       return {
         kind: "subagent",
         label: compactLabel(item.title) ?? compactLabel(item.prompt) ?? "subagent",
+        id: item.id,
       };
     case "command_execution":
       return {
         kind: "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
+        id: item.id,
       };
     case "dynamic_tool": {
       const monitor =
@@ -38,6 +40,7 @@ export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | und
       return {
         kind: monitor ? "monitor" : "task",
         label: compactLabel(item.title) ?? compactLabel(item.toolName) ?? "background tool",
+        id: item.id,
       };
     }
     default:
@@ -63,6 +66,7 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
       compactLabel(
         description === undefined ? task.taskId : `${description} (id ${task.taskId})`,
       ) ?? "background task",
+    id: task.taskId,
   };
 }
 
@@ -138,10 +142,12 @@ export function mergeRestartCancelledBackgroundWork(
   current: ReadonlyArray<Work>,
   added: ReadonlyArray<Work>,
 ): ReadonlyArray<Work> {
-  const seen = new Set(current.map((entry) => `${entry.kind}\u0000${entry.label}`));
+  // Rows recorded before ids existed fall back to kind + label.
+  const identity = (entry: Work) => entry.id ?? `${entry.kind}\u0000${entry.label}`;
+  const seen = new Set(current.map(identity));
   const merged = [...current];
   for (const entry of added) {
-    const key = `${entry.kind}\u0000${entry.label}`;
+    const key = identity(entry);
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(entry);
