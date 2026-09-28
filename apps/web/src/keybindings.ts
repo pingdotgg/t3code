@@ -432,6 +432,42 @@ export function isRichTextBoldShortcut(event: ShortcutEventLike): boolean {
   );
 }
 
+/**
+ * Ctrl+J / Ctrl+K as list down / up in open pickers. macOS only: elsewhere
+ * `mod` is Ctrl, so the chords belong to the terminal and command palette.
+ */
+export function listNavigationKeyFromEvent(
+  event: ShortcutEventLike,
+  platform = navigator.platform,
+): "ArrowDown" | "ArrowUp" | null {
+  if (event.type !== undefined && event.type !== "keydown") return null;
+  if (!isMacPlatform(platform)) return null;
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
+  const keys = resolveEventKeys(event);
+  if (keys.has("j")) return "ArrowDown";
+  if (keys.has("k")) return "ArrowUp";
+  return null;
+}
+
+/**
+ * Replays Ctrl+J / Ctrl+K as the matching arrow key on the same element, so
+ * a list input's own arrow handling moves the highlight. Returns whether it
+ * replayed, so callers can skip their handler for the original chord.
+ */
+export function redirectListNavigationKey(event: {
+  nativeEvent: KeyboardEvent;
+  currentTarget: EventTarget;
+  preventDefault: () => void;
+}): boolean {
+  const key = listNavigationKeyFromEvent(event.nativeEvent);
+  if (!key) return false;
+  event.preventDefault();
+  event.currentTarget.dispatchEvent(
+    new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }),
+  );
+  return true;
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,

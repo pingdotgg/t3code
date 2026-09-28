@@ -19,6 +19,7 @@ import {
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
+  listNavigationKeyFromEvent,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
@@ -1050,6 +1051,46 @@ describe("formatShortcutLabel", () => {
   it("formats labels for plus key", () => {
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
+  });
+});
+
+describe("listNavigationKeyFromEvent", () => {
+  it("maps Ctrl+J and Ctrl+K to down and up on macOS", () => {
+    assert.strictEqual(
+      listNavigationKeyFromEvent(event({ key: "j", ctrlKey: true }), "MacIntel"),
+      "ArrowDown",
+    );
+    assert.strictEqual(
+      listNavigationKeyFromEvent(event({ key: "k", ctrlKey: true }), "MacIntel"),
+      "ArrowUp",
+    );
+  });
+
+  it("matches the J key on non-Latin macOS layouts", () => {
+    assert.strictEqual(
+      listNavigationKeyFromEvent(event({ key: "о", code: "KeyJ", ctrlKey: true }), "MacIntel"),
+      "ArrowDown",
+    );
+  });
+
+  it("leaves Ctrl+J and Ctrl+K to the terminal and palette where mod is Ctrl", () => {
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "j", ctrlKey: true }), "Win32"));
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "k", ctrlKey: true }), "Linux x86_64"));
+  });
+
+  it("ignores Cmd, extra modifiers, bare letters, and keyup", () => {
+    const mac = "MacIntel";
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "j", metaKey: true }), mac));
+    assert.isNull(
+      listNavigationKeyFromEvent(event({ key: "j", ctrlKey: true, shiftKey: true }), mac),
+    );
+    assert.isNull(
+      listNavigationKeyFromEvent(event({ key: "k", ctrlKey: true, altKey: true }), mac),
+    );
+    assert.isNull(listNavigationKeyFromEvent(event({ key: "j" }), mac));
+    assert.isNull(
+      listNavigationKeyFromEvent(event({ type: "keyup", key: "j", ctrlKey: true }), mac),
+    );
   });
 });
 

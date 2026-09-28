@@ -76,6 +76,7 @@ import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/provider
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
+import { listNavigationKeyFromEvent } from "../keybindings";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
 export interface ComposerPromptEditorHandle {
@@ -950,7 +951,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           if (!handler) return false;
           const key =
-            event.key === "Tab"
+            listNavigationKeyFromEvent(event) ??
+            (event.key === "Tab"
               ? ("Tab" as const)
               : event.key === "ArrowDown"
                 ? ("ArrowDown" as const)
@@ -958,7 +960,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                   ? ("ArrowUp" as const)
                   : event.key === "Escape"
                     ? ("Escape" as const)
-                    : null;
+                    : null);
           if (!key) return false;
           const handled = handler(key, event);
           if (handled) {
