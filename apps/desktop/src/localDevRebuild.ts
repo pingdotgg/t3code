@@ -249,12 +249,12 @@ export async function checkLocalDevRebuildStaleness(input: {
  * Fast-forward the checkout to the remote default branch before rebuilding,
  * so the new build actually contains the advertised remote changes. The
  * branch is resolved fresh via ls-remote (never trusted from a stale poll),
- * and the pull only runs when the checkout is on that branch: anything else
- * (feature branch, detached HEAD, no default branch) aborts with an
- * actionable message instead of updating the wrong ref. Never merges or
- * touches work the fast-forward would overwrite: those cases fail with git's
- * own message and the rebuild is aborted before anything is built or
- * restarted.
+ * and the pull only runs when the checkout is on that branch with a clean
+ * working tree: anything else (feature branch, detached HEAD, local
+ * changes, no default branch) aborts with an actionable message instead of
+ * mutating local work or updating the wrong ref. Never merges: fast-forward
+ * failures surface git's own message and the rebuild is aborted before
+ * anything is built or restarted.
  */
 export async function pullLatestCheckoutChanges(
   sourceRoot: string,
@@ -287,13 +287,50 @@ export async function pullLatestCheckoutChanges(
     );
   }
 
+  // Clean-tree gate before the mutation boundary: a fast-forward can still
+  // move a worktree with unrelated edits, and a configured pull.autostash
+  // would silently stash/apply around it. Full-visibility flags match
+  // ProjectAutoPull so user status preferences cannot hide changes.
+  let workingTree: GitRunResult;
+  try {
+    workingTree = await runGit(
+      ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+      sourceRoot,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return fail(`Could not inspect the working tree: ${message}`);
+  }
+  if (workingTree.exitCode !== 0) {
+    return fail("Could not inspect the working tree.");
+  }
+  if (workingTree.stdout.trim().length > 0) {
+    return fail(
+      `Checkout has local changes; stash, commit, or discard them before pulling origin/${parsed.branch}.`,
+    );
+  }
+
   // Explicit remote + branch (not bare `git pull`): independent of whatever
-  // upstream the current branch happens to track.
+  // upstream the current branch happens to track. Autostash is disabled
+  // explicitly so user config cannot move local work around the pull.
   let pull: GitRunResult;
   try {
-    pull = await runGit(["pull", "--ff-only", "origin", parsed.branch], sourceRoot, {
-      timeoutMs: PULL_GIT_TIMEOUT_MS,
-    });
+    pull = await runGit(
+      [
+        "-c",
+        "merge.autostash=false",
+        "-c",
+        "rebase.autoStash=false",
+        "pull",
+        "--ff-only",
+        "origin",
+        parsed.branch,
+      ],
+      sourceRoot,
+      {
+        timeoutMs: PULL_GIT_TIMEOUT_MS,
+      },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return fail(`Could not pull latest changes: ${message}`);

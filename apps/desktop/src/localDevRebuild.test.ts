@@ -393,10 +393,21 @@ describe("local Dev rebuild pull", () => {
     return { runner, calls };
   }
 
+  const cleanTree = {
+    "status --porcelain --untracked-files=all --ignore-submodules=none": {
+      stdout: "",
+      exitCode: 0,
+    },
+  };
+
   it("pulls the advertised remote default branch before rebuilding", async () => {
     const { runner, calls } = trackingRunner({
       ...onDefaultBranch(),
-      "pull --ff-only origin main": { stdout: "Already up to date.\n", exitCode: 0 },
+      ...cleanTree,
+      "-c merge.autostash=false -c rebase.autoStash=false pull --ff-only origin main": {
+        stdout: "Already up to date.\n",
+        exitCode: 0,
+      },
     });
 
     const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
@@ -405,8 +416,58 @@ describe("local Dev rebuild pull", () => {
     expect(calls).toEqual([
       ["ls-remote", "--symref", "origin", "HEAD"],
       ["branch", "--show-current"],
-      ["pull", "--ff-only", "origin", "main"],
+      ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+      [
+        "-c",
+        "merge.autostash=false",
+        "-c",
+        "rebase.autoStash=false",
+        "pull",
+        "--ff-only",
+        "origin",
+        "main",
+      ],
     ]);
+  });
+
+  it("pulls origin/main without requiring a configured upstream", async () => {
+    const { runner, calls } = trackingRunner({
+      ...onDefaultBranch(),
+      ...cleanTree,
+      "-c merge.autostash=false -c rebase.autoStash=false pull --ff-only origin main": {
+        stdout: "Already up to date.\n",
+        exitCode: 0,
+      },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result).toEqual({ ok: true, message: null });
+    // No upstream lookup (rev-parse @{u}, branch --show-current -v, config
+    // branch.*.merge): the explicit origin/branch invocation works whether
+    // or not the local branch tracks anything.
+    expect(
+      calls.some(
+        (args) =>
+          args.join(" ").includes("@{u}") || args[0] === "config" || args.includes("@{upstream}"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses to pull a dirty worktree, including untracked files", async () => {
+    const { runner, calls } = trackingRunner({
+      ...onDefaultBranch(),
+      "status --porcelain --untracked-files=all --ignore-submodules=none": {
+        stdout: " M src/app.ts\n?? scratch-notes.txt\n",
+        exitCode: 0,
+      },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("local changes");
+    expect(calls.some((args) => args[0] === "pull" || args.includes("pull"))).toBe(false);
   });
 
   it("refuses to pull when the checkout is not on the advertised branch", async () => {
@@ -457,7 +518,8 @@ describe("local Dev rebuild pull", () => {
   it("refuses to pull when fast-forward is impossible and reports git's reason", async () => {
     const { runner } = trackingRunner({
       ...onDefaultBranch(),
-      "pull --ff-only origin main": {
+      ...cleanTree,
+      "-c merge.autostash=false -c rebase.autoStash=false pull --ff-only origin main": {
         stdout: "",
         stderr: "error: Your local changes would be overwritten by merge.\n",
         exitCode: 1,
