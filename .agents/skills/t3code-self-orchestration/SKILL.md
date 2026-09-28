@@ -90,6 +90,13 @@ Helper prompts must be self-contained:
 
 The child cannot see the parent conversation; include every required decision and constraint.
 
+For a replacement thread, include the last failing command/assertion, leading hypothesis,
+task-owned uncommitted work to preserve, and verified environment identity (workspace, state
+directory, ports, and process ownership). Explicitly transfer implementation and validation
+ownership: confirm the previous worker is idle or stop obsolete work through the supported
+control plane before the replacement writes shared state. A completed turn alone does not prove
+its background processes stopped; do not have both threads continue the same work.
+
 ## Monitoring
 
 New MCP-created children have one delegated assignment. T3 automatically reports the returned

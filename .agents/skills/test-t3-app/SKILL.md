@@ -19,6 +19,10 @@ first, then exercise the relevant actions with meaningful test data. Check obser
 snapshots, console errors, and failed requests. A generic empty app or pairing form does not
 demonstrate a feature. Native behavior requires native validation, not just the web client.
 
+Browser automation failure does not block independent backend/CLI acceptance work. Complete
+those scenarios separately and keep the browser limitation scoped to what it actually prevents;
+backend results do not waive the required real-client pass.
+
 Capture before/after screenshots for UI changes. Record the action and outcome when motion,
 timing, or reconnect behavior matters. Review the captures for relevance and secrets. Describe
 what you actually exercised, the tested revision, observations, and limitations in the PR's
@@ -140,7 +144,7 @@ If completion is uncertain, keep the environment alive and mention that it is re
 - The pairing input accepts a raw token or a complete same-origin pairing URL. Use the "Pairing token" label, not a textbox role (the input is masked). Never paste a token for another environment. Clear failed credentials before capturing evidence.
 - If the pairing URL is no longer visible, rerun `pair --base-dir <absolute-base-dir>`; do not pass `--dev-url` or `--base-url` to `pair`.
 - If the replacement token is rejected, verify that the CLI and server use the identical absolute base directory and web URL.
-- If the UI shows unexpected data, verify that every command uses the identical explicit base directory before editing anything.
+- If seeded data is missing or unexpected, verify the resolved database path and application flavor used by both the seed command and running server, not merely the supplied home directory or ports. Follow [database selection](references/sqlite-fixtures.md#select-the-correct-database), then confirm a known seeded entity through the target server's API before browser interaction. Do not mutate shared state or copy a live database to repair a mismatch.
 - If the backend and Vite are started separately, run `dev:server` and `dev:web` with the same
   `T3CODE_DEV_INSTANCE` (or explicit port offset) and keep the browser on the Vite origin.
   The runner must provide `VITE_DEV_SERVER_URL` for that origin plus `VITE_HTTP_URL` and

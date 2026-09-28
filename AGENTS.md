@@ -12,6 +12,7 @@
 
 - Never write unit tests after writing the code they test. If isolation is necessary, identify failure modes and write the tests first.
 - Highly prefer E2E tests as the sole testing mechanism. Use them to verify complex features work rather than adding low-signal isolated tests.
+- Acceptance tests must exercise the production code responsible for the claimed outcome. Do not manufacture that outcome in the fixture; mock only dependencies outside the behavior being verified. Mock-data screenshots prove rendering, not backend behavior.
 - At the end of E2E tests, produce a verifiable, repeatable artifact that records the tested revision, reproduction steps, assertions, and observed results (for example, a test report with a trace or recording).
 - If a system must be tested in isolation, first write down all the ways it could fail, then write the test and implementation code. Keep isolated tests only when they catch real bugs E2E tests miss.
 - Design changes are not merge-ready without screenshots: every user-visible web change ships with before/after captures published to the PR via `pnpm pr:media`. When live data is unavailable, capture an isolated render with meaningful mock data instead of skipping.
