@@ -1,6 +1,10 @@
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import {
+  getSlowRpcAckRequests,
+  type SlowRpcAckRequest,
+  useSlowRpcAckRequests,
+} from "../rpc/requestLatencyState";
 import { getLastWsStreamActivityMs } from "../rpc/wsActivity";
 import { recordWsDiagnostic } from "../rpc/wsDiagnostics";
 import {
@@ -191,6 +195,31 @@ export function shouldForceStallReconnect(input: {
   );
 }
 
+export function shouldShowReconnectedToast(input: {
+  readonly uiState: WsConnectionUiState;
+  readonly previousUiState: WsConnectionUiState;
+  readonly previousDisconnectedAt: string | null;
+  readonly connectedAt: string | null;
+  readonly debounceMs?: number;
+}): boolean {
+  if (
+    input.uiState !== "connected" ||
+    (input.previousUiState !== "offline" && input.previousUiState !== "reconnecting") ||
+    input.previousDisconnectedAt === null
+  ) {
+    return false;
+  }
+  // Same debounce as the reconnecting/offline toasts: a sub-second blip shows
+  // no reconnecting toast, so it must not show a "Reconnected" toast either.
+  if (input.connectedAt === null) {
+    return false;
+  }
+  const debounceMs = input.debounceMs ?? RECONNECT_TOAST_DEBOUNCE_MS;
+  const durationMs =
+    new Date(input.connectedAt).getTime() - new Date(input.previousDisconnectedAt).getTime();
+  return Number.isFinite(durationMs) && durationMs >= debounceMs;
+}
+
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
   const slowRequests = useSlowRpcAckRequests();
@@ -321,6 +350,13 @@ export function WebSocketConnectionCoordinator() {
     }
 
     const intervalId = window.setInterval(() => {
+      // Re-read fresh inside the tick: the effect closure captures render-time
+      // slow-request state, so a request that resolves before the next tick
+      // must not trigger a reconnect with no active work.
+      const freshSlowRequests = getSlowRpcAckRequests();
+      if (freshSlowRequests.length === 0) {
+        return;
+      }
       const currentStatus = getWsConnectionStatus();
       if (
         !shouldForceStallReconnect({
@@ -338,7 +374,7 @@ export function WebSocketConnectionCoordinator() {
       lastStallReconnectAtRef.current = Date.now();
       recordWsDiagnostic("stream-stalled", {
         idleMs: Date.now() - getLastWsStreamActivityMs(),
-        slowRequests: slowRequests.length,
+        slowRequests: freshSlowRequests.length,
       });
       runReconnect(false);
     }, 5_000);
@@ -430,9 +466,12 @@ export function WebSocketConnectionCoordinator() {
     }
 
     if (
-      uiState === "connected" &&
-      (previousUiState === "offline" || previousUiState === "reconnecting") &&
-      previousDisconnectedAt !== null
+      shouldShowReconnectedToast({
+        uiState,
+        previousUiState,
+        previousDisconnectedAt,
+        connectedAt: status.connectedAt,
+      })
     ) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
