@@ -185,7 +185,7 @@ export function useRemoteConnections() {
       if (environment.isRelayManaged) {
         Alert.alert(
           "Remove from this device?",
-          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays registered to your T3 Connect account and keeps using a host space. To remove it from your account and free that space, deregister it under T3 Account → T3 Connect.`,
+          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
           [
             { text: "Cancel", style: "cancel" },
             {
