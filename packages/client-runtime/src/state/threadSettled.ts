@@ -29,14 +29,6 @@ interface QueuedThreadShell {
   readonly runtime?: SettlementRuntimeLike | null;
 }
 
-interface SettlementThreadShell extends QueuedThreadShell {
-  readonly createdAt: string;
-  readonly settledOverride: "settled" | "active" | null;
-  readonly settledAt: string | null;
-  readonly hasPendingApprovals: boolean;
-  readonly hasPendingUserInput: boolean;
-}
-
 /**
  * A queued turn start lives for at most this long: session adoption takes
  * seconds, so a user message still unadopted after the grace window is a

@@ -1577,7 +1577,6 @@ export function buildPendingUserInputAnswers(
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
-    readonly localMessages?: ReadonlyArray<LocalThreadMessage>;
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
@@ -1710,11 +1709,6 @@ export function buildThreadFeed(
     );
     if (insertionIndex === -1) entries.push(entry);
     else entries.splice(insertionIndex, 0, entry);
-  }
-  for (const message of options?.localMessages ?? []) {
-    if (retainedMessageIds.has(message.id)) continue;
-    retainedMessageIds.add(message.id);
-    entries.push(appendLocalMessage(message));
   }
   return groupAdjacentActivities(entries);
 }
