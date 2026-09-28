@@ -148,18 +148,20 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
     }
 
     // Match packages/shared usageLimits.formatResetsIn for native widget renders.
-    internal fun formatResetsIn(resetsAt: Long?, now: Long): String {
-      if (resetsAt == null) return "Reset time unavailable"
-      if (resetsAt <= now) return "resets now"
-      val minutes = (resetsAt - now) / 60_000
-      val hours = minutes / 60
-      val days = hours / 24
-      val duration = when {
-        days > 0 -> "${days}d ${hours % 24}h"
-        hours > 0 -> "${hours}h ${minutes % 60}m"
-        else -> "${minutes}m"
+    internal fun formatResetsIn(resetsAt: Long?, now: Long): String = when {
+      resetsAt == null -> "Reset time unavailable"
+      resetsAt <= now -> "resets now"
+      else -> {
+        val minutes = (resetsAt - now) / 60_000
+        val hours = minutes / 60
+        val days = hours / 24
+        val duration = when {
+          days > 0 -> "${days}d ${hours % 24}h"
+          hours > 0 -> "${hours}h ${minutes % 60}m"
+          else -> "${minutes}m"
+        }
+        "resets in $duration"
       }
-      return "resets in $duration"
     }
 
     private fun rowView(
