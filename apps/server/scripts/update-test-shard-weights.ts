@@ -27,11 +27,13 @@ const weightsPath = NodePath.join(serverDir, "src/testUtils/shardWeights.json");
 const reportDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-server-test-report-"));
 const reportPath = NodePath.join(reportDir, "report.json");
 
-// Failing tests still report their duration, so the exit code is not checked.
-NodeChildProcess.spawnSync("vp", ["test", "run", "--reporter=json", `--outputFile=${reportPath}`], {
-  cwd: serverDir,
-  stdio: "inherit",
-});
+// `node --run` puts the package's own `vp` on PATH, on every platform. Failing
+// tests still report their duration, so the exit code is not checked.
+NodeChildProcess.spawnSync(
+  process.execPath,
+  ["--run", "test", "--", "--reporter=json", `--outputFile=${reportPath}`],
+  { cwd: serverDir, stdio: "inherit" },
+);
 
 const report: VitestJsonReport = JSON.parse(NodeFS.readFileSync(reportPath, "utf8"));
 NodeFS.rmSync(reportDir, { recursive: true, force: true });
@@ -50,4 +52,3 @@ const weights = Object.fromEntries(
 );
 
 NodeFS.writeFileSync(weightsPath, `${JSON.stringify(weights, null, 2)}\n`);
-NodeChildProcess.spawnSync("vp", ["fmt", weightsPath], { cwd: serverDir, stdio: "inherit" });
