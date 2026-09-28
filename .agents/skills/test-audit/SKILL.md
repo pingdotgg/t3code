@@ -63,6 +63,10 @@ matches one, and audits hunt for existing tests that do.
   delivery or acknowledgement the flag promises;
 - negative controls that pass for an unrelated reason, such as a denial from a
   different guard or a rejection the production path never reaches;
+- tests of logic-free holders: modules with no branching except defensive
+  validation, where the test only replays the setter and getter;
+- near-no-op assertions: tests that pass whether or not the fix works, such as
+  asserting a repair count of zero or a value the fixture itself supplied;
 - names or fixtures that promise more than the input exercises, such as a test
   claiming a window is retired while asserting it was not cleared.
 

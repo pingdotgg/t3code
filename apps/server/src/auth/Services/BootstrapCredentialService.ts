@@ -1,7 +1,7 @@
-import type {
-  AuthEnvironmentScope,
-  AuthPairingLink,
-  ServerAuthBootstrapMethod,
+import {
+  type AuthEnvironmentScope,
+  type AuthPairingLink,
+  type ServerAuthBootstrapMethod,
 } from "@t3tools/contracts";
 import { Data, DateTime, Duration, Context } from "effect";
 import type { Effect, Stream } from "effect";
@@ -15,6 +15,7 @@ export interface BootstrapGrant {
   readonly subject: string;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
+  readonly browserSessionOnly?: boolean;
   readonly expiresAt: DateTime.DateTime;
 }
 
@@ -51,6 +52,14 @@ export interface BootstrapCredentialServiceShape {
     readonly label?: string;
     readonly proofKeyThumbprint?: string;
   }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialError>;
+  readonly issueTransientBrowserSessionToken: (input: {
+    readonly ttl: Duration.Duration;
+    readonly subject: string;
+    readonly label?: string;
+  }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialError>;
+  readonly revokeTransientOneTimeToken: (id: string) => Effect.Effect<boolean>;
+  readonly revokeTransientOneTimeTokensForSubject: (subject: string) => Effect.Effect<number>;
+  readonly isTransientSubjectRevoked: (subject: string) => Effect.Effect<boolean>;
   readonly listActive: () => Effect.Effect<
     ReadonlyArray<AuthPairingLink>,
     BootstrapCredentialError

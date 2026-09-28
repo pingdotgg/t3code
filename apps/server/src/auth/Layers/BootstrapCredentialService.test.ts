@@ -148,4 +148,33 @@ it.layer(NodeServices.layer)("BootstrapCredentialServiceLive", (it) => {
       expect(revokedConsume.status).toBe(401);
     }).pipe(Effect.provide(makeBootstrapCredentialLayer())),
   );
+
+  it.effect("bounds transient subject revocation tombstones", () =>
+    Effect.gen(function* () {
+      const bootstrapCredentials = yield* BootstrapCredentialService;
+      const recentlyRevokedSubject = "preview-session-recent";
+      const evictedSubject = "preview-session-oldest";
+
+      yield* bootstrapCredentials.revokeTransientOneTimeTokensForSubject(evictedSubject);
+      yield* Effect.forEach(
+        Array.from({ length: 4_096 }, (_, index) =>
+          bootstrapCredentials.revokeTransientOneTimeTokensForSubject(`preview-session-${index}`),
+        ),
+        (revoke) => revoke,
+      );
+      yield* bootstrapCredentials.revokeTransientOneTimeTokensForSubject(recentlyRevokedSubject);
+
+      expect(yield* bootstrapCredentials.isTransientSubjectRevoked(evictedSubject)).toBe(false);
+      expect(yield* bootstrapCredentials.isTransientSubjectRevoked(recentlyRevokedSubject)).toBe(
+        true,
+      );
+      const denied = yield* Effect.flip(
+        bootstrapCredentials.issueTransientBrowserSessionToken({
+          ttl: Duration.seconds(60),
+          subject: recentlyRevokedSubject,
+        }),
+      );
+      expect(denied.status).toBe(401);
+    }).pipe(Effect.provide(makeBootstrapCredentialLayer())),
+  );
 });

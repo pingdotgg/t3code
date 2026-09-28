@@ -45,6 +45,7 @@ export type SessionCredentialChange =
 
 export class SessionCredentialError extends Data.TaggedError("SessionCredentialError")<{
   readonly message: string;
+  readonly reason?: "expired" | "revoked" | "invalid";
   readonly cause?: unknown;
 }> {}
 

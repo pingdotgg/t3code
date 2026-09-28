@@ -73,6 +73,7 @@ import {
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
+import { openPreviewSession } from "./openPreviewSession";
 import {
   PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS,
   explicitlySuppressesPreview,
@@ -224,6 +225,7 @@ export const classifyPreviewPreflightProbe = (input: {
 };
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { prepareManagedPreviewTarget, type ManagedPreviewTarget } from "./previewManagedTarget";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -240,6 +242,7 @@ import {
 import {
   assertPreviewRuntimeCurrent,
   withCurrentPreviewRuntime,
+  waitForManagedPreviewReadiness,
   waitForNavigationReadiness,
 } from "./previewNavigationReadiness";
 
@@ -512,6 +515,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const automationConnectionId = useAtomValue(automationConnectionAtom);
   const synchronizedThreadIdsRef = useRef(new Set<string>());
   const presentationSuppressedRuntimeTabsRef = useRef(new Map<string, Set<string>>());
+  const managedTargetsByThreadRef = useRef(
+    new Map<
+      string,
+      {
+        readonly serverEpoch: string | null;
+        readonly byTabId: Map<string, ManagedPreviewTarget>;
+      }
+    >(),
+  );
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
@@ -520,6 +532,58 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
+      };
+      const managedTargets = () => {
+        const current = readThreadPreviewState(threadRef);
+        const key = `${environmentId}\u0000${request.threadId}`;
+        const existing = managedTargetsByThreadRef.current.get(key);
+        if (existing?.serverEpoch === current.serverEpoch) {
+          for (const [knownTabId, target] of existing.byTabId) {
+            const session = current.sessions[knownTabId];
+            if (!session) {
+              existing.byTabId.delete(knownTabId);
+              continue;
+            }
+            // A manual navigation away from the managed origins leaves the
+            // session alive, so the entry would otherwise force managed
+            // readiness against an unrelated origin. Drop it and treat the
+            // tab as an ordinary unmanaged target.
+            const url = session.navStatus._tag === "Idle" ? null : session.navStatus.url;
+            if (url) {
+              try {
+                if (!target.expectedOrigins.includes(new URL(url).origin)) {
+                  existing.byTabId.delete(knownTabId);
+                }
+              } catch {
+                // Keep the entry when the URL cannot be parsed.
+              }
+            }
+          }
+          return existing.byTabId;
+        }
+        const replacement = { serverEpoch: current.serverEpoch, byTabId: new Map() };
+        managedTargetsByThreadRef.current.set(key, replacement);
+        return replacement.byTabId;
+      };
+      const waitForManagedTab = async (
+        managedTabId: string,
+        runtimeTabId: string,
+        options?: { readonly targetUrl?: string; readonly recoverPairingPage?: boolean },
+      ) => {
+        const target = managedTargets().get(managedTabId);
+        if (!target) return;
+        await waitForManagedPreviewReadiness({
+          threadRef,
+          request,
+          tabId: managedTabId,
+          runtimeTabId,
+          target,
+          ...(options?.targetUrl === undefined ? {} : { targetUrl: options.targetUrl }),
+          timeoutMs: request.timeoutMs,
+          ...(options?.recoverPairingPage === undefined
+            ? {}
+            : { recoverPairingPage: options.recoverPairingPage }),
+        });
       };
       let tabId = request.tabId ?? null;
       const browserActivity: { release?: () => void } = {};
@@ -553,7 +617,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           tabId,
           bridgeAvailable: Boolean(previewBridge),
         };
-        const requireReadyTab = async () => {
+        const requireReadyTab = async (verifyManagedTarget = true) => {
           const bridge = previewBridge;
           const readyTabId = tabId;
           if (!bridge || !readyTabId) {
@@ -588,6 +652,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             request.operation,
             hostDeadlineMs,
           );
+          if (verifyManagedTarget) {
+            await waitForManagedTab(readyTabId, runtimeTabId);
+          }
           return { bridge, tabId: readyTabId, runtimeTabId };
         };
         const applyPresentationIntent = async (
@@ -872,8 +939,16 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               );
             }
           }
-          case "status":
+          case "status": {
+            if (tabId) {
+              const current = readThreadPreviewState(threadRef);
+              await waitForManagedTab(
+                tabId,
+                previewRuntimeTabId(threadRef, current.serverEpoch, tabId),
+              );
+            }
             return await readPreviewAutomationStatus(threadRef, tabId);
+          }
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
             const resolvedInputUrl = input.url
@@ -891,13 +966,21 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
               : undefined;
             const reusedExistingTab = activeTabId !== null;
+            let managedTarget: ManagedPreviewTarget | null = null;
             tabId = activeTabId;
             if (!activeTabId) {
-              const result = await open({
-                environmentId,
-                input: {
-                  threadId: request.threadId,
-                  ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+              const result = await openPreviewSession({
+                openPreview: open,
+                threadRef,
+                ...(resolvedInputUrl === undefined ? {} : { url: resolvedInputUrl }),
+                beforeOpen: async (profileId) => {
+                  if (resolvedInputUrl === undefined) return;
+                  managedTarget = await prepareManagedPreviewTarget({
+                    request,
+                    threadRef,
+                    targetUrl: resolvedInputUrl,
+                    profileId,
+                  });
                 },
               });
               if (result._tag === "Failure") {
@@ -908,6 +991,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               activeTabId = snapshot.tabId;
               activeSnapshot = snapshot;
               tabId = activeTabId;
+            } else if (resolvedInputUrl !== undefined) {
+              managedTarget = await prepareManagedPreviewTarget({
+                request,
+                threadRef,
+                targetUrl: resolvedInputUrl,
+                ...(activeSnapshot?.profileId === undefined
+                  ? {}
+                  : { profileId: activeSnapshot.profileId }),
+              });
             }
             const activeRuntimeTabId = previewRuntimeTabId(
               threadRef,
@@ -958,6 +1050,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
               await previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl);
+              if (managedTarget) managedTargets().set(activeTabId, managedTarget);
+              else managedTargets().delete(activeTabId);
               await waitForNavigationReadiness(
                 threadRef,
                 request.requestId,
@@ -967,11 +1061,46 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 "load",
                 request.timeoutMs,
               );
+              if (managedTarget) {
+                await waitForManagedPreviewReadiness({
+                  threadRef,
+                  request,
+                  tabId: activeTabId,
+                  runtimeTabId: activeRuntimeTabId,
+                  target: managedTarget,
+                  targetUrl: resolvedInputUrl,
+                  timeoutMs: request.timeoutMs,
+                  recoverPairingPage: true,
+                });
+              }
+            } else if (reusedExistingTab && resolvedInputUrl && request.managedTargetAuth) {
+              throw new PreviewAutomationTargetUnavailableError({
+                requestId: request.requestId,
+                operation: request.operation,
+                environmentId,
+                threadId: request.threadId,
+                tabId: activeTabId,
+                bridgeAvailable: false,
+              });
+            } else if (managedTarget && resolvedInputUrl !== undefined) {
+              managedTargets().set(activeTabId, managedTarget);
+              await waitForManagedPreviewReadiness({
+                threadRef,
+                request,
+                tabId: activeTabId,
+                runtimeTabId: activeRuntimeTabId,
+                target: managedTarget,
+                targetUrl: resolvedInputUrl,
+                timeoutMs: request.timeoutMs,
+                recoverPairingPage: true,
+              });
+            } else if (resolvedInputUrl === undefined) {
+              await waitForManagedTab(activeTabId, activeRuntimeTabId);
             }
             return await readPreviewAutomationStatus(threadRef, activeTabId);
           }
           case "navigate": {
-            const ready = await requireReadyTab();
+            const ready = await requireReadyTab(false);
             const input = request.input as PreviewAutomationNavigateInput;
             const resolution = resolveBrowserNavigationTarget(
               environmentId,
@@ -980,7 +1109,17 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 url: input.url!,
               },
             );
+            const activeSnapshot = readThreadPreviewState(threadRef).sessions[ready.tabId];
+            const managedTarget = await prepareManagedPreviewTarget({
+              request,
+              threadRef,
+              targetUrl: resolution.resolvedUrl,
+              ...(activeSnapshot?.profileId === undefined
+                ? {}
+                : { profileId: activeSnapshot.profileId }),
+            });
             await ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl);
+            if (managedTarget) managedTargets().set(ready.tabId, managedTarget);
             await waitForNavigationReadiness(
               threadRef,
               request.requestId,
@@ -990,6 +1129,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               input.readiness ?? "load",
               input.timeoutMs ?? request.timeoutMs,
             );
+            if (managedTarget) {
+              await waitForManagedPreviewReadiness({
+                threadRef,
+                request,
+                tabId: ready.tabId,
+                runtimeTabId: ready.runtimeTabId,
+                target: managedTarget,
+                targetUrl: resolution.resolvedUrl,
+                timeoutMs: input.timeoutMs ?? request.timeoutMs,
+                recoverPairingPage: true,
+              });
+            } else {
+              managedTargets().delete(ready.tabId);
+            }
             return await readPreviewAutomationStatus(threadRef, ready.tabId);
           }
           case "resize": {
@@ -1142,13 +1295,21 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               ? (state.sessions[activeTabId] ?? state.snapshot ?? undefined)
               : undefined;
             const reusedExistingTab = activeTabId !== null;
+            let managedTarget: ManagedPreviewTarget | null = null;
             tabId = activeTabId;
             if (!activeTabId) {
-              const result = await open({
-                environmentId,
-                input: {
-                  threadId: request.threadId,
-                  ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
+              const result = await openPreviewSession({
+                openPreview: open,
+                threadRef,
+                ...(resolvedInputUrl === undefined ? {} : { url: resolvedInputUrl }),
+                beforeOpen: async (profileId) => {
+                  if (resolvedInputUrl === undefined) return;
+                  managedTarget = await prepareManagedPreviewTarget({
+                    request,
+                    threadRef,
+                    targetUrl: resolvedInputUrl,
+                    profileId,
+                  });
                 },
               });
               if (result._tag === "Failure") {
@@ -1159,6 +1320,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               activeTabId = snapshot.tabId;
               activeSnapshot = snapshot;
               tabId = activeTabId;
+            } else if (resolvedInputUrl !== undefined) {
+              managedTarget = await prepareManagedPreviewTarget({
+                request,
+                threadRef,
+                targetUrl: resolvedInputUrl,
+                ...(activeSnapshot?.profileId === undefined
+                  ? {}
+                  : { profileId: activeSnapshot.profileId }),
+              });
             }
             const activeRuntimeTabId = previewRuntimeTabId(
               threadRef,
@@ -1209,6 +1379,21 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
               await previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl);
+              if (managedTarget) managedTargets().set(activeTabId, managedTarget);
+              else managedTargets().delete(activeTabId);
+            } else if (reusedExistingTab && resolvedInputUrl && request.managedTargetAuth) {
+              throw new PreviewAutomationTargetUnavailableError({
+                requestId: request.requestId,
+                operation: request.operation,
+                environmentId,
+                threadId: request.threadId,
+                tabId: activeTabId,
+                bridgeAvailable: false,
+              });
+            } else if (managedTarget && resolvedInputUrl !== undefined) {
+              managedTargets().set(activeTabId, managedTarget);
+            } else if (resolvedInputUrl !== undefined) {
+              managedTargets().delete(activeTabId);
             }
             const readiness = input.readiness ?? (resolvedInputUrl !== undefined ? "load" : "none");
             if (readiness !== "none" && previewBridge) {
@@ -1241,6 +1426,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               request.operation,
               request.timeoutMs,
             );
+            if (managedTarget) {
+              await waitForManagedPreviewReadiness({
+                threadRef,
+                request,
+                tabId: activeTabId,
+                runtimeTabId: activeRuntimeTabId,
+                target: managedTarget,
+                ...(resolvedInputUrl === undefined ? {} : { targetUrl: resolvedInputUrl }),
+                timeoutMs: input.timeoutMs ?? request.timeoutMs,
+                recoverPairingPage: true,
+              });
+            } else if (resolvedInputUrl === undefined) {
+              await waitForManagedTab(activeTabId, activeRuntimeTabId);
+            }
             const snapshotInput = resolveSnapshotBudgets({
               includeConsole: input.includeConsole,
               includeNetwork: input.includeNetwork,

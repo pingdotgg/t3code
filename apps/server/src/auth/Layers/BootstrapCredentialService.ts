@@ -1,4 +1,4 @@
-import type { AuthPairingLink } from "@t3tools/contracts";
+import { AuthBrowserPreviewScope, type AuthPairingLink } from "@t3tools/contracts";
 import { DateTime, Duration, Effect, Layer, PubSub, Ref, Stream } from "effect";
 import { Option } from "effect";
 
@@ -16,6 +16,8 @@ import {
 import { defaultSessionScopes } from "../scopes.ts";
 
 interface StoredBootstrapGrant extends BootstrapGrant {
+  readonly id?: string;
+  readonly transient?: boolean;
   readonly remainingUses: number | "unbounded";
 }
 
@@ -31,6 +33,7 @@ type ConsumeResult =
     };
 
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
+const MAX_REVOKED_TRANSIENT_SUBJECTS = 4_096;
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 
@@ -40,10 +43,16 @@ const generatePairingToken = (): string => {
   return Array.from(randomBytes, (value) => PAIRING_TOKEN_ALPHABET[value & 31]).join("");
 };
 
+const generateTransientBootstrapCredential = (): string =>
+  Array.from(crypto.getRandomValues(new Uint8Array(32)), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
+
 export const makeBootstrapCredentialService = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const pairingLinks = yield* AuthPairingLinkRepository;
   const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
+  const revokedTransientSubjectsRef = yield* Ref.make(new Set<string>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
 
   const invalidBootstrapCredentialError = (message: string) =>
@@ -93,7 +102,9 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
   }
 
   const toBootstrapCredentialError = (message: string) => (cause: unknown) =>
-    internalBootstrapCredentialError(message, cause);
+    cause instanceof BootstrapCredentialError
+      ? cause
+      : internalBootstrapCredentialError(message, cause);
 
   const listActive: BootstrapCredentialServiceShape["listActive"] = () =>
     Effect.gen(function* () {
@@ -176,6 +187,106 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       return issued;
     }).pipe(Effect.mapError(toBootstrapCredentialError("Failed to issue pairing credential.")));
 
+  const issueTransientBrowserSessionToken: BootstrapCredentialServiceShape["issueTransientBrowserSessionToken"] =
+    (input) =>
+      Effect.gen(function* () {
+        const revokedSubjects = yield* Ref.get(revokedTransientSubjectsRef);
+        if (revokedSubjects.has(input.subject)) {
+          return yield* new BootstrapCredentialError({
+            message: "Preview authorization is no longer active.",
+            status: 401,
+          });
+        }
+        const id = crypto.randomUUID();
+        const credential = generateTransientBootstrapCredential();
+        const scopes = [AuthBrowserPreviewScope] as const;
+        const now = yield* DateTime.now;
+        const expiresAt = DateTime.add(now, {
+          milliseconds: Duration.toMillis(input.ttl),
+        });
+        const issued: IssuedBootstrapCredential = {
+          id,
+          credential,
+          scopes,
+          ...(input.label ? { label: input.label } : {}),
+          expiresAt,
+        };
+        yield* Ref.update(seededGrantsRef, (current) => {
+          const next = new Map(
+            Array.from(current).filter(
+              ([, grant]) =>
+                !grant.transient || !DateTime.isGreaterThanOrEqualTo(now, grant.expiresAt),
+            ),
+          );
+          next.set(credential, {
+            id,
+            transient: true,
+            method: "one-time-token",
+            role: "client",
+            scopes,
+            subject: input.subject,
+            ...(input.label ? { label: input.label } : {}),
+            browserSessionOnly: true,
+            expiresAt,
+            remainingUses: 1,
+          });
+          return next;
+        });
+        if ((yield* Ref.get(revokedTransientSubjectsRef)).has(input.subject)) {
+          yield* revokeTransientOneTimeToken(id);
+          return yield* new BootstrapCredentialError({
+            message: "Preview authorization is no longer active.",
+            status: 401,
+          });
+        }
+        return issued;
+      }).pipe(Effect.mapError(toBootstrapCredentialError("Failed to issue transient credential.")));
+
+  const revokeTransientOneTimeToken: BootstrapCredentialServiceShape["revokeTransientOneTimeToken"] =
+    (id) =>
+      Ref.modify(seededGrantsRef, (current) => {
+        const match = Array.from(current).find(
+          ([, grant]) => grant.transient === true && grant.id === id,
+        );
+        if (!match) return [false, current] as const;
+        const next = new Map(current);
+        next.delete(match[0]);
+        return [true, next] as const;
+      });
+
+  const revokeTransientOneTimeTokensForSubject: BootstrapCredentialServiceShape["revokeTransientOneTimeTokensForSubject"] =
+    (subject) =>
+      Ref.update(revokedTransientSubjectsRef, (current) => {
+        const next = new Set(current);
+        next.delete(subject);
+        next.add(subject);
+        while (next.size > MAX_REVOKED_TRANSIENT_SUBJECTS) {
+          const oldest = next.values().next().value;
+          if (oldest === undefined) break;
+          next.delete(oldest);
+        }
+        return next;
+      }).pipe(
+        Effect.andThen(
+          Ref.modify(seededGrantsRef, (current) => {
+            let revokedCount = 0;
+            const next = new Map<string, StoredBootstrapGrant>();
+            for (const [credential, grant] of current) {
+              if (grant.transient === true && grant.subject === subject) {
+                revokedCount += 1;
+              } else {
+                next.set(credential, grant);
+              }
+            }
+            return [revokedCount, revokedCount === 0 ? current : next] as const;
+          }),
+        ),
+      );
+
+  const isTransientSubjectRevoked: BootstrapCredentialServiceShape["isTransientSubjectRevoked"] = (
+    subject,
+  ) => Ref.get(revokedTransientSubjectsRef).pipe(Effect.map((subjects) => subjects.has(subject)));
+
   const consume: BootstrapCredentialServiceShape["consume"] = (credential, proofKeyThumbprint) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
@@ -241,6 +352,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
                 ...(grant.proofKeyThumbprint
                   ? { proofKeyThumbprint: grant.proofKeyThumbprint }
                   : {}),
+                ...(grant.browserSessionOnly ? { browserSessionOnly: true } : {}),
                 expiresAt: grant.expiresAt,
               } satisfies BootstrapGrant,
             },
@@ -313,6 +425,10 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
 
   return {
     issueOneTimeToken,
+    issueTransientBrowserSessionToken,
+    revokeTransientOneTimeToken,
+    revokeTransientOneTimeTokensForSubject,
+    isTransientSubjectRevoked,
     listActive,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

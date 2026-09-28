@@ -27,19 +27,22 @@ interface OpenPreviewSessionInput<E> {
   url?: string;
   viewport?: PreviewViewportSetting;
   profileId?: string;
+  beforeOpen?: (profileId: string) => Promise<void>;
 }
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
 ): Promise<AtomCommandResult<PreviewSessionSnapshot, E>> {
   const defaults = await resolveBrowserDefaults();
+  const profileId = input.profileId ?? browserDefaultOpenProfileId(defaults);
+  await input.beforeOpen?.(profileId);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      profileId,
     },
   });
   if (result._tag === "Failure") {

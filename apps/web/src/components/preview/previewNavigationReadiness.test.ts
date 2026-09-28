@@ -1,10 +1,15 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PreviewAutomationManagedTargetAuthError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   readThreadPreviewState: vi.fn(),
   evaluate: vi.fn(),
   status: vi.fn(),
+  navigate: vi.fn(),
 }));
 
 vi.mock("~/previewStateStore", () => ({
@@ -16,6 +21,7 @@ vi.mock("~/previewStateStore", () => ({
 
 vi.mock("./previewBridge", () => ({
   previewBridge: {
+    navigate: mocks.navigate,
     automation: {
       evaluate: mocks.evaluate,
       status: mocks.status,
@@ -31,6 +37,7 @@ import {
 } from "./previewAutomationErrors";
 import {
   withCurrentPreviewRuntime,
+  waitForManagedPreviewReadiness,
   waitForNavigationReadiness,
 } from "./previewNavigationReadiness";
 
@@ -46,6 +53,7 @@ describe("waitForNavigationReadiness", () => {
     mocks.readThreadPreviewState.mockReset();
     mocks.evaluate.mockReset();
     mocks.status.mockReset();
+    mocks.navigate.mockReset();
   });
 
   it("rejects a replaced runtime target even when readiness polling is disabled", async () => {
@@ -233,5 +241,132 @@ describe("waitForNavigationReadiness", () => {
         500,
       ),
     ).rejects.toBeInstanceOf(PreviewAutomationTargetUnavailableError);
+  });
+});
+
+describe("waitForManagedPreviewReadiness", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("environment-2"),
+    threadId: ThreadId.make("thread-1"),
+  };
+  const tabId = "tab_1";
+  const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", tabId);
+  const request = { operation: "open" as const, requestId: "request-managed-preview" };
+  const target = {
+    environmentId: threadRef.environmentId,
+    expectedOrigins: ["http://127.0.0.1:6270"],
+  };
+  const targetUrl = "http://127.0.0.1:6270/";
+
+  beforeEach(() => {
+    mocks.readThreadPreviewState.mockReturnValue({
+      serverEpoch: "epoch-1",
+      sessions: { [tabId]: { tabId } },
+    });
+    mocks.evaluate.mockReset();
+    mocks.navigate.mockReset();
+  });
+
+  it("recovers once from a pairing page and waits for authenticated app readiness", async () => {
+    mocks.evaluate
+      .mockResolvedValueOnce({
+        status: "unauthenticated",
+        pairingPage: true,
+        appReady: true,
+        reason: "missing",
+      })
+      .mockResolvedValueOnce({
+        status: "authenticated",
+        pairingPage: false,
+        appReady: true,
+      });
+    mocks.navigate.mockResolvedValue(undefined);
+
+    await expect(
+      waitForManagedPreviewReadiness({
+        threadRef,
+        request,
+        tabId,
+        runtimeTabId,
+        target,
+        targetUrl,
+        timeoutMs: 500,
+        recoverPairingPage: true,
+      }),
+    ).resolves.toBeUndefined();
+    expect(mocks.navigate).toHaveBeenCalledTimes(1);
+    expect(mocks.navigate).toHaveBeenCalledWith(runtimeTabId, targetUrl);
+    expect(mocks.evaluate).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not accept an authenticated pairing page as application readiness", async () => {
+    mocks.evaluate.mockResolvedValue({
+      status: "authenticated",
+      pairingPage: true,
+      appReady: true,
+    });
+
+    await expect(
+      waitForManagedPreviewReadiness({
+        threadRef,
+        request,
+        tabId,
+        runtimeTabId,
+        target,
+        targetUrl: `${targetUrl}pair`,
+        timeoutMs: 500,
+        recoverPairingPage: true,
+      }),
+    ).rejects.toMatchObject({
+      reason: "pairing-required",
+    } satisfies Partial<PreviewAutomationManagedTargetAuthError>);
+    expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+
+  it("does not recover or reauthorize revoked access", async () => {
+    mocks.evaluate.mockResolvedValue({
+      status: "unauthenticated",
+      pairingPage: true,
+      appReady: true,
+      reason: "revoked",
+    });
+
+    await expect(
+      waitForManagedPreviewReadiness({
+        threadRef,
+        request,
+        tabId,
+        runtimeTabId,
+        target,
+        targetUrl,
+        timeoutMs: 500,
+        recoverPairingPage: true,
+      }),
+    ).rejects.toMatchObject({
+      reason: "session-revoked",
+    } satisfies Partial<PreviewAutomationManagedTargetAuthError>);
+    expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a page on an origin outside the managed target", async () => {
+    mocks.evaluate.mockResolvedValue({
+      status: "origin-mismatch",
+      pairingPage: false,
+      appReady: false,
+    });
+
+    await expect(
+      waitForManagedPreviewReadiness({
+        threadRef,
+        request,
+        tabId,
+        runtimeTabId,
+        target,
+        targetUrl,
+        timeoutMs: 500,
+      }),
+    ).rejects.toMatchObject({
+      reason: "target-origin-mismatch",
+    } satisfies Partial<PreviewAutomationManagedTargetAuthError>);
   });
 });

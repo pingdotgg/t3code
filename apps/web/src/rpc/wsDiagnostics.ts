@@ -18,7 +18,10 @@ export type WsDiagnosticEvent =
   | "ping-timeout"
   | "streams-restarted"
   | "stream-parked"
-  | "stream-retry";
+  | "stream-retry"
+  | "stream-stalled"
+  | "stall-repair"
+  | "reconnect-repair";
 
 export interface WsDiagnosticEntry {
   readonly at: string;
@@ -31,6 +34,7 @@ const FAULT_EVENTS = new Set<WsDiagnosticEvent>([
   "ping-timeout",
   "stream-parked",
   "stream-retry",
+  "stream-stalled",
 ]);
 
 const entries: WsDiagnosticEntry[] = [];

@@ -126,20 +126,23 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
-          : Effect.all([
-              snapshot.getSnapshot,
-              openCodeRuntime
-                .loadOpenCodeSkillsForCwd({
-                  binaryPath: effectiveConfig.binaryPath,
-                  cwd,
-                  serverUrl: effectiveConfig.serverUrl,
-                  ...(effectiveConfig.serverPassword
-                    ? { serverPassword: effectiveConfig.serverPassword }
-                    : {}),
-                  environment: processEnv,
-                })
-                .pipe(Effect.timeout("20 seconds")),
-            ]).pipe(
+          : Effect.all(
+              [
+                snapshot.getSnapshot,
+                openCodeRuntime
+                  .loadOpenCodeSkillsForCwd({
+                    binaryPath: effectiveConfig.binaryPath,
+                    cwd,
+                    serverUrl: effectiveConfig.serverUrl,
+                    ...(effectiveConfig.serverPassword
+                      ? { serverPassword: effectiveConfig.serverPassword }
+                      : {}),
+                    environment: processEnv,
+                  })
+                  .pipe(Effect.timeout("20 seconds")),
+              ],
+              { concurrency: "unbounded" },
+            ).pipe(
               Effect.map(([machineSnapshot, skills]) => ({
                 ...machineSnapshot,
                 skills: openCodeSkillsToServerProviderSkills(skills),

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PNG } from "pngjs";
 
+import { ManagedPreviewAuth } from "../auth/Services/ManagedPreviewAuth.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -47,9 +48,24 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
+const ManagedPreviewAuthTest = Layer.succeed(
+  ManagedPreviewAuth,
+  ManagedPreviewAuth.of({
+    prepare: () => Effect.succeed(undefined),
+    attest: () => Effect.succeed(undefined),
+    openBootstrap: () => Effect.die("Managed preview bootstrap is unused in this test."),
+    release: () => Effect.void,
+    revokeProviderSession: () => Effect.void,
+    revokeAll: Effect.void,
+  }),
+);
+const PreviewAutomationBrokerTest = PreviewAutomationBroker.layer.pipe(
+  Layer.provide(ManagedPreviewAuthTest),
+  Layer.provide(NodeServices.layer),
+);
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
-  Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
+  Layer.provideMerge(PreviewAutomationBrokerTest),
 );
 
 it("normalizes empty successful notification responses to accepted", () => {
