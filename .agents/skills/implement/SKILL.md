@@ -16,4 +16,4 @@ Once done, use /code-review to review the work. Pass the relevant committed, sta
 
 Commit only task-owned changes when authorized by the request or applicable repository instructions. If the user says to leave changes uncommitted, preserve them without staging or committing. Preserve unrelated staged work.
 
-Use /create-pr only when publication is authorized. Report the delivery actually reached and any blocker; do not present local implementation or a commit as a published PR.
+Use /create-pr only when publication is authorized. Before stopping at validation, check applicable repository instructions for standing publication authorization; when present, continue through commit and PR creation without asking. Report the delivery actually reached and any blocker; do not present local implementation or a commit as a published PR.
