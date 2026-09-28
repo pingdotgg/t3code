@@ -796,6 +796,42 @@ export type SidebarThreadStatus =
   | "failed"
   | "ready";
 
+// t3-dispatch titles begin with `bot-<caller>--`.
+const BOT_THREAD_TITLE_PATTERN = /^bot-[a-z0-9]+(?:-[a-z0-9]+)*--/;
+
+export function isBotThreadTitle(title: string): boolean {
+  return BOT_THREAD_TITLE_PATTERN.test(title);
+}
+
+type SidebarFilterThread = {
+  readonly title: string;
+  readonly environmentId: string;
+  readonly modelSelection: { readonly instanceId: string };
+  readonly session: { readonly providerInstanceId?: string | undefined } | null;
+};
+
+export function sidebarThreadAccountKey(thread: SidebarFilterThread): string {
+  return JSON.stringify([
+    thread.environmentId,
+    thread.session?.providerInstanceId ?? thread.modelSelection.instanceId,
+  ]);
+}
+
+export function matchesSidebarThreadFilters(
+  thread: SidebarFilterThread,
+  filters: {
+    readonly hideBotThreads: boolean;
+    readonly accountKey: string | null;
+    readonly isOpen: boolean;
+  },
+): boolean {
+  return (
+    filters.isOpen ||
+    ((!filters.hideBotThreads || !isBotThreadTitle(thread.title)) &&
+      (filters.accountKey === null || sidebarThreadAccountKey(thread) === filters.accountKey))
+  );
+}
+
 export function shouldRecedeSidebarThread(input: {
   status: SidebarThreadStatus;
   isUnread: boolean;
