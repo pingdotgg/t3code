@@ -12,26 +12,41 @@ const INSTALL_SCRIPT_RELATIVE_PATH = Path.join("scripts", "install-t3-dev.sh");
 
 /** Per-command cap for the staleness check so an offline origin cannot hang it. */
 const STALENESS_GIT_TIMEOUT_MS = 30_000;
+/** Pulls fetch before merging, so they get a longer leash than read-only checks. */
+const PULL_GIT_TIMEOUT_MS = 120_000;
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 export interface GitRunResult {
   readonly stdout: string;
+  readonly stderr?: string;
   readonly exitCode: number;
 }
 
-export type GitRunner = (args: readonly string[], cwd: string) => Promise<GitRunResult>;
+export interface GitRunOptions {
+  readonly timeoutMs?: number;
+}
 
-function defaultGitRunner(args: readonly string[], cwd: string): Promise<GitRunResult> {
+export type GitRunner = (
+  args: readonly string[],
+  cwd: string,
+  options?: GitRunOptions,
+) => Promise<GitRunResult>;
+
+function defaultGitRunner(
+  args: readonly string[],
+  cwd: string,
+  options?: GitRunOptions,
+): Promise<GitRunResult> {
   return new Promise((resolve, reject) => {
     ChildProcess.execFile(
       "git",
       [...args],
       {
         cwd,
-        timeout: STALENESS_GIT_TIMEOUT_MS,
+        timeout: options?.timeoutMs ?? STALENESS_GIT_TIMEOUT_MS,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         // Numeric codes are process exit statuses (1 for "not ancestor",
         // 128 for "not a repo"); anything else means git never ran.
         const code = (error as { code?: unknown } | null)?.code;
@@ -39,7 +54,11 @@ function defaultGitRunner(args: readonly string[], cwd: string): Promise<GitRunR
           reject(error);
           return;
         }
-        resolve({ stdout: String(stdout ?? ""), exitCode: typeof code === "number" ? code : 0 });
+        resolve({
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr ?? ""),
+          exitCode: typeof code === "number" ? code : 0,
+        });
       },
     );
   });
@@ -224,6 +243,37 @@ export async function checkLocalDevRebuildStaleness(input: {
     behindBy = null;
   }
   return complete({ behind: true, behindBy });
+}
+
+/**
+ * Fast-forward the checkout to its upstream before rebuilding, so the new
+ * build actually contains the remote changes. Never merges or touches work
+ * the fast-forward would overwrite: those cases fail with git's own message
+ * and the rebuild is aborted before anything is built or restarted.
+ */
+export async function pullLatestCheckoutChanges(
+  sourceRoot: string,
+  runGit: GitRunner = defaultGitRunner,
+): Promise<{ ok: boolean; message: string | null }> {
+  let pull: GitRunResult;
+  try {
+    pull = await runGit(["pull", "--ff-only"], sourceRoot, { timeoutMs: PULL_GIT_TIMEOUT_MS });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: `Could not pull latest changes: ${message}` };
+  }
+  if (pull.exitCode !== 0) {
+    const detail = [pull.stderr, pull.stdout]
+      .map((output) => output?.trim())
+      .find((output) => output && output.length > 0);
+    return {
+      ok: false,
+      message: detail
+        ? `Could not fast-forward the checkout: ${detail}`
+        : "Could not fast-forward the checkout to its upstream.",
+    };
+  }
+  return { ok: true, message: null };
 }
 
 export function readEmbeddedDevSourceRoot(appRoot: string): string | null {

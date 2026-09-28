@@ -985,7 +985,7 @@ function AboutVersionSection() {
               size="xs"
               variant="outline"
               disabled={isStartingLocalRebuild}
-              onClick={requestLocalRebuild}
+              onClick={() => requestLocalRebuild()}
             >
               <RefreshCwIcon className={isStartingLocalRebuild ? "animate-spin" : undefined} />
               {isStartingLocalRebuild ? "Starting..." : "Rebuild and restart"}

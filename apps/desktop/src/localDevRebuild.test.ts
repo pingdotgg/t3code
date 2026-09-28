@@ -10,6 +10,7 @@ import {
   decideRebuildStaleness,
   launchLocalDevRebuild,
   parseLsRemoteSymrefHead,
+  pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
   type GitRunner,
@@ -365,5 +366,44 @@ describe("local Dev rebuild staleness", () => {
 
     expect(result.behind).toBe(false);
     expect(result.error).toEqual(expect.any(String));
+  });
+});
+
+describe("local Dev rebuild pull", () => {
+  it("fast-forwards the checkout before rebuilding", async () => {
+    const calls: Array<{ args: readonly string[]; cwd: string }> = [];
+    const runner: GitRunner = async (args, cwd) => {
+      calls.push({ args, cwd });
+      return { stdout: "Already up to date.\n", exitCode: 0 };
+    };
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result).toEqual({ ok: true, message: null });
+    expect(calls).toEqual([{ args: ["pull", "--ff-only"], cwd: "/repo/t3code" }]);
+  });
+
+  it("refuses to pull when fast-forward is impossible and reports git's reason", async () => {
+    const runner: GitRunner = async () => ({
+      stdout: "",
+      stderr: "error: Your local changes would be overwritten by merge.\n",
+      exitCode: 1,
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Your local changes would be overwritten");
+  });
+
+  it("reports a missing git binary instead of throwing", async () => {
+    const runner: GitRunner = async () => {
+      throw new Error("spawn git ENOENT");
+    };
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("spawn git ENOENT");
   });
 });

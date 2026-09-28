@@ -207,7 +207,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   downloadUpdate: () => ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
   getLocalRebuildState: () => ipcRenderer.invoke(LOCAL_REBUILD_GET_STATE_CHANNEL),
-  rebuildAndRestart: () => ipcRenderer.invoke(LOCAL_REBUILD_START_CHANNEL),
+  rebuildAndRestart: (options) => ipcRenderer.invoke(LOCAL_REBUILD_START_CHANNEL, options),
   checkLocalRebuildStaleness: () => ipcRenderer.invoke(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL),
   showNotification: (request) => ipcRenderer.invoke(SHOW_NOTIFICATION_CHANNEL, request),
   onNotificationClick: (listener) => {

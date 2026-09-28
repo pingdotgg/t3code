@@ -110,6 +110,7 @@ import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
   checkLocalDevRebuildStaleness,
   launchLocalDevRebuild,
+  pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
 } from "./localDevRebuild.ts";
@@ -2098,7 +2099,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
-  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async () => {
+  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async (_event, options) => {
     if (localRebuildStarted) {
       return {
         accepted: false,
@@ -2106,15 +2107,29 @@ function registerIpcHandlers(): void {
         message: "A local rebuild is already in progress.",
       } satisfies DesktopLocalRebuildResult;
     }
+    const rebuildState = getLocalDevRebuildState();
+    const pullLatest = (options as { pullLatest?: unknown } | undefined)?.pullLatest === true;
+    if (pullLatest) {
+      if (!rebuildState.enabled || !rebuildState.sourceRoot) {
+        return {
+          accepted: false,
+          logPath: null,
+          message: rebuildState.reason ?? "Local rebuilds are unavailable.",
+        } satisfies DesktopLocalRebuildResult;
+      }
+      const pull = await pullLatestCheckoutChanges(rebuildState.sourceRoot);
+      if (!pull.ok) {
+        return {
+          accepted: false,
+          logPath: null,
+          message: pull.message,
+        } satisfies DesktopLocalRebuildResult;
+      }
+    }
     localRebuildStarted = true;
-    const result = await launchLocalDevRebuild(
-      getLocalDevRebuildState(),
-      LOG_DIR,
-      undefined,
-      () => {
-        localRebuildStarted = false;
-      },
-    );
+    const result = await launchLocalDevRebuild(rebuildState, LOG_DIR, undefined, () => {
+      localRebuildStarted = false;
+    });
     if (!result.accepted) {
       localRebuildStarted = false;
     }
