@@ -19,6 +19,7 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
 } from "./cliErrors.ts";
+import { publishPlatformsThenLauncher } from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -225,10 +226,8 @@ const publishCmd = Command.make(
         );
       });
 
-      // The platform packages do not depend on each other, so they publish at
-      // once; each takes about 17s. The launcher still goes last.
-      yield* Effect.forEach(platformTarballs, publish, { concurrency: "unbounded", discard: true });
-      yield* publish(launcherTarball);
+      // Each publish takes about 17s, so the platform packages go at once.
+      yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
     }),
 ).pipe(
   Command.withDescription(
