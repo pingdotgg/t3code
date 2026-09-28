@@ -1,3 +1,4 @@
+import { WorkspaceRadioGroup } from "./WorkspaceRadioGroup";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
@@ -23,6 +24,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 
 interface BranchToolbarEnvModeSelectorProps {
+  inline?: boolean;
+  onInlineSelect?: (() => void) | undefined;
   forceNewWorktree?: boolean;
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
@@ -34,6 +37,8 @@ interface BranchToolbarEnvModeSelectorProps {
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
+  inline = false,
+  onInlineSelect,
   forceNewWorktree = false,
   envLocked,
   effectiveEnvMode,
@@ -55,6 +60,56 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     ],
     [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
   );
+
+  const selectMode = (value: string | null) => {
+    if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
+      onUsePreviousWorktree?.();
+      return;
+    }
+    onEnvModeChange(value as EnvMode);
+  };
+
+  if (inline) {
+    return (
+      <WorkspaceRadioGroup
+        label="Workspace"
+        shortcut="composer.workspace"
+        value={effectiveEnvMode}
+        disabled={envLocked || forceNewWorktree}
+        title={
+          forceNewWorktree
+            ? "Each model starts in its own worktree."
+            : envLocked
+              ? "The workspace is fixed once a thread starts."
+              : undefined
+        }
+        onSelect={(value) => {
+          selectMode(value);
+          // New worktrees need a base ref next; existing checkouts are complete.
+          if (value !== "worktree") onInlineSelect?.();
+        }}
+        options={envModeItems.map((item) => ({
+          ...item,
+          content: (
+            <>
+              {item.value === "worktree" ? (
+                <FolderGit2Icon className="size-3 shrink-0" />
+              ) : activeWorktreePath || item.value === PREVIOUS_WORKTREE_SELECT_VALUE ? (
+                <FolderGitIcon className="size-3 shrink-0" />
+              ) : (
+                <FolderIcon className="size-3 shrink-0" />
+              )}
+              {item.value === PREVIOUS_WORKTREE_SELECT_VALUE ? (
+                <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
+              ) : (
+                <span className="min-w-0 truncate">{item.label}</span>
+              )}
+            </>
+          ),
+        }))}
+      />
+    );
+  }
 
   if (envLocked || forceNewWorktree) {
     return (
@@ -93,18 +148,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   }
 
   return (
-    <Select
-      modal={false}
-      value={effectiveEnvMode}
-      onValueChange={(value: string | null) => {
-        if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
-          onUsePreviousWorktree?.();
-          return;
-        }
-        onEnvModeChange(value as EnvMode);
-      }}
-      items={envModeItems}
-    >
+    <Select modal={false} value={effectiveEnvMode} onValueChange={selectMode} items={envModeItems}>
       <Tooltip>
         <TooltipTrigger
           render={

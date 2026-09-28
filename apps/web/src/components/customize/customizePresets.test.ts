@@ -40,12 +40,16 @@ describe("resolvePresetPreview", () => {
 });
 
 describe("surfaceVisibility", () => {
-  it("counts options inside the model button as shown", () => {
+  it.each([
+    ["composerToolbar", "traits", 4],
+    ["composerContextBar", "branch", 3],
+    ["threadRow", "pullRequest", 7],
+  ] as const)("counts combined guests on %s as shown", (surface, guest, total) => {
     expect(
-      surfaceVisibility("composerToolbar", {
-        composerToolbar: { order: [], hidden: [], combined: ["traits"] },
+      surfaceVisibility(surface, {
+        [surface]: { order: [], hidden: [], combined: [guest] },
       }),
-    ).toEqual({ shown: 4, total: 4 });
+    ).toEqual({ shown: total, total });
   });
   it("counts hidden elements against the surface total", () => {
     const layout = setSurfaceElementHidden({}, "chatHeader", "git", true);

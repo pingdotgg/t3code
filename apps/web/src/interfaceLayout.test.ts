@@ -198,3 +198,67 @@ describe("combined composer elements", () => {
     expect(setSurfaceElementHidden(hidden, "composerToolbar", "traits", false)).toEqual({});
   });
 });
+
+const refiningPairs = [
+  ["composerToolbar", "traits", "model", "mode"],
+  ["composerContextBar", "branch", "workspace", "controls"],
+  ["threadRow", "pullRequest", "branch", "terminal"],
+] as const;
+
+describe.each(refiningPairs)("%s: %s refines %s", (surface, guest, host, unrelated) => {
+  it("accepts only declared guests, ignores duplicates, and preserves old layouts", () => {
+    expect([
+      ...resolveSurfaceLayout(surface, {
+        [surface]: { order: [], hidden: [], combined: [guest, guest, host, unrelated, "unknown"] },
+      }).combined,
+    ]).toEqual([guest]);
+    expect(
+      resolveSurfaceLayout(surface, { [surface]: { order: [], hidden: [] } }).combined.size,
+    ).toBe(0);
+    expect(setSurfaceElementCombined({}, surface, unrelated, true)).toEqual({});
+  });
+
+  it("keeps combinations through reorder, supports separation and reset", () => {
+    const combined = setSurfaceElementCombined({}, surface, guest, true);
+    expect(
+      resolveSurfaceLayout(
+        surface,
+        moveSurfaceElementBefore(combined, surface, host, null),
+      ).combined.has(guest),
+    ).toBe(true);
+    expect(setSurfaceElementCombined(combined, surface, guest, false)).toEqual({});
+    expect(resetSurfaceLayout(combined, surface)).toEqual({});
+  });
+
+  it("lets hidden guests win and refuses combining them", () => {
+    const combined = setSurfaceElementCombined({}, surface, guest, true);
+    const hidden = setSurfaceElementHidden(combined, surface, guest, true);
+    expect(hidden[surface]?.combined ?? []).toEqual([]);
+    expect(resolveSurfaceLayout(surface, hidden).combined.size).toBe(0);
+    expect(setSurfaceElementCombined(hidden, surface, guest, true)).toBe(hidden);
+    expect(setSurfaceElementHidden(hidden, surface, guest, false)).toEqual({});
+    expect(
+      resolveSurfaceLayout(surface, {
+        [surface]: { order: [], hidden: [guest], combined: [guest] },
+      }).combined.size,
+    ).toBe(0);
+  });
+
+  it("renders guests standalone when their host is hidden, except required hosts", () => {
+    const resolved = resolveSurfaceLayout(surface, {
+      [surface]: { order: [], hidden: [host], combined: [guest] },
+    });
+    expect(resolved.hidden.has(guest)).toBe(false);
+    expect(resolved.combined.has(guest)).toBe(surface === "composerToolbar");
+    if (surface !== "composerToolbar") {
+      const hidden = setSurfaceElementHidden(
+        setSurfaceElementCombined({}, surface, guest, true),
+        surface,
+        host,
+        true,
+      );
+      expect(resolveSurfaceLayout(surface, hidden).combined.size).toBe(0);
+      expect(setSurfaceElementHidden(hidden, surface, host, false)).toEqual({});
+    }
+  });
+});

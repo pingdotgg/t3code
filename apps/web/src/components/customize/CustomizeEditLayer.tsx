@@ -296,6 +296,7 @@ export function CustomizeEditLayer({
           .filter(
             (definition) =>
               !resolveSurfaceLayout("threadRow", layout).hidden.has(definition.id) &&
+              !resolveSurfaceLayout("threadRow", layout).combined.has(definition.id) &&
               !measurement.elements.some((element) => element.id === definition.id),
           )
           .map((definition) => definition.label)
@@ -304,16 +305,34 @@ export function CustomizeEditLayer({
     isDefaultSurfaceLayout(layoutSurface, layout),
   );
 
-  const toolbarElements = measurement.elements
-    .filter((element) => element.surface === "composerToolbar")
-    .toSorted((a, b) => a.rect.left - b.rect.left);
-  const modelIndex = toolbarElements.findIndex((element) => element.id === "model");
-  const modelElement = toolbarElements[modelIndex];
-  const traitsElement = toolbarElements.find(
-    (element, index) => element.id === "traits" && Math.abs(index - modelIndex) === 1,
-  );
-  const traitsCombined = resolveSurfaceLayout("composerToolbar", layout).combined.has("traits");
-  const combineRect = modelElement && (traitsCombined || traitsElement) ? modelElement.rect : null;
+  const combinations = config.layoutSurfaces.flatMap((layoutSurface) => {
+    const resolved = resolveSurfaceLayout(layoutSurface, layout);
+    // Saved order determines adjacency even when details wrap across lines.
+    const elements = resolved.order.flatMap((id) =>
+      measurement.elements.filter(
+        (element) => element.surface === layoutSurface && element.id === id,
+      ),
+    );
+    return INTERFACE_SURFACES[layoutSurface].flatMap((guest) => {
+      if (!("combinesInto" in guest) || resolved.hidden.has(guest.id)) return [];
+      const hostIndex = elements.findIndex((element) => element.id === guest.combinesInto);
+      const host = elements[hostIndex];
+      const guestIndex = elements.findIndex((element) => element.id === guest.id);
+      const combined = resolved.combined.has(guest.id);
+      if (!host || (!combined && guestIndex < 0)) return [];
+      const guestElement = elements[guestIndex];
+      return [
+        {
+          surface: layoutSurface,
+          guest,
+          host,
+          guestElement,
+          combined,
+          adjacent: Math.abs(guestIndex - hostIndex) === 1,
+        },
+      ];
+    });
+  });
 
   const root = measurement.root ? pad(measurement.root, 6) : null;
   const viewportWidth = window.innerWidth;
@@ -422,49 +441,70 @@ export function CustomizeEditLayer({
           })}
       </div>
 
-      {surface === "composer" && combineRect ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={
-                  traitsCombined
-                    ? "Separate Model options from the model button"
-                    : "Put Model options inside the model button"
+      {combinations.map(
+        ({ surface: layoutSurface, guest, host, guestElement, combined, adjacent }) => {
+          const label = combined
+            ? `Separate ${guest.label} from ${host.definition.label}`
+            : `Put ${guest.label} inside ${host.definition.label}`;
+          const sameLine = guestElement && Math.abs(guestElement.rect.top - host.rect.top) < 10;
+          const anchor = !combined && guestElement ? guestElement.rect : host.rect;
+          const left =
+            combined || !guestElement
+              ? host.rect.right - 10
+              : adjacent && sameLine
+                ? guestElement.rect.left > host.rect.left
+                  ? (host.rect.right + guestElement.rect.left) / 2
+                  : (guestElement.rect.right + host.rect.left) / 2
+                : Math.max(
+                    anchor.left,
+                    Math.min(anchor.right, (host.rect.left + host.rect.right) / 2),
+                  );
+          // Composer badges stay outside the input. A row's upper line can
+          // occupy the space above a detail, in which case use its lower edge.
+          const above = anchor.top - 22;
+          const collidesAbove =
+            layoutSurface === "threadRow" &&
+            (above < (measurement.root?.top ?? 0) ||
+              measurement.elements.some(
+                (element) =>
+                  element !== host &&
+                  element !== guestElement &&
+                  element.rect.bottom > above &&
+                  element.rect.top < anchor.top &&
+                  element.rect.left < left + 10 &&
+                  element.rect.right > left - 10,
+              ));
+          const top = Math.max(
+            4,
+            Math.min(viewportHeight - 24, collidesAbove ? anchor.bottom + 2 : above),
+          );
+          return (
+            <Tooltip key={`${layoutSurface}:${guest.id}`}>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={label}
+                    onClick={() =>
+                      commitLayout((current) =>
+                        setSurfaceElementCombined(current, layoutSurface, guest.id, !combined),
+                      )
+                    }
+                    className="pointer-events-auto fixed z-[130] flex size-5 -translate-x-1/2 items-center justify-center rounded-full bg-foreground text-background ring-2 ring-background outline-none focus-visible:ring-primary [&_svg]:size-3"
+                    style={{
+                      left: Math.max(14, Math.min(viewportWidth - 14, left)),
+                      top,
+                    }}
+                  >
+                    {combined ? <UnlinkIcon /> : <LinkIcon />}
+                  </button>
                 }
-                onClick={() =>
-                  commitLayout((current) =>
-                    setSurfaceElementCombined(
-                      current,
-                      "composerToolbar",
-                      "traits",
-                      !traitsCombined,
-                    ),
-                  )
-                }
-                className="pointer-events-auto fixed z-[130] flex size-5 -translate-x-1/2 items-center justify-center rounded-full bg-foreground text-background ring-2 ring-background outline-none focus-visible:ring-primary [&_svg]:size-3"
-                style={{
-                  left:
-                    traitsCombined || !traitsElement
-                      ? combineRect.right
-                      : traitsElement.rect.left > combineRect.left
-                        ? (combineRect.right + traitsElement.rect.left) / 2
-                        : (traitsElement.rect.right + combineRect.left) / 2,
-                  top: Math.max(4, combineRect.top - 10),
-                }}
-              >
-                {traitsCombined ? <UnlinkIcon /> : <LinkIcon />}
-              </button>
-            }
-          />
-          <TooltipPopup>
-            {traitsCombined
-              ? "Separate Model options"
-              : "Put Model options inside the model button"}
-          </TooltipPopup>
-        </Tooltip>
-      ) : null}
+              />
+              <TooltipPopup>{label}</TooltipPopup>
+            </Tooltip>
+          );
+        },
+      )}
 
       {drag?.moved ? (
         <div

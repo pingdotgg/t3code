@@ -86,9 +86,15 @@ export function resolveContextBarLeadsControls(
   shown: { workspace: boolean; branch: boolean },
 ): boolean {
   const controlsIndex = layout.order.indexOf("controls");
-  return layout.order
-    .slice(0, controlsIndex)
-    .some((id) => id !== "controls" && shown[id] && !layout.hidden.has(id));
+  return (["workspace", "branch"] as const).some((id) => {
+    const host = id === "branch" && layout.combined.has(id) ? "workspace" : id;
+    return (
+      shown[id] &&
+      !layout.hidden.has(id) &&
+      !layout.hidden.has(host) &&
+      layout.order.indexOf(host) < controlsIndex
+    );
+  });
 }
 
 // Labels collapse to icons when the strip's content no longer fits. A small

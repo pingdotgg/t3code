@@ -1,3 +1,4 @@
+import { WorkspaceRadioGroup } from "./WorkspaceRadioGroup";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
@@ -17,6 +18,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarEnvironmentSelectorProps {
+  inline?: boolean;
+  onInlineSelect?: (() => void) | undefined;
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
@@ -28,6 +31,8 @@ interface BranchToolbarEnvironmentSelectorProps {
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
+  inline = false,
+  onInlineSelect,
   autoEnvironmentLabel,
   onAutoEnvironment,
   envLocked,
@@ -52,6 +57,44 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     ],
     [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
   );
+
+  const selectEnvironment = (value: string | null) =>
+    value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange?.(value as EnvironmentId);
+
+  if (inline) {
+    return (
+      <WorkspaceRadioGroup
+        label="Run on"
+        shortcut="composer.host"
+        value={autoEnvironmentLabel ? "auto" : environmentId}
+        disabled={envLocked || !onEnvironmentChange}
+        title={envLocked ? "The environment is fixed once a thread starts." : undefined}
+        onSelect={(value) => {
+          selectEnvironment(value);
+          onInlineSelect?.();
+        }}
+        options={environmentItems.map((item) => ({
+          ...item,
+          content: (
+            <>
+              {item.value === "auto" ? (
+                <ScaleIcon className="size-3 shrink-0" />
+              ) : (
+                <EnvironmentMachineIcon
+                  kind={
+                    availableEnvironments.find((env) => env.environmentId === item.value)
+                      ?.machine ?? "server"
+                  }
+                  className="size-3 shrink-0"
+                />
+              )}
+              <span className="min-w-0 truncate">{item.label}</span>
+            </>
+          ),
+        }))}
+      />
+    );
+  }
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
   // its padding: the composer context strip has no min-height of its own, and
@@ -91,9 +134,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     <Select
       modal={false}
       value={autoEnvironmentLabel ? "auto" : environmentId}
-      onValueChange={(value) =>
-        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
-      }
+      onValueChange={selectEnvironment}
       items={environmentItems}
     >
       <Tooltip>

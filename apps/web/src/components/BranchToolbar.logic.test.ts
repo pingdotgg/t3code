@@ -26,6 +26,7 @@ import {
   moveSurfaceElement,
   resolveSurfaceLayout,
   setSurfaceElementHidden,
+  setSurfaceElementCombined,
 } from "../interfaceLayout";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -889,6 +890,29 @@ describe("resolveContextBarLeadsControls", () => {
     expect(
       resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", {}), {
         workspace: false,
+        branch: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("combined context order", () => {
+  it("counts a visible branch at its workspace host even when the workspace has no content", () => {
+    const layout = setSurfaceElementCombined({}, "composerContextBar", "branch", true);
+    expect(
+      resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", layout), {
+        workspace: false,
+        branch: true,
+      }),
+    ).toBe(true);
+  });
+  it("does not count a branch's old slot before controls when its host follows controls", () => {
+    let layout = moveSurfaceElement({}, "composerContextBar", "branch", "workspace");
+    layout = moveSurfaceElement(layout, "composerContextBar", "controls", "workspace");
+    layout = setSurfaceElementCombined(layout, "composerContextBar", "branch", true);
+    expect(
+      resolveContextBarLeadsControls(resolveSurfaceLayout("composerContextBar", layout), {
+        workspace: true,
         branch: true,
       }),
     ).toBe(false);

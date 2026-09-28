@@ -1547,6 +1547,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
+  const combinedBranchPr =
+    rowLayout.combined.has("pullRequest") && Boolean(thread.branch) && prBadge !== null;
   const terminalStatusIcon =
     terminalStatus && showsDetail("terminal") ? (
       <span
@@ -1785,6 +1787,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }
 
   const diff = latestTurnDiff(thread);
+  const diffBadge = diff ? (
+    <span className="shrink-0 font-mono">
+      <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
+      <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
+    </span>
+  ) : null;
 
   return (
     <li
@@ -2050,11 +2058,30 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 switch (id) {
                   case "branch":
                     return thread.branch && showsDetail("branch") ? (
-                      <span key={id} data-customize-element="threadRow:branch" className="contents">
+                      <span
+                        key={id}
+                        data-customize-element="threadRow:branch"
+                        className={
+                          combinedBranchPr
+                            ? "inline-flex min-w-0 flex-1 items-center gap-1"
+                            : "contents"
+                        }
+                      >
                         <ThreadWorktreeIndicator thread={thread} />
-                        <span className="flex min-w-0 flex-1 text-muted-foreground/40">
+                        <span
+                          className={cn(
+                            "flex min-w-0 text-muted-foreground/40",
+                            !combinedBranchPr && "flex-1",
+                          )}
+                        >
                           <MiddleTruncate value={thread.branch} showTitle={false} />
                         </span>
+                        {combinedBranchPr ? (
+                          <>
+                            {prBadge}
+                            {diffBadge}
+                          </>
+                        ) : null}
                       </span>
                     ) : (
                       <span key={id} className="flex-1" />
@@ -2065,18 +2092,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     return (
                       <span
                         key={id}
-                        data-customize-element="threadRow:pullRequest"
+                        data-customize-element={
+                          combinedBranchPr ? undefined : "threadRow:pullRequest"
+                        }
                         className="contents"
                       >
-                        {prBadge}
-                        {diff ? (
-                          <span className="shrink-0 font-mono">
-                            <span className="text-diff-addition-foreground">
-                              +{diff.insertions}
-                            </span>{" "}
-                            <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
-                          </span>
-                        ) : null}
+                        {combinedBranchPr ? null : prBadge}
+                        {combinedBranchPr ? null : diffBadge}
                       </span>
                     );
                   default:

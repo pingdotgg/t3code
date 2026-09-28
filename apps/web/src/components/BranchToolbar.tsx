@@ -652,6 +652,54 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showWorkspaceGroup = !contextBarLayout.hidden.has("workspace");
   const showBranchSelector = showGitControls && !contextBarLayout.hidden.has("branch");
 
+  const branchCombined = showBranchSelector && contextBarLayout.combined.has("branch");
+  const workspaceLabel = forceNewWorktree
+    ? resolveEnvModeLabel("worktree")
+    : envModeLocked
+      ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
+      : effectiveEnvMode === "worktree"
+        ? resolveEnvModeLabel("worktree")
+        : resolveCurrentWorkspaceLabel(activeWorktreePath);
+  const workspaceControls = (onInlineSelect?: () => void) => (
+    <>
+      {showEnvironmentIndicator && availableEnvironments ? (
+        <BranchToolbarEnvironmentSelector
+          inline={branchCombined}
+          onInlineSelect={onInlineSelect}
+          autoEnvironmentLabel={autoEnvironmentLabel}
+          onAutoEnvironment={onAutoEnvironment}
+          envLocked={envLocked}
+          environmentId={environmentId}
+          availableEnvironments={availableEnvironments}
+          {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+        />
+      ) : null}
+      {showGitControls ? (
+        <>
+          {showEnvironmentIndicator && !branchCombined ? (
+            <Separator
+              orientation="vertical"
+              className="mx-0.5 h-3.5!"
+              data-composer-context-control
+            />
+          ) : null}
+          <BranchToolbarEnvModeSelector
+            inline={branchCombined}
+            onInlineSelect={onInlineSelect}
+            forceNewWorktree={forceNewWorktree}
+            envLocked={envModeLocked}
+            effectiveEnvMode={effectiveEnvMode}
+            activeWorktreePath={activeWorktreePath}
+            onEnvModeChange={onEnvModeChange}
+            previousWorktreeLabel={previousWorktreeLabel}
+            previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
+            onUsePreviousWorktree={onUsePreviousWorktree}
+          />
+        </>
+      ) : null}
+    </>
+  );
+
   if (!hasActiveThread || !activeProject) return null;
 
   return (
@@ -666,7 +714,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >
-      {showGitControls && showWorkspaceGroup ? (
+      {showGitControls && showWorkspaceGroup && !branchCombined ? (
         <div
           data-customize-element="composerContextBar:workspace"
           className="contents @3xl/composer-surface:hidden"
@@ -692,7 +740,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           />
         </div>
       ) : null}
-      {showWorkspaceGroup && (showGitControls || showEnvironmentIndicator) ? (
+      {showWorkspaceGroup && !branchCombined && (showGitControls || showEnvironmentIndicator) ? (
         <div
           data-customize-element="composerContextBar:workspace"
           className={cn(
@@ -702,37 +750,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             composerControlsHostRef ? "shrink" : "flex-1",
           )}
         >
-          {showEnvironmentIndicator && availableEnvironments && (
-            <>
-              <BranchToolbarEnvironmentSelector
-                autoEnvironmentLabel={autoEnvironmentLabel}
-                onAutoEnvironment={onAutoEnvironment}
-                envLocked={envLocked}
-                environmentId={environmentId}
-                availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
-              />
-              {showGitControls ? (
-                <Separator
-                  orientation="vertical"
-                  className="mx-0.5 h-3.5!"
-                  data-composer-context-control
-                />
-              ) : null}
-            </>
-          )}
-          {showGitControls ? (
-            <BranchToolbarEnvModeSelector
-              forceNewWorktree={forceNewWorktree}
-              envLocked={envModeLocked}
-              effectiveEnvMode={effectiveEnvMode}
-              activeWorktreePath={activeWorktreePath}
-              onEnvModeChange={onEnvModeChange}
-              previousWorktreeLabel={previousWorktreeLabel}
-              previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
-              onUsePreviousWorktree={onUsePreviousWorktree}
-            />
-          ) : null}
+          {workspaceControls()}
         </div>
       ) : null}
 
@@ -754,13 +772,46 @@ export const BranchToolbar = memo(function BranchToolbar({
       ) : null}
 
       {showBranchSelector ? (
-        <span data-customize-element="composerContextBar:branch" className="contents">
+        <span
+          data-customize-element={
+            branchCombined ? "composerContextBar:workspace" : "composerContextBar:branch"
+          }
+          className="contents"
+        >
           <BranchToolbarBranchSelector
+            workspaceContent={branchCombined ? workspaceControls : undefined}
+            workspaceLabel={branchCombined ? workspaceLabel : undefined}
+            workspaceShortcuts={
+              branchCombined
+                ? [
+                    !envLocked && showEnvironmentPicker ? "composer.host" : "",
+                    !envModeLocked && !forceNewWorktree ? "composer.workspace" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
+                : undefined
+            }
+            workspaceEnvironment={
+              branchCombined && showEnvironmentIndicator
+                ? {
+                    label: autoEnvironmentLabel ?? activeEnvironmentOption?.label ?? "Run on",
+                    icon: autoEnvironmentLabel ? (
+                      <ScaleIcon className="size-3 shrink-0" />
+                    ) : (
+                      <EnvironmentMachineIcon
+                        kind={activeEnvironmentOption?.machine ?? "server"}
+                        className="size-3 shrink-0"
+                      />
+                    ),
+                  }
+                : undefined
+            }
             forceNewWorktree={forceNewWorktree}
             ref={branchSelectorRef}
             className={cn(
-              orderClassName("branch"),
-              "min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto",
+              orderClassName(branchCombined ? "workspace" : "branch"),
+              "min-w-0 flex-initial",
+              !branchCombined && "justify-end @3xl/composer-surface:ml-auto",
             )}
             environmentId={environmentId}
             threadId={threadId}

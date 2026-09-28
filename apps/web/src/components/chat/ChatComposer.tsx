@@ -5987,7 +5987,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         if (!trigger) return;
         trigger.focus({ preventScroll: true });
-        trigger.click();
+        trigger.dataset.composerOpenControl = command;
+        try {
+          trigger.click();
+        } finally {
+          delete trigger.dataset.composerOpenControl;
+        }
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,

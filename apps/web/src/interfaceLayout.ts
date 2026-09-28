@@ -14,7 +14,9 @@ export interface InterfaceElementDefinition {
   readonly description?: string;
   readonly sortable?: boolean;
   readonly required?: boolean;
-  readonly combineInto?: string;
+  /** A guest refines the same subject as its host and depends on its choice.
+   * Safety controls and actions always remain independent. */
+  readonly combinesInto?: string;
 }
 
 export const INTERFACE_SURFACES = {
@@ -23,7 +25,7 @@ export const INTERFACE_SURFACES = {
     { id: "status", label: "Status and time", description: "Working, approval, or last activity" },
     { id: "branch", label: "Branch", sortable: true },
     { id: "terminal", label: "Terminal activity", sortable: true },
-    { id: "pullRequest", label: "Pull request", sortable: true },
+    { id: "pullRequest", label: "Pull request", sortable: true, combinesInto: "branch" },
     { id: "environment", label: "Remote machine", sortable: true },
     { id: "provider", label: "Provider", sortable: true },
   ],
@@ -33,14 +35,19 @@ export const INTERFACE_SURFACES = {
       id: "traits",
       label: "Model options",
       description: "Effort, speed, and thinking",
-      combineInto: "model",
+      combinesInto: "model",
       sortable: true,
     },
     { id: "mode", label: "Access and plan mode", sortable: true },
     { id: "attach", label: "Attach files" },
   ],
   composerContextBar: [
-    { id: "workspace", label: "Environment and workspace", sortable: true },
+    {
+      id: "workspace",
+      label: "Workspace",
+      description: "Environment and workspace",
+      sortable: true,
+    },
     {
       id: "controls",
       label: "Model and mode",
@@ -48,7 +55,7 @@ export const INTERFACE_SURFACES = {
       sortable: true,
       required: true,
     },
-    { id: "branch", label: "Branch", sortable: true },
+    { id: "branch", label: "Branch", sortable: true, combinesInto: "workspace" },
   ],
   chatHeader: [
     { id: "scripts", label: "Project scripts", sortable: true },
@@ -121,7 +128,14 @@ export function resolveSurfaceLayout<S extends InterfaceSurfaceId>(
     (saved?.hidden ?? []).filter((id) => knownIds.has(id) && !requiredIds.has(id)),
   );
   const eligible = new Set(
-    definitions.filter((element) => element.combineInto).map((element) => element.id),
+    definitions
+      .filter(
+        (element) =>
+          element.combinesInto &&
+          knownIds.has(element.combinesInto) &&
+          !hidden.has(element.combinesInto),
+      )
+      .map((element) => element.id),
   );
   const combined = new Set(
     (saved?.combined ?? []).filter((id) => eligible.has(id) && !hidden.has(id)),
@@ -177,6 +191,11 @@ export function setSurfaceElementHidden(
   elementId: string,
   hidden: boolean,
 ): InterfaceLayout {
+  if (
+    hidden &&
+    surfaceDefinitions(surface).some((element) => element.id === elementId && element.required)
+  )
+    return layout;
   const current = currentSurface(layout, surface);
   const nextHidden = hidden
     ? [...new Set([...current.hidden, elementId])]
@@ -185,7 +204,15 @@ export function setSurfaceElementHidden(
     ...current,
     hidden: nextHidden,
     ...(hidden && current.combined
-      ? { combined: current.combined.filter((id) => id !== elementId) }
+      ? {
+          combined: current.combined.filter(
+            (id) =>
+              id !== elementId &&
+              !surfaceDefinitions(surface).some(
+                (definition) => definition.id === id && definition.combinesInto === elementId,
+              ),
+          ),
+        }
       : {}),
   });
 }
@@ -197,7 +224,7 @@ export function setSurfaceElementCombined(
   combined: boolean,
 ): InterfaceLayout {
   if (
-    !surfaceDefinitions(surface).some((element) => element.id === elementId && element.combineInto)
+    !surfaceDefinitions(surface).some((element) => element.id === elementId && element.combinesInto)
   )
     return layout;
   const current = currentSurface(layout, surface);

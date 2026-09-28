@@ -14,9 +14,13 @@ import {
 afterEach(() => useCustomizeInterfaceStore.getState().close());
 
 describe("customize snapshots", () => {
-  it("captures combinations as layout changes for Undo and Revert", () => {
+  it.each([
+    ["composerToolbar", "traits"],
+    ["composerContextBar", "branch"],
+    ["threadRow", "pullRequest"],
+  ] as const)("captures %s combinations for Undo and Revert", (surface, guest) => {
     const before = pickCustomizeSettings(DEFAULT_CLIENT_SETTINGS);
-    const interfaceLayout = { composerToolbar: { order: [], hidden: [], combined: ["traits"] } };
+    const interfaceLayout = { [surface]: { order: [], hidden: [], combined: [guest] } };
     const after = pickCustomizeSettings({ ...DEFAULT_CLIENT_SETTINGS, interfaceLayout });
     expect(after.interfaceLayout).toEqual(interfaceLayout);
     expect(changedCustomizeSettingKeys(before, after)).toEqual(["interfaceLayout"]);
