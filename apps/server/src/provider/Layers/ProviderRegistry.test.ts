@@ -481,6 +481,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           }),
       );
 
+      it.effect("does not report ChatGPT usage limits for a custom model provider", () =>
+        Effect.gen(function* () {
+          // A custom `model_provider` has no account, but Codex still answers
+          // the usage read from the ChatGPT login saved in its home.
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: { account: null, requiresOpenaiAuth: false },
+                rateLimits: {
+                  snapshot: {
+                    limitId: "codex",
+                    primary: {
+                      usedPercent: 14,
+                      windowDurationMins: 10_080,
+                      resetsAt: 1_791_049_011,
+                    },
+                  },
+                  resetCredits: { availableCount: 1 },
+                },
+              }),
+            ),
+          );
+
+          assert.deepStrictEqual(status.usageLimits?.windows, []);
+          assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+        }),
+      );
+
       it.effect("returns an api key label for codex api key auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
