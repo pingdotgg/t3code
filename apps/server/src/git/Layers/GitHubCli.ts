@@ -27,6 +27,34 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * The process runner joins a failure's stderr onto one `<argv> <reason>.`
+ * first line, so the first `* Request to …` trace line — and every
+ * rate-limit header after it — is invisible to line-anchored parsing, and the
+ * argv plus one debug fragment survive debug-line stripping. Recover the raw
+ * stderr with the exact argv this call ran with. Anything without that prefix
+ * (spawn errors, raw stderr handed in directly) passes through untouched.
+ */
+export function splitRunnerMessage(
+  message: string,
+  args: readonly string[],
+): {
+  readonly stderr: string;
+  readonly timedOut: boolean;
+} {
+  const label = ["gh", ...args].join(" ");
+  if (!message.startsWith(label)) return { stderr: message, timedOut: false };
+  const rest = message.slice(label.length);
+  if (rest.startsWith(" timed out.")) {
+    const stderr = rest.slice(" timed out.".length);
+    return { stderr: stderr.startsWith(" ") ? stderr.slice(1) : stderr, timedOut: true };
+  }
+  const match = /^ failed \([^)]*\)\.([\s\S]*)$/.exec(rest);
+  if (!match) return { stderr: message, timedOut: false };
+  const stderr = match[1] ?? "";
+  return { stderr: stderr.startsWith(" ") ? stderr.slice(1) : stderr, timedOut: false };
+}
+
 function retryAfterAtFromMessage(message: string): string | undefined {
   const retryAfter = /(?:^|\r?\n)\s*retry-after\s*:\s*([^\r\n]+)/iu.exec(message)?.[1]?.trim();
   const resetAt = /(?:^|\r?\n)\s*x-ratelimit-reset\s*:\s*(\d+)/iu.exec(message)?.[1];
@@ -41,7 +69,11 @@ function retryAfterAtFromMessage(message: string): string | undefined {
   return Number.isFinite(retryAt) ? new Date(retryAt).toISOString() : undefined;
 }
 
-function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
+function normalizeGitHubCliError(
+  operation: "execute" | "stdout",
+  error: unknown,
+  args?: readonly string[],
+): GitHubCliError {
   if (error instanceof Error) {
     if (error.message.includes("Command not found: gh")) {
       return new GitHubCliError({
@@ -78,19 +110,26 @@ function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown
       });
     }
 
-    const retryAfterAt = retryAfterAtFromMessage(error.message);
-    // `GH_DEBUG=api` writes its request/response trace to stderr, which the
-    // process runner embeds in the failure message. Strip every diagnostic
-    // line before it reaches the detail so failures stay small and never
-    // carry headers, tokens, or query dumps.
-    const cleaned = stripGhDebugLines(error.message);
+    const { stderr, timedOut } =
+      args === undefined
+        ? { stderr: error.message, timedOut: false }
+        : splitRunnerMessage(error.message, args);
+    const retryAfterAt = retryAfterAtFromMessage(stderr);
+    // `GH_DEBUG=api` writes its request/response trace to stderr. Strip every
+    // diagnostic line before it reaches the detail so failures stay small and
+    // never carry argv, headers, tokens, or query dumps.
+    const cleaned = stripGhDebugLines(stderr);
     return new GitHubCliError({
       operation,
       // An exhausted quota fails every call identically until the reset, so say that once in
       // stable words the PR caches and the client can match on — instead of echoing the raw
       // `gh` argv and stderr on every failure.
       detail: rewriteGitHubRateLimitDetail(
-        `GitHub CLI command failed: ${cleaned.length > 0 ? cleaned : (error.message.split("\n")[0] ?? "unknown error")}`,
+        cleaned.length > 0
+          ? `GitHub CLI command failed: ${cleaned}`
+          : timedOut
+            ? "GitHub CLI command failed: timed out."
+            : "GitHub CLI command failed.",
       ),
       ...(retryAfterAt ? { retryAfterAt } : {}),
       cause: error,
@@ -309,10 +348,12 @@ const makeGitHubCli = Effect.sync(() => {
       const raw = attempt.raw;
       const failure =
         raw instanceof Error ? raw : new Error("GitHub CLI command failed with no detail.");
-      // The runner embeds stderr — including the debug trace — in the message,
-      // so the measured request count survives even on failure.
-      const telemetry = parseGhDebugTelemetry(failure.message);
-      const normalized = normalizeGitHubCliError("execute", failure);
+      // The runner embeds stderr in the failure message behind an
+      // `<argv> <reason>.` prefix; recover the raw stderr first so the
+      // first request's trace line and rate-limit headers parse exactly.
+      const { stderr } = splitRunnerMessage(failure.message, input.args);
+      const telemetry = parseGhDebugTelemetry(stderr);
+      const normalized = normalizeGitHubCliError("execute", failure, input.args);
       if (usage._tag === "Some") {
         const outcome = isGitHubRateLimitMessage(normalized.detail) ? "rate-limited" : "failure";
         const retryAfterAtMs =
