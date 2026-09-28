@@ -538,8 +538,26 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         const key = `${environmentId}\u0000${request.threadId}`;
         const existing = managedTargetsByThreadRef.current.get(key);
         if (existing?.serverEpoch === current.serverEpoch) {
-          for (const knownTabId of existing.byTabId.keys()) {
-            if (!current.sessions[knownTabId]) existing.byTabId.delete(knownTabId);
+          for (const [knownTabId, target] of existing.byTabId) {
+            const session = current.sessions[knownTabId];
+            if (!session) {
+              existing.byTabId.delete(knownTabId);
+              continue;
+            }
+            // A manual navigation away from the managed origins leaves the
+            // session alive, so the entry would otherwise force managed
+            // readiness against an unrelated origin. Drop it and treat the
+            // tab as an ordinary unmanaged target.
+            const url = session.navStatus._tag === "Idle" ? null : session.navStatus.url;
+            if (url) {
+              try {
+                if (!target.expectedOrigins.includes(new URL(url).origin)) {
+                  existing.byTabId.delete(knownTabId);
+                }
+              } catch {
+                // Keep the entry when the URL cannot be parsed.
+              }
+            }
           }
           return existing.byTabId;
         }

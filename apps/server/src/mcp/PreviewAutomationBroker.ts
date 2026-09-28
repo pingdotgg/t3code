@@ -810,6 +810,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     yield* PubSub.publish(hostRouteChanges, undefined);
     const { connection, requestId, requestContext, requestSequence } = route.route;
     const requestTimeoutMs = route.remainingTimeoutMs;
+    const removePending = SynchronizedRef.update(state, (next) => {
+      if (!next.pending.has(requestId)) return next;
+      const pending = new Map(next.pending);
+      pending.delete(requestId);
+      return { ...next, pending };
+    });
     const preparedManagedAuth = yield* managedPreviewAuth
       .prepare({
         environmentId: input.scope.environmentId,
@@ -826,6 +832,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
               reason: error.reason ?? "bootstrap-failed",
             }),
         ),
+        Effect.tapError(() => removePending),
       );
     const authorizationAccepted = yield* SynchronizedRef.modify(state, (current) => {
       const pendingRequest = current.pending.get(requestId);
@@ -847,17 +854,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
             ),
           );
       }
+      yield* removePending;
       return yield* new PreviewAutomationManagedTargetAuthError({
         ...requestContext,
         reason: "authorization-revoked",
       });
     }
-    const removePending = SynchronizedRef.update(state, (next) => {
-      if (!next.pending.has(requestId)) return next;
-      const pending = new Map(next.pending);
-      pending.delete(requestId);
-      return { ...next, pending };
-    });
     const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
       const offered = yield* Queue.offer(connection.queue, {
         type: "request",
