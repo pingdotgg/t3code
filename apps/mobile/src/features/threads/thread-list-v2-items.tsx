@@ -31,12 +31,13 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { cn } from "../../lib/cn";
-import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { buildThreadCopyMenuItem, resolveThreadCopy } from "./thread-copy-menu";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -785,8 +786,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
-      if (nativeEvent.event === "copy-thread-id") {
-        copyTextWithHaptic(thread.id, { target: "thread-id" });
+      const copy = resolveThreadCopy(nativeEvent.event, thread, props.project?.workspaceRoot);
+      if (copy?.value === null) {
+        Alert.alert(`${copy.target === "path" ? "Path" : "Branch"} unavailable`);
+      } else if (copy) {
+        void tryCopyTextWithHaptic(copy.value, { target: copy.target }).then((copied) => {
+          if (!copied) Alert.alert("Could not copy to the clipboard");
+        });
       }
       if (nativeEvent.event === "delete") handleDelete();
       if (nativeEvent.event === "snooze:custom") {
@@ -822,6 +828,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsnooze,
       snoozePresets,
       setCustomSnoozeOpen,
+      props.project?.workspaceRoot,
     ],
   );
   const primaryAction = useMemo(() => {
@@ -1213,7 +1220,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     },
                   ]
                 : []),
-              { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              buildThreadCopyMenuItem(thread),
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported

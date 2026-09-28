@@ -56,6 +56,7 @@ import IconFilterFilled from "@tabler/icons-react-native/IconFilterFilled";
 import IconFolder from "@tabler/icons-react-native/IconFolder";
 import IconFolderOpen from "@tabler/icons-react-native/IconFolderOpen";
 import IconFolderPlus from "@tabler/icons-react-native/IconFolderPlus";
+import IconHash from "@tabler/icons-react-native/IconHash";
 import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
@@ -179,6 +180,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   macstudio: IconDeviceDesktop,
   magnifyingglass: IconSearch,
   mic: IconMicrophone,
+  number: IconHash,
   paintbrush: IconPalette,
   pencil: IconPencil,
   "person.crop.circle": IconUserCircle,
