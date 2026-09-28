@@ -322,6 +322,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
+  const resetsIn = window ? formatResetsIn(window, now) : null;
   const [revealed, setRevealed] = useState(false);
   return (
     <SettingsScreen title="Account">
@@ -366,13 +367,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                 {remainingPercent(window)}% left
               </Text>
-              {window.resetsAt ? (
+              {resetsIn ? (
                 <Text selectable className="text-sm text-foreground-muted">
-                  Resets{" "}
-                  {new Date(window.resetsAt).toLocaleString(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short",
-                  })}
+                  {resetsIn}
                 </Text>
               ) : null}
               {reset && reset.restoresPercent > 0 ? (

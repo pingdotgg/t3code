@@ -14,9 +14,7 @@ import {
 import { AlertTriangleIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
@@ -147,7 +145,6 @@ function SegmentPopover({
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: () => void;
 }) {
-  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const where =
@@ -183,12 +180,7 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label="Left">{remaining}%</Row>
-        {window.resetsAt ? (
-          <Row label="Resets">
-            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
-            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
-          </Row>
-        ) : null}
+        {resetsIn ? <Row label="Resets">{resetsIn.replace("resets ", "")}</Row> : null}
         {reset && reset.restoresPercent > 0 ? (
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
