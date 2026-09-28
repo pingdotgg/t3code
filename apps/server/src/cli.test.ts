@@ -79,7 +79,7 @@ import { DelegationAuditRepository } from "./persistence/Services/DelegationAudi
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { dispatchThroughStartupGate } from "./orchestration/gatedDispatch.ts";
 import { deriveDelegationCleanupIntents } from "./orchestration/delegationAuditCleanup.ts";
-import { redactAuditPayload } from "./orchestration/auditRedaction.ts";
+import { redactAuditText } from "./orchestration/auditRedaction.ts";
 import { WorktreeCleanupJobRepository } from "./persistence/Services/WorktreeCleanupJobs.ts";
 import { WorktreeCleanupJobRepositoryLive } from "./persistence/Layers/WorktreeCleanupJobs.ts";
 import { __testing as mcpTesting } from "./mcpServer.ts";
@@ -402,9 +402,7 @@ const cliTestRpcHandlersLayer = (options: { readonly loseTurnStartReply?: boolea
                         attemptCount: job.attemptCount,
                         nextAttemptAt: job.nextAttemptAt,
                         reason: job.lastReason,
-                        error: job.lastError
-                          ? (redactAuditPayload(job.lastError).payload as string)
-                          : null,
+                        error: job.lastError ? redactAuditText(job.lastError) : null,
                       }),
                     }),
                   ),

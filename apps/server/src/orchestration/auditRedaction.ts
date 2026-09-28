@@ -116,9 +116,17 @@ export function redactAuditPayload(value: unknown): {
   const serialized = JSON.stringify(redactedValue.payload);
   const bytes = Buffer.byteLength(serialized, "utf8");
   if (bytes > MAX_AUDIT_PAYLOAD_BYTES) {
+    let previewBytes = 0;
+    let previewEnd = 0;
+    for (const character of serialized) {
+      const characterBytes = Buffer.byteLength(character, "utf8");
+      if (previewBytes + characterBytes > MAX_AUDIT_PAYLOAD_BYTES) break;
+      previewBytes += characterBytes;
+      previewEnd += character.length;
+    }
     return {
       payload: {
-        preview: serialized.slice(0, MAX_AUDIT_PAYLOAD_BYTES),
+        preview: serialized.slice(0, previewEnd),
         originalBytes: bytes,
         truncated: true,
       },
@@ -126,9 +134,24 @@ export function redactAuditPayload(value: unknown): {
       redacted: redactedValue.redacted,
     };
   }
+
   return {
     payload: redactedValue.payload,
     evidenceStatus: redactedValue.redacted ? "redacted" : "complete",
     redacted: redactedValue.redacted,
   };
+}
+
+export function redactAuditText(value: string): string {
+  const { payload } = redactAuditPayload(value);
+  if (typeof payload === "string") return payload;
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    "preview" in payload &&
+    typeof payload.preview === "string"
+  ) {
+    return payload.preview;
+  }
+  throw new Error("Audit text redaction returned a non-text payload.");
 }

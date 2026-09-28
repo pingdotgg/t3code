@@ -660,6 +660,7 @@ async function withNestedThreadAudit(
   args: Record<string, unknown>,
   execute: (attempts: ReadonlyArray<NestedThreadAuditContext>) => Promise<string>,
 ): Promise<string> {
+  validateNestedThreadContext(options, toolName);
   const children = Array.isArray(args.children) ? args.children : null;
   const requestValues =
     children === null

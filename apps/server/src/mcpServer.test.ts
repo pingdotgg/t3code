@@ -421,6 +421,64 @@ describe("send_to_thread MCP tool", () => {
 });
 
 describe("create_nested_thread MCP tool", () => {
+  it.each([
+    {
+      label: "thread",
+      property: "threadId",
+      message: "only available from a T3 provider session",
+    },
+    {
+      label: "runtime mode",
+      property: "runtimeMode",
+      message: "requires an authenticated parent runtime mode",
+    },
+    {
+      label: "provider instance",
+      property: "providerInstanceId",
+      message: "requires an authenticated parent provider instance",
+    },
+  ] as const)(
+    "validates $label before beginning audit persistence",
+    async ({ property, message }) => {
+      const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-audit-context-"));
+      const auditPath = path.join(root, "audit-began");
+      const cliScript = `
+      const fs = require("node:fs");
+      fs.writeFileSync(${JSON.stringify(auditPath)}, "invoked");
+    `;
+      const toolOptions: Parameters<typeof __testing.withNestedThreadAudit>[0] = {
+        cwd: root,
+        toolsets: new Set(["create_nested_thread"]),
+        threadId: "parent-1",
+        cliCommand: process.execPath,
+        cliArgsPrefix: ["-e", cliScript, "--"],
+        runtimeMode: "approval-required" as const,
+        providerInstanceId: ProviderInstanceId.make("copilot"),
+      };
+      delete toolOptions[property];
+
+      try {
+        await expect(
+          __testing.withNestedThreadAudit(
+            toolOptions,
+            "create_nested_thread",
+            "tool-call",
+            {
+              project: root,
+              title: "Invalid audit context",
+              prompt: "Do not persist this request.",
+              model: "gpt-6-luna",
+            },
+            async () => JSON.stringify(createdOutcome),
+          ),
+        ).rejects.toThrow(message);
+        await expect(readFile(auditPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("allows audited dry-runs and non-workspace creation without a Git HEAD", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-audit-non-git-"));
     const noGitRoot = path.join(root, "no-git");

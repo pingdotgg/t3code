@@ -2225,35 +2225,43 @@ describe("OrchestrationEngine", () => {
       );
     }
 
-    await expect(
-      system.run(
-        engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make("cmd-reject-cleared-message-child"),
-          threadId: childThreadId,
-          message: {
-            messageId: MessageId.make("message-audit-child"),
-            role: "user",
-            text: "child request",
-            attachments: [],
-          },
-          crossThreadSourceThreadId: sourceThreadId,
-          crossThreadDispatchCapability: issueCrossThreadDispatchCapability(sourceThreadId),
-          delegationAudit: {
-            operationId: "operation-audit-clear",
-            attemptId: "attempt-audit-clear",
-            initiatingMessageId: sourceMessageId,
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          createdAt,
-        }),
-      ),
-    ).rejects.toThrow("has no active turn");
+    for (const commandId of [
+      "cmd-reject-cleared-message-child",
+      "cmd-retry-reject-cleared-message-child",
+    ]) {
+      await expect(
+        system.run(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(commandId),
+            threadId: childThreadId,
+            message: {
+              messageId: MessageId.make("message-audit-child"),
+              role: "user",
+              text: "child request",
+              attachments: [],
+            },
+            crossThreadSourceThreadId: sourceThreadId,
+            crossThreadDispatchCapability: issueCrossThreadDispatchCapability(sourceThreadId),
+            delegationAudit: {
+              operationId: "operation-audit-clear",
+              attemptId: "attempt-audit-clear",
+              initiatingMessageId: sourceMessageId,
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt,
+          }),
+        ),
+      ).rejects.toThrow("has no active turn");
+    }
 
-    const rejection = system.delegationAuditEvents.find(
+    const rejections = system.delegationAuditEvents.filter(
       (event) => event.eventType === "turn.start.rejected",
     );
+    expect(rejections).toHaveLength(2);
+    expect(new Set(rejections.map((event) => event.eventId)).size).toBe(2);
+    const rejection = rejections[0];
     expect(rejection?.payload).toMatchObject({
       code: "CROSS_THREAD_INVARIANT_REJECTED",
       expectedInitiatingMessageId: sourceMessageId,

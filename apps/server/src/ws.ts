@@ -130,7 +130,7 @@ import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnap
 import { ProjectionThreadActivityRepository } from "./persistence/Services/ProjectionThreadActivities.ts";
 import { DelegationAuditRepository } from "./persistence/Services/DelegationAudit.ts";
 import { WorktreeCleanupJobRepository } from "./persistence/Services/WorktreeCleanupJobs.ts";
-import { redactAuditPayload } from "./orchestration/auditRedaction.ts";
+import { redactAuditPayload, redactAuditText } from "./orchestration/auditRedaction.ts";
 import { buildRevision } from "./buildIdentity.ts";
 import { WorkflowCoordinatorReactor } from "./orchestration/Services/WorkflowCoordinatorReactor.ts";
 import { runReviewChangesWorkflow } from "./orchestration/reviewChangesWorkflow.ts";
@@ -1100,9 +1100,7 @@ const makeWsRpcLayer = (
                   attemptCount: job.attemptCount,
                   nextAttemptAt: job.nextAttemptAt,
                   reason: job.lastReason,
-                  error: job.lastError
-                    ? (redactAuditPayload(job.lastError).payload as string)
-                    : null,
+                  error: job.lastError ? redactAuditText(job.lastError) : null,
                 });
               }
               return { ...page, cleanupStates, warnings };

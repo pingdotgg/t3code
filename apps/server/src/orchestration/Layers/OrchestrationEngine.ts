@@ -797,7 +797,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                                     : "unknown";
                           yield* maybeDelegationAuditRepository.value.append({
                             eventId: EventId.make(
-                              `delegation-audit:${auditContext.operationId}:${auditContext.attemptId}:turn.start.rejected`,
+                              `delegation-audit:${auditContext.operationId}:${auditContext.attemptId}:turn.start.rejected:${command.commandId}`,
                             ),
                             operationId: auditContext.operationId,
                             sourceThreadId,
