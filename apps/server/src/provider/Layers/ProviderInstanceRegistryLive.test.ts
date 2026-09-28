@@ -122,6 +122,7 @@ const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings =>
   enabled: false,
   binaryPath: "cursor-agent",
   apiEndpoint: "",
+  cloudAutoCreatePR: true,
   customModels: [],
   ...overrides,
 });

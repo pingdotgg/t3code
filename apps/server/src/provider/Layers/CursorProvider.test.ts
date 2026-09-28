@@ -305,6 +305,7 @@ const baseCursorSettings: CursorSettings = {
   enabled: true,
   binaryPath: "cursor-agent",
   apiEndpoint: "",
+  cloudAutoCreatePR: true,
   customModels: [],
 };
 const cursorAcpDiscoveryFailedMessage = [
@@ -690,6 +691,7 @@ describe("checkCursorProviderStatus", () => {
         enabled: true,
         binaryPath: missingCursorBinaryPath,
         apiEndpoint: "",
+        cloudAutoCreatePR: true,
         customModels: [],
       }),
     );
@@ -711,6 +713,7 @@ describe("checkCursorProviderStatus", () => {
           enabled: true,
           binaryPath: wrapperPath,
           apiEndpoint: "",
+          cloudAutoCreatePR: true,
           customModels: [],
         },
         {
@@ -740,6 +743,7 @@ describe("discoverCursorModelsViaAcp", () => {
           enabled: true,
           binaryPath: wrapperPath,
           apiEndpoint: "",
+          cloudAutoCreatePR: true,
           customModels: [],
         };
         const { discover, invalidate } = yield* makeCursorModelDiscovery(settings, {
@@ -779,6 +783,7 @@ describe("discoverCursorModelsViaAcp", () => {
         enabled: true,
         binaryPath: wrapperPath,
         apiEndpoint: "",
+        cloudAutoCreatePR: true,
         customModels: [],
       }).pipe(Effect.scoped),
     );
@@ -801,6 +806,7 @@ describe("discoverCursorModelsViaAcp", () => {
         enabled: true,
         binaryPath: wrapperPath,
         apiEndpoint: "",
+        cloudAutoCreatePR: true,
         customModels: [],
       }),
     );

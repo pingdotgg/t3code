@@ -89,6 +89,11 @@ interface BranchToolbarBranchSelectorProps {
   draftId?: DraftId;
   envLocked: boolean;
   effectiveEnvModeOverride?: "local" | "worktree";
+  /**
+   * The thread runs in the cloud, so the picked branch is only where its
+   * workspace starts on the remote. Picking one never touches the checkout.
+   */
+  selectsCloudStartingBranch?: boolean;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   startFromOrigin: boolean;
@@ -110,6 +115,7 @@ export function BranchToolbarBranchSelector({
   draftId,
   envLocked,
   effectiveEnvModeOverride,
+  selectsCloudStartingBranch = false,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
@@ -162,13 +168,16 @@ export function BranchToolbarBranchSelector({
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
-  const effectiveEnvMode =
-    effectiveEnvModeOverride ??
-    resolveEffectiveEnvMode({
-      activeWorktreePath,
-      hasServerThread,
-      draftThreadEnvMode: draftThread?.envMode,
-    });
+  // A cloud starting branch is picked like a new worktree's base: recorded on
+  // the thread, never checked out.
+  const effectiveEnvMode = selectsCloudStartingBranch
+    ? "worktree"
+    : (effectiveEnvModeOverride ??
+      resolveEffectiveEnvMode({
+        activeWorktreePath,
+        hasServerThread,
+        draftThreadEnvMode: draftThread?.envMode,
+      }));
 
   // ---------------------------------------------------------------------------
   // Thread branch mutation (colocated — only this component calls it)
@@ -204,7 +213,7 @@ export function BranchToolbarBranchSelector({
       setDraftThreadContext(draftId ?? threadRef, {
         branch,
         worktreePath,
-        envMode: nextDraftEnvMode,
+        envMode: selectsCloudStartingBranch ? (draftThread?.envMode ?? "local") : nextDraftEnvMode,
         environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
         projectRef: scopeProjectRef(environmentId, activeProject.id),
       });
@@ -221,6 +230,8 @@ export function BranchToolbarBranchSelector({
       threadRef,
       environmentId,
       effectiveEnvMode,
+      selectsCloudStartingBranch,
+      draftThread?.envMode,
       draftThread?.environmentSelection,
       stopThreadSession,
       updateThreadMetadata,
@@ -647,7 +658,7 @@ export function BranchToolbarBranchSelector({
     effectiveEnvMode,
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
-    startFromOrigin,
+    startFromOrigin: startFromOrigin && !selectsCloudStartingBranch,
   });
 
   // Branch status is the fallback when this thread has no linked pull requests.
@@ -810,7 +821,12 @@ export function BranchToolbarBranchSelector({
             // No press-scale: the popup aligns live to this trigger, so a
             // momentary 0.97 shrink would drag the open popup ~3px sideways.
             className="min-w-0 max-w-full active:scale-100"
-            disabled={isInitialBranchesLoadPending || isBranchActionPending}
+            // A started cloud thread's workspace already exists; its branch is history.
+            disabled={
+              isInitialBranchesLoadPending ||
+              isBranchActionPending ||
+              (selectsCloudStartingBranch && envLocked)
+            }
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />
             <span
@@ -895,7 +911,7 @@ export function BranchToolbarBranchSelector({
               />
             </ComboboxListVirtualized>
           </div>
-          {isSelectingWorktreeBase ? (
+          {isSelectingWorktreeBase && !selectsCloudStartingBranch ? (
             <Tooltip>
               <TooltipTrigger
                 render={

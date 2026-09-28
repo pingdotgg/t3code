@@ -32,6 +32,7 @@ import {
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ThreadExecutionTarget,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type TurnId,
@@ -257,6 +258,7 @@ import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import { getProviderModelCapabilities } from "../providerModels";
 import {
   applyProviderInstanceSettings,
+  cloudProviderSnapshot,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
   sortProviderInstanceEntries,
@@ -2597,7 +2599,17 @@ export default function ChatView(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
-  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const environmentProviderStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  // A cloud thread sees each provider as its cloud offers it: cloud models,
+  // ready without a local CLI.
+  const requestsCloud = activeThread?.executionTarget === "cloud";
+  const providerStatuses = useMemo(
+    () =>
+      requestsCloud
+        ? environmentProviderStatuses.map(cloudProviderSnapshot)
+        : environmentProviderStatuses,
+    [environmentProviderStatuses, requestsCloud],
+  );
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -2871,6 +2883,11 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const activeProviderCloud = activeProviderStatus?.cloud ?? null;
+  // A draft's Cloud choice applies only while its provider can run in the
+  // cloud; a started thread keeps the target it was created with.
+  const executionTarget: ThreadExecutionTarget =
+    requestsCloud && (isServerThread || activeProviderCloud !== null) ? "cloud" : "local";
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -5847,13 +5864,18 @@ export default function ChatView(props: ChatViewProps) {
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
-  const sendEnvMode = resolveSendEnvMode({
-    requestedEnvMode: envMode,
-    isGitRepo,
-  });
+  // A cloud agent clones the remote itself; no local worktree is prepared for it.
+  const sendEnvMode =
+    executionTarget === "cloud"
+      ? "local"
+      : resolveSendEnvMode({
+          requestedEnvMode: envMode,
+          isGitRepo,
+        });
+  // A cloud thread's branch names where its workspace started, not the checkout.
   const localCheckoutBranchMismatch = useMemo(
     () =>
-      isServerThread
+      isServerThread && executionTarget !== "cloud"
         ? resolveLocalCheckoutBranchMismatch({
             effectiveEnvMode: envMode,
             activeWorktreePath,
@@ -5861,7 +5883,14 @@ export default function ChatView(props: ChatViewProps) {
             currentGitBranch: gitStatusQuery.data?.refName ?? null,
           })
         : null,
-    [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+    [
+      activeThreadBranch,
+      activeWorktreePath,
+      envMode,
+      executionTarget,
+      gitStatusQuery.data?.refName,
+      isServerThread,
+    ],
   );
   const activeComposerTasksProgress = useMemo(() => {
     if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
@@ -8346,6 +8375,7 @@ export default function ChatView(props: ChatViewProps) {
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      ...(executionTarget === "cloud" ? { executionTarget } : {}),
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -9329,6 +9359,29 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  // Only a draft can choose; the target is fixed once the thread exists.
+  const onExecutionTargetChange = useCallback(
+    (target: ThreadExecutionTarget) => {
+      if (!isLocalDraftThread) return;
+      setDraftThreadContext(composerDraftTarget, {
+        executionTarget: target,
+        // A cloud agent clones the remote; it cannot reuse a local worktree.
+        ...(target === "cloud" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+      });
+      scheduleComposerFocus();
+    },
+    [
+      composerDraftTarget,
+      draftThread?.worktreePath,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+    ],
+  );
+  const onCloudSetup = useCallback(() => {
+    if (activeProviderInstanceId) openProviderSetup(activeProviderInstanceId);
+  }, [activeProviderInstanceId, openProviderSetup]);
+
   // "Work locally" on the setup card: cancel the bootstrap and remember the
   // draft. The cancelled dispatch deletes the half-made thread and puts the
   // message back in the composer; the effect below then flips the draft to
@@ -10156,6 +10209,10 @@ export default function ChatView(props: ChatViewProps) {
                                     : undefined
                                 }
                                 availableEnvironments={logicalProjectEnvironments}
+                                executionTarget={executionTarget}
+                                cloud={activeProviderCloud}
+                                {...(isLocalDraftThread ? { onExecutionTargetChange } : {})}
+                                onCloudSetup={onCloudSetup}
                                 composerControlsHostRef={setRestingComposerControlsHost}
                                 contextStripVisible={showComposerContextStrip}
                               />

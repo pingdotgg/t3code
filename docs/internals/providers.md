@@ -95,6 +95,20 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+## Cloud threads
+
+A thread's `executionTarget` is fixed at creation. A `cloud` thread runs in a
+provider-hosted clone of the remote, so it belongs to the same instance and account
+as a local one; the instance routes it to a different adapter rather than being a
+separate provider. See the [Cursor router](../../apps/server/src/provider/Layers/CursorCloudAdapter.ts).
+Local checkpoints would record the checkout rather than the agent's changes, so the
+[checkpoint reactor](../../apps/server/src/orchestration/Layers/CheckpointReactor.ts)
+skips cloud threads. A cloud turn also outlives this server: startup
+[reconciliation](../../apps/server/src/serverRuntimeStartup.ts) reattaches the session
+from its resume cursor instead of settling the turn as interrupted, and adapter
+shutdown must not announce `session.exited`. The cursor may only name a run T3 has
+not seen finish, so ProviderService saves the settled cursor at every turn boundary.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. [ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts)

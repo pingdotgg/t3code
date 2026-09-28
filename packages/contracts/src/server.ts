@@ -243,6 +243,16 @@ export const ServerProvider = Schema.Struct({
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  // Present when the driver can also run threads in a provider-hosted cloud
+  // workspace. `available` stays false until the account is set up for it;
+  // `message` then says how.
+  cloud: Schema.optional(
+    Schema.Struct({
+      available: Schema.Boolean,
+      message: Schema.optional(TrimmedNonEmptyString),
+      models: Schema.Array(ServerProviderModel),
+    }),
+  ),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

@@ -737,6 +737,12 @@ const make = Effect.gen(function* () {
           ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
           ...(sessionTitle ? { title: sessionTitle } : {}),
           modelSelection: desiredModelSelection,
+          ...(thread.executionTarget === "cloud"
+            ? {
+                executionTarget: "cloud" as const,
+                ...(thread.branch ? { branch: thread.branch } : {}),
+              }
+            : {}),
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
         })

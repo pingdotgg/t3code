@@ -1108,35 +1108,33 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         canonicalEvent.type === "turn.aborted"
       ) {
         yield* recordTurnCompletedAnalytics(source, canonicalEvent);
-        if (source.provider === "claudeAgent") {
-          // Background Claude turns have no sendTurn response to persist their
-          // new native boundary. Save it before clients can checkpoint the turn.
-          yield* Effect.gen(function* () {
-            const adapter = yield* registry.getByInstance(source.instanceId);
-            const session = (yield* adapter.listSessions()).find(
-              (session) => session.threadId === canonicalEvent.threadId,
-            );
-            if (session?.resumeCursor !== undefined) {
-              const binding = yield* directory.getBinding(session.threadId);
-              if (
-                Option.isNone(binding) ||
-                binding.value.providerInstanceId !== source.instanceId
-              ) {
-                return;
-              }
-              yield* directory.upsert({
-                threadId: session.threadId,
-                provider: source.provider,
-                providerInstanceId: source.instanceId,
-                resumeCursor: session.resumeCursor,
-              });
-            }
-          }).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("failed to persist Claude turn resume state", { cause }),
-            ),
+        // Save the adapter's settled cursor at every turn boundary. Background
+        // Claude turns have no sendTurn response to persist their new native
+        // boundary, and a cloud cursor names the run in flight until it ends;
+        // without this, recovery would reattach to a finished run.
+        yield* Effect.gen(function* () {
+          const adapter = yield* registry.getByInstance(source.instanceId);
+          const session = (yield* adapter.listSessions()).find(
+            (session) => session.threadId === canonicalEvent.threadId,
           );
-        }
+          if (session?.resumeCursor === undefined) {
+            return;
+          }
+          const binding = yield* directory.getBinding(session.threadId);
+          if (Option.isNone(binding) || binding.value.providerInstanceId !== source.instanceId) {
+            return;
+          }
+          yield* directory.upsert({
+            threadId: session.threadId,
+            provider: source.provider,
+            providerInstanceId: source.instanceId,
+            resumeCursor: session.resumeCursor,
+          });
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to persist turn resume state", { cause }),
+          ),
+        );
       } else if (canonicalEvent.type === "session.exited") {
         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
       }

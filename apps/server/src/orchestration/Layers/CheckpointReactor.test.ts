@@ -11,6 +11,7 @@ import {
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderInstanceId,
+  type ThreadExecutionTarget,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -307,6 +308,7 @@ describe("CheckpointReactor", () => {
     readonly localStatusRefName?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
+    readonly executionTarget?: ThreadExecutionTarget;
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
@@ -458,6 +460,7 @@ describe("CheckpointReactor", () => {
           branch: options?.threadBranch ?? null,
           worktreePath:
             options?.threadWorktreePath !== undefined ? options.threadWorktreePath : cwd,
+          ...(options?.executionTarget ? { executionTarget: options.executionTarget } : {}),
           createdAt,
         })
         .pipe(
@@ -1093,6 +1096,42 @@ describe("CheckpointReactor", () => {
     expect(
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
     ).toBe(false);
+  });
+
+  it("does not checkpoint the local checkout for a cloud thread's turn", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      executionTarget: "cloud",
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-remote-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-remote"),
+    });
+    // A local edit during the turn is not the remote agent's work.
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "local edit\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-remote-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-remote"),
+      payload: { state: "completed" },
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.checkpoints).toEqual([]);
+    for (const turnCount of [0, 1]) {
+      expect(
+        gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), turnCount)),
+      ).toBe(false);
+    }
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {

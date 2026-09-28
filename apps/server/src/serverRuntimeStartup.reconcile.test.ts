@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSendTurnInput,
+  type ProviderSessionStartInput,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -987,5 +988,52 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
       continueAfterServerUpdate: null,
       continueAfterServerUpdatePrepared: null,
     });
+  }),
+);
+
+it.effect("reattaches a cloud thread's turn instead of settling it as interrupted", () =>
+  Effect.gen(function* () {
+    const cursorInstanceId = ProviderInstanceId.make("cursor");
+    const thread = {
+      ...makeThread("thread-cloud", "running", TurnId.make("turn-cloud")),
+      executionTarget: "cloud" as const,
+    };
+    const reattached = yield* Deferred.make<ProviderSessionStartInput>();
+    const dispatched: OrchestrationCommand[] = [];
+    const binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId: thread.id,
+      provider: ProviderDriverKind.make("cursor"),
+      providerInstanceId: cursorInstanceId,
+      status: "running",
+      resumeCursor: { agentId: "bc-1" },
+      runtimePayload: { activeTurnId: thread.session.activeTurnId },
+    };
+
+    yield* runReconciliation({
+      threads: [thread],
+      providerService: {
+        ...makeProviderService(),
+        startSession: (threadId, input) =>
+          Deferred.succeed(reattached, input).pipe(Effect.as({ threadId } as never)),
+      },
+      directory: {
+        getBinding: () => Effect.succeedSome(binding),
+        upsert: () => Effect.die("a reattached binding is not rewritten"),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => dispatched.push(command)).pipe(
+          Effect.as({ sequence: dispatched.length }),
+        ),
+    });
+
+    const input = yield* Deferred.await(reattached);
+    assert.equal(input.providerInstanceId, cursorInstanceId);
+    assert.equal(input.executionTarget, "cloud");
+    assert.equal(input.resumeCursor, undefined, "the persisted cursor is used");
+    assert.deepStrictEqual(dispatched, [], "the running turn is left for the provider to finish");
   }),
 );

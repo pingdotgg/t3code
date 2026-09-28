@@ -4455,6 +4455,34 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.title).toBe("User-set title");
   });
 
+  it("links a pull request the provider reports opening", async () => {
+    const harness = await createHarness();
+    const report = (eventId: string) =>
+      harness.emit({
+        type: "thread.metadata.updated",
+        eventId: asEventId(eventId),
+        provider: ProviderDriverKind.make("cursor"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: asThreadId("thread-1"),
+        payload: { pullRequestUrl: "https://github.com/Acme/Widgets/pull/42" },
+      });
+
+    report("evt-pr-reported");
+    // A second report of the same PR is a no-op, not an ingestion failure.
+    report("evt-pr-reported-again");
+
+    const thread = await waitForThread(harness.readModel, (entry) => entry.pullRequests.length > 0);
+    await harness.drain();
+    expect((await harness.readModel()).threads[0]?.pullRequests).toHaveLength(1);
+    expect(thread.pullRequests[0]).toMatchObject({
+      host: "github.com",
+      repository: "acme/widgets",
+      number: 42,
+      url: "https://github.com/Acme/Widgets/pull/42",
+      source: "agent",
+    });
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -4,6 +4,7 @@ import {
   EventId,
   MessageId,
   type ProjectId,
+  type ThreadExecutionTarget,
   ThreadId,
   TurnId,
   type OrchestrationEvent,
@@ -205,14 +206,22 @@ const make = Effect.gen(function* () {
 
   // Resolves the workspace CWD for checkpoint operations, preferring the
   // active provider session CWD and falling back to the thread/project config.
-  // Returns undefined when no CWD can be determined or the workspace is not
-  // a git repository.
+  // Returns undefined when no CWD can be determined, the workspace is not
+  // a git repository, or the thread's agent works in a cloud workspace that
+  // the local checkout does not reflect.
   const resolveCheckpointCwd = Effect.fn("resolveCheckpointCwd")(function* (input: {
     readonly threadId: ThreadId;
-    readonly thread: { readonly projectId: ProjectId; readonly worktreePath: string | null };
+    readonly thread: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+      readonly executionTarget?: ThreadExecutionTarget | undefined;
+    };
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined, CheckpointStoreError> {
+    if (input.thread.executionTarget === "cloud") {
+      return undefined;
+    }
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
     const fromThread = resolveThreadWorkspaceCwd({
       thread: input.thread,

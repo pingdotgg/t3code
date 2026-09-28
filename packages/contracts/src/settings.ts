@@ -716,13 +716,23 @@ export const CursorSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    // Cloud threads authenticate with the instance's `CURSOR_API_KEY`
+    // environment variable, which Settings stores as a secret.
+    cloudAutoCreatePR: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Cloud pull requests",
+        description: "Cloud agents open a pull request when a run pushes changes.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "apiEndpoint"],
+    order: ["binaryPath", "apiEndpoint", "cloudAutoCreatePR"],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
@@ -1417,6 +1427,7 @@ const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   apiEndpoint: Schema.optionalKey(TrimmedString),
+  cloudAutoCreatePR: Schema.optionalKey(Schema.Boolean),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 

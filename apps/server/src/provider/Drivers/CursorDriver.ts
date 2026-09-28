@@ -9,6 +9,10 @@
  * drives `runtime.prompt` with a structured-output schema and collects the
  * agent's `agent_message_chunk` stream into a single JSON blob.
  *
+ * Threads created with the `cloud` execution target run as Cursor Cloud
+ * Agents through Cursor's HTTP API instead of the CLI; the snapshot's `cloud`
+ * field reports whether the instance's API key allows that.
+ *
  * @module provider/Drivers/CursorDriver
  */
 import { CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
@@ -26,6 +30,8 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
+import { makeCursorCloudAdapter, routeCursorExecution } from "../Layers/CursorCloudAdapter.ts";
+import { checkCursorCloudStatus } from "../Layers/CursorCloudProvider.ts";
 import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
 import {
   buildInitialCursorProviderSnapshot,
@@ -158,6 +164,13 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               return { ...snapshot, usageLimits };
             }),
         ),
+        // Cloud threads need only an API key, so they are offered even when
+        // the local CLI is missing or signed out.
+        Effect.filterOrElse(
+          () => !effectiveConfig.enabled,
+          (snapshot) =>
+            Effect.map(checkCursorCloudStatus(processEnv), (cloud) => ({ ...snapshot, cloud })),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -208,7 +221,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
 
       const { snapshot, onAvailableCommands, snapshotForCwd } =
         yield* makeCursorCommandCatalog(managedSnapshot);
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
+      const localAdapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
@@ -219,6 +232,11 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             Effect.flatMap((skills) => onAvailableCommands(commands, cwd, skills)),
           ),
       });
+      const cloudAdapter = yield* makeCursorCloudAdapter(effectiveConfig, {
+        environment: processEnv,
+        instanceId,
+      });
+      const adapter = routeCursorExecution(localAdapter, cloudAdapter);
 
       return {
         instanceId,

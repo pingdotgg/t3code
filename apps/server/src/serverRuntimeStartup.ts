@@ -643,6 +643,40 @@ export const reconcileProviderSessions = Effect.gen(function* () {
         );
       });
 
+    const cloudInstanceId =
+      thread.executionTarget === "cloud" &&
+      Option.isSome(binding) &&
+      binding.value.resumeCursor != null &&
+      thread.archivedAt === null &&
+      thread.deletedAt === null
+        ? binding.value.providerInstanceId
+        : undefined;
+    if (cloudInstanceId !== undefined) {
+      // The turn kept running in the cloud workspace. Reattach to it rather
+      // than treating it as interrupted or prompting it to continue.
+      yield* forkParked(
+        providerService
+          .startSession(thread.id, {
+            threadId: thread.id,
+            providerInstanceId: cloudInstanceId,
+            modelSelection: thread.modelSelection,
+            executionTarget: "cloud",
+            runtimeMode: session.runtimeMode,
+          })
+          .pipe(
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterrupts(cause),
+              (cause) =>
+                Effect.logWarning("failed to reattach cloud provider session after restart", {
+                  threadId: thread.id,
+                  cause,
+                }).pipe(Effect.andThen(settleAsError(ORPHANED_PROVIDER_SESSION_ERROR))),
+            ),
+          ),
+      );
+      continue;
+    }
+
     if (
       Option.isSome(binding) &&
       (continuationMarked || interruptedByRestart) &&

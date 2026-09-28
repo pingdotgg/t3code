@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
@@ -2468,6 +2469,26 @@ const make = Effect.gen(function* () {
             expectedVersion: thread.titleState?.version ?? null,
             needsRefinement: false,
           });
+        }
+      }
+
+      if (event.type === "thread.metadata.updated" && event.payload.pullRequestUrl) {
+        const url = event.payload.pullRequestUrl;
+        const pullRequest = parseChangeRequestUrl(url);
+        if (pullRequest) {
+          yield* orchestrationEngine
+            .dispatch({
+              type: "thread.pull-request.link",
+              commandId: yield* providerCommandId(event, "pull-request-link"),
+              threadId: thread.id,
+              host: pullRequest.host,
+              repository: pullRequest.repository,
+              number: pullRequest.number,
+              url,
+              source: "agent",
+            })
+            // The decider rejects a second link of the same PR; the thread already has it.
+            .pipe(Effect.catchTags({ OrchestrationCommandInvariantError: () => Effect.void }));
         }
       }
 

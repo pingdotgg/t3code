@@ -257,6 +257,8 @@ export type ThreadStateChangedPayload = typeof ThreadStateChangedPayload.Type;
 const ThreadMetadataUpdatedPayload = Schema.Struct({
   name: Schema.optional(TrimmedNonEmptyStringSchema),
   metadata: Schema.optional(UnknownRecordSchema),
+  /** A pull request the provider opened for this thread outside the local checkout. */
+  pullRequestUrl: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
 

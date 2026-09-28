@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
+  cloudProviderSnapshot,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
@@ -539,5 +540,37 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("cloudProviderSnapshot", () => {
+  const cloudModel = {
+    slug: "composer-2",
+    name: "Composer 2",
+    isCustom: false,
+    capabilities: null,
+  };
+
+  it("offers a cloud-capable instance's cloud models even when its CLI is missing", () => {
+    const cursor: ServerProvider = {
+      ...provider({
+        provider: ProviderDriverKind.make("cursor"),
+        instanceId: "cursor",
+        status: "error",
+      }),
+      installed: false,
+      message: "Cursor CLI is not installed.",
+      cloud: { available: true, models: [cloudModel] },
+    };
+    const entry = deriveProviderInstanceEntries([cloudProviderSnapshot(cursor)])[0]!;
+    expect(isProviderInstancePickerReady(entry)).toBe(true);
+    expect(entry.models).toEqual([cloudModel]);
+    expect(entry.snapshot.message).toBeUndefined();
+    expect(entry.snapshot.requiresNewThreadForModelChange).toBe(true);
+  });
+
+  it("leaves providers without a cloud alone", () => {
+    const codex = provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" });
+    expect(cloudProviderSnapshot(codex)).toBe(codex);
   });
 });
