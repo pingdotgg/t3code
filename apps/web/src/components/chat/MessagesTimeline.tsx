@@ -583,7 +583,12 @@ const TimelineAttachmentTile = memo(function TimelineAttachmentTile({
               ...image,
               previewUrl: new URL(asset.relativeUrl, httpBaseUrl).toString(),
             };
-          } catch {
+          } catch (error) {
+            // Sibling failures degrade gracefully, but the clicked
+            // attachment's own failure must reach the outer catch so a
+            // transient error reports its real cause instead of reading as
+            // a missing attachment.
+            if (image.id === attachment.id) throw error;
             return null;
           }
         }),

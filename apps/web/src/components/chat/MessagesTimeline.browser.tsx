@@ -12,6 +12,12 @@ const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
 const createAssetUrlMock = vi.hoisted(() =>
   vi.fn(async () => ({ relativeUrl: "/assets/signed/abc123" })),
 );
+const toastAddMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ui/toast")>()),
+  toastManager: { add: toastAddMock },
+}));
 
 vi.mock("~/environmentApi", () => ({
   readEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
@@ -1134,6 +1140,53 @@ describe("MessagesTimeline", () => {
         images: [{ src: "http://localhost:3773/assets/signed/abc123", name: "shot.png" }],
         index: 0,
       });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("reports the real error when the clicked attachment fails to load", async () => {
+    createAssetUrlMock.mockRejectedValueOnce(new Error("boom"));
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "user-1",
+            kind: "message",
+            createdAt: "2026-09-08T10:00:00.000Z",
+            message: {
+              id: MessageId.make("user-message-1"),
+              role: "user",
+              text: "Look at this",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-1-abc123",
+                  name: "shot.png",
+                  mimeType: "image/png",
+                  sizeBytes: 42,
+                },
+              ],
+              createdAt: "2026-09-08T10:00:00.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+    try {
+      await page.getByRole("button", { name: "Open shot.png" }).click();
+      await vi.waitFor(() => {
+        expect(toastAddMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Unable to open attachment",
+            description: "boom",
+          }),
+        );
+      });
+      expect(props.onImageExpand).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
     }
