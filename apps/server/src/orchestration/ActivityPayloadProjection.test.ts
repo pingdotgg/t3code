@@ -55,12 +55,30 @@ describe("projectActivityPayload", () => {
     });
   });
 
-  it("leaves MCP activities unchanged", () => {
+  it("keeps MCP tool identity in snapshots without projecting arguments and results", () => {
     const original = activity({
       itemType: "mcp_tool_call",
-      data: { result: "must remain available" },
+      data: {
+        toolCallId: "call-1",
+        kind: "other",
+        rawInput: {
+          toolName: "delegate_work",
+          prompt: "private prompt",
+          authorization: "Bearer private-token",
+        },
+        rawOutput: { content: "large result" },
+      },
     });
-    expect(projectActivityPayload(original)).toBe(original);
+    const projected = projectActivityPayload(original);
+    expect(projected).not.toBe(original);
+    expect(projected.payload).toEqual({
+      itemType: "mcp_tool_call",
+      data: {
+        toolCallId: "call-1",
+        kind: "other",
+        toolName: "delegate_work",
+      },
+    });
   });
 
   it("substantially reduces representative bulky tool payloads", () => {

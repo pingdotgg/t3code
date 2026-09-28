@@ -21,7 +21,6 @@ import {
   DEFAULT_PROVIDER_DRIVER_KIND,
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
-  type DesktopLocalRebuildState,
   type EnvironmentId,
   type ModelSelection,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -90,6 +89,8 @@ import {
   DEFAULT_WORKFLOW_RUNS_SHOW_BADGE,
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
+  DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+  MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
   type FontSize,
   type MessagePreviewLineCount,
@@ -119,6 +120,7 @@ import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { DeviceSettings } from "./DeviceSettings";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { useLocalRebuildState, useRequestLocalRebuild } from "../../hooks/useLocalRebuild";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
   setDesktopUpdateStateQueryData,
@@ -376,12 +378,12 @@ const SIDEBAR_VISIBILITY_ROWS: ReadonlyArray<{
   {
     key: "sidebarShowPullRequests",
     title: "Pull requests",
-    description: "Show Pull Requests in the sidebar top actions.",
+    description: "Show Pull Requests in the sidebar footer.",
   },
   {
     key: "sidebarShowSkills",
     title: "Skills",
-    description: "Show Skills in the sidebar top actions.",
+    description: "Show Skills in the sidebar footer.",
   },
   {
     key: "sidebarShowNewThread",
@@ -809,67 +811,14 @@ function AboutVersionSection() {
   const queryClient = useQueryClient();
   const updateStateQuery = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
-  const [localRebuildState, setLocalRebuildState] = useState<DesktopLocalRebuildState | null>(null);
-  const [isStartingLocalRebuild, setIsStartingLocalRebuild] = useState(false);
+  const localRebuildState = useLocalRebuildState();
+  const { requestLocalRebuild, isStartingLocalRebuild } = useRequestLocalRebuild();
+  const checkMinutes = useSettings((settings) => settings.localRebuildStalenessCheckMinutes);
+  const { updateSettings } = useUpdateSettings();
 
   const updateState = updateStateQuery.data ?? null;
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
-
-  useEffect(() => {
-    const getLocalRebuildState = window.desktopBridge?.getLocalRebuildState;
-    if (!getLocalRebuildState) return;
-
-    let cancelled = false;
-    void getLocalRebuildState()
-      .then((state) => {
-        if (!cancelled) setLocalRebuildState(state);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleLocalRebuild = useCallback(() => {
-    const rebuildAndRestart = window.desktopBridge?.rebuildAndRestart;
-    if (!rebuildAndRestart || isStartingLocalRebuild) return;
-    if (!window.confirm("Build the current checkout, install it, and restart T3 Code?")) return;
-
-    setIsStartingLocalRebuild(true);
-    void rebuildAndRestart()
-      .then((result) => {
-        if (result.accepted) {
-          toastManager.add({
-            type: "success",
-            title: "Local rebuild started",
-            description: "T3 Code will restart after the new build is ready.",
-          });
-          return;
-        }
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not start local rebuild",
-            description: [result.message, result.logPath ? `Log: ${result.logPath}` : null]
-              .filter(Boolean)
-              .join(" "),
-          }),
-        );
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not start local rebuild",
-            description: error instanceof Error ? error.message : "Local rebuild failed to start.",
-          }),
-        );
-      })
-      .finally(() => {
-        setIsStartingLocalRebuild(false);
-      });
-  }, [isStartingLocalRebuild]);
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -1036,11 +985,53 @@ function AboutVersionSection() {
               size="xs"
               variant="outline"
               disabled={isStartingLocalRebuild}
-              onClick={handleLocalRebuild}
+              onClick={requestLocalRebuild}
             >
               <RefreshCwIcon className={isStartingLocalRebuild ? "animate-spin" : undefined} />
               {isStartingLocalRebuild ? "Starting..." : "Rebuild and restart"}
             </Button>
+          }
+        />
+      ) : null}
+      {localRebuildState?.enabled ? (
+        <SettingsRow
+          title="Check for source updates"
+          description="Check whether the remote default branch moved past the running build. The sidebar refresh icon lights up when a rebuild would bring in newer changes. Set 0 to turn the check off."
+          resetAction={
+            checkMinutes !== DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES ? (
+              <SettingResetButton
+                label="source update check interval"
+                onClick={() =>
+                  updateSettings({
+                    localRebuildStalenessCheckMinutes:
+                      DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              className="w-24"
+              value={String(checkMinutes)}
+              inputMode="numeric"
+              onCommit={(value) => {
+                const minutes = Number.parseInt(value.trim(), 10);
+                if (
+                  !Number.isFinite(minutes) ||
+                  minutes < 0 ||
+                  minutes > MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES
+                ) {
+                  toastManager.add({
+                    type: "warning",
+                    title: `Check interval must be between 0 and ${MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES} minutes`,
+                  });
+                  return;
+                }
+                updateSettings({ localRebuildStalenessCheckMinutes: minutes });
+              }}
+              aria-label="Source update check interval in minutes"
+            />
           }
         />
       ) : null}

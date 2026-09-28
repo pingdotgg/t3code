@@ -826,6 +826,7 @@ describe("QueuedTurnReactor", () => {
                 state: "interrupted" as const,
                 completedAt: interruptedAt,
               },
+              activities: [],
               session: {
                 threadId: child.id,
                 status: "ready" as const,
@@ -846,6 +847,79 @@ describe("QueuedTurnReactor", () => {
     expect(settlementCommands(commands)).toHaveLength(1);
   });
 
+  it("settles provider-confirmed completion without the interrupted grace", async () => {
+    const state = delegatedReadModel();
+    const child = state.threads[1]!;
+    const completedAt = new Date().toISOString();
+    const providerCompletedState: OrchestrationReadModel = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id
+          ? thread
+          : {
+              ...thread,
+              updatedAt: completedAt,
+              latestTurn: {
+                ...thread.latestTurn!,
+                state: "interrupted" as const,
+                completedAt,
+              },
+              session: {
+                threadId: child.id,
+                status: "ready" as const,
+                providerName: "copilot",
+                runtimeMode: "approval-required" as const,
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: completedAt,
+              },
+            },
+      ),
+    };
+    const commands = await runReactor(providerCompletedState, monitorSnapshot("head"), {
+      waitAfterStartMs: 50,
+    });
+
+    expect(settlementCommands(commands)).toHaveLength(1);
+    expect(delegationStallCommands(commands)).toEqual([]);
+  });
+
+  it("settles a completed delegated turn without insights after its grace", async () => {
+    const state = delegatedReadModel();
+    const child = state.threads[1]!;
+    const completedAt = new Date().toISOString();
+    const completedWithoutInsights: OrchestrationReadModel = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id
+          ? thread
+          : {
+              ...thread,
+              updatedAt: completedAt,
+              latestTurn: { ...thread.latestTurn!, completedAt },
+              activities: thread.activities.filter(
+                (activity) =>
+                  activity.kind !== "insights.turn.completed" ||
+                  activity.turnId !== thread.latestTurn?.turnId,
+              ),
+            },
+      ),
+    };
+    const beforeGrace = await runReactor(completedWithoutInsights, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1,
+      waitAfterStartMs: 50,
+    });
+    const afterGrace = await runReactor(completedWithoutInsights, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1,
+      waitAfterStartMs: 2_200,
+    });
+
+    expect(settlementCommands(beforeGrace)).toEqual([]);
+    expect(delegationStallCommands(beforeGrace)).toEqual([]);
+    expect(settlementCommands(afterGrace)).toHaveLength(1);
+    expect(delegationStallCommands(afterGrace)).toEqual([]);
+  });
+
   it("does not settle an interrupted steer after its continuation is persisted", async () => {
     const state = delegatedReadModel();
     const child = state.threads[1]!;
@@ -862,6 +936,7 @@ describe("QueuedTurnReactor", () => {
                 state: "interrupted" as const,
                 completedAt: interruptedAt,
               },
+              activities: [],
               session: {
                 threadId: child.id,
                 status: "ready" as const,
@@ -946,6 +1021,66 @@ describe("QueuedTurnReactor", () => {
       delegationStallCommands(first)[0]?.commandId,
     );
     expect(settlementCommands(first)).toEqual([]);
+  });
+
+  it("reports an idle delegation with a stale dispatch-turn fence and leaves it settleable", async () => {
+    const state = delegatedReadModel();
+    const child = state.threads[1]!;
+    const staleFence = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id || !thread.nudging?.delegation
+          ? thread
+          : {
+              ...thread,
+              nudging: {
+                ...thread.nudging,
+                delegation: {
+                  ...thread.nudging.delegation,
+                  dispatchTurnId: TurnId.make("stale-dispatch-turn"),
+                },
+              },
+            },
+      ),
+    };
+    const first = await runReactor(staleFence, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1_000,
+    });
+    const second = await runReactor(staleFence, monitorSnapshot("head"), {
+      delegationIdleStallThresholdMs: 1_000,
+    });
+
+    expect(delegationStallCommands(first)).toHaveLength(1);
+    expect(delegationStallCommands(first)[0]).toMatchObject({
+      threadId: child.id,
+      summary: expect.stringContaining("settle"),
+    });
+    expect(delegationStallCommands(second)).toHaveLength(1);
+    expect(delegationStallCommands(second)[0]?.commandId).toBe(
+      delegationStallCommands(first)[0]?.commandId,
+    );
+    expect(settlementCommands(first)).toEqual([]);
+    expect(staleFence.threads[1]!.nudging?.delegation?.completedAt).toBeNull();
+
+    const validFence = {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id !== child.id || !thread.nudging?.delegation
+          ? thread
+          : {
+              ...thread,
+              nudging: {
+                ...thread.nudging,
+                delegation: {
+                  ...thread.nudging.delegation,
+                  dispatchTurnId: child.latestTurn!.turnId,
+                },
+              },
+            },
+      ),
+    };
+    const laterSettlement = await runReactor(validFence, monitorSnapshot("head"));
+    expect(settlementCommands(laterSettlement)).toHaveLength(1);
   });
 
   it.each([
@@ -1278,7 +1413,11 @@ describe("QueuedTurnReactor", () => {
       { delegationIdleStallThresholdMs: 1_000 },
     );
 
-    expect(delegationStallCommands(commands)).toEqual([
+    expect(
+      delegationStallCommands(commands).filter(
+        (command) => "threadId" in command && command.threadId === child.id,
+      ),
+    ).toEqual([
       expect.objectContaining({
         type: "thread.delegation.stall",
         summary: expect.stringContaining("unfinished grandchildren"),

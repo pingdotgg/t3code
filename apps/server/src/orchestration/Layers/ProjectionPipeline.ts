@@ -732,6 +732,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.deleted": {
+          // Keep a child attempt's evidence with its source thread; deleting the source thread
+          // removes its audit history in the same projection transaction.
+          yield* sql`
+            DELETE FROM delegation_audit_events
+            WHERE source_thread_id = ${event.payload.threadId}
+          `;
           yield* projectionThreadPullRequestRepository.deleteByThreadId({
             threadId: event.payload.threadId,
           });

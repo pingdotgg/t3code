@@ -71,8 +71,31 @@ export function projectActivityPayload(
 ): OrchestrationThreadActivity {
   const payload = asRecord(activity.payload);
   const data = asRecord(payload?.data);
-  if (!payload || !data || payload.itemType === "mcp_tool_call") {
+  if (!payload || !data) {
     return activity;
+  }
+  if (payload.itemType === "mcp_tool_call") {
+    const rawInput = asRecord(data.rawInput);
+    const toolName = [
+      rawInput?.toolName,
+      rawInput?.name,
+      rawInput?.tool,
+      data.toolName,
+      payload.toolName,
+    ]
+      .map(asTrimmedString)
+      .find((value) => value !== null);
+    return {
+      ...activity,
+      payload: {
+        ...payload,
+        data: {
+          ...(typeof data.toolCallId === "string" ? { toolCallId: data.toolCallId } : {}),
+          ...(typeof data.kind === "string" ? { kind: data.kind } : {}),
+          ...(toolName ? { toolName } : {}),
+        },
+      },
+    };
   }
 
   const projectedData: Record<string, unknown> = {};

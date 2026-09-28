@@ -46,4 +46,5 @@ export * from "./t3ProjectFile.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./validation.ts";
 export * from "./collaborativeAcceptance.ts";
+export * from "./delegationAudit.ts";
 export * from "./browserValidation.ts";

@@ -41,6 +41,9 @@ import {
   OrchestrationGetFullThreadDiffStateError,
   OrchestrationGetSnapshotError,
   OrchestrationGetThreadActivitiesError,
+  DelegationAuditActivityEvidence,
+  DelegationAuditEvidenceStatus,
+  DelegationAuditError,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffStateError,
   ORCHESTRATION_WS_METHODS,
@@ -100,6 +103,7 @@ import {
 } from "./git/VcsBridge.ts";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { deriveDelegationCleanupIntents } from "./orchestration/delegationAuditCleanup.ts";
 import { RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -123,6 +127,11 @@ import { makeClientCommandDispatcher } from "./orchestration/clientCommandDispat
 import { crossVersionRpcSerializationLayer } from "./rpc/crossVersionRpcSerialization.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionThreadActivityRepository } from "./persistence/Services/ProjectionThreadActivities.ts";
+import { DelegationAuditRepository } from "./persistence/Services/DelegationAudit.ts";
+import { WorktreeCleanupJobRepository } from "./persistence/Services/WorktreeCleanupJobs.ts";
+import { redactAuditPayload, redactAuditText } from "./orchestration/auditRedaction.ts";
+import { buildRevision } from "./buildIdentity.ts";
 import { WorkflowCoordinatorReactor } from "./orchestration/Services/WorkflowCoordinatorReactor.ts";
 import { runReviewChangesWorkflow } from "./orchestration/reviewChangesWorkflow.ts";
 import {
@@ -168,6 +177,7 @@ import { ServerAuth, type AuthenticatedSession } from "./auth/Services/ServerAut
 import { rpcAuthorizationLayer } from "./auth/RpcAuthorization.ts";
 import { PreviewManager } from "./preview/Manager.ts";
 import { PortDiscovery } from "./preview/PortScanner.ts";
+import { PullRequestCreationAutomation } from "./pullRequestMonitor/PullRequestCreationAutomation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { PreviewAutomationBroker } from "./mcp/PreviewAutomationBroker.ts";
 import {
@@ -194,6 +204,8 @@ const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError)
 const isOrchestrationGetSnapshotError = Schema.is(OrchestrationGetSnapshotError);
 const isProjectSearchEntriesError = Schema.is(ProjectSearchEntriesError);
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
+const isDelegationAuditError = Schema.is(DelegationAuditError);
+const isDelegationAuditEvidenceStatus = Schema.is(DelegationAuditEvidenceStatus);
 
 async function writeThreadMarkdownExportFile(input: {
   readonly directory: string;
@@ -282,7 +294,11 @@ const makeWsRpcLayer = (
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+      const delegationAudit = yield* DelegationAuditRepository;
+      const activityRepository = yield* ProjectionThreadActivityRepository;
+      const worktreeCleanupJobs = yield* WorktreeCleanupJobRepository;
       const orchestrationEngine = yield* OrchestrationEngineService;
+      const pullRequestCreationAutomation = yield* PullRequestCreationAutomation;
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const diffStateQuery = yield* DiffStateQuery;
       const keybindings = yield* Keybindings;
@@ -926,6 +942,246 @@ const makeWsRpcLayer = (
                     message: "Failed to load older thread activity",
                     cause,
                   }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.beginDelegationAudit]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.beginDelegationAudit,
+            Effect.gen(function* () {
+              const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(
+                input.sourceThreadId,
+              );
+              if (Option.isNone(threadOption)) {
+                return yield* new DelegationAuditError({
+                  code: "source-thread-not-found",
+                  message: "The source thread is not available for delegation audit.",
+                });
+              }
+              const thread = threadOption.value;
+              const sourceTurnId =
+                thread.session?.activeTurnId ?? thread.latestTurn?.turnId ?? null;
+              const sourceMessageId = thread.session?.activeMessageId ?? null;
+              const initiatingMessageId =
+                sourceMessageId ??
+                thread.messages
+                  .toReversed()
+                  .find(
+                    (message) =>
+                      message.role === "user" &&
+                      sourceTurnId !== null &&
+                      message.turnId === sourceTurnId,
+                  )?.id ??
+                null;
+              const projectOption = yield* projectionSnapshotQuery.getProjectShellById(
+                thread.projectId,
+              );
+              const persistedInput = {
+                ...input,
+                sourceTurnId,
+                sourceMessageId,
+                initiatingMessageId,
+                providerInstanceId: thread.modelSelection.instanceId,
+                model: thread.modelSelection.model,
+                workspaceRoot:
+                  thread.worktreePath ??
+                  (Option.isSome(projectOption) ? projectOption.value.workspaceRoot : null),
+                buildRevision,
+                occurredAt: new Date().toISOString(),
+              };
+              return yield* delegationAudit.begin(persistedInput);
+            }).pipe(
+              Effect.mapError((cause) =>
+                isDelegationAuditError(cause)
+                  ? cause
+                  : new DelegationAuditError({
+                      code: "audit-persistence-unavailable",
+                      message: "Unable to persist the delegation audit request.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent,
+            Effect.gen(function* () {
+              const sourceThread = yield* projectionSnapshotQuery.getThreadShellById(
+                input.sourceThreadId,
+              );
+              if (Option.isNone(sourceThread)) {
+                return yield* new DelegationAuditError({
+                  code: "source-thread-not-found",
+                  message: "The source thread is not available for delegation audit.",
+                });
+              }
+              const source = yield* delegationAudit.getOperationSource(input.operationId);
+              if (Option.isNone(source) || source.value !== input.sourceThreadId) {
+                return yield* new DelegationAuditError({
+                  code: "operation-not-found",
+                  message: "The delegation audit operation was not found for this source thread.",
+                });
+              }
+              yield* delegationAudit.append({
+                ...input,
+                occurredAt: new Date().toISOString(),
+              });
+            }).pipe(
+              Effect.mapError((cause) =>
+                isDelegationAuditError(cause)
+                  ? cause
+                  : new DelegationAuditError({
+                      code: "audit-persistence-unavailable",
+                      message: "Unable to persist the delegation audit event.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getDelegationAuditPage]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getDelegationAuditPage,
+            Effect.gen(function* () {
+              const sourceThreadId =
+                input.sourceThreadId ??
+                (input.operationId === undefined
+                  ? null
+                  : (yield* delegationAudit.getOperationSource(input.operationId)).pipe(
+                      Option.getOrNull,
+                    ));
+              if (sourceThreadId === null) {
+                return yield* new DelegationAuditError({
+                  code: "operation-not-found",
+                  message: "The delegation audit operation was not found.",
+                });
+              }
+              const sourceThread =
+                yield* projectionSnapshotQuery.getThreadShellById(sourceThreadId);
+              if (Option.isNone(sourceThread)) {
+                return yield* new DelegationAuditError({
+                  code: "source-thread-not-found",
+                  message: "The source thread is not available for delegation audit.",
+                });
+              }
+              const page = yield* delegationAudit.page({ ...input, sourceThreadId });
+              const childAttempts = deriveDelegationCleanupIntents(page.events);
+              const cleanupStates: Array<(typeof page.cleanupStates)[number]> = [];
+              const warnings = [...page.warnings];
+              for (const attempt of childAttempts) {
+                const jobOption = yield* worktreeCleanupJobs.getByThreadId(attempt.childThreadId);
+                if (Option.isNone(jobOption)) {
+                  if (attempt.cleanupRequested === null) continue;
+                  const status = attempt.cleanupRequested ? "pending-enqueue" : "not-required";
+                  cleanupStates.push({
+                    ...attempt,
+                    jobId: null,
+                    status,
+                    attemptCount: null,
+                    nextAttemptAt: null,
+                    reason: null,
+                    error: null,
+                  });
+                  if (status === "pending-enqueue") {
+                    warnings.push(
+                      `Cleanup state for attempt ${attempt.attemptId} is unresolved; reconciliation is required.`,
+                    );
+                  }
+                  continue;
+                }
+                const job = jobOption.value;
+                cleanupStates.push({
+                  attemptId: attempt.attemptId,
+                  childThreadId: attempt.childThreadId,
+                  jobId: job.threadId,
+                  status: job.status,
+                  attemptCount: job.attemptCount,
+                  nextAttemptAt: job.nextAttemptAt,
+                  reason: job.lastReason,
+                  error: job.lastError ? redactAuditText(job.lastError) : null,
+                });
+              }
+              return { ...page, cleanupStates, warnings };
+            }).pipe(
+              Effect.mapError((cause) =>
+                isDelegationAuditError(cause)
+                  ? cause
+                  : new DelegationAuditError({
+                      code: "audit-persistence-unavailable",
+                      message: "Unable to load the delegation audit page.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getActivityEvidence]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getActivityEvidence,
+            Effect.gen(function* () {
+              const sourceThread = yield* projectionSnapshotQuery.getThreadShellById(
+                input.threadId,
+              );
+              if (Option.isNone(sourceThread)) {
+                return yield* new DelegationAuditError({
+                  code: "source-thread-not-found",
+                  message: "The thread is not available for activity evidence.",
+                });
+              }
+              const activity = yield* activityRepository.getById(input);
+              if (Option.isNone(activity)) {
+                return {
+                  threadId: input.threadId,
+                  activityId: input.activityId,
+                  evidenceStatus: "unavailable",
+                  redacted: false,
+                  payload: null,
+                  warning: "Full activity evidence is unavailable for this historical record.",
+                } satisfies typeof DelegationAuditActivityEvidence.Type;
+              }
+              const storedPayload =
+                activity.value.payload !== null &&
+                typeof activity.value.payload === "object" &&
+                !Array.isArray(activity.value.payload)
+                  ? (activity.value.payload as Record<string, unknown>)
+                  : null;
+              const storedAuditMetadata =
+                storedPayload?.auditEvidence !== null &&
+                typeof storedPayload?.auditEvidence === "object" &&
+                !Array.isArray(storedPayload.auditEvidence)
+                  ? (storedPayload.auditEvidence as Record<string, unknown>)
+                  : null;
+              const evidence = redactAuditPayload(activity.value.payload);
+              const evidenceStatus = isDelegationAuditEvidenceStatus(
+                storedAuditMetadata?.evidenceStatus,
+              )
+                ? storedAuditMetadata.evidenceStatus
+                : evidence.evidenceStatus;
+              const redacted = evidence.redacted || storedAuditMetadata?.redacted === true;
+              return {
+                threadId: input.threadId,
+                activityId: input.activityId,
+                evidenceStatus,
+                redacted,
+                payload: evidence.payload,
+                warning:
+                  storedAuditMetadata === null
+                    ? "Historical tool version and provider correlation metadata were not stored."
+                    : evidenceStatus === "complete"
+                      ? null
+                      : `Activity evidence is ${evidenceStatus}.`,
+              } satisfies typeof DelegationAuditActivityEvidence.Type;
+            }).pipe(
+              Effect.mapError((cause) =>
+                isDelegationAuditError(cause)
+                  ? cause
+                  : new DelegationAuditError({
+                      code: "audit-persistence-unavailable",
+                      message: "Unable to load activity evidence.",
+                      cause,
+                    }),
               ),
             ),
             { "rpc.aggregate": "orchestration" },
@@ -2346,8 +2602,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "git" },
           ),
-        [WS_METHODS.gitRunStackedAction]: (input) =>
-          observeRpcStream(
+        [WS_METHODS.gitRunStackedAction]: (input) => {
+          const projectId = input.projectId;
+          const threadId = input.threadId;
+          return observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
               gitManager
@@ -2356,6 +2614,18 @@ const makeWsRpcLayer = (
                   progressReporter: {
                     publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
                   },
+                  ...(threadId !== undefined && projectId !== undefined
+                    ? {
+                        onPullRequestCreateIntent: (context) =>
+                          pullRequestCreationAutomation.recordIntent({
+                            actionId: input.actionId,
+                            threadId,
+                            projectId,
+                            cwd: input.cwd,
+                            ...context,
+                          }),
+                      }
+                    : {}),
                 })
                 .pipe(
                   Effect.matchCauseEffect({
@@ -2363,8 +2633,32 @@ const makeWsRpcLayer = (
                     onSuccess: (result) =>
                       Effect.gen(function* () {
                         const createdPrNumber = result.pr.number;
-                        const projectId = input.projectId;
-                        const threadId = input.threadId;
+                        if (
+                          result.pr.status === "created" &&
+                          projectId !== undefined &&
+                          threadId !== undefined
+                        ) {
+                          yield* pullRequestCreationAutomation
+                            .handleCreatedResult({
+                              actionId: input.actionId,
+                              threadId,
+                              projectId,
+                              cwd: input.cwd,
+                              pullRequest: result.pr,
+                            })
+                            .pipe(
+                              Effect.catch((error) =>
+                                Effect.logWarning(
+                                  "created PR handoff failed; durable recovery will retry",
+                                  {
+                                    actionId: input.actionId,
+                                    operation: error.operation,
+                                    detail: error.detail,
+                                  },
+                                ),
+                              ),
+                            );
+                        }
                         if (
                           result.pr.status === "created" &&
                           typeof createdPrNumber === "number" &&
@@ -2394,7 +2688,8 @@ const makeWsRpcLayer = (
                 ),
             ),
             { "rpc.aggregate": "git" },
-          ),
+          );
+        },
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           observeRpcEffect(WS_METHODS.gitResolvePullRequest, gitManager.resolvePullRequest(input), {
             "rpc.aggregate": "git",

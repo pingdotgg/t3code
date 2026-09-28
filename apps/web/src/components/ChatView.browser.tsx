@@ -289,6 +289,18 @@ function createMockEnvironmentApi(input: {
       getThreadActivities: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getThreadActivities"],
+      getDelegationAuditPage: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["getDelegationAuditPage"],
+      beginDelegationAudit: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["beginDelegationAudit"],
+      appendDelegationAuditEvent: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["appendDelegationAuditEvent"],
+      getActivityEvidence: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["getActivityEvidence"],
       getTurnDiff: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getTurnDiff"],
@@ -3459,7 +3471,142 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
-      resolveDispatch({ sequence: fixture.snapshot.snapshotSequence + 1 });
+      localStorage.removeItem("t3code:client-settings:v1");
+      await mounted.cleanup();
+    }
+  });
+
+  it("enables the sidebar footer rebuild icon when main moves past the running build", async () => {
+    const rebuildAndRestart = vi.fn().mockResolvedValue({
+      accepted: true,
+      logPath: "/tmp/t3code/dev-rebuild.log",
+      message: null,
+    });
+    // Stubbed before mount so the footer's mount-time bridge reads see it.
+    // Other shell coordinators call a handful of bridge methods
+    // unconditionally once a bridge exists, so they need no-op stand-ins.
+    window.desktopBridge = {
+      getAppBranding: () => null,
+      getClientSettings: vi.fn().mockResolvedValue(null),
+      setClientSettings: vi.fn().mockResolvedValue(undefined),
+      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+      setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+      getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
+      setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
+      removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+      setVibrancy: vi.fn().mockResolvedValue(false),
+      setTheme: vi.fn().mockResolvedValue(undefined),
+      getZoomFactor: () => 1,
+      onMenuAction: () => () => {},
+      onNotificationClick: () => () => {},
+      showNotification: vi.fn().mockResolvedValue(false),
+      onUpdateState: () => () => {},
+      getLocalRebuildState: vi.fn().mockResolvedValue({
+        enabled: true,
+        sourceRoot: "/repo/t3code",
+        reason: null,
+      }),
+      checkLocalRebuildStaleness: vi.fn().mockResolvedValue({
+        available: true,
+        behind: true,
+        behindBy: 3,
+        localBranch: "main",
+        localSha: "b".repeat(40),
+        remoteBranch: "main",
+        remoteSha: "c".repeat(40),
+        buildSha: "a".repeat(40),
+        checkedAt: new Date().toISOString(),
+        error: null,
+      }),
+      rebuildAndRestart,
+    } as unknown as NonNullable<typeof window.desktopBridge>;
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-footer-rebuild" as MessageId,
+        targetText: "sidebar footer rebuild",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await expect.element(page.getByTestId("sidebar-footer-rebuild")).toBeInTheDocument();
+      await vi.waitFor(
+        () => {
+          const button = document.querySelector('[data-testid="sidebar-footer-rebuild"]');
+          expect(button?.getAttribute("disabled")).toBeNull();
+          expect(button?.getAttribute("title")).toContain("3 new commits");
+        },
+        { timeout: 8_000, interval: 50 },
+      );
+      await page.getByTestId("sidebar-footer-rebuild").click();
+      await vi.waitFor(
+        () => {
+          expect(rebuildAndRestart).toHaveBeenCalledOnce();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows the source update check interval when local rebuilds are available", async () => {
+    // Same shell stand-ins as above: settings panels assume these exist once
+    // a bridge is present.
+    window.desktopBridge = {
+      getAppBranding: () => null,
+      getClientSettings: vi.fn().mockResolvedValue(null),
+      setClientSettings: vi.fn().mockResolvedValue(undefined),
+      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+      setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+      getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
+      setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
+      removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+      setVibrancy: vi.fn().mockResolvedValue(false),
+      setTheme: vi.fn().mockResolvedValue(undefined),
+      getZoomFactor: () => 1,
+      onMenuAction: () => () => {},
+      onNotificationClick: () => () => {},
+      showNotification: vi.fn().mockResolvedValue(false),
+      onUpdateState: () => () => {},
+      getLocalRebuildState: vi.fn().mockResolvedValue({
+        enabled: true,
+        sourceRoot: "/repo/t3code",
+        reason: null,
+      }),
+    } as unknown as NonNullable<typeof window.desktopBridge>;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      initialPath: "/settings/general",
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-rebuild-interval" as MessageId,
+        targetText: "sidebar rebuild interval",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await expect
+        .element(page.getByLabelText("Source update check interval in minutes"))
+        .toBeInTheDocument();
+      await vi.waitFor(
+        () => {
+          const interval = document.querySelector(
+            'input[aria-label="Source update check interval in minutes"]',
+          ) as HTMLInputElement | null;
+          expect(interval?.value).toBe("15");
+        },
+        { timeout: 8_000, interval: 50 },
+      );
+    } finally {
       await mounted.cleanup();
     }
   });
@@ -6830,7 +6977,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("runs the Sidebar V2 top actions", async () => {
+  it("runs the Sidebar V2 top and footer actions", async () => {
     localStorage.setItem(
       "t3code:client-settings:v1",
       JSON.stringify({
@@ -6860,7 +7007,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      await page.getByText("Skills", { exact: true }).click();
+      await page.getByTestId("sidebar-footer-skills").click();
       await waitForURL(
         mounted.router,
         (path) => path === "/skills",

@@ -28,20 +28,25 @@ interface FileBrowserPanelProps {
 
 const TREE_UNSAFE_CSS = `
   :host {
-    --trees-bg-override: transparent;
+    /* Opaque: the truncation fade markers paint this base first and state
+       colors on top, so a transparent base lets measure text bleed through. */
+    --trees-bg-override: var(--background);
     --trees-selected-bg-override: color-mix(in srgb, var(--primary) 18%, transparent);
     --trees-hover-bg-override: color-mix(in srgb, currentColor 10%, transparent);
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
     --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12.5px;
+    --trees-font-size-override: var(--app-sidebar-font-size);
   }
   /* The panel owns the filter input below; the tree's built-in search overlay
      opens on the same model value and would render a second, competing box. */
   div[data-file-tree-search-container] { display: none !important; }
+  div[data-item-section='decoration'] { min-width: 0; overflow: hidden; }
   div[data-item-section='decoration'] span {
     opacity: 0.55;
     font-size: 11px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   button[data-type='item'] { border-radius: 6px; }
   button[data-type='item']:focus-visible {

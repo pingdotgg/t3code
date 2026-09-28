@@ -334,12 +334,17 @@ const makeGitHubCli = Effect.sync(() => {
       Effect.gen(function* () {
         const reference = explicitPullRequestUrl(input.reference);
         if (!reference) {
+          const repositoryArgs =
+            input.repository !== undefined && input.repository.trim().length > 0
+              ? ["--repo", input.repository.trim()]
+              : [];
           const result = yield* execute({
             cwd: input.cwd,
             args: [
               "pr",
               "view",
               input.reference,
+              ...repositoryArgs,
               "--json",
               "number,title,url,baseRefName,headRefName,headRefOid,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
             ],
@@ -422,11 +427,16 @@ const makeGitHubCli = Effect.sync(() => {
         }
         return yield* mapPullRequestSummary(resolved);
       }),
-    getPullRequestPatch: (input) =>
-      execute({
+    getPullRequestPatch: (input) => {
+      const repositoryArgs =
+        input.repository !== undefined && input.repository.trim().length > 0
+          ? ["--repo", input.repository.trim()]
+          : [];
+      return execute({
         cwd: input.cwd,
-        args: ["pr", "diff", input.reference],
-      }).pipe(Effect.map((result) => result.stdout)),
+        args: ["pr", "diff", input.reference, ...repositoryArgs],
+      }).pipe(Effect.map((result) => result.stdout));
+    },
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,

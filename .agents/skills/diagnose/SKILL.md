@@ -17,6 +17,8 @@ If the failure is intermittent, use repetition, tracing, stress, or timing contr
 
 ## Completion
 
+Before declaring an environment or fixture blocker, identify the failing boundary and, when safe and authorized, run a probe that distinguishes configuration, fixture behavior, and product behavior. For example, check whether a pending-job read consults the durable repository or synthesizes a default. If progress requires external access, permission, or unavailable evidence, state that exact dependency rather than retrying indefinitely.
+
 Remove temporary instrumentation and throwaway reproduction artifacts introduced during diagnosis. Preserve regression tests and any reproduction evidence explicitly needed for follow-up; identify retained artifacts and their purpose without deleting user-owned work.
 
 Done means the root cause is supported by evidence, the fix or explicit blocker is recorded, the regression behavior is checked, and relevant validation results are reported. Do not claim resolution from a passing unrelated command.

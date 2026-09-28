@@ -230,6 +230,18 @@ export interface WsRpcClient {
     readonly getThreadActivities: RpcUnaryMethod<
       typeof ORCHESTRATION_WS_METHODS.getThreadActivities
     >;
+    readonly getDelegationAuditPage: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.getDelegationAuditPage
+    >;
+    readonly beginDelegationAudit: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.beginDelegationAudit
+    >;
+    readonly appendDelegationAuditEvent: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent
+    >;
+    readonly getActivityEvidence: RpcUnaryMethod<
+      typeof ORCHESTRATION_WS_METHODS.getActivityEvidence
+    >;
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
     readonly getTurnDiffState: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiffState>;
     readonly getFullThreadDiffState: RpcUnaryMethod<
@@ -534,6 +546,18 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getTurnDiff](input)),
       getThreadActivities: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getThreadActivities](input)),
+      getDelegationAuditPage: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage](input),
+        ),
+      beginDelegationAudit: (input) =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.beginDelegationAudit](input)),
+      appendDelegationAuditEvent: (input) =>
+        transport.request((client) =>
+          client[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent](input),
+        ),
+      getActivityEvidence: (input) =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.getActivityEvidence](input)),
       getFullThreadDiff: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.getFullThreadDiff](input)),
       getTurnDiffState: (input) =>

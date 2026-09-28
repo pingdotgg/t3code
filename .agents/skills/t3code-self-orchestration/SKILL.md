@@ -90,6 +90,13 @@ Helper prompts must be self-contained:
 
 The child cannot see the parent conversation; include every required decision and constraint.
 
+For a replacement thread, include the last failing command/assertion, leading hypothesis,
+task-owned uncommitted work to preserve, and verified environment identity (workspace, state
+directory, ports, and process ownership). Explicitly transfer implementation and validation
+ownership: confirm the previous worker is idle or stop obsolete work through the supported
+control plane before the replacement writes shared state. A completed turn alone does not prove
+its background processes stopped; do not have both threads continue the same work.
+
 ## Monitoring
 
 New MCP-created children have one delegated assignment. T3 automatically reports the returned
@@ -108,13 +115,16 @@ notify-only children are never included. Partial creation failures are removed f
 before `delegate_work` returns, so only created assignments remain. Do not call `set_child_wait`
 just to establish the wait after delegation.
 
-Use `set_child_wait` with `{mode: "any" | "all", assignments: [{childThreadId, assignmentId}]}`
-to revise the selected results later. Use `{mode: "decisions-only", assignments: []}` to suppress
-routine wakes, or `null` to restore automatic follow-up. Reassigning a child retargets an
-unsettled wait entry to its new assignment; a settled entry remains tied to the assignment that
-produced its outcome. Already-queued terminal results remain deliverable after reassignment. A
-satisfied wait is consumed once; a failure escalates without pretending the wait succeeded. Legacy
-waits whose assignments are unavailable must be revised.
+Use `set_child_wait` with `{mode: "any" | "all", assignments: [{childThreadId, assignmentId}], deadlineAt?}`
+to revise the selected results later; `deadlineAt` is an optional ISO timestamp. Use
+`{mode: "decisions-only", assignments: []}` to suppress routine wakes, or `null` to restore
+automatic follow-up. Reassigning a child retargets an unsettled wait entry to its new assignment;
+a settled entry remains tied to the assignment that produced its outcome. Already-queued terminal
+results remain deliverable after reassignment. A failed or blocked child settles its wait entry and
+wakes the parent with a failure report. When `deadlineAt` expires, T3 marks every remaining
+unsettled entry blocked and queues reports; the resulting parent dispatch settles and consumes the
+wait. A consumed wait does not mean success: inspect the reports. Legacy waits whose assignments
+are unavailable must be revised.
 
 For an early decision or important finding, a child can call `report_to_parent` with
 `kind: "decision-needed"` or `"important-update"`, a concise `summary`, and a stable `reportId`.
@@ -161,7 +171,9 @@ file references and evidence, the required tests, validation, and the delivery b
 `assign_to_thread` with a stable `requestId` when the child's assignment is finished and idle.
 If it is rejected because the child is busy (an active turn, queued work, or an automatic
 PR-monitor turn), use `send_to_thread` with a stable `requestId` instead; that message is not a
-tracked assignment, so it produces no automatic completion report.
+tracked assignment, so it produces no automatic completion report. Check completion yourself with
+`t3 chat show <threadId> --messages`, or retry `assign_to_thread` once the child is idle to get a
+tracked assignment.
 
 ## Failure handling
 

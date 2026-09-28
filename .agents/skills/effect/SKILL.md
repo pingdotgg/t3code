@@ -33,6 +33,7 @@ Use the current Effect source, not memory or older Effect v2/v3 examples.
 
 - Use the repo's existing Effect test helpers for tests that exercise Effect services, layers, runtime context, scoped resources, or platform integrations.
 - Use live tests for filesystem, git repositories, HTTP servers, sockets, child processes, locks, real time, and other live platform behavior.
+- For persisted deadlines and retries, verify that writers and workers use compatible clocks. Use a live clock when subprocesses supply wall-clock timestamps; with simulated time, keep fixture timestamps and clock advancement consistent. See the [test-clock scar](../../references/scars/full.md#test-clocks-and-durable-pr-monitoring).
 - Run tests from package directories such as `packages/<name>`; never run package tests from the repo root.
 - Prefer explicit test layers over ad hoc managed runtimes. Keep dependency provisioning visible in the test file.
 - Use scoped fixtures and finalizers for resources that must be cleaned up, including temporary directories, flags, databases, fibers, servers, and global state.

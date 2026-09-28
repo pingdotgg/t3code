@@ -110,6 +110,15 @@ import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import type { WorkflowRunResult } from "./agentWorkflows.ts";
 import type { WorkflowRunInput } from "./workflowRuntime.ts";
+import type {
+  DelegationAuditActivityEvidence,
+  DelegationAuditActivityEvidenceInput,
+  DelegationAuditAppendInput,
+  DelegationAuditBeginInput,
+  DelegationAuditBeginResult,
+  DelegationAuditPage,
+  DelegationAuditPageInput,
+} from "./delegationAudit.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -239,6 +248,30 @@ export interface DesktopLocalRebuildResult {
   accepted: boolean;
   logPath: string | null;
   message: string | null;
+}
+
+/**
+ * Whether the remote default branch has moved past the commit the running
+ * Dev build was built from. Compared with `git ls-remote` (no fetch, no
+ * local state changes) against the embedded build commit, falling back to
+ * the checkout's HEAD when the build carries no commit metadata.
+ */
+export interface DesktopLocalRebuildStaleness {
+  /** False when local rebuilds are unavailable; no check is attempted. */
+  available: boolean;
+  /** True when the remote default branch contains the base commit plus more. */
+  behind: boolean;
+  /** Best-effort commit count between base and remote tip; null when unknown. */
+  behindBy: number | null;
+  localBranch: string | null;
+  localSha: string | null;
+  remoteBranch: string | null;
+  remoteSha: string | null;
+  /** Commit the running build was made from; null when not embedded. */
+  buildSha: string | null;
+  checkedAt: string | null;
+  /** Human-readable reason when the check could not complete. */
+  error: string | null;
 }
 
 export interface DesktopEnvironmentBootstrap {
@@ -956,6 +989,7 @@ export interface DesktopBridge {
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   getLocalRebuildState?: () => Promise<DesktopLocalRebuildState>;
   rebuildAndRestart?: () => Promise<DesktopLocalRebuildResult>;
+  checkLocalRebuildStaleness?: () => Promise<DesktopLocalRebuildStaleness>;
   showNotification: (request: DesktopNotificationRequest) => Promise<boolean>;
   onNotificationClick: (listener: (click: DesktopNotificationClick) => void) => () => void;
 }
@@ -1200,6 +1234,12 @@ export interface EnvironmentApi {
     getThreadActivities: (
       input: OrchestrationGetThreadActivitiesInput,
     ) => Promise<OrchestrationGetThreadActivitiesResult>;
+    getDelegationAuditPage: (input: DelegationAuditPageInput) => Promise<DelegationAuditPage>;
+    beginDelegationAudit: (input: DelegationAuditBeginInput) => Promise<DelegationAuditBeginResult>;
+    appendDelegationAuditEvent: (input: DelegationAuditAppendInput) => Promise<void>;
+    getActivityEvidence: (
+      input: DelegationAuditActivityEvidenceInput,
+    ) => Promise<DelegationAuditActivityEvidence>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;

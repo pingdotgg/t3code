@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MessageId, TurnId } from "@t3tools/contracts";
+import { EventId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { DelegationAuditEvent } from "@t3tools/contracts";
 import type { TimelineEntry } from "../../session-logic";
 import type { TurnDiffSummary } from "../../types";
 import {
@@ -8,6 +9,7 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   deriveRevertTurnCountByUserMessageId,
+  deriveDelegationOperationSummary,
   EMPTY_REVIEW_OUTPUT_MESSAGE_IDS,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -18,6 +20,94 @@ import {
   stabilizeStringMap,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
+
+describe("delegation operation status", () => {
+  const sourceThreadId = ThreadId.make("source-thread");
+  const sourceTurnId = TurnId.make("source-turn");
+  const auditEvent = (
+    sequence: number,
+    operationId: string,
+    toolCallId: string,
+    payload: unknown,
+  ): DelegationAuditEvent => ({
+    sequence,
+    eventId: EventId.make(`audit-event-${sequence}`),
+    operationId,
+    attemptId: null,
+    sourceThreadId,
+    sourceTurnId,
+    sourceMessageId: MessageId.make("source-message"),
+    childThreadId: null,
+    eventType: "operation.failed",
+    occurredAt: "2026-09-01T00:00:00.000Z",
+    evidenceStatus: "complete",
+    redacted: false,
+    context: {
+      authorization: {
+        sourceThreadId,
+        sourceTurnId,
+        initiatingMessageId: MessageId.make("source-message"),
+        scope: "orchestration:operate",
+      },
+      toolName: "delegate_work",
+      toolVersion: "1",
+      toolCallId,
+      providerInstanceId: null,
+      model: null,
+      workspaceRoot: null,
+      gitRevision: null,
+      buildRevision: "server-build",
+    },
+    payload,
+  });
+
+  it("correlates operation failures to the initiating call and keeps transport success separate", () => {
+    const summary = deriveDelegationOperationSummary(
+      [
+        auditEvent(1, "operation-other", "other-provider-call", {
+          toolTransport: "completed",
+          operationStatus: "failed",
+          failedAttemptCount: 5,
+          unresolvedAttemptIds: [],
+        }),
+        auditEvent(2, "operation-selected", "selected-provider-call", {
+          toolTransport: "completed",
+          operationStatus: "failed",
+          failedAttemptCount: 5,
+          unresolvedAttemptIds: [],
+        }),
+      ],
+      sourceTurnId,
+      "selected-provider-call",
+    );
+
+    expect(summary).toEqual({
+      operationId: "operation-selected",
+      operationStatus: "failed",
+      toolTransport: "completed",
+    });
+  });
+
+  it("does not turn an unfinished operation into a definitive failure", () => {
+    const summary = deriveDelegationOperationSummary(
+      [
+        auditEvent(1, "operation-unresolved", "mcp-call", {
+          toolTransport: "completed",
+          operationStatus: "unknown",
+          unresolvedAttemptIds: ["attempt-1"],
+        }),
+      ],
+      sourceTurnId,
+      "mcp-call",
+    );
+
+    expect(summary).toEqual({
+      operationId: "operation-unresolved",
+      operationStatus: "unresolved",
+      toolTransport: "completed",
+    });
+  });
+});
 
 describe("compaction timeline boundaries", () => {
   const work = (id: string, compact = false): TimelineEntry => ({
@@ -777,6 +867,7 @@ describe("computeStableMessagesTimelineRows", () => {
       label: "Ran command",
       isComplete: true,
       toolLifecycleStatus: "completed" as const,
+      toolCallId: "provider-call-1",
     };
     const row = {
       id: "work-1",
@@ -789,6 +880,7 @@ describe("computeStableMessagesTimelineRows", () => {
     for (const changes of [
       { toolLifecycleStatus: "failed" as const },
       { toolData: { stdout: "new output" } },
+      { toolCallId: "provider-call-2" },
     ]) {
       const changed = { ...row, groupedEntries: [{ ...entry, ...changes }] };
       expect(computeStableMessagesTimelineRows([changed], initial).result[0]).toBe(changed);

@@ -316,22 +316,26 @@ export default function GitActionsControl({
       draftId,
       setDraftThreadContext,
       setThreadBranch,
+      threadToastData,
     ],
   );
 
   const persistThreadPullRequestAssociation = useCallback(
     async (result: GitRunStackedActionResult) => {
-      if (result.pr.status !== "created" && result.pr.status !== "opened_existing") {
+      if (!activeThreadRef || (!activeServerThread && !activeDraftThread)) {
+        return;
+      }
+      if (
+        activeServerThread ? result.pr.status !== "opened_existing" : result.pr.status !== "created"
+      ) {
         return;
       }
       if (
         result.pr.number === undefined ||
         result.pr.url === undefined ||
-        result.pr.url.trim().length === 0
+        result.pr.url.trim().length === 0 ||
+        result.pr.baseBranch === undefined
       ) {
-        return;
-      }
-      if (!activeThreadRef) {
         return;
       }
 
@@ -348,29 +352,40 @@ export default function GitActionsControl({
 
       const pullRequest = {
         number: result.pr.number,
-        url: result.pr.url,
+        url: result.pr.url.trim(),
         title: result.pr.title ?? `Pull request #${result.pr.number}`,
-        baseBranch: result.pr.baseBranch ?? "main",
+        baseBranch: result.pr.baseBranch,
         headBranch,
+        ...(result.pr.headSha === undefined ? {} : { headSha: result.pr.headSha }),
+        ...(result.pr.isCrossRepository === undefined
+          ? {}
+          : { isCrossRepository: result.pr.isCrossRepository }),
+        ...(result.pr.headRepositoryNameWithOwner === undefined
+          ? {}
+          : { headRepositoryNameWithOwner: result.pr.headRepositoryNameWithOwner }),
         state: "open" as const,
       };
 
       if (activeServerThread) {
-        const api = readEnvironmentApi(activeThreadRef.environmentId);
-        if (!api) {
-          return;
-        }
         try {
+          const api = readEnvironmentApi(activeThreadRef.environmentId);
+          if (!api) {
+            throw new Error("The thread connection is unavailable.");
+          }
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
             threadId: activeThreadRef.threadId,
             pullRequest,
-            pullRequestSource: "created",
+            pullRequestSource: "manual",
           });
-        } catch {
-          // Keep local association unset when durable write fails so reload
-          // cannot disagree with optimistic UI.
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to associate pull request",
+            description: error instanceof Error ? error.message : "An error occurred.",
+            ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+          });
           return;
         }
         setThreadBranch(

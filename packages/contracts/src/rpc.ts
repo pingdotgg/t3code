@@ -22,6 +22,16 @@ import {
   CollaborativeAcceptanceStatus,
 } from "./collaborativeAcceptance.ts";
 import {
+  DelegationAuditActivityEvidence,
+  DelegationAuditActivityEvidenceInput,
+  DelegationAuditAppendInput,
+  DelegationAuditBeginInput,
+  DelegationAuditBeginResult,
+  DelegationAuditError,
+  DelegationAuditPage,
+  DelegationAuditPageInput,
+} from "./delegationAudit.ts";
+import {
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   ProviderUploadFeedbackError,
@@ -1070,6 +1080,41 @@ export const WsOrchestrationGetThreadActivitiesRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetDelegationAuditPageRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getDelegationAuditPage,
+  {
+    payload: DelegationAuditPageInput,
+    success: DelegationAuditPage,
+    error: DelegationAuditError,
+  },
+);
+
+export const WsOrchestrationBeginDelegationAuditRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.beginDelegationAudit,
+  {
+    payload: DelegationAuditBeginInput,
+    success: DelegationAuditBeginResult,
+    error: DelegationAuditError,
+  },
+);
+
+export const WsOrchestrationAppendDelegationAuditEventRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent,
+  {
+    payload: DelegationAuditAppendInput,
+    error: DelegationAuditError,
+  },
+);
+
+export const WsOrchestrationGetActivityEvidenceRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getActivityEvidence,
+  {
+    payload: DelegationAuditActivityEvidenceInput,
+    success: DelegationAuditActivityEvidence,
+    error: DelegationAuditError,
+  },
+);
+
 export const WsOrchestrationGetFullThreadDiffRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getFullThreadDiff,
   {
@@ -1522,6 +1567,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetThreadActivitiesRpc,
+  WsOrchestrationGetDelegationAuditPageRpc,
+  WsOrchestrationBeginDelegationAuditRpc,
+  WsOrchestrationAppendDelegationAuditEventRpc,
+  WsOrchestrationGetActivityEvidenceRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationGetTurnDiffStateRpc,
   WsOrchestrationGetFullThreadDiffStateRpc,
