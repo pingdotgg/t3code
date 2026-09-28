@@ -2998,7 +2998,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
               if (isElectron && event.altKey) {
                 event.preventDefault();
                 event.stopPropagation();
-                void readLocalApi()?.shell.openExternal(href);
+                void readLocalApi()
+                  ?.shell.openExternal(href)
+                  .catch((cause) =>
+                    reportMarkdownActionFailure(
+                      { operation: "open-link-external", target: href },
+                      cause,
+                    ),
+                  );
               }
               return;
             }
