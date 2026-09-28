@@ -1,6 +1,7 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 
 import {
@@ -670,6 +671,18 @@ export const OrchestrationV2ProviderSessionDetached = Schema.Struct({
 export type OrchestrationV2ProviderSessionDetached =
   typeof OrchestrationV2ProviderSessionDetached.Type;
 
+/** The literal `kind` a union member is stored and sent with. */
+function encodedKind(member: Schema.Top): string {
+  const encoded = SchemaAST.toEncoded(member.ast);
+  const kind = SchemaAST.isObjects(encoded)
+    ? encoded.propertySignatures.find((property) => property.name === "kind")?.type
+    : undefined;
+  if (kind !== undefined && SchemaAST.isLiteral(kind) && typeof kind.literal === "string") {
+    return kind.literal;
+  }
+  throw new Error("Each member of a kind union needs a literal string `kind`.");
+}
+
 /**
  * A union tagged by `kind` that tolerates kinds this build does not know.
  * After the known members comes a decode-only arm: an object with an unknown
@@ -677,21 +690,18 @@ export type OrchestrationV2ProviderSessionDetached =
  * failing, so a newer server can add kinds without breaking older clients and
  * rows written before a kind existed still load. `unknown` builds that arm's
  * input around the given `kind` field. A known kind whose fields do not decode
- * still fails. The arm never encodes; values always match a known member first.
+ * still fails. Kinds are the encoded ones, which a member may rename on decode.
+ * The arm never encodes; values always match a known member first.
  */
 function kindUnionWithFallback<
-  const Members extends ReadonlyArray<
-    Schema.Top & { readonly fields: { readonly kind: Schema.Literal<string> } }
-  >,
+  const Members extends ReadonlyArray<Schema.Top & { readonly Encoded: { readonly kind: string } }>,
   Unknown extends Schema.Top,
 >(
   members: Members,
   unknown: (kind: Schema.optional<Schema.String>) => Unknown,
   fallback: (value: Unknown["Type"]) => Schema.Union<Members>["Encoded"],
 ) {
-  const knownKinds: ReadonlySet<string> = new Set(
-    members.map((member) => member.fields.kind.literal),
-  );
+  const knownKinds: ReadonlySet<string> = new Set(members.map(encodedKind));
   const unknownKind = unknown(
     Schema.optional(
       Schema.String.check(
@@ -907,9 +917,23 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
+const SubagentNotificationSource = Schema.Struct({
+  kind: Schema.Literal("subagent"),
+  /** The subagent's own thread, when the notification reports one subagent. */
+  childThreadId: Schema.optional(ThreadId),
+});
+const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+
 /**
  * What a notification reports on. Several pieces of work of one kind share
  * that kind; mixed or unnamed work is `background_task`.
+ *
+ * Sources are stored and sent in the shape clients before `subagent` and
+ * `command` existed decode, since they reject a kind they do not know: a
+ * command is `background_command`, and a subagent is `background_task` with
+ * `work: "subagent"`, a field those clients ignore. Encoding picks the first
+ * member that fits, so those come first. The plain `subagent` and `command`
+ * members after them decode values that were already decoded once.
  */
 export const OrchestrationV2NotificationSource = kindUnionWithFallback(
   [
@@ -920,17 +944,31 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
       childThreadId: Schema.optional(ThreadId),
     }),
     Schema.Struct({
-      kind: Schema.Literal("subagent"),
-      /** The subagent's own thread, when the notification reports one subagent. */
+      kind: Schema.Literal("background_task"),
+      work: Schema.Literal("subagent"),
       childThreadId: Schema.optional(ThreadId),
-    }),
-    Schema.Struct({ kind: Schema.Literal("command") }),
+    }).pipe(
+      Schema.decodeTo(Schema.toType(SubagentNotificationSource), {
+        decode: SchemaGetter.transform(({ childThreadId }) =>
+          childThreadId === undefined
+            ? { kind: "subagent" as const }
+            : { kind: "subagent" as const, childThreadId },
+        ),
+        encode: SchemaGetter.transform(({ childThreadId }) => ({
+          kind: "background_task" as const,
+          work: "subagent" as const,
+          ...(childThreadId === undefined ? {} : { childThreadId }),
+        })),
+      }),
+    ),
+    Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
+    SubagentNotificationSource,
+    CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
   ],
   (kind) => Schema.Struct({ kind }),
-  // Codex command wakes were stored as `background_command` before `command` existed.
-  ({ kind }) => ({ kind: kind === "background_command" ? "command" : "background_task" }),
+  () => ({ kind: "background_task" }),
 );
 export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
 

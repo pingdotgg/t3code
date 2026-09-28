@@ -1075,6 +1075,46 @@ describe("background work kinds from older or newer servers", () => {
     expect(sourceOf({ kind: "monitor" })).toEqual({ kind: "monitor" });
   });
 
+  it("sends and stores sources that clients from before specific kinds still decode", () => {
+    // The notification source schema clients shipped with before #13948. They
+    // reject a kind outside it, which fails the whole thread load.
+    const PreSpecificKindsNotification = Schema.Struct({
+      type: Schema.Literal("notification"),
+      source: Schema.Union([
+        Schema.Struct({ kind: Schema.Literal("delegated_task"), taskIds: Schema.Array(NodeId) }),
+        Schema.Struct({
+          kind: Schema.Literals(["background_task", "background_command", "monitor"]),
+          nativeRef: Schema.optional(Schema.Unknown),
+        }),
+      ]),
+      outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
+      summary: Schema.String,
+      detail: Schema.optional(Schema.String),
+    });
+    const decodePreSpecificKinds = Schema.decodeUnknownSync(PreSpecificKindsNotification);
+    const sendOverWire = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem));
+    const cases = [
+      [{ kind: "subagent", childThreadId: "child" }, { kind: "background_task" }],
+      [{ kind: "subagent" }, { kind: "background_task" }],
+      [{ kind: "command" }, { kind: "background_command" }],
+      [{ kind: "monitor" }, { kind: "monitor" }],
+      [{ kind: "background_task" }, { kind: "background_task" }],
+      [
+        { kind: "delegated_task", taskIds: ["task-1"], childThreadId: "child" },
+        { kind: "delegated_task", taskIds: ["task-1"] },
+      ],
+    ] as const;
+    for (const [source, preSpecificKindsSource] of cases) {
+      const item = decodeOrchestrationV2TurnItemJson(storedNotification(source));
+      for (const encoded of [encodeOrchestrationV2TurnItemJson(item), sendOverWire(item)]) {
+        expect(decodePreSpecificKinds(encoded).source).toEqual(preSpecificKindsSource);
+        // Current clients read the specific kind back.
+        expect(decodeOrchestrationV2TurnItemJson(encoded)).toEqual(item);
+      }
+      expect(item).toMatchObject({ source });
+    }
+  });
+
   it("decodes a notification source kind from a newer server as generic background work", () => {
     const item = decodeOrchestrationV2TurnItemJson(
       storedNotification({ kind: "workflow", workflowId: "wf-1" }),
