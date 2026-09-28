@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - vitest loads this sequencer from the config,
+// outside any Effect runtime, and only needs path.relative.
 import * as NodePath from "node:path";
 
 import { BaseSequencer, type TestSpecification } from "vite-plus/test/node";

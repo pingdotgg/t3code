@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - a one-off maintenance script with no
+// Effect runtime; it only spawns vitest and reads and writes two files.
 // Run with: node apps/server/scripts/update-test-shard-weights.ts
 // Runs the whole server suite once and records how long each test file takes,
 // so CI can split the suite into shards of equal duration. See
