@@ -509,6 +509,57 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("folds append-system-prompt launch args into the system prompt append", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-append-"));
+    NodeFS.writeFileSync(NodePath.join(dir, "extra.md"), "code word: pineapple");
+    const harness = makeHarness({
+      claudeConfig: {
+        launchArgs: `--append-system-prompt-file ${NodePath.join(dir, "extra.md")} --append-system-prompt "inline text"`,
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: `${buildRuntimeInstructions({ harness: "Claude Code" })}\n\ncode word: pineapple\n\ninline text`,
+      });
+      assert.deepEqual(createInput?.options.extraArgs, { "thinking-display": "summarized" });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails session start when the append-system-prompt-file is unreadable", () => {
+    const harness = makeHarness({
+      claudeConfig: { launchArgs: "--append-system-prompt-file /nonexistent/extra.md" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const exit = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit);
+
+      assert.equal(exit._tag, "Failure");
+      assert.equal(harness.getLastCreateQueryInput(), undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("loads Claude filesystem settings sources for SDK sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

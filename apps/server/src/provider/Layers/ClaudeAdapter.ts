@@ -4831,8 +4831,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const {
         "permission-mode": launchArgPermissionMode,
         "dangerously-skip-permissions": launchArgSkipPermissions,
+        "append-system-prompt": launchArgAppendSystemPrompt,
+        "append-system-prompt-file": launchArgAppendSystemPromptFile,
         ...extraArgs
       } = parseCliArgs(claudeSettings.launchArgs).flags;
+      // The SDK sends `systemPrompt.append` on initialize, and the CLI assigns
+      // it over anything the append launch args loaded, so they are folded into
+      // that append instead of passed through. A missing file fails the start,
+      // as it does in the CLI, rather than silently dropping the text.
+      const launchArgAppendFileText = launchArgAppendSystemPromptFile
+        ? yield* fileSystem
+            .readFileString(path.resolve(input.cwd ?? ".", launchArgAppendSystemPromptFile))
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProcessError({
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    detail: `Failed to read --append-system-prompt-file '${launchArgAppendSystemPromptFile}'.`,
+                    cause,
+                  }),
+              ),
+            )
+        : undefined;
       const selectedModel =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
       const modelSelection = selectedModel
@@ -4915,7 +4936,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "preset",
           preset: "claude_code",
           // Model and effort can change after this session-level prompt is set.
-          append: buildRuntimeInstructions({ harness: "Claude Code" }),
+          append: [
+            buildRuntimeInstructions({ harness: "Claude Code" }),
+            launchArgAppendFileText,
+            launchArgAppendSystemPrompt,
+          ]
+            .filter((part) => part)
+            .join("\n\n"),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
