@@ -218,7 +218,7 @@ function removeDatabaseValue(database: IDBDatabase, storeName: string, key: IDBV
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
       const transaction = database.transaction(storeName, "readwrite");
-      transaction.addEventListener("error", () => {
+      transaction.addEventListener("abort", () => {
         resume(
           Effect.fail(
             catalogError("remove", transaction.error ?? "Unknown IndexedDB remove error"),
@@ -239,7 +239,7 @@ function removeDatabaseValuesInRange(database: IDBDatabase, storeName: string, r
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
       const transaction = database.transaction(storeName, "readwrite");
-      transaction.addEventListener("error", () => {
+      transaction.addEventListener("abort", () => {
         resume(
           Effect.fail(
             catalogError("remove", transaction.error ?? "Unknown IndexedDB cursor error"),
