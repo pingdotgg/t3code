@@ -206,6 +206,10 @@ function runnerError(cause: unknown, method: string): CursorAgentSdkRunnerError 
     : new CursorAgentSdkRunnerError({ method, cause });
 }
 
+function isActiveRunConflict(cause: unknown): boolean {
+  return cause instanceof Error && /already has active run/i.test(cause.message);
+}
+
 export function isCursorCancellationError(cause: unknown): boolean {
   let current = cause;
   const seen = new Set<object>();
@@ -375,6 +379,12 @@ export function makeCursorAgentSdkRunner(
         typeof input.options.local?.cwd === "string"
           ? input.options.local.cwd
           : input.options.local?.cwd?.[0];
+      const runOptions = {
+        runtime: "local" as const,
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+      };
+      let abandonedRunRecoveryAvailable = input.operation === "resume";
 
       return {
         agentId: agent.agentId,
@@ -419,20 +429,51 @@ export function makeCursorAgentSdkRunner(
             return callbackChain;
           };
 
-          const run = yield* Effect.tryPromise({
-            try: () =>
-              agent.send(sendInput.message, {
-                ...sendInput.options,
-                onDelta: async ({ update }) => {
-                  if (!callbacksReady) {
-                    pendingUpdates.push(update);
-                    return;
+          const startRun = () =>
+            Effect.tryPromise({
+              try: () =>
+                agent.send(sendInput.message, {
+                  ...sendInput.options,
+                  onDelta: async ({ update }) => {
+                    if (!callbacksReady) {
+                      pendingUpdates.push(update);
+                      return;
+                    }
+                    await dispatchUpdate(update);
+                  },
+                }),
+              catch: (cause) => runnerError(cause, "run.start"),
+            });
+          const run = yield* startRun().pipe(
+            Effect.catchIf(
+              (error) => abandonedRunRecoveryAvailable && isActiveRunConflict(error.cause),
+              (error) =>
+                Effect.gen(function* () {
+                  abandonedRunRecoveryAvailable = false;
+                  const latestRun = yield* Effect.tryPromise({
+                    try: () => Agent.listRuns(agent.agentId, { ...runOptions, limit: 1 }),
+                    catch: (cause) => runnerError(cause, "agent.listRuns"),
+                  });
+                  const activeRun = latestRun.items.find(
+                    (candidate) => candidate.status === "running",
+                  );
+                  if (activeRun === undefined) {
+                    return yield* error;
                   }
-                  await dispatchUpdate(update);
-                },
-              }),
-            catch: (cause) => runnerError(cause, "run.start"),
-          });
+                  yield* log({
+                    direction: "outgoing",
+                    stage: "decoded",
+                    payload: { type: "run.cancel", runId: activeRun.id },
+                  });
+                  yield* Effect.tryPromise({
+                    try: () => Agent.cancelRun(activeRun.id, runOptions),
+                    catch: (cause) => runnerError(cause, "agent.cancelRun"),
+                  });
+                  return yield* startRun();
+                }),
+            ),
+          );
+          abandonedRunRecoveryAvailable = false;
           runId = run.id;
           yield* log({
             direction: "incoming",

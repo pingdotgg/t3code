@@ -1,6 +1,7 @@
 import {
   latestRootProviderFailure,
   threadErrorSummary,
+  usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   isOrchestrationV2WorkActive,
@@ -55,10 +56,23 @@ function summarizeThreadRun(
   };
 }
 
+function presentedUsageLimitRun(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["runs"][number] | null {
+  const providerSession = projection.providerSessions.findLast(
+    (session) => session.providerInstanceId === projection.thread.providerInstanceId,
+  );
+  return usageLimitRunPresentedAsLatest(
+    projection.runs,
+    projection.turnItems,
+    providerSession?.lastError ?? null,
+  );
+}
+
 export function deriveLatestThreadRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
-  const run = latestMatchingRun(projection, () => true);
+  const run = presentedUsageLimitRun(projection) ?? latestMatchingRun(projection, () => true);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
@@ -72,6 +86,7 @@ export function deriveThreadActivityRun(
 ): ThreadRunSummary | null {
   const run =
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
+    presentedUsageLimitRun(projection) ??
     latestMatchingRun(projection, () => true);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
@@ -181,11 +196,12 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
-  const latestRunProjection = latestMatchingRun(projection, () => true);
-  const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
+  const usageLimitedRun = presentedUsageLimitRun(projection);
+  const latestRunProjection = usageLimitedRun ?? latestMatchingRun(projection, () => true);
+  const activityRun = deriveThreadActivityRun(projection);
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
@@ -198,7 +214,11 @@ export function deriveThreadRuntime(
       runs: projection.runs,
     }).length > 0;
   return {
-    status: hasPendingBackgroundTasks ? "idle" : (activityRun?.status ?? "idle"),
+    status: usageLimitedRun
+      ? "failed"
+      : hasPendingBackgroundTasks
+        ? "idle"
+        : (activityRun?.status ?? "idle"),
     activeRunId,
     activityStartedAt:
       activityRun !== null && ACTIVITY_RUN_STATUSES.has(activityRun.status)

@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  contextUsageForHandoff,
   handoffBudget,
   historyCost,
   historyResponseItems,
@@ -260,6 +261,102 @@ describe("handoff budget", () => {
       );
     }
     assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+  });
+
+  it("keeps measured occupancy across a model change", () => {
+    const previous = {
+      usedTokens: 37_321,
+      maxTokens: 258_400,
+      autoCompactThreshold: 32_000,
+    };
+    assert.isNull(
+      contextUsageForHandoff({
+        sameNativeThread: false,
+        sameSelection: false,
+        reuseTelemetry: false,
+        previousUsage: previous,
+      }),
+    );
+    assert.equal(
+      contextUsageForHandoff({
+        sameNativeThread: true,
+        sameSelection: true,
+        reuseTelemetry: true,
+        previousUsage: previous,
+      }),
+      previous,
+    );
+    assert.deepEqual(
+      contextUsageForHandoff({
+        sameNativeThread: true,
+        sameSelection: false,
+        reuseTelemetry: true,
+        previousUsage: previous,
+      }),
+      { usedTokens: 37_321, maxTokens: 258_400 },
+    );
+    assert.deepEqual(
+      contextUsageForHandoff({
+        sameNativeThread: true,
+        sameSelection: false,
+        reuseTelemetry: false,
+        previousUsage: previous,
+      }),
+      { usedTokens: 37_321, maxTokens: 258_400 },
+    );
+    assert.deepEqual(
+      contextUsageForHandoff({
+        sameNativeThread: true,
+        sameSelection: false,
+        reuseTelemetry: false,
+        previousUsage: { usedTokens: 30_000, maxTokens: 32_000, autoCompactThreshold: 31_000 },
+        knownModelWindow: 1_000_000,
+      }),
+      { usedTokens: 30_000, maxTokens: 1_000_000 },
+    );
+
+    const preserved = contextUsageForHandoff({
+      sameNativeThread: true,
+      sameSelection: false,
+      reuseTelemetry: false,
+      previousUsage: previous,
+    });
+    assert.equal(
+      handoffBudget({
+        tokenCap: 16_000,
+        userText: "Continue work",
+        attachments: [
+          {
+            type: "image",
+            id: "screenshot-a",
+            name: "a.png",
+            mimeType: "image/png",
+            sizeBytes: 100_000,
+          },
+          {
+            type: "image",
+            id: "screenshot-b",
+            name: "b.png",
+            mimeType: "image/png",
+            sizeBytes: 100_000,
+          },
+        ],
+        providerThread: { ...providerThread, contextUsage: preserved },
+        nativeContextEstimate: 0,
+        modelContextWindow: preserved?.maxTokens,
+      }),
+      16_000,
+    );
+    assert.equal(
+      handoffBudget({
+        tokenCap: 16_000,
+        userText: "Continue work",
+        attachments: [],
+        providerThread,
+        nativeContextEstimate: 120_000,
+      }),
+      0,
+    );
   });
   it("reserves context for image batches up to the attachment limit, honoring smaller known windows", () => {
     let previousBudget = 16_000;

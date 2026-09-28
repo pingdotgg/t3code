@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
@@ -2479,6 +2480,10 @@ interface ActiveClaudeTurnContext {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
+  // Item ordinals allocated in this turn. Later turns never look items up
+  // here: a subagent resumed from another turn keeps its ordinal on the
+  // session subagent registry.
+  readonly itemOrdinals: Map<string, number>;
   readonly assistant: {
     fallbackText: string;
     fallbackNativeItemId: string;
@@ -2788,8 +2793,6 @@ export function makeClaudeAdapterV2(
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
-        const itemOrdinals = yield* Ref.make(new Map<string, number>());
-        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
@@ -3284,29 +3287,16 @@ export function makeClaudeAdapterV2(
           }),
         });
 
-        const resolveItemOrdinal = Effect.fnUntraced(function* (
-          context: ActiveClaudeTurnContext,
-          nativeItemId: string,
-        ) {
-          const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
-          if (existing !== undefined) {
-            return existing;
-          }
-
-          const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-            const next = (current.get(context.nativeTurnId) ?? 0) + 1;
-            const updated = new Map(current);
-            updated.set(context.nativeTurnId, next);
-            return [next, updated];
+        const resolveItemOrdinal = (context: ActiveClaudeTurnContext, nativeItemId: string) =>
+          Effect.sync(() => {
+            const existing = context.itemOrdinals.get(nativeItemId);
+            if (existing !== undefined) {
+              return existing;
+            }
+            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
+            context.itemOrdinals.set(nativeItemId, ordinal);
+            return ordinal;
           });
-          const nextOrdinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
-          yield* Ref.update(itemOrdinals, (current) => {
-            const updated = new Map(current);
-            updated.set(nativeItemId, nextOrdinal);
-            return updated;
-          });
-          return nextOrdinal;
-        });
 
         const providerTurnPayload = (input: {
           readonly context: ActiveClaudeTurnContext;
@@ -3378,6 +3368,20 @@ export function makeClaudeAdapterV2(
             startedAt: input.startedAt,
             completedAt,
           };
+          const readPath = ["read", "read file"].includes(input.classification.normalizedName)
+            ? firstStringInputField(input.toolInput, ["file_path", "path"])?.trim()
+            : undefined;
+          const nativeToolInput = claudeNativeToolInputValue(input.toolInput);
+          const searchTitle = ["grep", "glob", "ls"].includes(input.classification.normalizedName)
+            ? formatSearchToolLabel({
+                input:
+                  nativeToolInput !== null &&
+                  typeof nativeToolInput === "object" &&
+                  !Array.isArray(nativeToolInput)
+                    ? (nativeToolInput as Record<string, unknown>)
+                    : undefined,
+              })
+            : undefined;
           const itemBase = {
             id: turnItemId,
             threadId: input.threadId,
@@ -3389,7 +3393,7 @@ export function makeClaudeAdapterV2(
             parentItemId: null,
             ordinal: input.ordinal,
             status: input.status,
-            title: null,
+            title: readPath !== undefined ? formatReadToolLabel(readPath) : (searchTitle ?? null),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,
@@ -3410,9 +3414,6 @@ export function makeClaudeAdapterV2(
             | "completedAt"
             | "updatedAt"
           >;
-          const readPath = ["read", "read file"].includes(input.classification.normalizedName)
-            ? firstStringInputField(input.toolInput, ["file_path", "path"])?.trim()
-            : undefined;
           const viewedImagePath =
             readPath &&
             readPath.length <= 4096 &&
@@ -4701,6 +4702,10 @@ export function makeClaudeAdapterV2(
               });
             });
           }
+          // Rate-limit frames park with the wake output so the drain can
+          // replay them to the turn that was still starting when they
+          // arrived; the offer gate below keeps them from requesting a
+          // continuation on their own.
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
@@ -4708,7 +4713,8 @@ export function makeClaudeAdapterV2(
             isNewSubagentTaskStarted ||
             message.type === "assistant" ||
             message.type === "user" ||
-            message.type === "result";
+            message.type === "result" ||
+            message.type === "rate_limit_event";
           if (!isWakeEvidence) {
             return;
           }
@@ -4903,6 +4909,18 @@ export function makeClaudeAdapterV2(
               });
             }
             const context = yield* Ref.get(activeTurn);
+            if (context === null) {
+              // A rejected window can open the CLI's notification wake,
+              // before the continuation turn exists to record it on. Park
+              // the frame with the wake output so the drain replays it to
+              // the turn; dropping it here loses the reset time the
+              // provider just reported.
+              yield* bufferWakeMessage({
+                nativeThreadId: liveQuery.nativeThreadId,
+                message,
+              });
+              return;
+            }
             const overageAllowed =
               rateLimitInfo.overageStatus === "allowed" ||
               rateLimitInfo.overageStatus === "allowed_warning" ||
@@ -4910,28 +4928,26 @@ export function makeClaudeAdapterV2(
               rateLimitInfo.overageInUse === true;
             const blocked = rateLimitInfo.status === "rejected" && !overageAllowed;
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
-            if (context !== null) {
-              if (blocked) {
-                context.rejectedRateLimitTypes.add(limitType);
-                const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
-                context.rateLimitResetTimes.set(
-                  limitType,
-                  Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
-                    ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                    : null,
-                );
-              } else if (
-                rateLimitInfo.status === "allowed" ||
-                rateLimitInfo.status === "allowed_warning" ||
-                overageAllowed
-              ) {
-                context.rejectedRateLimitTypes.delete(limitType);
-                context.rateLimitResetTimes.delete(limitType);
-              }
+            if (blocked) {
+              context.rejectedRateLimitTypes.add(limitType);
+              const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
+              context.rateLimitResetTimes.set(
+                limitType,
+                Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
+                  ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
+                  : null,
+              );
+            } else if (
+              rateLimitInfo.status === "allowed" ||
+              rateLimitInfo.status === "allowed_warning" ||
+              overageAllowed
+            ) {
+              context.rejectedRateLimitTypes.delete(limitType);
+              context.rateLimitResetTimes.delete(limitType);
             }
             // Rejected windows pause the SDK without ending its turn. Overage
             // and warnings keep running; repeats of a window need only one notice.
-            if (context !== null && blocked) {
+            if (blocked) {
               const limitKey = `${limitType}:${rateLimitInfo.resetsAt ?? "unknown"}`;
               if (!context.announcedUsageLimits.has(limitKey)) {
                 context.announcedUsageLimits.add(limitKey);
@@ -6397,6 +6413,7 @@ export function makeClaudeAdapterV2(
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
+              itemOrdinals: new Map(),
               assistant: {
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
@@ -6543,6 +6560,27 @@ export function makeClaudeAdapterV2(
               });
             }
             const currentTurn = yield* Ref.get(activeTurn);
+            const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId ?? null;
+            if (
+              currentTurn === null &&
+              turnInput.requestRuntimeRestart === true &&
+              nativeThreadId !== null &&
+              existing.nativeThreadId === nativeThreadId
+            ) {
+              // Stop after the turn settled: the background shells belong to
+              // the CLI process, so closing its query is what stops them.
+              yield* closeLiveQueryForNativeThread(nativeThreadId);
+              // A turn started while the close was pending may have opened a
+              // replacement process. Its Waiting and wake state are its own.
+              const current = yield* Ref.get(queryContext);
+              if (current === null || current.query === existing.query) {
+                yield* clearWakeStateForNativeThread(nativeThreadId);
+                yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                  status: "idle",
+                });
+              }
+              return;
+            }
             if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
               return yield* new ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,

@@ -13,7 +13,6 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";
@@ -38,6 +37,7 @@ import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
 import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
+import { layer as projectStoreLayer } from "../ProjectStore.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
@@ -301,6 +301,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const storesLayer = Layer.mergeAll(
     eventStoreLayer,
     projectionStoreLayer,
+    projectStoreLayer,
     commandReceiptStoreLayer,
     effectOutboxLayer,
     turnItemPositionStoreLayer,
@@ -413,7 +414,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         commandPolicyLayer,
         contextHandoffServiceProvided,
         persistenceLayer,
-        ProjectionProjectRepositoryLive.pipe(Layer.provide(databaseLayer)),
         providedRegistryLayer,
         continuationRequestsLayer,
         runtimeLayer,

@@ -8,6 +8,7 @@ import {
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2DelegatedCompletionDelivery,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -1960,6 +1961,50 @@ describe("orchestrator MCP toolkit", () => {
             ).toMatchObject({
               title: "Metadata-managed thread",
               linkedPullRequest: linked.linkedPullRequest,
+              settled: false,
+              settledAt: null,
+            });
+            expect(metadataRead.thread).toMatchObject({ settled: false, settledAt: null });
+
+            yield* orchestrator.dispatch({
+              type: "thread.settle",
+              commandId: CommandId.make("command:mcp-empty:settle"),
+              threadId: emptyThread.threadId,
+              settledAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+            });
+            const settledReadCall = yield* invoke("t3_thread_read", {
+              threadId: emptyThread.threadId,
+            });
+            const settledRead = yield* decodeThreadReadResult(
+              settledReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(settledRead.thread).toMatchObject({
+              settled: true,
+              settledAt: "2026-01-01T00:00:00.000Z",
+            });
+            const settledListCall = yield* invoke("t3_thread_list", { settled: true, limit: 100 });
+            const settledList = yield* decodeThreadListResult(
+              settledListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(settledList.threads.map((thread) => thread.threadId)).toEqual([
+              emptyThread.threadId,
+            ]);
+            expect(settledList.threads[0]).toMatchObject({
+              settled: true,
+              settledAt: "2026-01-01T00:00:00.000Z",
+            });
+            const activeListCall = yield* invoke("t3_thread_list", { settled: false, limit: 100 });
+            const activeList = yield* decodeThreadListResult(activeListCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(
+              activeList.threads.some((thread) => thread.threadId === emptyThread.threadId),
+            ).toBe(false);
+            yield* orchestrator.dispatch({
+              type: "thread.unsettle",
+              commandId: CommandId.make("command:mcp-empty:unsettle"),
+              threadId: emptyThread.threadId,
+              reason: "user",
             });
 
             const unlinkedCall = yield* invoke("t3_thread_update", {
@@ -2701,7 +2746,27 @@ describe("orchestrator MCP toolkit", () => {
               completionWake: "always",
             });
             const thirdLateTask = taskFromDispatch(thirdLateChild);
-            if (lateTask.childThreadId === null || thirdLateTask.childThreadId === null) {
+            const fourthLateTask = taskFromDispatch(
+              yield* orchestrator.dispatch({
+                type: "delegated_task.request",
+                createdBy: "agent",
+                creationSource: "mcp",
+                commandId: CommandId.make("command:mcp-late-parent:fourth-late-task"),
+                parentThreadId: lateParentThreadId,
+                parentRunId: lateParentRun.id,
+                parentNodeId: lateParentRun.rootNodeId,
+                task: cancellationPrompt,
+                modelSelection: codexSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                completionWake: "always",
+              }),
+            );
+            if (
+              lateTask.childThreadId === null ||
+              thirdLateTask.childThreadId === null ||
+              fourthLateTask.childThreadId === null
+            ) {
               return yield* Effect.die(new Error("Late completion child thread missing."));
             }
             const beforeFirstDelivery = yield* waitForProjection(
@@ -2814,9 +2879,9 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Late completion successor delivery missing."));
             }
 
-            // The bounded successor can coalesce a late result only once. A
-            // third terminal after that successor has started remains
-            // inspectable, but cannot recursively create a third parent run.
+            // Results that land while the successor runs wait for it to settle,
+            // then go out together in one more delivery. Nothing is left
+            // pending once the parent has been told about every child.
             const successorGate = yield* Deferred.make<void>();
             deliveryTerminalGates.set(lateParentThreadId, successorGate);
             yield* orchestrator.dispatch({
@@ -2867,55 +2932,129 @@ describe("orchestrator MCP toolkit", () => {
                   item.type === "user_message" && item.messageId === successorDelivery.messageId,
               ),
             ).toBe(false);
-            const thirdLateChildProjection = yield* waitForProjection(
-              orchestrator,
-              thirdLateTask.childThreadId,
-              (projection) =>
-                projection.runs.some((run) => run.status === "running") &&
-                projection.providerTurns.some((turn) => turn.status === "running"),
-            );
-            const thirdLateChildRun = thirdLateChildProjection.runs.find(
-              (run) => run.status === "running",
-            );
-            if (thirdLateChildRun === undefined) {
-              return yield* Effect.die(new Error("Third late completion child run missing."));
+            for (const [label, childThreadId] of [
+              ["third", thirdLateTask.childThreadId],
+              ["fourth", fourthLateTask.childThreadId],
+            ] as const) {
+              const childProjection = yield* waitForProjection(
+                orchestrator,
+                childThreadId,
+                (projection) =>
+                  projection.runs.some((run) => run.status === "running") &&
+                  projection.providerTurns.some((turn) => turn.status === "running"),
+              );
+              const childRun = childProjection.runs.find((run) => run.status === "running");
+              if (childRun === undefined) {
+                return yield* Effect.die(new Error(`${label} late completion child run missing.`));
+              }
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(`command:mcp-late-parent:interrupt-${label}-late-child`),
+                threadId: childThreadId,
+                runId: childRun.id,
+                reason: "Terminalize while the successor delivery is running.",
+              });
             }
-            yield* orchestrator.dispatch({
-              type: "run.interrupt",
-              commandId: CommandId.make("command:mcp-late-parent:interrupt-third-late-child"),
-              threadId: thirdLateTask.childThreadId,
-              runId: thirdLateChildRun.id,
-              reason: "Terminalize after the bounded successor started.",
-            });
-            yield* waitForProjection(
+            const pendingDuringSuccessor = yield* waitForProjection(
               orchestrator,
               lateParentThreadId,
               (projection) =>
-                projection.subagents.find((task) => task.id === thirdLateTask.id)
-                  ?.completionDelivery?.state === "pending",
+                [thirdLateTask.id, fourthLateTask.id].every(
+                  (taskId) =>
+                    projection.subagents.find((task) => task.id === taskId)?.completionDelivery
+                      ?.state === "pending",
+                ),
             );
+            // The running successor still owns the cohort's only reservation.
+            expect(
+              pendingDuringSuccessor.runs.find((run) => run.id === lateParentRun.id)
+                ?.delegatedCompletion?.delivery,
+            ).toMatchObject({
+              generation: successorDelivery.generation,
+              taskIds: successorDelivery.taskIds,
+            });
+            yield* expectOffersToStay(2);
             yield* Deferred.succeed(successorGate, undefined);
-            const exhaustedCohort = yield* waitForProjection(
+            const batchedReserved = yield* waitForProjection(
               orchestrator,
               lateParentThreadId,
               (projection) => {
-                const cohort = projection.runs.find(
-                  (run) => run.id === lateParentRun.id,
-                )?.delegatedCompletion;
+                const delivery = projection.runs.find((run) => run.id === lateParentRun.id)
+                  ?.delegatedCompletion?.delivery;
                 return (
-                  cohort?.settledDeliveryCount === 2 &&
-                  cohort.delivery === null &&
+                  delivery !== undefined &&
+                  delivery !== null &&
+                  delivery.generation === successorDelivery.generation + 1 &&
                   projection.runs.find((run) => run.id === activeSuccessorRun.id)?.status ===
-                    "completed" &&
-                  projection.subagents.find((task) => task.id === thirdLateTask.id)
-                    ?.completionDelivery?.state === "pending"
+                    "completed"
                 );
               },
             );
+            const batchedDelivery = batchedReserved.runs.find((run) => run.id === lateParentRun.id)
+              ?.delegatedCompletion?.delivery;
+            if (batchedDelivery === undefined || batchedDelivery === null) {
+              return yield* Effect.die(new Error("Batched late completion delivery missing."));
+            }
+            expect([...batchedDelivery.taskIds].toSorted()).toEqual(
+              [thirdLateTask.id, fourthLateTask.id].toSorted(),
+            );
             expect(
-              exhaustedCohort.runs.find((run) => run.id === lateParentRun.id)?.delegatedCompletion,
-            ).toMatchObject({ settledDeliveryCount: 2, delivery: null });
-            yield* expectOffersToStay(2);
+              [lateTask.id, thirdLateTask.id, fourthLateTask.id].map(
+                (taskId) =>
+                  batchedReserved.subagents.find((task) => task.id === taskId)?.completionDelivery
+                    ?.state,
+              ),
+            ).toEqual(["delivered", "claimed", "claimed"]);
+            // One offer per delivery: first, successor, and this batch.
+            yield* waitForContinuationOffers(3);
+            yield* expectOffersToStay(3);
+            expect(
+              batchedReserved.runs.filter((run) => {
+                const message = batchedReserved.messages.find(
+                  (candidate) => candidate.id === run.userMessageId,
+                );
+                return (
+                  message?.delegatedCompletion?.parentRunId === lateParentRun.id &&
+                  run.status !== "completed"
+                );
+              }),
+            ).toHaveLength(0);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "server",
+              commandId: CommandId.make("command:mcp-late-parent:dispatch-batched-delivery"),
+              threadId: lateParentThreadId,
+              messageId: batchedDelivery.messageId,
+              text: "Delegated tasks reached terminal states.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "queue_after_active" },
+              delegatedCompletion: {
+                parentRunId: lateParentRun.id,
+                generation: batchedDelivery.generation,
+                taskIds: batchedDelivery.taskIds,
+              },
+            });
+            const drainedCohort = yield* waitForProjection(
+              orchestrator,
+              lateParentThreadId,
+              (projection) =>
+                projection.runs.find((run) => run.id === lateParentRun.id)?.delegatedCompletion
+                  ?.delivery === null &&
+                projection.runs.some(
+                  (run) =>
+                    run.userMessageId === batchedDelivery.messageId && run.status === "completed",
+                ),
+            );
+            expect(
+              [earlyLateTask.id, lateTask.id, thirdLateTask.id, fourthLateTask.id].map(
+                (taskId) =>
+                  drainedCohort.subagents.find((task) => task.id === taskId)?.completionDelivery
+                    ?.state,
+              ),
+            ).toEqual(["delivered", "delivered", "delivered", "delivered"]);
+            yield* expectOffersToStay(3);
 
             // Queue Remove is a durable disposal action, not a local queue
             // edit. Start a fresh parent-run cohort so removing this delivery
@@ -3048,6 +3187,313 @@ describe("orchestrator MCP toolkit", () => {
               removedDelivery.subagents.find((task) => task.id === removeTask.id),
             ).toMatchObject({ result: expect.any(String), status: "completed" });
             yield* expectOffersToStay(0);
+
+            // A wide fan-out keeps waking its parent until every result is
+            // delivered. Two children finish before the first delivery starts,
+            // five while it runs, three before the successor starts, and two
+            // while the successor runs. Three batched deliveries cover all
+            // twelve, and the cohort never has two deliveries outstanding.
+            const fanoutParentThreadId = ThreadId.make("thread:mcp-fanout-parent");
+            const fanoutParentGate = yield* Deferred.make<void>();
+            const firstFanoutDeliveryGate = yield* Deferred.make<void>();
+            const secondFanoutDeliveryGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(fanoutParentThreadId, fanoutParentGate);
+            deliveryTerminalGates.set(fanoutParentThreadId, firstFanoutDeliveryGate);
+            yield* Ref.set(continuationOffers, []);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-fanout-parent:create"),
+              threadId: fanoutParentThreadId,
+              projectId,
+              title: "Fan-out parent",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-fanout-parent:start"),
+              threadId: fanoutParentThreadId,
+              messageId: MessageId.make("message:mcp-fanout-parent:start"),
+              text: "Fan out twelve review agents.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const fanoutStarted = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                projection.runs.some((run) => run.status === "running") &&
+                projection.providerTurns.some((turn) => turn.status === "running"),
+            );
+            const fanoutRun = fanoutStarted.runs.find((run) => run.status === "running");
+            if (fanoutRun === undefined || fanoutRun.rootNodeId === null) {
+              return yield* Effect.die(new Error("Fan-out parent run missing."));
+            }
+            const fanoutRootNodeId = fanoutRun.rootNodeId;
+            const fanoutTasks = yield* Effect.forEach(
+              Array.from({ length: 12 }, (_, index) => index),
+              (index) =>
+                orchestrator
+                  .dispatch({
+                    type: "delegated_task.request",
+                    createdBy: "agent",
+                    creationSource: "mcp",
+                    commandId: CommandId.make(`command:mcp-fanout-parent:task-${index}`),
+                    parentThreadId: fanoutParentThreadId,
+                    parentRunId: fanoutRun.id,
+                    parentNodeId: fanoutRootNodeId,
+                    task: cancellationPrompt,
+                    modelSelection: codexSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    completionWake: "always",
+                  })
+                  .pipe(Effect.map(taskFromDispatch)),
+            );
+            type FanoutTask = (typeof fanoutTasks)[number];
+            const finishFanoutChildren = (tasks: ReadonlyArray<FanoutTask>) =>
+              Effect.forEach(
+                tasks,
+                (task) =>
+                  Effect.gen(function* () {
+                    const childThreadId = task.childThreadId;
+                    if (childThreadId === null) {
+                      return yield* Effect.die(new Error("Fan-out child thread missing."));
+                    }
+                    const child = yield* waitForProjection(
+                      orchestrator,
+                      childThreadId,
+                      (projection) =>
+                        projection.runs.some((run) => run.status === "running") &&
+                        projection.providerTurns.some((turn) => turn.status === "running"),
+                    );
+                    const childRun = child.runs.find((run) => run.status === "running");
+                    if (childRun === undefined) {
+                      return yield* Effect.die(new Error("Fan-out child run missing."));
+                    }
+                    yield* orchestrator.dispatch({
+                      type: "run.interrupt",
+                      commandId: CommandId.make(`command:mcp-fanout-parent:finish-${task.id}`),
+                      threadId: childThreadId,
+                      runId: childRun.id,
+                      reason: "Finish this fan-out child.",
+                    });
+                  }),
+                { discard: true },
+              );
+            const fanoutDelivery = (projection: OrchestrationV2ThreadProjection) =>
+              projection.runs.find((run) => run.id === fanoutRun.id)?.delegatedCompletion
+                ?.delivery ?? null;
+            const fanoutDeliveryRuns = (projection: OrchestrationV2ThreadProjection) =>
+              projection.runs.filter(
+                (run) =>
+                  projection.messages.find((message) => message.id === run.userMessageId)
+                    ?.delegatedCompletion?.parentRunId === fanoutRun.id,
+              );
+            // The cohort holds one reservation, and at most one of its
+            // delivery runs is queued or running at a time.
+            const expectAtMostOneOutstandingDelivery = (
+              projection: OrchestrationV2ThreadProjection,
+            ) =>
+              expect(
+                fanoutDeliveryRuns(projection).filter(
+                  (run) =>
+                    run.status !== "completed" &&
+                    run.status !== "failed" &&
+                    run.status !== "cancelled" &&
+                    run.status !== "interrupted",
+                ).length,
+              ).toBeLessThanOrEqual(1);
+            const deliveryStates = (
+              projection: OrchestrationV2ThreadProjection,
+              tasks: ReadonlyArray<FanoutTask>,
+            ) =>
+              tasks.map(
+                (task) =>
+                  projection.subagents.find((candidate) => candidate.id === task.id)
+                    ?.completionDelivery?.state,
+              );
+            const sortedIds = (ids: ReadonlyArray<string>) => [...ids].toSorted();
+            const idsOf = (tasks: ReadonlyArray<FanoutTask>) =>
+              sortedIds(tasks.map((task) => task.id));
+            const dispatchFanoutDelivery = (
+              label: string,
+              delivery: OrchestrationV2DelegatedCompletionDelivery,
+            ) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "agent",
+                creationSource: "server",
+                commandId: CommandId.make(`command:mcp-fanout-parent:dispatch-${label}`),
+                threadId: fanoutParentThreadId,
+                messageId: delivery.messageId,
+                text: "Delegated tasks reached terminal states.",
+                attachments: [],
+                modelSelection: codexSelection,
+                dispatchMode: { type: "queue_after_active" },
+                delegatedCompletion: {
+                  parentRunId: fanoutRun.id,
+                  generation: delivery.generation,
+                  taskIds: delivery.taskIds,
+                },
+              });
+            const deliveryRunStatus = (
+              projection: OrchestrationV2ThreadProjection,
+              delivery: OrchestrationV2DelegatedCompletionDelivery,
+            ) => projection.runs.find((run) => run.userMessageId === delivery.messageId)?.status;
+
+            const beforeFirstStarts = fanoutTasks.slice(0, 2);
+            const duringFirst = fanoutTasks.slice(2, 7);
+            const beforeSecondStarts = fanoutTasks.slice(7, 10);
+            const duringSecond = fanoutTasks.slice(10, 12);
+
+            yield* finishFanoutChildren(beforeFirstStarts);
+            const firstReserved = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryStates(projection, beforeFirstStarts).every(
+                  (state) => state === "claimed",
+                ) && fanoutDelivery(projection)?.taskIds.length === 2,
+            );
+            const firstFanoutDelivery = fanoutDelivery(firstReserved);
+            if (firstFanoutDelivery === null) {
+              return yield* Effect.die(new Error("First fan-out delivery missing."));
+            }
+            expect(sortedIds(firstFanoutDelivery.taskIds)).toEqual(idsOf(beforeFirstStarts));
+            yield* dispatchFanoutDelivery("first", firstFanoutDelivery);
+            yield* Deferred.succeed(fanoutParentGate, undefined);
+            yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) => deliveryRunStatus(projection, firstFanoutDelivery) === "running",
+            );
+
+            yield* finishFanoutChildren(duringFirst);
+            const pendingDuringFirst = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryStates(projection, duringFirst).every((state) => state === "pending"),
+            );
+            expect(fanoutDelivery(pendingDuringFirst)).toEqual(firstFanoutDelivery);
+            expectAtMostOneOutstandingDelivery(pendingDuringFirst);
+
+            deliveryTerminalGates.set(fanoutParentThreadId, secondFanoutDeliveryGate);
+            yield* Deferred.succeed(firstFanoutDeliveryGate, undefined);
+            const secondReserved = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryRunStatus(projection, firstFanoutDelivery) === "completed" &&
+                fanoutDelivery(projection)?.generation === firstFanoutDelivery.generation + 1,
+            );
+            expect(sortedIds(fanoutDelivery(secondReserved)?.taskIds ?? [])).toEqual(
+              idsOf(duringFirst),
+            );
+            expect(deliveryStates(secondReserved, beforeFirstStarts)).toEqual([
+              "delivered",
+              "delivered",
+            ]);
+
+            // Results that land before the successor starts join it.
+            yield* finishFanoutChildren(beforeSecondStarts);
+            const secondJoined = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryStates(projection, beforeSecondStarts).every(
+                  (state) => state === "claimed",
+                ) && fanoutDelivery(projection)?.taskIds.length === 8,
+            );
+            const secondFanoutDelivery = fanoutDelivery(secondJoined);
+            if (secondFanoutDelivery === null) {
+              return yield* Effect.die(new Error("Second fan-out delivery missing."));
+            }
+            expect(sortedIds(secondFanoutDelivery.taskIds)).toEqual(
+              idsOf([...duringFirst, ...beforeSecondStarts]),
+            );
+            expectAtMostOneOutstandingDelivery(secondJoined);
+            yield* dispatchFanoutDelivery("second", secondFanoutDelivery);
+            yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) => deliveryRunStatus(projection, secondFanoutDelivery) === "running",
+            );
+
+            yield* finishFanoutChildren(duringSecond);
+            const pendingDuringSecond = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryStates(projection, duringSecond).every((state) => state === "pending"),
+            );
+            expectAtMostOneOutstandingDelivery(pendingDuringSecond);
+
+            // Later deliveries complete as soon as they start.
+            deliveryTerminalGates.delete(fanoutParentThreadId);
+            yield* Deferred.succeed(secondFanoutDeliveryGate, undefined);
+            const thirdReserved = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryRunStatus(projection, secondFanoutDelivery) === "completed" &&
+                fanoutDelivery(projection)?.generation === secondFanoutDelivery.generation + 1,
+            );
+            const thirdFanoutDelivery = fanoutDelivery(thirdReserved);
+            if (thirdFanoutDelivery === null) {
+              return yield* Effect.die(new Error("Third fan-out delivery missing."));
+            }
+            expect(sortedIds(thirdFanoutDelivery.taskIds)).toEqual(idsOf(duringSecond));
+            yield* dispatchFanoutDelivery("third", thirdFanoutDelivery);
+            const fanoutDrained = yield* waitForProjection(
+              orchestrator,
+              fanoutParentThreadId,
+              (projection) =>
+                deliveryRunStatus(projection, thirdFanoutDelivery) === "completed" &&
+                fanoutDelivery(projection) === null,
+            );
+            expect(deliveryStates(fanoutDrained, fanoutTasks)).toEqual(
+              fanoutTasks.map(() => "delivered"),
+            );
+            expect(
+              fanoutTasks.map(
+                (task) =>
+                  fanoutDrained.subagents.find((candidate) => candidate.id === task.id)?.status,
+              ),
+            ).toEqual(fanoutTasks.map(() => "interrupted"));
+            const drainedDeliveryRuns = fanoutDeliveryRuns(fanoutDrained);
+            expect(drainedDeliveryRuns.map((run) => run.status)).toEqual([
+              "completed",
+              "completed",
+              "completed",
+            ]);
+            const deliveredTaskIds = drainedDeliveryRuns.flatMap(
+              (run) =>
+                fanoutDrained.messages.find((message) => message.id === run.userMessageId)
+                  ?.delegatedCompletion?.taskIds ?? [],
+            );
+            expect(sortedIds(deliveredTaskIds)).toEqual(idsOf(fanoutTasks));
+            const offeredDeliveries = new Set(
+              (yield* Ref.get(continuationOffers)).map(
+                (offer) => offer.delegatedCompletion?.messageId,
+              ),
+            );
+            expect(offeredDeliveries).toEqual(
+              new Set([
+                firstFanoutDelivery.messageId,
+                secondFanoutDelivery.messageId,
+                thirdFanoutDelivery.messageId,
+              ]),
+            );
           }).pipe(Effect.provide(testLayer));
         }),
       ),

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
   resolveLatestMergeBackRun,
+  threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
 
 const capabilities = (input?: {
@@ -29,6 +31,41 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it("allows a completed thread to switch providers after its session detaches", () => {
+    const projection = {
+      thread: {
+        id: "thread",
+        activeProviderThreadId: "provider-thread",
+        modelSelection: { instanceId: "cursor", model: "grok-4.7" },
+      },
+      runs: [{ id: "run", status: "completed" }],
+      providerSessions: [],
+      providerThreads: [
+        {
+          id: "provider-thread",
+          appThreadId: "thread",
+          providerInstanceId: "cursor",
+          providerSessionId: "detached-session",
+          nativeThreadRef: { driver: "cursor", nativeId: "agent-123", strength: "strong" },
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+
+    expect(threadSupportsProviderHandoff(projection)).toBe(true);
+    expect(
+      threadSupportsProviderHandoff({
+        ...projection,
+        runs: [{ ...projection.runs[0]!, status: "running" }],
+      }),
+    ).toBe(false);
+    expect(
+      threadSupportsProviderHandoff({
+        ...projection,
+        providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
+      }),
+    ).toBe(false);
+  });
+
   it("sorts queued messages and gates reorder and promotion from capabilities", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },

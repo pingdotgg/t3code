@@ -38,4 +38,33 @@ describe("WebSocket RPC contracts", () => {
     expect(methods).toEqual(expect.arrayContaining(Object.values(ORCHESTRATION_V2_WS_METHODS)));
     expect(methods.filter((method) => method.startsWith("orchestrationV1."))).toEqual([]);
   });
+
+  it("rejects server-internal commands sent to dispatchCommand", () => {
+    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
+    const decode = Schema.decodeUnknownExit(dispatchCommand.payloadSchema);
+
+    expect(
+      Exit.isFailure(
+        decode({
+          type: "checkpoint.rollback.fail",
+          commandId: "forged-rollback-failure",
+          threadId: "thread-1",
+          requestId: "rollback-1",
+          message: "Forged failure.",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isSuccess(
+        decode({
+          type: "checkpoint.rollback",
+          commandId: "rollback-1",
+          threadId: "thread-1",
+          scopeId: "scope-1",
+          checkpointId: "checkpoint-1",
+        }),
+      ),
+    ).toBe(true);
+  });
 });

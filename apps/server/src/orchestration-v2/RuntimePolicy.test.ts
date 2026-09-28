@@ -14,10 +14,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
-import { layerFromProjectRepository, RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import { layerFromProjectStore, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
 const projectId = ProjectId.make("project:runtime-policy");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -76,7 +76,7 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const TestLayer = layerFromProjectRepository.pipe(
+const TestLayer = layerFromProjectStore.pipe(
   Layer.provide(
     Layer.succeed(ProviderInstanceRegistry, {
       getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
@@ -87,8 +87,8 @@ const TestLayer = layerFromProjectRepository.pipe(
     }),
   ),
   Layer.provide(
-    Layer.mock(ProjectionProjects.ProjectionProjectRepository)({
-      getById: () =>
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      get: () =>
         Effect.succeed(
           Option.some({
             projectId,
@@ -97,6 +97,8 @@ const TestLayer = layerFromProjectRepository.pipe(
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             autoPull: false,
+            faviconPath: null,
+            projectIcon: null,
             scripts: [],
             createdAt: "2026-06-21T00:00:00.000Z",
             updatedAt: "2026-06-21T00:00:00.000Z",

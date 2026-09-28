@@ -8,6 +8,7 @@ import {
   RunId,
   RuntimeRequestId,
   NodeId,
+  type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -20,12 +21,14 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { replayAndBufferProjectedLiveEvents } from "../orchestration/LiveStreamBudget.ts";
+import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
+import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import {
   CommandReceiptStoreV2,
   type CommandReceiptV2,
+  type ProjectCommandReceiptV2,
   layer as commandReceiptStoreLayer,
 } from "./CommandReceiptStore.ts";
 import {
@@ -39,6 +42,7 @@ import {
   ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
   ProjectionStoreV2,
 } from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import {
   TurnItemPositionStoreV2,
   layer as turnItemPositionStoreLayer,
@@ -156,6 +160,28 @@ export interface EventSinkV2Shape {
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
   }) => Effect.Effect<CommandReceiptV2, EventSinkV2Error>;
+  /**
+   * Append a project event, fold it into its row and record the receipt in one
+   * transaction. A reused command id commits nothing and returns its receipt.
+   */
+  readonly commitProjectCommand: (input: {
+    readonly commandId: CommandId;
+    readonly projectId: ProjectId;
+    readonly commandType: string;
+    readonly acceptedAt: DateTime.Utc;
+    readonly event: UnsequencedProjectEvent;
+  }) => Effect.Effect<
+    { readonly receipt: ProjectCommandReceiptV2; readonly committed: boolean },
+    EventSinkV2Error
+  >;
+  /** Record a rejected project command, or return the receipt its command id already has. */
+  readonly commitRejectedProjectCommand: (input: {
+    readonly commandId: CommandId;
+    readonly projectId: ProjectId;
+    readonly commandType: string;
+    readonly rejectedAt: DateTime.Utc;
+    readonly error: string;
+  }) => Effect.Effect<ProjectCommandReceiptV2, EventSinkV2Error>;
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
@@ -186,6 +212,7 @@ const baseLayer: Layer.Layer<
   | EffectOutboxV2
   | EventStoreV2
   | ProjectionStoreV2
+  | ProjectStore.ProjectStoreV2
   | SqlClient.SqlClient
   | TurnItemPositionStoreV2
 > = Layer.effect(
@@ -196,6 +223,7 @@ const baseLayer: Layer.Layer<
     const effectOutbox = yield* EffectOutboxV2;
     const eventStore = yield* EventStoreV2;
     const projectionStore = yield* ProjectionStoreV2;
+    const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
@@ -568,6 +596,68 @@ const baseLayer: Layer.Layer<
       );
     });
 
+    const existingProjectReceipt = (commandId: CommandId) =>
+      commandReceipts.getProjectByCommandId(commandId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(`Command ${commandId} was already used by a thread command.` as const),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+
+    const commitProjectCommandEffect = Effect.fn("orchestrationV2.EventSink.commitProjectCommand")(
+      function* (input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0]) {
+        const result = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const reserved: ProjectCommandReceiptV2 = {
+              commandId: input.commandId,
+              projectId: input.projectId,
+              commandType: input.commandType,
+              acceptedAt: input.acceptedAt,
+              resultSequence: 0,
+              status: "accepted",
+              error: null,
+            };
+            if (!(yield* commandReceipts.insertIfAbsent(reserved))) {
+              return { receipt: yield* existingProjectReceipt(input.commandId), event: undefined };
+            }
+            const event = yield* eventStore.appendProjectEvent(input.event);
+            yield* projectStore.apply(event);
+            const receipt = { ...reserved, resultSequence: event.sequence };
+            yield* commandReceipts.upsert(receipt);
+            return { receipt, event };
+          }),
+        );
+        if (result.event !== undefined) {
+          yield* eventStore.publishCommitted([result.event]);
+        }
+        return { receipt: result.receipt, committed: result.event !== undefined };
+      },
+    );
+
+    const commitRejectedProjectCommandEffect = Effect.fn(
+      "orchestrationV2.EventSink.commitRejectedProjectCommand",
+    )(function* (input: Parameters<EventSinkV2Shape["commitRejectedProjectCommand"]>[0]) {
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const receipt: ProjectCommandReceiptV2 = {
+            commandId: input.commandId,
+            projectId: input.projectId,
+            commandType: input.commandType,
+            acceptedAt: input.rejectedAt,
+            resultSequence: yield* eventStore.latestApplicationSequence,
+            status: "rejected",
+            error: input.error,
+          };
+          return (yield* commandReceipts.insertIfAbsent(receipt))
+            ? receipt
+            : yield* existingProjectReceipt(input.commandId);
+        }),
+      );
+    });
+
     const catchUp = (input: {
       readonly afterSequence: number;
       readonly throughSequence: number;
@@ -716,6 +806,20 @@ const baseLayer: Layer.Layer<
               }),
           ),
         ),
+      commitProjectCommand: (input) =>
+        commitProjectCommandEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({ commandId: input.commandId, eventCount: 1, cause }),
+          ),
+        ),
+      commitRejectedProjectCommand: (input) =>
+        commitRejectedProjectCommandEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({ commandId: input.commandId, eventCount: 0, cause }),
+          ),
+        ),
       stream: (input) =>
         stream(input).pipe(
           Stream.mapError(
@@ -766,6 +870,11 @@ export const layer: Layer.Layer<
   EventStoreV2 | ProjectionStoreV2 | SqlClient.SqlClient
 > = baseLayer.pipe(
   Layer.provide(
-    Layer.mergeAll(commandReceiptStoreLayer, effectOutboxLayer, turnItemPositionStoreLayer),
+    Layer.mergeAll(
+      commandReceiptStoreLayer,
+      effectOutboxLayer,
+      ProjectStore.layer,
+      turnItemPositionStoreLayer,
+    ),
   ),
 );

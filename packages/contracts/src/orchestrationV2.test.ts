@@ -29,6 +29,7 @@ import {
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
+  OrchestrationV2RpcSchemas,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
@@ -121,6 +122,52 @@ describe("orchestration V2 contracts", () => {
       expect(runtime).not.toHaveProperty("output");
       expect(json).not.toHaveProperty("output");
     }
+  });
+
+  it("decodes thread event types from a newer server as skippable items", () => {
+    const decodeWireItems = Schema.decodeUnknownSync(
+      Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
+    );
+    const detached = (id: string, sequence: number) => ({
+      kind: "event",
+      sequence,
+      event: {
+        id,
+        type: "provider-session.detached",
+        threadId: "thread-1",
+        occurredAt: DateTime.formatIso(now),
+        payload: { providerSessionId: "provider-session-1", detachedAt: DateTime.formatIso(now) },
+      },
+    });
+
+    const items = decodeWireItems([
+      detached("event-1", 1),
+      {
+        kind: "event",
+        sequence: 2,
+        event: {
+          id: "event-2",
+          type: "run.background-work-cancelled",
+          threadId: "thread-1",
+          occurredAt: DateTime.formatIso(now),
+          payload: { runId: "run-1", restartCancelledBackgroundWork: [] },
+        },
+      },
+      detached("event-3", 3),
+    ]);
+
+    expect(items.map((item) => item.kind)).toEqual(["event", "unknown-event", "event"]);
+    expect(items[1]).toEqual({
+      kind: "unknown-event",
+      sequence: 2,
+      eventType: "run.background-work-cancelled",
+    });
+    // A known type with a broken payload is a real defect, not a newer event.
+    expect(() =>
+      decodeWireItems([
+        { ...detached("event-4", 4), event: { ...detached("event-4", 4).event, payload: {} } },
+      ]),
+    ).toThrow();
   });
 
   it("negotiates bounded socket snapshots as an optional capability", () => {

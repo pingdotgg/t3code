@@ -1030,6 +1030,13 @@ interface ActiveCodexTurnContext {
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
+  // Item positions allocated in this turn. Later turns never look items up
+  // here: late background items resolve their settled turn's context, and a
+  // subagent's approvals allocate on the owning root turn.
+  readonly itemPositions: Map<
+    string,
+    { readonly ordinal: number; readonly startedAt: DateTime.Utc }
+  >;
 }
 
 interface ActiveCodexProviderRetry {
@@ -1639,14 +1646,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
         );
         const nextProviderTurnOrdinals = yield* Ref.make(new Map<string, number>());
-        const itemPositions = yield* Ref.make(
-          new Map<string, { readonly ordinal: number; readonly startedAt: DateTime.Utc }>(),
-        );
-        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const providerRetries = yield* Ref.make(
           new Map<ProviderTurnId, ActiveCodexProviderRetry>(),
         );
-        const planDeltas = yield* Ref.make(new Map<string, string>());
+        // Streamed plan text per plan item, dropped when the item completes.
+        const planDeltas = new Map<string, string>();
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
@@ -1751,6 +1755,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               rootNodeId: input.turnInput.rootNodeId,
               subagent: null,
               startedAt: input.startedAt,
+              itemPositions: new Map(),
             };
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
@@ -2114,27 +2119,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           startedAt?: DateTime.Utc,
         ) =>
           Effect.gen(function* () {
-            const existing = (yield* Ref.get(itemPositions)).get(nativeItemId);
+            // Read the clock first so the lookup and the insert run without yielding.
+            const now = startedAt ?? (yield* DateTime.now);
+            const existing = context.itemPositions.get(nativeItemId);
             if (existing !== undefined) {
               return existing;
             }
-
-            const turnKey = context.nativeTurnId;
-            const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-              const next = (current.get(turnKey) ?? 0) + 1;
-              const updated = new Map(current);
-              updated.set(turnKey, next);
-              return [next, updated];
-            });
             const position = {
-              ordinal: context.providerTurnOrdinal * 100 + nextWithinTurn,
-              startedAt: startedAt ?? (yield* DateTime.now),
+              ordinal: context.providerTurnOrdinal * 100 + context.itemPositions.size + 1,
+              startedAt: now,
             };
-            yield* Ref.update(itemPositions, (current) => {
-              const updated = new Map(current);
-              updated.set(nativeItemId, position);
-              return updated;
-            });
+            context.itemPositions.set(nativeItemId, position);
             return position;
           });
 
@@ -2303,6 +2298,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               rootNodeId: providerNodeId,
               subagent,
               startedAt: turn.startedAt,
+              itemPositions: new Map(),
             };
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
@@ -3706,12 +3702,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               return;
             }
             yield* completeProviderRetry(context, yield* DateTime.now);
-            const markdown = yield* Ref.modify(planDeltas, (current) => {
-              const updated = new Map(current);
-              const next = `${updated.get(payload.itemId) ?? ""}${payload.delta}`;
-              updated.set(payload.itemId, next);
-              return [next, updated];
-            });
+            const markdown = `${planDeltas.get(payload.itemId) ?? ""}${payload.delta}`;
+            planDeltas.set(payload.itemId, markdown);
             const artifacts = yield* buildProposedPlanArtifacts({
               context,
               nativeItemId: payload.itemId,
@@ -4297,11 +4289,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "plan") {
-              const deltas = yield* Ref.get(planDeltas);
               const markdown =
                 payload.item.text.length > 0
                   ? payload.item.text
-                  : (deltas.get(payload.item.id) ?? "");
+                  : (planDeltas.get(payload.item.id) ?? "");
+              planDeltas.delete(payload.item.id);
               // A finished proposal stays active until Implement consumes it.
               const artifacts = yield* buildProposedPlanArtifacts({
                 context,

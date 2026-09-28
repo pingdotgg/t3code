@@ -55,6 +55,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -515,6 +516,7 @@ export interface AcpAdapterV2Options {
      * by exactly that on this receipt.
      */
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     readonly beforeNativeResponseAdmissionCheck?: (
@@ -1103,6 +1105,9 @@ interface ActiveAcpTurn {
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
+  // Root item ordinals allocated in this turn. Subagent child items keep
+  // theirs on the subagent, which carries over into later turns.
+  readonly itemOrdinals: Map<string, number>;
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
@@ -1339,6 +1344,7 @@ interface ActiveAcpSubagent {
   childSessionId: string | null;
   assistantText: string;
   readonly assistantMessages: Map<string, string>;
+  readonly childItemOrdinals: Map<string, number>;
   nextChildOrdinal: number;
   /**
    * Whether a terminal carryover status has been projected to events.
@@ -1631,8 +1637,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const emitNativeResponseLifecycle =
           options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
         const nextElicitationOrdinal = yield* Ref.make(0);
-        const itemOrdinals = yield* Ref.make(new Map<string, number>());
-        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
         const snapshot = yield* Ref.make<SnapshotMessageState>({
           order: [],
@@ -2075,26 +2079,22 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             : Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore),
         );
 
-        const resolveItemOrdinal = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-          nativeItemId: string,
-        ) {
-          const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
+        const resolveItemOrdinal = (context: ActiveAcpTurn, nativeItemId: string) =>
+          Effect.sync(() => {
+            const existing = context.itemOrdinals.get(nativeItemId);
+            if (existing !== undefined) return existing;
+            const ordinal = context.input.providerTurnOrdinal * 100 + context.itemOrdinals.size + 1;
+            context.itemOrdinals.set(nativeItemId, ordinal);
+            return ordinal;
+          });
+
+        const resolveSubagentChildOrdinal = (subagent: ActiveAcpSubagent, nativeItemId: string) => {
+          const existing = subagent.childItemOrdinals.get(nativeItemId);
           if (existing !== undefined) return existing;
-          const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
-            const next = (current.get(context.nativeTurnId) ?? 0) + 1;
-            const updated = new Map(current);
-            updated.set(context.nativeTurnId, next);
-            return [next, updated] as const;
-          });
-          const ordinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
-          yield* Ref.update(itemOrdinals, (current) => {
-            const updated = new Map(current);
-            updated.set(nativeItemId, ordinal);
-            return updated;
-          });
+          const ordinal = subagent.nextChildOrdinal++;
+          subagent.childItemOrdinals.set(nativeItemId, ordinal);
           return ordinal;
-        });
+        };
 
         const emitProviderRetry = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
@@ -2522,14 +2522,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           subagent.assistantMessages.set(nativeItemId, messageText);
           subagent.assistantText = messageText;
           const now = yield* DateTime.now;
-          let ordinal = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
-          if (ordinal === undefined) {
-            ordinal = subagent.nextChildOrdinal++;
-            const allocated = ordinal;
-            yield* Ref.update(itemOrdinals, (current) =>
-              new Map(current).set(nativeItemId, allocated),
-            );
-          }
+          const ordinal = resolveSubagentChildOrdinal(subagent, nativeItemId);
           const artifacts = makeSubagentConversationArtifacts({
             messageId: providerMessageId(nativeItemId),
             turnItemId: providerTurnItemId(nativeItemId),
@@ -2666,6 +2659,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             childSessionId: null,
             assistantText: "",
             assistantMessages: new Map(),
+            childItemOrdinals: new Map(),
             nextChildOrdinal: 101,
             terminalStatusProjected: false,
           };
@@ -3259,9 +3253,28 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           } else {
             switch (toolCall.kind) {
               case "read":
+                turnItem = {
+                  ...base,
+                  title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
+                  type: "dynamic_tool",
+                  toolName: "Read",
+                  input:
+                    path === undefined ||
+                    ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
+                      ? (rawInputRecord ?? {})
+                      : { ...rawInputRecord, path },
+                  ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                };
+                break;
               case "search":
                 turnItem = {
                   ...base,
+                  title:
+                    formatSearchToolLabel({
+                      rawInput: rawInputRecord,
+                      input: rawInputRecord,
+                      ...(path === undefined ? {} : { pattern: path }),
+                    }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
                   ...(path === undefined
@@ -4239,14 +4252,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 const status = toolStatus(merged.status);
                 const startedAt = context.toolStartedAt.get(key) ?? now;
                 context.toolStartedAt.set(key, startedAt);
-                let ordinal = (yield* Ref.get(itemOrdinals)).get(key);
-                if (ordinal === undefined) {
-                  ordinal = subagent.nextChildOrdinal++;
-                  const allocated = ordinal;
-                  yield* Ref.update(itemOrdinals, (current) =>
-                    new Map(current).set(key, allocated),
-                  );
-                }
+                const ordinal = resolveSubagentChildOrdinal(subagent, key);
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
                   driver,
@@ -6744,6 +6750,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               nativeTurnId,
               startedAt,
               completed,
+              itemOrdinals: new Map(),
               user: { current: null, nextSegment: 0 },
               assistant: { current: null, nextSegment: 0 },
               reasoning: { current: null, nextSegment: 0 },
@@ -6929,6 +6936,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       // The agent finished this prompt's reply. Background work
                       // holds the run open, not the text it already sent.
                       yield* closeTextStreams(context);
+                      yield* (
+                        options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
+                      );
                       return;
                     }
                     yield* finalizeTurn(context, status);
@@ -7642,8 +7652,6 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
                         yield* Ref.set(promptInstructionStates, new Map());
-                        yield* Ref.set(itemOrdinals, new Map());
-                        yield* Ref.set(nextItemOrdinalsByTurn, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {
                           order: [],
