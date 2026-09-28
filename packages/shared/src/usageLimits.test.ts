@@ -202,6 +202,131 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("ignores disabled subscriptions when matching native usage with a hub", () => {
+    const providers = ["Claude Max Subscription", "Claude Team Subscription"].map((label, index) =>
+      provider({
+        driver: claude,
+        instanceId: ProviderInstanceId.make(`claude-${index}`),
+        enabled: index === 1,
+        auth: { status: "authenticated", email: "same@example.com", label },
+        usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
+      }),
+    );
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers,
+              usageLimitSources: [
+                {
+                  ...source,
+                  accounts: [
+                    {
+                      id: "team",
+                      driver: claude,
+                      email: "same@example.com",
+                      plan: "Claude Subscription",
+                      usageLimits: {
+                        checkedAt: "2026-09-03T11:30:00.000Z",
+                        windows: [{ ...window, usedPercent: 60 }],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(60);
+  });
+
+  it("keeps distinct Claude subscriptions sharing an email separate across environments", () => {
+    const subscriptions = ["Claude Max Subscription", "Claude Team Subscription"].map(
+      (plan, index) =>
+        provider({
+          driver: claude,
+          instanceId: ProviderInstanceId.make(`claude-${index}`),
+          auth: { status: "authenticated", email: "same@example.com", label: plan },
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent: index * 50 }] },
+        }),
+    );
+    const sources = [
+      {
+        ...source,
+        accounts: [
+          {
+            id: "team",
+            driver: claude,
+            email: "same@example.com",
+            plan: "Claude Team Subscription",
+            usageLimits: {
+              checkedAt: "2026-09-03T11:30:00.000Z",
+              windows: [{ ...window, usedPercent: 60 }],
+              resetCredits: { availableCount: 2 },
+            },
+          },
+        ],
+      },
+    ];
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: subscriptions } }],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: subscriptions,
+            usageLimitSources: sources,
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(2);
+    expect(
+      accounts.map((account) => [account.plan, account.limits.windows[0]?.usedPercent]),
+    ).toEqual([
+      ["Claude Max Subscription", 0],
+      ["Claude Team Subscription", 60],
+    ]);
+    expect(accounts.map((account) => account.environments.length)).toEqual([2, 2]);
+    const report = collectProviderUsageLimits(
+      subscriptions[0]!.instanceId,
+      subscriptions,
+      sources,
+      Date.parse(checkedAt),
+    );
+    expect(report?.accounts).toHaveLength(2);
+    expect(report?.accounts.map((account) => account.limits.resetCredits?.availableCount)).toEqual([
+      undefined,
+      2,
+    ]);
+  });
+
+  it("retains both Codex accounts while merging repeated reads of each account", () => {
+    const providers = ["personal@example.com", "work@example.com"].map((email, index) =>
+      provider({
+        instanceId: ProviderInstanceId.make(`codex-${index}`),
+        auth: { status: "authenticated", email },
+        usageLimits: { checkedAt, windows: [window] },
+      }),
+    );
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers } }],
+      [EnvironmentId.make("env-b"), { ...laptop, serverConfig: { providers } }],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.email)).toEqual([
+      "personal@example.com",
+      "work@example.com",
+    ]);
+  });
+
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
     const native = provider({
       driver: claude,
