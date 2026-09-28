@@ -1,9 +1,15 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
+
+/** The activity fields the mutation scan reads. */
+interface WorkspaceMutationActivity {
+  readonly id: string;
+  readonly kind: string;
+  readonly payload: unknown;
+}
 
 const WORKSPACE_MUTATION_ITEM_TYPES = new Set(["command_execution", "file_change"]);
 
-function activityPayload(activity: OrchestrationThreadActivity): Record<string, unknown> | null {
+function activityPayload(activity: WorkspaceMutationActivity): Record<string, unknown> | null {
   return activity.payload !== null && typeof activity.payload === "object"
     ? (activity.payload as Record<string, unknown>)
     : null;
@@ -15,7 +21,7 @@ function activityPayload(activity: OrchestrationThreadActivity): Record<string, 
  * command can mutate the workspace without reporting the paths it touched.
  */
 export function latestWorkspaceMutationId(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  activities: ReadonlyArray<WorkspaceMutationActivity>,
 ): string | null {
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];

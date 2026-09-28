@@ -5,7 +5,6 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -22,7 +21,10 @@ import {
   type OrchestratorV2Shape,
   OrchestratorDispatchError,
 } from "../../../orchestration-v2/Orchestrator.ts";
-import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
+import {
+  type PullRequestTestThread,
+  v2PullRequestThread,
+} from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import { ProjectService } from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
@@ -73,7 +75,7 @@ function makeProject(
   };
 }
 
-function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): OrchestrationThreadShell {
+function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): PullRequestTestThread {
   return {
     id: THREAD_ID,
     projectId: PROJECT_ID,
@@ -84,17 +86,12 @@ function makeThread(pullRequests: ReadonlyArray<ThreadPullRequestLink>): Orchest
     branch: null,
     worktreePath: null,
     pullRequests,
-    latestTurn: null,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-20T00:00:00.000Z",
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    session: null,
     latestUserMessageAt: "2026-08-20T00:00:00.000Z",
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
   };
 }
 
@@ -131,7 +128,7 @@ function makeLink(
 }
 
 interface HarnessOptions {
-  readonly thread?: OrchestrationThreadShell | null;
+  readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   /** A rejection the orchestrator reports as the dispatch error's cause. */
   readonly reject?: (command: OrchestrationCommand) => string | null;

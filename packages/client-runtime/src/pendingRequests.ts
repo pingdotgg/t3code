@@ -1,6 +1,5 @@
 import {
   ApprovalRequestId,
-  type OrchestrationThreadActivity,
   ProviderApprovalOption,
   ProviderRequestKind,
   UserInputQuestion,
@@ -121,7 +120,14 @@ function isStaleRequestFailure(
 }
 
 /** Reduces request state once for web, desktop, and mobile. Layout stays with each client. */
-export function derivePendingRequests(activities: ReadonlyArray<OrchestrationThreadActivity>) {
+/** The activity fields this fold reads. */
+export interface PendingRequestActivity {
+  readonly kind: string;
+  readonly payload: unknown;
+  readonly createdAt: string;
+}
+
+export function derivePendingRequests(activities: ReadonlyArray<PendingRequestActivity>) {
   const approvals = new Map<ApprovalRequestId, PendingApproval>();
   const userInputs = new Map<ApprovalRequestId, PendingUserInput>();
   const closedApprovals = new Set<ApprovalRequestId>();

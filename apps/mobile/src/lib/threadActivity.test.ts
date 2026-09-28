@@ -316,7 +316,6 @@ describe("buildThreadFeed", () => {
           id: MessageId.make("feedback-local"),
           role: "assistant",
           text: "Feedback sent to OpenAI.\n\nThread ID: `codex-thread-1`",
-          turnId: null,
           streaming: false,
           createdAt: "2026-08-29T00:00:00.000Z",
           updatedAt: "2026-08-29T00:00:00.000Z",

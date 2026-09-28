@@ -18,7 +18,7 @@
  * metadata).
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationThreadActivity, OrchestrationV2Subagent } from "@t3tools/contracts";
+import type { OrchestrationV2Subagent } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
@@ -462,8 +462,15 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  * session left a panel full of "Working" agents while the sidebar showed
  * nothing). Idle is preserved — a resumable Codex child stays resumable.
  */
+/** The activity fields the subagent fold reads. */
+export interface SubagentActivity {
+  readonly kind: string;
+  readonly payload: unknown;
+  readonly createdAt: string;
+}
+
 export function foldSubagentActivities(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  activities: ReadonlyArray<SubagentActivity>,
   options?: { readonly sessionLive?: boolean },
 ): ReadonlyArray<RuntimeSubagent> {
   const agents = new Map<string, MutableAgent>();

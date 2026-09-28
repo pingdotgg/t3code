@@ -6,8 +6,6 @@ import {
   ThreadId,
   type OrchestrationV2Command as OrchestrationCommand,
   type OrchestrationProjectShell,
-  type OrchestrationShellSnapshot,
-  type OrchestrationThreadShell,
   type PullRequestRef,
   type PullRequestStack,
   type PullRequestSummary,
@@ -29,6 +27,7 @@ import { ServerActivation } from "../serverActivation.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "./Orchestrator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
+import type { PullRequestTestThread } from "./testkit/pullRequestFixtures.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("sync-project");
@@ -58,8 +57,8 @@ function makeProject(id: ProjectId = PROJECT_ID): OrchestrationProjectShell {
 
 function makeThread(
   id: string,
-  overrides: Partial<OrchestrationThreadShell> = {},
-): OrchestrationThreadShell {
+  overrides: Partial<PullRequestTestThread> = {},
+): PullRequestTestThread {
   return {
     id: ThreadId.make(id),
     projectId: PROJECT_ID,
@@ -73,17 +72,12 @@ function makeThread(
     branch: null,
     worktreePath: null,
     pullRequests: [],
-    latestTurn: null,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-20T00:00:00.000Z",
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
-    session: null,
     latestUserMessageAt: "2026-08-20T00:00:00.000Z",
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
     ...overrides,
   };
 }
@@ -118,10 +112,18 @@ function makeLink(
   };
 }
 
+/** The shell the fake projection store serves: one project and its threads. */
+interface TestShellSnapshot {
+  readonly snapshotSequence: number;
+  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+  readonly threads: ReadonlyArray<PullRequestTestThread>;
+  readonly updatedAt: string;
+}
+
 function makeSnapshot(
-  threads: ReadonlyArray<OrchestrationThreadShell>,
+  threads: ReadonlyArray<PullRequestTestThread>,
   snapshotSequence = 1,
-): OrchestrationShellSnapshot {
+): TestShellSnapshot {
   return {
     snapshotSequence,
     projects: [makeProject()],
@@ -151,7 +153,7 @@ function makeSummary(
 
 interface HarnessOptions {
   readonly invalidate?: PullRequestService["Service"]["invalidate"];
-  readonly snapshot: OrchestrationShellSnapshot;
+  readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
@@ -269,9 +271,9 @@ const sweepAgain = Effect.fn("sweepPullRequestSyncHarness")(function* (
 
 /** What the reactor would have persisted, so the next sweep sees its own writes. */
 function applySync(
-  snapshot: OrchestrationShellSnapshot,
+  snapshot: TestShellSnapshot,
   commands: ReadonlyArray<SyncCommand>,
-): OrchestrationShellSnapshot {
+): TestShellSnapshot {
   return {
     ...snapshot,
     snapshotSequence: snapshot.snapshotSequence + 1,

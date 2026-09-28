@@ -7,12 +7,15 @@ import {
   ComposerContextRecord,
   OrchestrationMessageContext,
 } from "./composerContext.ts";
-import { OrchestrationMessage, ThreadTurnStartCommand } from "./orchestration.ts";
+import {
+  OrchestrationV2Command,
+  OrchestrationV2ConversationMessageJson,
+} from "./orchestrationV2.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
-const decodeMessage = Schema.decodeUnknownSync(OrchestrationMessage);
-const decodeTurnStart = Schema.decodeUnknownSync(ThreadTurnStartCommand);
+const decodeMessage = Schema.decodeUnknownSync(OrchestrationV2ConversationMessageJson);
+const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
 
 const base = { version: 1, contextId: "ctx_1" } as const;
 
@@ -229,12 +232,17 @@ describe("OrchestrationMessageContext", () => {
     ).toThrow();
   });
 
-  it("is optional on messages and turn-start commands", () => {
+  it("is optional on messages and message dispatch commands", () => {
     const message = {
+      createdBy: "user",
+      creationSource: "web",
       id: "m1",
+      threadId: "t1",
+      runId: null,
+      nodeId: null,
       role: "user",
       text: "hi",
-      turnId: null,
+      attachments: [],
       streaming: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -246,19 +254,18 @@ describe("OrchestrationMessageContext", () => {
     });
     expect(withContext.context?.records).toHaveLength(1);
 
-    const command = decodeTurnStart({
-      type: "thread.turn.start",
+    const command = decodeCommand({
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
       commandId: "c1",
       threadId: "t1",
-      message: {
-        messageId: "m1",
-        role: "user",
-        text: "hi",
-        attachments: [],
-        context: { version: 1, records: [knownRecords.image] },
-      },
-      createdAt: "2026-01-01T00:00:00.000Z",
+      messageId: "m1",
+      text: "hi",
+      attachments: [],
+      context: { version: 1, records: [knownRecords.image] },
+      dispatchMode: { type: "start_immediately" },
     });
-    expect(command.message.context?.records[0]?.kind).toBe("image");
+    expect(command.type === "message.dispatch" && command.context?.records[0]?.kind).toBe("image");
   });
 });

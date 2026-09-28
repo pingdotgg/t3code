@@ -96,6 +96,13 @@ const ProjectLucideIconWire = Schema.Struct({
   monogram: Schema.optional(ProjectMonogramText),
 });
 
+/** A workspace-relative image a project may use as its favicon. */
+export const ProjectFaviconPath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(1024),
+  Schema.isPattern(/\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i),
+);
+export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
+
 // Older peers only know lucide/emoji. Keep monograms out of their validated
 // `monogram` field too: old grapheme counters can reject otherwise valid text.
 export const ProjectIconOverride = Schema.Union([

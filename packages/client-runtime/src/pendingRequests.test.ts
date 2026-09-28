@@ -1,6 +1,5 @@
-import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { derivePendingRequests } from "./pendingRequests.ts";
+import { derivePendingRequests, type PendingRequestActivity } from "./pendingRequests.ts";
 
 let nextActivityId = 0;
 
@@ -8,21 +7,13 @@ function makeActivity(overrides: {
   id?: string;
   createdAt?: string;
   kind?: string;
-  summary?: string;
-  tone?: OrchestrationThreadActivity["tone"];
   payload?: Record<string, unknown>;
-  turnId?: string;
-  sequence?: number;
-}): OrchestrationThreadActivity {
+}): PendingRequestActivity & { readonly id: string } {
   return {
-    id: EventId.make(overrides.id ?? `activity-${nextActivityId++}`),
+    id: overrides.id ?? `activity-${nextActivityId++}`,
     createdAt: overrides.createdAt ?? "2026-02-23T00:00:00.000Z",
     kind: overrides.kind ?? "tool.started",
-    summary: overrides.summary ?? "Tool call",
-    tone: overrides.tone ?? "tool",
     payload: overrides.payload ?? {},
-    turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
-    ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
 
@@ -59,13 +50,11 @@ describe("pending approvals", () => {
   );
 
   it("tracks open approvals and removes resolved ones", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "approval-open",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
-        summary: "Command approval requested",
-        tone: "approval",
         payload: {
           requestId: "req-1",
           requestKind: "command",
@@ -76,16 +65,12 @@ describe("pending approvals", () => {
         id: "approval-close",
         createdAt: "2026-02-23T00:00:02.000Z",
         kind: "approval.resolved",
-        summary: "Approval resolved",
-        tone: "info",
         payload: { requestId: "req-2" },
       }),
       makeActivity({
         id: "approval-closed-request",
         createdAt: "2026-02-23T00:00:01.500Z",
         kind: "approval.requested",
-        summary: "File-change approval requested",
-        tone: "approval",
         payload: { requestId: "req-2", requestType: "unknown" },
       }),
     ];
@@ -101,13 +86,11 @@ describe("pending approvals", () => {
   });
 
   it("maps canonical requestType payloads into pending approvals", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "approval-open-request-type",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
-        summary: "Command approval requested",
-        tone: "approval",
         payload: {
           requestId: "req-request-type",
           requestType: "command_execution_approval",
@@ -135,8 +118,6 @@ describe("pending approvals", () => {
     const activities = [
       makeActivity({
         kind: "approval.requested",
-        summary: "App access approval requested",
-        tone: "approval",
         payload: {
           requestId: "req-safari",
           requestType: "mcp_elicitation_approval",
@@ -160,13 +141,11 @@ describe("pending approvals", () => {
   });
 
   it("derives dynamic tool requests as actionable generic approvals", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "approval-open-dynamic-tool",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
-        summary: "Approval requested",
-        tone: "approval",
         payload: {
           requestId: "req-dynamic-tool",
           requestType: "dynamic_tool_call",
@@ -186,13 +165,11 @@ describe("pending approvals", () => {
   });
 
   it("clears stale pending approvals when provider reports unknown pending request", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "approval-open-stale",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
-        summary: "Command approval requested",
-        tone: "approval",
         payload: {
           requestId: "req-stale-1",
           requestType: "unknown",
@@ -202,8 +179,6 @@ describe("pending approvals", () => {
         id: "approval-failed-stale",
         createdAt: "2026-02-23T00:00:02.000Z",
         kind: "provider.approval.respond.failed",
-        summary: "Provider approval response failed",
-        tone: "error",
         payload: {
           requestId: "req-stale-1",
           detail: "Unknown pending permission request: req-stale-1",
@@ -215,13 +190,11 @@ describe("pending approvals", () => {
   });
 
   it("clears stale pending approvals when the backend marks them stale after restart", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "approval-open-stale-restart",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "approval.requested",
-        summary: "Command approval requested",
-        tone: "approval",
         payload: {
           requestId: "req-stale-restart-1",
           requestKind: "command",
@@ -231,8 +204,6 @@ describe("pending approvals", () => {
         id: "approval-failed-stale-restart",
         createdAt: "2026-02-23T00:00:02.000Z",
         kind: "provider.approval.respond.failed",
-        summary: "Provider approval response failed",
-        tone: "error",
         payload: {
           requestId: "req-stale-restart-1",
           detail:
@@ -278,7 +249,6 @@ describe("pending questions", () => {
       makeActivity({
         id: "async-question",
         kind: "user-input.requested",
-        summary: "User input requested",
         payload: { requestId: "async-1", responseMode: "message", questions: [question] },
       }),
     ];
@@ -319,7 +289,6 @@ describe("pending questions", () => {
       makeActivity({
         id: "native-user-input",
         kind: "user-input.requested",
-        summary: "User input requested",
         payload: { requestId: "req-native-choice", questions: [question] },
       }),
     ];
@@ -328,13 +297,11 @@ describe("pending questions", () => {
   });
 
   it("tracks open structured prompts and removes resolved ones", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "user-input-open",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "user-input.requested",
-        summary: "User input requested",
-        tone: "info",
         payload: {
           requestId: "req-user-input-1",
           questions: [
@@ -357,8 +324,6 @@ describe("pending questions", () => {
         id: "user-input-resolved",
         createdAt: "2026-02-23T00:00:02.000Z",
         kind: "user-input.resolved",
-        summary: "User input submitted",
-        tone: "info",
         payload: {
           requestId: "req-user-input-2",
           answers: {
@@ -370,8 +335,6 @@ describe("pending questions", () => {
         id: "user-input-open-2",
         createdAt: "2026-02-23T00:00:01.500Z",
         kind: "user-input.requested",
-        summary: "User input requested",
-        tone: "info",
         payload: {
           requestId: "req-user-input-2",
           questions: [
@@ -416,13 +379,11 @@ describe("pending questions", () => {
   });
 
   it("clears stale pending user-input prompts when the provider reports an orphaned request", () => {
-    const activities: OrchestrationThreadActivity[] = [
+    const activities: PendingRequestActivity[] = [
       makeActivity({
         id: "user-input-open-stale",
         createdAt: "2026-02-23T00:00:01.000Z",
         kind: "user-input.requested",
-        summary: "User input requested",
-        tone: "info",
         payload: {
           requestId: "req-user-input-stale-1",
           questions: [
@@ -445,8 +406,6 @@ describe("pending questions", () => {
         id: "user-input-failed-stale",
         createdAt: "2026-02-23T00:00:02.000Z",
         kind: "provider.user-input.respond.failed",
-        summary: "Provider user input response failed",
-        tone: "error",
         payload: {
           requestId: "req-user-input-stale-1",
           detail:
@@ -463,7 +422,6 @@ describe.each(["approval", "user-input"])("%s request completion", (requestKind)
   const requested = makeActivity({
     id: `${requestKind}-requested`,
     kind: `${requestKind}.requested`,
-    sequence: 42,
     payload: {
       requestId: "request-1",
       requestKind: "command",
@@ -483,7 +441,7 @@ describe.each(["approval", "user-input"])("%s request completion", (requestKind)
           detail: `Unknown pending ${requestKind} request: request-1`,
         },
       });
-      const replayedRequest = { ...requested, id: EventId.make("replayed-request"), sequence: 43 };
+      const replayedRequest = { ...requested, id: "replayed-request" };
 
       for (const activities of [
         [requested, closed, replayedRequest],

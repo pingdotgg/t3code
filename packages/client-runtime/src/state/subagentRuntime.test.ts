@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import { classifyTaskAgentKind } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
+  type SubagentActivity,
 } from "./subagentRuntime.ts";
 
 let sequence = 0;
@@ -17,7 +18,7 @@ function activity(
   kind: string,
   payload: Record<string, unknown>,
   at = `2026-08-01T10:00:${String(sequence).padStart(2, "0")}.000Z`,
-): OrchestrationThreadActivity {
+): SubagentActivity {
   sequence += 1;
   const stamped =
     kind.startsWith("task.") && !("agentKind" in payload)
@@ -29,35 +30,20 @@ function activity(
           }),
         }
       : payload;
-  return {
-    id: `activity-${sequence}`,
-    tone: "info",
-    kind,
-    summary: kind,
-    payload: stamped,
-    turnId: null,
-    createdAt: at,
-  } as unknown as OrchestrationThreadActivity;
+  return { kind, payload: stamped, createdAt: at };
 }
 
 /** A pre-stamp row (legacy thread / old server): no agentKind at all. */
-function legacyActivity(
-  kind: string,
-  payload: Record<string, unknown>,
-): OrchestrationThreadActivity {
+function legacyActivity(kind: string, payload: Record<string, unknown>): SubagentActivity {
   sequence += 1;
   return {
-    id: `activity-${sequence}`,
-    tone: "info",
     kind,
-    summary: kind,
     payload,
-    turnId: null,
     createdAt: `2026-08-01T10:00:${String(sequence).padStart(2, "0")}.000Z`,
-  } as unknown as OrchestrationThreadActivity;
+  };
 }
 
-function fold(rows: ReadonlyArray<OrchestrationThreadActivity>) {
+function fold(rows: ReadonlyArray<SubagentActivity>) {
   return foldSubagentActivities(rows);
 }
 

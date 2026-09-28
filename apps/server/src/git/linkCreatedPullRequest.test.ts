@@ -6,7 +6,6 @@ import {
   type GitRunStackedActionResult,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -18,7 +17,10 @@ import {
   type OrchestratorV2Shape,
   OrchestratorDispatchError,
 } from "../orchestration-v2/Orchestrator.ts";
-import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
+import {
+  type PullRequestTestThread,
+  v2PullRequestThread,
+} from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { refreshPushedPullRequests } from "./refreshPushedPullRequests.ts";
@@ -51,7 +53,7 @@ const project: OrchestrationProjectShell = {
   updatedAt: "2026-08-01T00:00:00.000Z",
 };
 
-const thread: OrchestrationThreadShell = {
+const thread: PullRequestTestThread = {
   id: THREAD_ID,
   projectId: PROJECT_ID,
   title: "Thread",
@@ -61,17 +63,12 @@ const thread: OrchestrationThreadShell = {
   branch: null,
   worktreePath: null,
   pullRequests: [],
-  latestTurn: null,
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-20T00:00:00.000Z",
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
-  session: null,
   latestUserMessageAt: "2026-08-20T00:00:00.000Z",
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
 };
 
 function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedActionResult, "pr"> {
@@ -80,7 +77,7 @@ function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedAction
 
 const makeDependencies = (
   dispatch: OrchestratorV2Shape["dispatch"],
-  threadShell: OrchestrationThreadShell | null = thread,
+  threadShell: PullRequestTestThread | null = thread,
 ) =>
   Layer.mergeAll(
     Layer.mock(ProjectService)({

@@ -1,5 +1,4 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {

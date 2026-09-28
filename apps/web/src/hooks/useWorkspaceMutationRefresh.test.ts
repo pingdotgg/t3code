@@ -1,4 +1,3 @@
-import { EventId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,21 +5,8 @@ import {
   workspaceMutationRefreshToken,
 } from "./useWorkspaceMutationRefresh";
 
-function activity(
-  id: string,
-  kind: string,
-  itemType: string,
-  status?: string,
-): OrchestrationThreadActivity {
-  return {
-    id: EventId.make(id),
-    kind,
-    tone: "tool",
-    summary: "Tool activity",
-    payload: { itemType, ...(status ? { status } : {}) },
-    turnId: null,
-    createdAt: "2026-08-30T00:00:00.000Z",
-  };
+function activity(id: string, kind: string, itemType: string, status?: string) {
+  return { id, kind, payload: { itemType, ...(status ? { status } : {}) } };
 }
 
 describe("workspace mutation refresh", () => {

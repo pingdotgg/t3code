@@ -22,7 +22,8 @@ import {
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
-import { ThreadLinkedPullRequest, ThreadTitleRegeneration } from "./orchestration.ts";
+import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
+import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
