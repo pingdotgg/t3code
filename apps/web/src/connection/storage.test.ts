@@ -69,6 +69,25 @@ describe("makeCatalogStore", () => {
 });
 
 describe("makeCatalogBackend", () => {
+  it.effect("reports a closed IndexedDB connection as a typed read and write failure", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const database = {
+        transaction: () => {
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      } as unknown as IDBDatabase;
+      const backend = makeCatalogBackend(database);
+
+      const readError = yield* Effect.flip(backend.read);
+      const writeError = yield* Effect.flip(backend.write("{}"));
+
+      expect(readError).toBeInstanceOf(ConnectionTransientError);
+      expect(readError.message).toContain("The database connection is closing.");
+      expect(writeError).toBeInstanceOf(ConnectionTransientError);
+    }),
+  );
+
   it.effect("fails writes when desktop secure storage declines the catalog", () =>
     Effect.gen(function* () {
       const setConnectionCatalog = vi.fn().mockResolvedValue(false);
