@@ -18,6 +18,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TrimmedNonEmptyString,
   TurnItemId,
 } from "./index.ts";
 import {
@@ -1155,9 +1156,25 @@ describe("background work kinds from older or newer servers", () => {
       { taskId: "bg-5", kind: "subagent", childThreadId: "thread-child" },
     ]);
     // The fallback is decode-only: what was decoded encodes as its known member.
-    expect(encodeOrchestrationV2ProviderThreadJson(providerThread).pendingBackgroundTasks).toEqual(
-      providerThread.pendingBackgroundTasks,
+    const encoded = encodeOrchestrationV2ProviderThreadJson(providerThread).pendingBackgroundTasks;
+    expect(encoded).toEqual(providerThread.pendingBackgroundTasks);
+    // Clients from before kinds read a roster entry as this struct and ignore `kind`.
+    const decodePreKindsRoster = Schema.decodeUnknownSync(
+      Schema.Array(
+        Schema.Struct({
+          taskId: TrimmedNonEmptyString,
+          description: Schema.optional(TrimmedNonEmptyString),
+          taskType: Schema.optional(TrimmedNonEmptyString),
+        }),
+      ),
     );
+    expect(decodePreKindsRoster(encoded).map((task) => task.taskId)).toEqual([
+      "bg-1",
+      "bg-2",
+      "bg-3",
+      "bg-4",
+      "bg-5",
+    ]);
     expect(() =>
       decodeOrchestrationV2ProviderThreadJson({
         ...encodeOrchestrationV2ProviderThreadJson(providerThread),
