@@ -322,7 +322,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
-  const resetsIn = window ? formatResetsIn(window, now) : null;
+  const [openedAt] = useState(() => Date.now());
+  const observedAt = account ? Date.parse(account.limits.checkedAt) : openedAt;
+  const resetsIn = window ? formatResetsIn(window, Math.max(openedAt, observedAt)) : null;
   const [revealed, setRevealed] = useState(false);
   return (
     <SettingsScreen title="Account">

@@ -162,7 +162,12 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       return "resets in $duration"
     }
 
-    private fun rowView(context: Context, provider: JSONObject, window: JSONObject?, now: Long): RemoteViews {
+    private fun rowView(
+      context: Context,
+      provider: JSONObject,
+      window: JSONObject?,
+      now: Long
+    ): RemoteViews {
       val child = RemoteViews(context.packageName, R.layout.t3_subscription_widget_row)
       val remaining = window?.optInt("remaining")?.coerceIn(0, 100)
       val detail = provider.optString("detail")
@@ -180,7 +185,9 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       val reset = if (window == null) {
         context.getString(R.string.t3_subscription_widget_refresh)
       } else {
-        val resetsAt = runCatching { Instant.parse(window.optString("resetsAt")).toEpochMilli() }.getOrNull()
+        val resetsAt = runCatching {
+          Instant.parse(window.optString("resetsAt")).toEpochMilli()
+        }.getOrNull()
         formatResetsIn(resetsAt, now)
       }
       child.setTextViewText(R.id.t3_widget_reset, reset)
