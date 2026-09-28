@@ -1,27 +1,22 @@
 import {
-  Button,
   DatePicker,
   Host,
   HStack,
   Picker,
   Popover,
+  RNHostView,
   Spacer,
   Text,
   VStack,
 } from "@expo/ui/swift-ui";
 import {
-  accessibilityAddTraits,
   accessibilityHidden,
-  buttonBorderShape,
-  buttonStyle,
   clipped,
-  controlSize,
   font,
   datePickerStyle,
   foregroundStyle,
   frame,
   labelsHidden,
-  labelStyle,
   padding,
   pickerStyle,
   tag,
@@ -32,12 +27,17 @@ import {
   resolveCustomSnooze,
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { useState } from "react";
-import { useWindowDimensions } from "react-native";
+import { useState, type ReactNode } from "react";
+import { NavigationContainer, NavigationIndependentTree } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { ScrollView, useWindowDimensions, View } from "react-native";
+import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
+import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 const durationAmounts = Array.from({ length: 99 }, (_, index) => index + 1);
+const SnoozeStack = createNativeStackNavigator<{ CustomSnooze: undefined }>();
 const modes = [
   { value: "date", label: "Date and time" },
   { value: "duration", label: "Duration" },
@@ -52,13 +52,15 @@ export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
 }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(() => new Date(Date.now() + 3_600_000));
   const [amount, setAmount] = useState(2);
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
   const [error, setError] = useState<string | null>(null);
   const { themeVariables: colors, themeAppearance } = useAppearancePreferences();
+  const popoverWidth = Math.min(360, width - 32);
+  const popoverHeight = Math.min(error ? 364 : 324, height - 96);
   const updateDate = (value: Date) => {
     setDate(value);
     setError(null);
@@ -98,133 +100,179 @@ export function CustomSnoozeSheet(props: {
           />
         </Popover.Trigger>
         <Popover.Content>
-          <VStack
-            spacing={16}
-            modifiers={[padding({ all: 16 }), frame({ width: Math.min(360, width - 32) })]}
+          <SnoozePopoverNavigation
+            width={popoverWidth}
+            height={popoverHeight}
+            onClose={props.onClose}
+            onSubmit={submit}
           >
-            <HStack spacing={12}>
-              <Button
-                label="Cancel"
-                systemImage="xmark"
-                role="cancel"
-                onPress={props.onClose}
-                modifiers={[
-                  labelStyle("iconOnly"),
-                  buttonStyle(NATIVE_LIQUID_GLASS_SUPPORTED ? "glass" : "bordered"),
-                  buttonBorderShape("circle"),
-                  controlSize("large"),
-                ]}
-              />
-              <Text
-                modifiers={[
-                  font({ textStyle: "headline" }),
-                  frame({ maxWidth: Infinity, alignment: "leading" }),
-                  accessibilityAddTraits(["isHeader"]),
-                ]}
-              >
-                Custom snooze
-              </Text>
-              <Button
-                label="Snooze"
-                onPress={submit}
-                modifiers={[
-                  buttonStyle(
-                    NATIVE_LIQUID_GLASS_SUPPORTED ? "glassProminent" : "borderedProminent",
-                  ),
-                  controlSize("large"),
-                ]}
-              />
-            </HStack>
-            <Picker
-              label="Snooze mode"
-              selection={mode}
-              onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
-                setMode(value);
-                setError(null);
-              }}
-              modifiers={[pickerStyle("segmented")]}
+            <Host
+              matchContents={{ vertical: true }}
+              colorScheme={themeAppearance}
+              style={{ width: popoverWidth }}
             >
-              {modes.map((option) => (
-                <Text key={option.value} modifiers={[tag(option.value)]}>
-                  {option.label}
-                </Text>
-              ))}
-            </Picker>
-            {mode === "date" ? (
-              <DatePicker
-                title="Snooze until"
-                selection={date}
-                displayedComponents={["date", "hourAndMinute"]}
-                onDateChange={updateDate}
-                modifiers={[
-                  datePickerStyle("wheel"),
-                  labelsHidden(),
-                  frame({ maxWidth: Infinity, height: 180 }),
-                ]}
-              />
-            ) : (
-              <HStack spacing={0}>
+              <VStack
+                spacing={16}
+                modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
+              >
                 <Picker
-                  label="Duration amount"
-                  selection={amount}
-                  onSelectionChange={(value: number) => {
-                    setAmount(value);
+                  label="Snooze mode"
+                  selection={mode}
+                  onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
+                    setMode(value);
                     setError(null);
                   }}
-                  modifiers={[
-                    pickerStyle("wheel"),
-                    labelsHidden(),
-                    frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
-                    clipped(),
-                  ]}
+                  modifiers={[pickerStyle("segmented")]}
                 >
-                  {durationAmounts.map((value) => (
-                    <Text
-                      key={value}
-                      modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
-                    >
-                      {String(value)}
-                    </Text>
-                  ))}
-                </Picker>
-                <Picker
-                  label="Duration unit"
-                  selection={unit}
-                  onSelectionChange={(value: typeof unit) => {
-                    setUnit(value);
-                    setError(null);
-                  }}
-                  modifiers={[
-                    pickerStyle("wheel"),
-                    labelsHidden(),
-                    frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
-                    clipped(),
-                  ]}
-                >
-                  {units.map((option) => (
-                    <Text
-                      key={option.value}
-                      modifiers={[tag(option.value), foregroundStyle(colors["--color-foreground"])]}
-                    >
+                  {modes.map((option) => (
+                    <Text key={option.value} modifiers={[tag(option.value)]}>
                       {option.label}
                     </Text>
                   ))}
                 </Picker>
-              </HStack>
-            )}
-            {error ? (
-              <Text
-                modifiers={[
-                  font({ textStyle: "footnote" }),
-                  foregroundStyle(colors["--color-danger-foreground"]),
-                ]}
-              >
-                {error}
-              </Text>
-            ) : null}
-          </VStack>
+                {mode === "date" ? (
+                  <DatePicker
+                    title="Snooze until"
+                    selection={date}
+                    displayedComponents={["date", "hourAndMinute"]}
+                    onDateChange={updateDate}
+                    modifiers={[
+                      datePickerStyle("wheel"),
+                      labelsHidden(),
+                      frame({ maxWidth: Infinity, height: 180 }),
+                    ]}
+                  />
+                ) : (
+                  <HStack spacing={0}>
+                    <Picker
+                      label="Duration amount"
+                      selection={amount}
+                      onSelectionChange={(value: number) => {
+                        setAmount(value);
+                        setError(null);
+                      }}
+                      modifiers={[
+                        pickerStyle("wheel"),
+                        labelsHidden(),
+                        frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
+                        clipped(),
+                      ]}
+                    >
+                      {durationAmounts.map((value) => (
+                        <Text
+                          key={value}
+                          modifiers={[tag(value), foregroundStyle(colors["--color-foreground"])]}
+                        >
+                          {String(value)}
+                        </Text>
+                      ))}
+                    </Picker>
+                    <Picker
+                      label="Duration unit"
+                      selection={unit}
+                      onSelectionChange={(value: typeof unit) => {
+                        setUnit(value);
+                        setError(null);
+                      }}
+                      modifiers={[
+                        pickerStyle("wheel"),
+                        labelsHidden(),
+                        frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
+                        clipped(),
+                      ]}
+                    >
+                      {units.map((option) => (
+                        <Text
+                          key={option.value}
+                          modifiers={[
+                            tag(option.value),
+                            foregroundStyle(colors["--color-foreground"]),
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      ))}
+                    </Picker>
+                  </HStack>
+                )}
+                {error ? (
+                  <Text
+                    modifiers={[
+                      font({ textStyle: "footnote" }),
+                      foregroundStyle(colors["--color-danger-foreground"]),
+                    ]}
+                  >
+                    {error}
+                  </Text>
+                ) : null}
+              </VStack>
+            </Host>
+          </SnoozePopoverNavigation>
         </Popover.Content>
       </Popover>
     </Host>
+  );
+}
+
+/** The popover owns a native navigation bar, just like the app's sheet screens. */
+function SnoozePopoverNavigation(props: {
+  readonly width: number;
+  readonly height: number;
+  readonly onClose: () => void;
+  readonly onSubmit: () => void;
+  readonly children: ReactNode;
+}) {
+  const navigationTheme = useMobileNavigationTheme();
+  const { themeVariables: colors } = useAppearancePreferences();
+
+  return (
+    <VStack modifiers={[frame({ width: props.width, height: props.height })]}>
+      <RNHostView>
+        <View style={{ width: props.width, height: props.height }}>
+          <NavigationIndependentTree>
+            <NavigationContainer theme={navigationTheme}>
+              <SnoozeStack.Navigator
+                screenOptions={{
+                  contentStyle: { backgroundColor: "transparent" },
+                  headerShadowVisible: false,
+                  headerStyle: {
+                    backgroundColor: NATIVE_LIQUID_GLASS_SUPPORTED
+                      ? "transparent"
+                      : colors["--color-card"],
+                  },
+                  headerTintColor: colors["--color-foreground"],
+                  headerTitleStyle: { fontSize: 17, fontWeight: "700" },
+                  headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
+                  title: "Custom snooze",
+                }}
+              >
+                <SnoozeStack.Screen name="CustomSnooze">
+                  {() => (
+                    <>
+                      <NativeHeaderToolbar placement="left">
+                        <NativeHeaderToolbar.Button
+                          accessibilityLabel="Cancel custom snooze"
+                          icon="xmark"
+                          onPress={props.onClose}
+                        />
+                      </NativeHeaderToolbar>
+                      <NativeHeaderToolbar placement="right">
+                        <NativeHeaderToolbar.Button label="Snooze" onPress={props.onSubmit} />
+                      </NativeHeaderToolbar>
+                      <ScrollView
+                        contentInsetAdjustmentBehavior="automatic"
+                        showsVerticalScrollIndicator={false}
+                      >
+                        {props.children}
+                      </ScrollView>
+                    </>
+                  )}
+                </SnoozeStack.Screen>
+              </SnoozeStack.Navigator>
+            </NavigationContainer>
+          </NavigationIndependentTree>
+        </View>
+      </RNHostView>
+    </VStack>
   );
 }

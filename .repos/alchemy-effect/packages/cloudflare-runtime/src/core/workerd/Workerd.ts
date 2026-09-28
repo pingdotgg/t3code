@@ -190,11 +190,18 @@ const makeStreamPump = (
   };
 };
 
+const externalEnv = () => {
+  const env = { ...process.env };
+  delete env.NODE_ENV;
+  return env;
+};
+
 const makeBun = () =>
   make((command, args, config) =>
     Effect.sync(() =>
       Bun.spawn({
         cmd: [command, ...args],
+        env: externalEnv(),
         stdio: [config, "pipe", "pipe", "pipe"],
         killSignal: "SIGKILL",
       }),
@@ -266,6 +273,7 @@ const makeNode = () =>
     Effect.try({
       try: () =>
         NodeChildProcess.spawn(command, args, {
+          env: externalEnv(),
           stdio: ["pipe", "pipe", "pipe", "pipe"],
           killSignal: "SIGKILL",
         }),

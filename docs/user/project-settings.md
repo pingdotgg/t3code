@@ -1,8 +1,9 @@
 # Settings and project overrides
 
-The Settings breadcrumb ends with the environment and project a change applies to. They start
-at **All environments** and **All projects** and stay selected as you move between categories or
-search for a setting.
+On web and desktop, the "Applying settings for …" sentence at the top of Settings pages picks
+the project and environment a change applies to. Pages that only hold device preferences, such as
+Appearance, don't show it. They start at **All projects** and **All environments**
+and stay selected as you move between categories or search for a setting.
 
 Preferences saved on this device, such as appearance, confirmations and browser profiles, always
 show and ignore the selection. Everything else is stored on a server. Choose one environment to
@@ -26,6 +27,17 @@ again.
 Providers and diagnostics are per machine: they show one environment at a time, the primary
 one until you pick another. Every other setting fans out to the selection.
 
+On mobile, open **Settings** and use the filter in its header to choose connected environments
+and a project. The filter stays available in server-setting pages. With **All projects** selected,
+the **Server settings** categories and auto-settle controls in **Thread behavior** edit the
+selected environments' defaults. Choosing a project edits its overrides on the selected
+environments. Use **Use defaults** in a page to remove that page's project overrides.
+Open **Settings → Projects & threads → Overview** to rename the project across its selected
+connected checkouts and see where those checkouts live.
+Settings that are environment-wide stay read-only while a project is selected. When selected
+targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
+and other phone-only settings ignore the filter.
+
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser
@@ -38,8 +50,17 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
-For workspace mode, a project's `t3.json` preference applies when the project has no override.
+Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
+resolve in one order: a project override, then the environment setting, then `t3.json`, then the
+built-in default. Leave a setting on **Inherit** to let the next tier decide.
 Browser access changes apply when an agent session next starts.
+
+New worktrees initialize git submodules recursively. If that step is slow because the repository
+declares many nested submodules, set **Submodules** in **Settings → General** (with the project
+selected to override it there) to **Top level only** to stop at the ones the repository declares
+itself, or **Skip** to leave them for a setup script. It resolves in the same order as the
+workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
+applies when the project and environment are both on **Inherit**.
 
 ## Storage cleanup
 
@@ -83,6 +104,7 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 
 In Source Control, enable **Automatically pull** to keep the default-branch checkout up to date
 with its configured upstream. Choose an environment to set the default or a project to override it.
+On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
 
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has

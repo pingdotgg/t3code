@@ -70,9 +70,7 @@ export interface LibsqlClient extends Client.SqlClient {
  */
 export const LibsqlClient = Context.Service<LibsqlClient>("@effect/sql-libsql/LibsqlClient")
 
-const LibsqlTransaction = Context.Service<readonly [LibsqlConnection, counter: number]>(
-  "@effect/sql-libsql/LibsqlClient/LibsqlTransaction"
-)
+let clientIdCounter = 0
 
 /**
  * Configuration for a libSQL client, either by supplying connection options or an existing live libSQL client.
@@ -185,6 +183,9 @@ export const make = (
   options: LibsqlClientConfig
 ): Effect.Effect<LibsqlClient, never, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
+    const LibsqlTransaction = Context.Service<readonly [LibsqlConnection, counter: number]>(
+      `@effect/sql-libsql/LibsqlClient/LibsqlTransaction/${clientIdCounter++}`
+    )
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
     const transformRows = options.transformResultNames ?
       Statement.defaultTransforms(

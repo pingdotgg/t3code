@@ -101,11 +101,9 @@ vi.mock("expo-widgets", () => ({
   addPushToStartTokenListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
 
-vi.mock("../../widgets/AgentActivity", () => ({
-  default: {
-    getInstances: widgetMocks.getInstances,
-    start: widgetMocks.start,
-  },
+vi.mock("./agentLiveActivity", () => ({
+  getAgentLiveActivities: widgetMocks.getInstances,
+  startAgentLiveActivity: widgetMocks.start,
 }));
 
 // The state modules pull the whole connection stack (and native expo modules)

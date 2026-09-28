@@ -6,6 +6,7 @@ import type { PlatformError } from "effect/PlatformError";
 import { existsSync } from "node:fs";
 import { decodeFqn, encodeFqn } from "../FQN.ts";
 import { recordStateStoreInit } from "../Telemetry/Metrics.ts";
+import { writeFileAtomic } from "../Util/AtomicFile.ts";
 import { STATE_STORE_VERSION } from "./HttpStateApi.ts";
 import { State, StateStoreError, type StateService } from "./State.ts";
 import { encodeState, reviveState } from "./StateEncoding.ts";
@@ -118,23 +119,12 @@ export const makeLocalState = () =>
     const outputFile = ({ stack, stage }: { stack: string; stage: string }) =>
       path.join(stateDir, stack, stage, `__stack_output__.json`);
 
-    // Write state files atomically: write to a unique sibling temp file, then
-    // rename it over the target. Rename within a directory is atomic on POSIX
-    // filesystems, so a concurrent `get` (e.g. a parallel test reading shared
-    // `.alchemy/state`) never observes a truncated, mid-write file — which
-    // would otherwise surface as `JSON.parse("")` → "Unexpected end of JSON
-    // input". The temp suffix is unique per process+call so concurrent writers
-    // of the same file don't clobber each other's temp.
+    // Write state files atomically so a concurrent `get` (e.g. a parallel
+    // test reading shared `.alchemy/state`) never observes a truncated,
+    // mid-write file — which would otherwise surface as `JSON.parse("")` →
+    // "Unexpected end of JSON input".
     const writeAtomic = (file: string, contents: string) =>
-      Effect.suspend(() => {
-        const tmp = `${file}.${process.pid}.${Math.random()
-          .toString(36)
-          .slice(2)}.tmp`;
-        return fs.writeFileString(tmp, contents).pipe(
-          Effect.flatMap(() => fs.rename(tmp, file)),
-          Effect.tapError(() => fs.remove(tmp).pipe(Effect.ignore)),
-        );
-      });
+      writeFileAtomic(fs, file, contents);
 
     // Parse a state file, tolerating an empty read. A zero-length file can
     // linger from a write that was interrupted before this atomic-write change

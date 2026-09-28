@@ -1,3 +1,4 @@
+import { SettingsGroup } from "./SettingsGroup";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -35,11 +36,7 @@ export function FoldedSettingsSection({
 
   return (
     <section id={id} ref={targetRef} tabIndex={-1} className="outline-none">
-      <Collapsible
-        open={open}
-        onOpenChange={setOpen}
-        className="rounded-xl border border-border/60 bg-card/40 text-foreground shadow-xs/5"
-      >
+      <Collapsible open={open} onOpenChange={setOpen} render={<SettingsGroup divided={false} />}>
         <div className="flex items-center gap-4 px-3 sm:px-4">
           <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 items-center gap-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md">
             <ChevronRightIcon

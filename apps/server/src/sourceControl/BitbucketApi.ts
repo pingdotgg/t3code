@@ -39,12 +39,12 @@ const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 
 const BitbucketApiEnvConfig = Config.all({
-  baseUrl: Config.string("T3CODE_BITBUCKET_API_BASE_URL").pipe(
+  baseUrl: Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
     Config.withDefault(DEFAULT_API_BASE_URL),
   ),
-  accessToken: Config.string("T3CODE_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
-  email: Config.string("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
-  apiToken: Config.string("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
+  accessToken: Config.String("T3CODE_BITBUCKET_ACCESS_TOKEN").pipe(Config.option),
+  email: Config.String("T3CODE_BITBUCKET_EMAIL").pipe(Config.option),
+  apiToken: Config.String("T3CODE_BITBUCKET_API_TOKEN").pipe(Config.option),
 });
 
 const BitbucketApiOperation = Schema.Literals([
@@ -117,6 +117,7 @@ export class BitbucketResponseBodyReadError extends Schema.TaggedError<Bitbucket
   {
     operation: BitbucketApiOperation,
     status: Schema.Int,
+    retryAt: Schema.optional(Schema.Number),
     cause: Schema.Defect(),
   },
 ) {
@@ -584,6 +585,7 @@ function responseError(
   // only its length is reported anyway.
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
+    const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
     const collected = yield* collectUint8StreamText({
       stream: response.stream,
       maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
@@ -593,6 +595,7 @@ function responseError(
           new BitbucketResponseBodyReadError({
             operation,
             status: response.status,
+            retryAt,
             cause,
           }),
       ),
@@ -601,7 +604,7 @@ function responseError(
       operation,
       status: response.status,
       responseBodyLength: collected.text.length,
-      retryAt: retryAtFromHeader(response.headers["retry-after"], now),
+      retryAt,
     });
   });
 }

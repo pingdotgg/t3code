@@ -31,7 +31,7 @@ export function CustomSnoozeSheet(props: {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={props.onClose}>
       <KeyboardAvoidingView
-        className="flex-1 items-center justify-center bg-black/40 px-6"
+        className="flex-1 items-center justify-center bg-backdrop px-6"
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
@@ -152,7 +152,7 @@ export function CustomSnoozeSheet(props: {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              className="min-h-12 justify-center rounded-xl bg-primary px-3"
+              className="min-h-12 justify-center rounded-xl bg-subtle px-3"
               onPress={() => {
                 const input: CustomSnoozeInput =
                   mode === "date"
@@ -171,7 +171,7 @@ export function CustomSnoozeSheet(props: {
                 props.onClose();
               }}
             >
-              <AppText className="text-primary-foreground">Snooze</AppText>
+              <AppText className="text-foreground">Snooze</AppText>
             </Pressable>
           </View>
         </ScrollView>

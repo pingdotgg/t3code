@@ -45,7 +45,7 @@ export const OtelTestFunctionLive = OtelTestFunction.make(
         // polls this route until it reports 200 before asserting on
         // exported telemetry.
         if (url.pathname === "/probe") {
-          const endpoint = yield* Config.string("COLLECTOR_URL").pipe(
+          const endpoint = yield* Config.String("COLLECTOR_URL").pipe(
             Effect.orDie,
           );
           const result = yield* Effect.tryPromise(() =>
@@ -73,7 +73,7 @@ export const OtelTestFunctionLive = OtelTestFunction.make(
     Effect.provide(
       Layer.unwrap(
         Effect.gen(function* () {
-          const url = yield* Config.string("COLLECTOR_URL");
+          const url = yield* Config.String("COLLECTOR_URL");
           return Telemetry.layerOtlp({ url, serviceName: "otel-lambda-test" });
         }),
       ),
