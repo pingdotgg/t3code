@@ -3945,8 +3945,8 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      // No explicit model/effort on the launch input: the task inherits the
-      // session's selection.
+      // No explicit model/effort on the launch input: the model starts from the
+      // session's selection, and effort stays unknown.
       harness.query.emit({
         type: "system",
         subtype: "task_started",
@@ -3984,13 +3984,13 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
         assert.equal(started.payload.model, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
-        assert.equal(started.payload.effort, "max");
+        assert.equal(started.payload.effort, undefined);
       }
       const progress = taskEvents[1];
       assert.equal(progress?.type, "task.progress");
       if (progress?.type === "task.progress") {
         assert.equal(progress.payload.model, SYNTHETIC_SUBAGENT_MODEL);
-        assert.equal(progress.payload.effort, "max");
+        assert.equal(progress.payload.effort, undefined);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -4063,12 +4063,90 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
         assert.equal(started.payload.model, SYNTHETIC_SUBAGENT_MODEL);
-        assert.equal(started.payload.effort, "max");
+        assert.equal(started.payload.effort, undefined);
       }
       const progress = taskEvents[1];
       assert.equal(progress?.type, "task.progress");
       if (progress?.type === "task.progress") {
         assert.equal(progress.payload.model, SYNTHETIC_SUBAGENT_MODEL);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("a subagent resumed by SendMessage keeps its model and effort", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      const toolUse = (index: number, id: string, name: string, input: object) =>
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session",
+          uuid: `stream-${id}`,
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index,
+            content_block: { type: "tool_use", id, name, input },
+          },
+        } as unknown as SDKMessage);
+      const taskStarted = (toolUseId: string) =>
+        harness.query.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-resumed",
+          description: "Agent R",
+          task_type: "local_agent",
+          tool_use_id: toolUseId,
+          uuid: `task-resumed-${toolUseId}`,
+          session_id: "sdk-session",
+        } as unknown as SDKMessage);
+
+      toolUse(0, "toolu_agent_r", "Agent", { description: "Agent R", effort: "high" });
+      taskStarted("toolu_agent_r");
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_r",
+        message: { model: SYNTHETIC_SUBAGENT_MODEL, content: [] },
+        uuid: "resumed-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // Reviving a finished agent re-registers the same task under the
+      // SendMessage call, whose input names neither model nor effort.
+      toolUse(1, "toolu_send_r", "SendMessage", { to: "task-resumed", message: "continue" });
+      taskStarted("toolu_send_r");
+
+      const resumed = Array.from(yield* Fiber.join(startedFiber))[1];
+      assert.equal(resumed?.type, "task.started");
+      if (resumed?.type === "task.started") {
+        assert.equal(resumed.payload.model, SYNTHETIC_SUBAGENT_MODEL);
+        assert.equal(resumed.payload.effort, "high");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

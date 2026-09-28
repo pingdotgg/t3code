@@ -417,9 +417,6 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
-  /** Effective effort for the session's turns; subagents without an explicit
-   * effort override inherit this. */
-  currentEffort: string | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -3720,28 +3717,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ) {
           context.turnState.hasSubagents = true;
         }
-        // Model/effort: the Agent tool's input carries explicit overrides;
-        // absent ones inherit the session's selection (SDK behavior).
-        // Subagent assistant snapshots refine model with the authoritative API
-        // id: one that already arrived is buffered and outranks the seed here,
-        // later ones refine the record in place. AgentInput.effort may be a
-        // named level or an integer.
+        // Model/effort: the Agent tool's input carries explicit overrides.
+        // A resumed agent re-registers under the same task_id, launched by a
+        // SendMessage call that carries neither, so it keeps what is already
+        // known. A fresh agent's model falls back to the session's, and
+        // subagent assistant snapshots refine it with the authoritative API id:
+        // one that already arrived is buffered and outranks the seed here,
+        // later ones refine the record in place. Effort has no such source (an
+        // agent definition may set its own), so it is only reported when
+        // explicit. AgentInput.effort may be a named level or an integer.
         const launchInput = launchingTool?.input;
         const toolUseId = message.tool_use_id;
         const bufferedModel = toolUseId ? context.pendingTaskModels.get(toolUseId) : undefined;
         if (toolUseId) {
           context.pendingTaskModels.delete(toolUseId);
         }
+        const known = context.taskAgents.get(message.task_id);
         const model =
           bufferedModel ??
           trimmedString(launchInput?.model) ??
+          known?.model ??
           trimmedString(context.session.model ?? undefined);
         const rawLaunchEffort = launchInput?.effort;
         const effort =
           trimmedString(rawLaunchEffort) ??
           (typeof rawLaunchEffort === "number" && Number.isFinite(rawLaunchEffort)
             ? String(rawLaunchEffort)
-            : context.currentEffort);
+            : known?.effort);
         // Remember the agent identity so every later task.* payload for this
         // taskId is self-describing (identity must survive activity retention).
         context.taskAgents.set(message.task_id, {
@@ -3752,7 +3754,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           taskType: message.task_type,
           workflowName: message.workflow_name,
           skipTranscript: message.skip_transcript === true,
-          runHandles: context.taskAgents.get(message.task_id)?.runHandles,
+          runHandles: known?.runHandles,
           owningAgentId,
           model,
           effort,
@@ -5036,7 +5038,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
-        currentEffort: effectiveEffort ?? undefined,
         resumeSessionId: sessionId,
         pendingApprovals,
         pendingUserInputs,
@@ -5172,14 +5173,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...context.session,
         model: modelSelection.model,
       };
-      const turnEffort = resolveClaudeCatalogEffort(
-        modelCatalog,
-        modelSelection.model,
-        getModelSelectionStringOptionValue(modelSelection, "effort"),
-      );
-      context.currentEffort =
-        getEffectiveClaudeAgentEffort(modelCatalog, turnEffort ?? null, modelSelection.model) ??
-        undefined;
     }
 
     // Apply interaction mode by switching the SDK's permission mode.
