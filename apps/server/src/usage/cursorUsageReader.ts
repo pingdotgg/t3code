@@ -5,7 +5,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
-import { readMacCursorAccessToken } from "../provider/cursorCredentialStore.ts";
+import {
+  CursorKeychainTimeoutError,
+  readMacCursorAccessToken,
+} from "../provider/cursorCredentialStore.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -15,6 +18,18 @@ function object(value: unknown): Record<string, unknown> {
 
 function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+}
+
+/**
+ * Maps Cursor's tiered names (`cursor-grok-4.6-high-fast`,
+ * `claude-fable-5-1-thinking-high`) to the base model's rate-table key.
+ * Grok resolves through xAI's first-party entry, which has no bare alias.
+ */
+export function cursorRateModel(model: string): string {
+  const base = model
+    .replace(/^cursor-/, "")
+    .replace(/(?:-thinking)?(?:-(?:none|minimal|low|medium|high|xhigh|max))?(?:-fast)?$/, "");
+  return base.startsWith("grok-") ? `xai/${base}` : base;
 }
 
 export interface CursorAccountUsageReadResult {
@@ -74,7 +89,9 @@ export async function readCursorAccountUsage(
         ? null
         : typeof credentialSource === "string"
           ? "Cursor credentials could not be read."
-          : "Cursor Keychain credentials could not be read.",
+          : cause instanceof CursorKeychainTimeoutError
+            ? "Allow Keychain access on the Mac running T3 Code, then refresh."
+            : "Cursor Keychain credentials could not be read.",
     };
   }
   if (typeof accessToken !== "string" || !accessToken) {
@@ -232,6 +249,7 @@ export async function readCursorAccountUsage(
           provider: "cursor",
           timestampMs,
           model: event.model,
+          rateModel: cursorRateModel(event.model),
           sessionId,
           totals,
           reportedCostUsd,

@@ -31,6 +31,9 @@ variable. Use absolute paths or `~/` paths in the account's environment settings
 environment paths depend on each project's working directory and cannot be reliably discovered
 by Usage. Accounts sharing a history directory count once.
 
+When your app and server support different providers, usage totals may cover only the providers
+your app understands. Update the app to include newly supported providers.
+
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
 results appear as each one responds.
@@ -120,3 +123,12 @@ Add **Subscription usage** from your iOS or Android widget gallery to see remain
 Claude quotas. Tap it to open **Usage → Limits**. On iOS, use **Edit Widget** to choose Session,
 Weekly, or both for each provider. Reopen T3 to refresh expired readings. The Android widget
 requires Android 12L or later.
+
+## Keyboard shortcuts
+
+On web and desktop, open Usage from the command palette. While on Usage,
+press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
+Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
+24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
+Press `Escape` to return to the previous page. Customize these shortcuts in
+**Settings → Keybindings**.

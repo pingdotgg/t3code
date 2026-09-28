@@ -46,6 +46,24 @@ describe("KeybindingsSettings.logic", () => {
       );
     },
   );
+  it("orders Usage bindings and command choices like the page", () => {
+    const expected = [
+      "usage.cost",
+      "usage.open",
+      "usage.tokens",
+      "usage.limits",
+      "usage.period.day",
+      "usage.period.week",
+      "usage.period.month",
+      "usage.period.quarter",
+    ];
+    const bindings = DEFAULT_RESOLVED_KEYBINDINGS.toReversed();
+    expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+    expect(
+      buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
+    ).toEqual(expected);
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
