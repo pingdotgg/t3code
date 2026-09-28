@@ -45,10 +45,12 @@ function Panel({
   edge = "left",
   maxWidth = 800,
   storageKey = "test-panel-width",
+  rowWidth,
 }: {
   edge?: "left" | "right";
   maxWidth?: number;
   storageKey?: string;
+  rowWidth?: number | undefined;
 }) {
   const resize = useResizableWidth({
     storageKey,
@@ -56,6 +58,7 @@ function Panel({
     minWidth: 200,
     maxWidth,
     edge,
+    rowWidth,
   });
   useLayoutEffect(() => {
     result = resize;
@@ -239,5 +242,46 @@ describe("panel width storage changes", () => {
     expect(setItem).not.toHaveBeenCalled();
     await act(() => renderer.update(<Panel />));
     expect(result.width).toBe(400);
+  });
+});
+
+describe("panel width row tracking", () => {
+  it("absorbs row changes so the sibling column keeps its width", async () => {
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    expect(result.width).toBe(400);
+    // App sidebar collapses: the row widens and the panel takes all of it.
+    await act(() => renderer.update(<Panel rowWidth={1256} />));
+    expect(result.width).toBe(656);
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    expect(result.width).toBe(400);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it("restores the same split after a row change hits the panel bounds", async () => {
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    await act(() => renderer.update(<Panel rowWidth={700} />));
+    expect(result.width).toBe(200);
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    expect(result.width).toBe(400);
+  });
+
+  it("starts from a fresh baseline after tracking stops", async () => {
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    await act(() => renderer.update(<Panel rowWidth={undefined} />));
+    await act(() => renderer.update(<Panel rowWidth={1256} />));
+    expect(result.width).toBe(400);
+  });
+
+  it("drags from the shifted width and saves what the user released", async () => {
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    await act(() => renderer.update(<Panel rowWidth={1100} />));
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(50));
+    });
+    expect(result.width).toBe(550);
+    expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "550");
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    expect(result.width).toBe(450);
   });
 });

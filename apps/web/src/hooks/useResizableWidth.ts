@@ -24,6 +24,13 @@ export interface UseResizableWidthOptions {
    *   - "right" → panel grows rightward (left-anchored panels)
    */
   readonly edge: "left" | "right";
+  /**
+   * Width of the row the panel shares with a sibling column. While defined,
+   * a change is absorbed by the panel so the sibling keeps its width (the app
+   * sidebar collapsing widens the panel, not the chat). Pass undefined to stop
+   * tracking; the next defined value becomes the new baseline. Not persisted.
+   */
+  readonly rowWidth?: number | undefined;
 }
 
 export interface ResizableWidthHandlers {
@@ -47,7 +54,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
   readonly handlers: ResizableWidthHandlers;
 } {
-  const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
+  const { storageKey, defaultWidth, minWidth, maxWidth, edge, rowWidth } = options;
 
   const clamp = useCallback(
     (value: number): number => {
@@ -68,10 +75,25 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       return defaultWidth;
     }
   };
-  const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
+  const [widthState, setWidthState] = useState(() => ({
+    storageKey,
+    width: readWidth(),
+    rowWidth,
+  }));
   // Panels stay mounted across threads; restore the destination width before paint.
   if (widthState.storageKey !== storageKey) {
-    setWidthState({ storageKey, width: readWidth() });
+    setWidthState({ storageKey, width: readWidth(), rowWidth });
+  } else if (widthState.rowWidth !== rowWidth) {
+    // The unclamped width keeps the shift reversible: reopening the sidebar
+    // after a clamp restores the same split.
+    setWidthState({
+      storageKey,
+      width:
+        rowWidth !== undefined && widthState.rowWidth !== undefined
+          ? widthState.width + rowWidth - widthState.rowWidth
+          : widthState.width,
+      rowWidth,
+    });
   }
 
   const clampedWidth = clamp(widthState.width);
@@ -86,7 +108,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       edge,
       resize(value) {
         const nextWidth = latestOptions.current.clamp(value);
-        setWidthState({ storageKey, width: nextWidth });
+        setWidthState((current) => ({ ...current, storageKey, width: nextWidth }));
         return nextWidth;
       },
       finish(finalWidth) {

@@ -1,5 +1,7 @@
 import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 
+import { flushSync } from "react-dom";
+
 import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
 
@@ -52,13 +54,20 @@ export function PreviewPanelShell(props: {
   const maximized = props.maximized ?? false;
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
-  // container measurement (and its re-renders) everywhere else.
-  const maxWidth = useClampedMaxWidth(hostRef, isInline && !maximized);
+  // row measurement (and its re-renders) everywhere else.
+  const rowWidth = useRowWidth(hostRef, isInline && !maximized);
   const { width, handlers } = useResizableWidth({
     storageKey: props.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: props.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
-    maxWidth,
+    // Unmeasured only before the first layout effect or in modes that never
+    // apply the width; the viewport is an upper bound on the row.
+    maxWidth: getPreviewPanelMaxWidth(
+      rowWidth ?? (typeof window === "undefined" ? 1280 : window.innerWidth),
+    ),
+    // A closed panel leaves the whole row to its sibling, so only an open one
+    // keeps the sibling's width steady.
+    rowWidth: open ? rowWidth : undefined,
     edge: "left",
   });
   // Derive suppression before the layout commits so the browser never creates
@@ -138,15 +147,17 @@ export function PreviewPanelShell(props: {
 }
 
 /**
- * Track the flex-row width to derive an upper bound for the panel.
- * Resize-aware so dragging the OS window narrower (or expanding the app
- * sidebar) re-clamps the stored width on the next render (the hook's clamp
- * picks this up automatically). The row is observed rather than the panel
- * itself because the panel competes with its sibling column for row space.
- * Row measurement only runs when `enabled`; modes without a resize handle
- * never apply the resulting width, so they skip the observer entirely.
+ * Track the flex-row width the panel shares with its sibling column. It
+ * bounds the panel and lets an open panel absorb row changes (window resize,
+ * app sidebar toggle) so the sibling keeps its width. The row is observed
+ * rather than the panel itself because the panel competes with its sibling
+ * for row space. Measurement only runs when `enabled`; modes without a resize
+ * handle never apply the resulting width, so they skip the observer entirely.
  */
-function useClampedMaxWidth(hostRef: RefObject<HTMLDivElement | null>, enabled: boolean): number {
+function useRowWidth(
+  hostRef: RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+): number | undefined {
   const [rowWidth, setRowWidth] = useState<number | undefined>(undefined);
   useLayoutEffect(() => {
     if (!enabled) return;
@@ -160,16 +171,20 @@ function useClampedMaxWidth(hostRef: RefObject<HTMLDivElement | null>, enabled: 
       setRowWidth(parent.clientWidth);
     };
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(parent);
+    // Flush in the observer's pre-paint slot: the app sidebar animates its
+    // width, and a panel that caught up a frame late would wobble the chat.
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            flushSync(measure);
+          });
+    observer?.observe(parent);
     return () => {
-      observer.disconnect();
+      observer?.disconnect();
+      // Tracking restarts from a fresh baseline, not a width from before.
+      setRowWidth(undefined);
     };
   }, [hostRef, enabled]);
-  // Unmeasured only before the first layout effect or in modes that never
-  // apply the width; the viewport is an upper bound on the row.
-  return getPreviewPanelMaxWidth(
-    rowWidth ?? (typeof window === "undefined" ? 1280 : window.innerWidth),
-  );
+  return rowWidth;
 }
