@@ -149,7 +149,38 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
   });
 });
 
-function readDatabaseValue(database: IDBDatabase, storeName: string, key: IDBValidKey) {
+type DatabaseHandle = Effect.Effect<IDBDatabase, ConnectionTransientError>;
+
+/** Share a connection until the browser closes it; the next access reopens it. */
+const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")(function* () {
+  const lock = yield* Semaphore.make(1);
+  let current: IDBDatabase | null = null;
+  const get: DatabaseHandle = Effect.suspend(() =>
+    current !== null
+      ? Effect.succeed(current)
+      : lock.withPermits(1)(
+          Effect.gen(function* () {
+            if (current !== null) return current;
+            const opened = yield* openDatabase();
+            current = opened;
+            opened.addEventListener("close", () => {
+              if (current === opened) current = null;
+            });
+            return opened;
+          }),
+        ),
+  );
+  yield* get;
+  const close = lock.withPermits(1)(
+    Effect.sync(() => {
+      current?.close();
+      current = null;
+    }),
+  );
+  return { get, close };
+});
+
+function readDatabaseValueOnConnection(database: IDBDatabase, storeName: string, key: IDBValidKey) {
   return Effect.callback<unknown, ConnectionTransientError>((resume) => {
     try {
       const request = database.transaction(storeName, "readonly").objectStore(storeName).get(key);
@@ -165,7 +196,7 @@ function readDatabaseValue(database: IDBDatabase, storeName: string, key: IDBVal
   }).pipe(Effect.withSpan("web.connectionStorage.readDatabaseValue"));
 }
 
-function writeDatabaseValue(
+function writeDatabaseValueOnConnection(
   database: IDBDatabase,
   storeName: string,
   key: IDBValidKey,
@@ -191,7 +222,11 @@ function writeDatabaseValue(
   }).pipe(Effect.withSpan("web.connectionStorage.writeDatabaseValue"));
 }
 
-function removeDatabaseValue(database: IDBDatabase, storeName: string, key: IDBValidKey) {
+function removeDatabaseValueOnConnection(
+  database: IDBDatabase,
+  storeName: string,
+  key: IDBValidKey,
+) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
       const transaction = database.transaction(storeName, "readwrite");
@@ -212,7 +247,11 @@ function removeDatabaseValue(database: IDBDatabase, storeName: string, key: IDBV
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValue"));
 }
 
-function removeDatabaseValuesInRange(database: IDBDatabase, storeName: string, range: IDBKeyRange) {
+function removeDatabaseValuesInRangeOnConnection(
+  database: IDBDatabase,
+  storeName: string,
+  range: IDBKeyRange,
+) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
     try {
       const transaction = database.transaction(storeName, "readwrite");
@@ -250,6 +289,39 @@ function removeDatabaseValuesInRange(database: IDBDatabase, storeName: string, r
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValuesInRange"));
 }
 
+function readDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
+  return Effect.flatMap(database, (opened) =>
+    readDatabaseValueOnConnection(opened, storeName, key),
+  );
+}
+
+function writeDatabaseValue(
+  database: DatabaseHandle,
+  storeName: string,
+  key: IDBValidKey,
+  value: unknown,
+) {
+  return Effect.flatMap(database, (opened) =>
+    writeDatabaseValueOnConnection(opened, storeName, key, value),
+  );
+}
+
+function removeDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
+  return Effect.flatMap(database, (opened) =>
+    removeDatabaseValueOnConnection(opened, storeName, key),
+  );
+}
+
+function removeDatabaseValuesInRange(
+  database: DatabaseHandle,
+  storeName: string,
+  range: IDBKeyRange,
+) {
+  return Effect.flatMap(database, (opened) =>
+    removeDatabaseValuesInRangeOnConnection(opened, storeName, range),
+  );
+}
+
 function threadCacheKey(environmentId: EnvironmentId, threadId: ThreadId) {
   return `${environmentId}:${threadId}`;
 }
@@ -278,7 +350,7 @@ export interface CatalogBackend {
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
 }
 
-export function makeCatalogBackend(database: IDBDatabase): CatalogBackend {
+export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
   const bridge = window.desktopBridge;
   if (bridge?.getConnectionCatalog !== undefined && bridge.setConnectionCatalog !== undefined) {
     return {
@@ -487,9 +559,11 @@ export function makeBrowserGitHubRoutingPermissions(
 
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
-    const database = yield* Effect.acquireRelease(openDatabase(), (database) =>
-      Effect.sync(() => database.close()),
+    const databaseHandle = yield* Effect.acquireRelease(
+      makeDatabaseHandle(),
+      (handle) => handle.close,
     );
+    const database = databaseHandle.get;
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
