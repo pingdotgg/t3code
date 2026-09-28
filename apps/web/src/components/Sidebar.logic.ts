@@ -832,6 +832,25 @@ export function matchesSidebarThreadFilters(
   );
 }
 
+/**
+ * Accessible name for the filter trigger. It sits beside the project scope
+ * trigger, whose name is "Filter threads by project", so this one has to name
+ * what it filters too. The active-state dot is decorative, so the name is the
+ * only place a screen reader learns a filter is on.
+ */
+export function sidebarThreadFilterButtonLabel(input: {
+  readonly hideBotThreads: boolean;
+  readonly accountLabel: string | null;
+}): string {
+  const active = [
+    ...(input.hideBotThreads ? ["bot threads hidden"] : []),
+    ...(input.accountLabel === null ? [] : [input.accountLabel]),
+  ];
+  return active.length === 0
+    ? "Filter threads by bot and account"
+    : `Filter threads by bot and account: ${active.join(", ")}`;
+}
+
 export function shouldRecedeSidebarThread(input: {
   status: SidebarThreadStatus;
   isUnread: boolean;

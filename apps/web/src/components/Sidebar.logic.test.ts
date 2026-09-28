@@ -23,6 +23,7 @@ import {
   isBotThreadTitle,
   matchesSidebarThreadFilters,
   sidebarThreadAccountKey,
+  sidebarThreadFilterButtonLabel,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -110,6 +111,21 @@ describe("sidebar conversation filters", () => {
     expect(matchesSidebarThreadFilters(thread, filters)).toBe(false);
     expect(matchesSidebarThreadFilters({ ...thread, title: "Review" }, filters)).toBe(true);
     expect(matchesSidebarThreadFilters(thread, { ...filters, isOpen: true })).toBe(true);
+  });
+
+  it("names what the trigger filters and which filters are on", () => {
+    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: false, accountLabel: null })).toBe(
+      "Filter threads by bot and account",
+    );
+    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: true, accountLabel: null })).toBe(
+      "Filter threads by bot and account: bot threads hidden",
+    );
+    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: false, accountLabel: "AU" })).toBe(
+      "Filter threads by bot and account: AU",
+    );
+    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: true, accountLabel: "AU" })).toBe(
+      "Filter threads by bot and account: bot threads hidden, AU",
+    );
   });
 });
 

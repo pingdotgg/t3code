@@ -20,6 +20,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { sidebarThreadFilterButtonLabel } from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -99,6 +100,14 @@ export function SidebarThreadHeader({
     ? `New thread (${newThreadShortcutLabel})`
     : "New thread";
   const filtersActive = hideBotThreads || selectedAccountKey !== null;
+  const filterButtonLabel = sidebarThreadFilterButtonLabel({
+    hideBotThreads,
+    accountLabel:
+      selectedAccountKey === null
+        ? null
+        : (accountOptions.find((option) => option.key === selectedAccountKey)?.label ??
+          "unavailable account"),
+  });
 
   return (
     <div className="flex items-center gap-1">
@@ -148,7 +157,7 @@ export function SidebarThreadHeader({
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
         <Menu>
-          <MenuTrigger render={<SidebarHeaderIconButton label="Filter threads" />}>
+          <MenuTrigger render={<SidebarHeaderIconButton label={filterButtonLabel} />}>
             <ListFilterIcon className={cn("size-4", filtersActive && "text-sidebar-foreground")} />
             {filtersActive ? (
               <span
@@ -157,7 +166,14 @@ export function SidebarThreadHeader({
               />
             ) : null}
           </MenuTrigger>
-          <MenuPopup align="end" side="bottom">
+          <MenuPopup
+            align="end"
+            side="bottom"
+            // Account names are user-chosen and can be long. Without a cap the
+            // menu grows past the sidebar and over the conversation; the cap is
+            // what makes the labels below truncate.
+            className="max-w-[min(18rem,var(--available-width))] overflow-hidden"
+          >
             <MenuCheckboxItem
               checked={hideBotThreads}
               closeOnClick={false}

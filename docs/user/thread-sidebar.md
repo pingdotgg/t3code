@@ -125,6 +125,20 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Filter the thread list
+
+On web and desktop, the filter button beside the sidebar search narrows the list
+two ways, and you can use both at once. **Hide dispatched bot threads** drops the
+threads an agent started on your behalf. **LLM account** keeps only the threads
+that run on one account; the same account on two machines is listed separately,
+with the machine named beside it. Search and the section counts follow the filters.
+
+The thread you have open stays visible even when a filter would hide it, so you
+never lose your place. Your choices are remembered on this device until you
+change them. Choose **Clear bot and account filters** to see everything again. If
+the selected account is no longer available, it appears as **Unavailable
+account** until you clear it.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
