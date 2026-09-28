@@ -1,7 +1,15 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Editor } from "@pierre/diffs/editor";
 import { EditorProvider, File, Virtualizer } from "@pierre/diffs/react";
-import { BookOpen, ChevronRight, Code2, Eye, FolderTree, LoaderCircle } from "lucide-react";
+import {
+  BookOpen,
+  ChevronRight,
+  Code2,
+  Eye,
+  FolderTree,
+  LoaderCircle,
+  TextWrapIcon,
+} from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
@@ -36,6 +44,7 @@ interface FilePreviewPanelProps {
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
+const FILE_WORD_WRAP_STORAGE_KEY = "t3code.filePreviewWordWrap";
 const NOOP_PENDING_CHANGE = () => {};
 
 function stripQueryAndFragment(path: string): string {
@@ -62,6 +71,7 @@ interface EditableFileSurfaceProps {
   resolvedTheme: "light" | "dark";
   onPendingChange: (relativePath: string, pending: boolean) => void;
   revealLine?: number | null;
+  wordWrap: boolean;
 }
 
 function EditableFileSurface({
@@ -72,6 +82,7 @@ function EditableFileSurface({
   resolvedTheme,
   onPendingChange,
   revealLine = null,
+  wordWrap,
 }: EditableFileSurfaceProps) {
   const saveSession = useMemo(
     () => getProjectFileSaveSession(environmentId, cwd, relativePath),
@@ -168,7 +179,7 @@ function EditableFileSurface({
             }}
             options={{
               disableFileHeader: true,
-              overflow: "scroll",
+              overflow: wordWrap ? "wrap" : "scroll",
               theme: resolveDiffThemeName(resolvedTheme),
               themeType: resolvedTheme,
             }}
@@ -316,6 +327,14 @@ function initialExplorerOpen(): boolean {
   }
 }
 
+function initialWordWrap(): boolean {
+  try {
+    return window.localStorage.getItem(FILE_WORD_WRAP_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export function FilePreviewPanel({
   threadRef,
   cwd,
@@ -333,6 +352,7 @@ export function FilePreviewPanel({
   const environmentApi = ensureEnvironmentApi(environmentId);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [renderMarkdown, setRenderMarkdown] = useState(true);
+  const [wordWrap, setWordWrap] = useState(initialWordWrap);
   const [treeReveal, setTreeReveal] = useState<{ path: string; nonce: number } | null>(null);
   const revealNonceRef = useRef(0);
   const breadcrumbRef = useRef<HTMLDivElement>(null);
@@ -359,6 +379,13 @@ export function FilePreviewPanel({
     setExplorerOpenPersisted(!explorerOpen);
   };
 
+  const setWordWrapPersisted = (wrap: boolean) => {
+    setWordWrap(wrap);
+    try {
+      window.localStorage.setItem(FILE_WORD_WRAP_STORAGE_KEY, String(wrap));
+    } catch {}
+  };
+
   const revealInTree = (path: string) => {
     if (!path) {
       setExplorerOpenPersisted(true);
@@ -378,6 +405,12 @@ export function FilePreviewPanel({
   const showPdf = !!relativePath && !showImage && isPdfPreviewFile(relativePath);
   const showMarkdownToggle =
     !!relativePath && !showImage && !showPdf && isMarkdownPreviewFile(relativePath);
+  const showWordWrapToggle =
+    !!relativePath &&
+    !showImage &&
+    !showPdf &&
+    !(showMarkdownToggle && renderMarkdown) &&
+    file.data?.binary !== true;
   const openInBrowser =
     relativePath &&
     isPreviewSupportedInRuntime() &&
@@ -484,6 +517,27 @@ export function FilePreviewPanel({
               </button>
             </div>
           ) : null}
+          {showWordWrapToggle ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Toggle
+                    className="shrink-0"
+                    pressed={wordWrap}
+                    onPressedChange={setWordWrapPersisted}
+                    aria-label={wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+                    variant="default"
+                    size="sm"
+                  >
+                    <TextWrapIcon className="size-3.5" />
+                  </Toggle>
+                }
+              />
+              <TooltipPopup>
+                {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -588,7 +642,7 @@ export function FilePreviewPanel({
                   }}
                   options={{
                     disableFileHeader: true,
-                    overflow: "scroll",
+                    overflow: wordWrap ? "wrap" : "scroll",
                     theme: resolveDiffThemeName(resolvedTheme),
                     themeType: resolvedTheme,
                   }}
@@ -605,6 +659,7 @@ export function FilePreviewPanel({
                 resolvedTheme={resolvedTheme}
                 onPendingChange={onPendingChange}
                 revealLine={revealLine}
+                wordWrap={wordWrap}
               />
             )
           ) : null}
