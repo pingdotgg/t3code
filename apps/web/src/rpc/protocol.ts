@@ -17,6 +17,7 @@ import {
   WS_RECONNECT_MAX_RETRIES,
 } from "./wsConnectionState";
 import { recordWsDiagnostic, sanitizeWsSocketUrl } from "./wsDiagnostics";
+import { recordWsStreamActivity } from "./wsActivity";
 
 export interface WsProtocolLifecycleHandlers {
   readonly isActive?: () => boolean;
@@ -104,6 +105,7 @@ function composeLifecycleHandlers(
         return;
       }
       defaults.onOpen();
+      recordWsStreamActivity();
       handlers?.onOpen?.();
     },
     onError: (message) => {
@@ -125,6 +127,7 @@ function composeLifecycleHandlers(
         return;
       }
       recordWsDiagnostic("protocol-connected");
+      recordWsStreamActivity();
       handlers?.onProtocolConnected?.();
     },
   };

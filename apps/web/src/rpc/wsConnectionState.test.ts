@@ -72,4 +72,21 @@ describe("wsConnectionState", () => {
       reconnectPhase: "exhausted",
     });
   });
+
+  it("clears the previous connection error when a new connection opens", () => {
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+    recordWsConnectionErrored("boom");
+    recordWsConnectionClosed({ code: 1006, reason: "gone" });
+    expect(getWsConnectionStatus().lastError).toBe("boom");
+
+    recordWsConnectionOpened();
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      lastError: null,
+      lastErrorAt: null,
+      phase: "connected",
+    });
+  });
 });

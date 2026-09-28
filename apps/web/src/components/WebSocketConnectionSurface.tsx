@@ -1,6 +1,12 @@
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import {
+  getSlowRpcAckRequests,
+  type SlowRpcAckRequest,
+  useSlowRpcAckRequests,
+} from "../rpc/requestLatencyState";
+import { getLastWsStreamActivityMs, recordWsStreamActivity } from "../rpc/wsActivity";
+import { recordWsDiagnostic } from "../rpc/wsDiagnostics";
 import {
   getWsConnectionStatus,
   getWsConnectionUiState,
@@ -12,9 +18,19 @@ import {
 } from "../rpc/wsConnectionState";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { reportClientWarning } from "../lib/clientLogger";
-import { getPrimaryEnvironmentConnection } from "../environments/runtime";
+import {
+  getPrimaryEnvironmentConnection,
+  hasActiveThreadDetailWork,
+  repairActiveThreadDetailSubscriptionsAfterStall,
+} from "../environments/runtime";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
+/** Silence while work is pending before the watchdog suspects a dead socket. */
+export const WS_STALL_SILENCE_MS = 45_000;
+/** Suppress toast flicker for blips that recover within this window. */
+const RECONNECT_TOAST_DEBOUNCE_MS = 1_000;
+/** Bound for the pre-reconnect responsiveness probe (see stall watchdog). */
+const STALL_PROBE_TIMEOUT_MS = 10_000;
 type WsAutoReconnectTrigger = "focus" | "online";
 
 const connectionTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -50,8 +66,25 @@ function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
   return `Attempt ${reconnectAttempt}/${status.reconnectMaxAttempts}`;
 }
 
-function describeExhaustedToast(): string {
-  return "Retries exhausted trying to reconnect";
+function describeExhaustedToast(status: WsConnectionStatus): string {
+  const detail = describeReconnectDetail(status);
+  return detail
+    ? `Retries exhausted trying to reconnect. Last error: ${detail}`
+    : "Retries exhausted trying to reconnect";
+}
+
+function truncateReconnectDetail(detail: string, maxLength = 160): string {
+  const trimmed = detail.trim().replace(/\s+/g, " ");
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
+}
+
+function describeReconnectDetail(status: WsConnectionStatus): string | null {
+  const raw = status.lastError?.trim() || status.closeReason?.trim() || null;
+  if (!raw) {
+    return status.closeCode === null ? null : `close code ${status.closeCode}`;
+  }
+  const withCode = status.closeCode === null ? raw : `${raw} (close code ${status.closeCode})`;
+  return truncateReconnectDetail(withCode);
 }
 
 function buildReconnectTitle(_status: WsConnectionStatus): string {
@@ -148,10 +181,85 @@ export function shouldRestartStalledReconnect(
   );
 }
 
+export function shouldForceStallReconnect(input: {
+  readonly uiState: WsConnectionUiState;
+  readonly lastActivityMs: number;
+  readonly nowMs: number;
+  readonly hasActiveWork: boolean;
+  readonly silenceMs?: number;
+}): boolean {
+  const silenceMs = input.silenceMs ?? WS_STALL_SILENCE_MS;
+  return (
+    input.uiState === "connected" &&
+    input.hasActiveWork &&
+    Number.isFinite(input.lastActivityMs) &&
+    input.nowMs - input.lastActivityMs >= silenceMs
+  );
+}
+/**
+ * True when the server still answers unary RPC within the timeout. Silence
+ * alone doesn't prove a broken socket, so the watchdog probes before
+ * reconnecting and only reconnects an actually unresponsive connection.
+ */
+async function probePrimaryConnectionResponsive(): Promise<boolean> {
+  let connection: ReturnType<typeof getPrimaryEnvironmentConnection>;
+  try {
+    connection = getPrimaryEnvironmentConnection();
+  } catch {
+    return false;
+  }
+  let timeoutId: number | null = null;
+  try {
+    await Promise.race([
+      connection.refreshShellSnapshot(),
+      new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(
+          () => reject(new Error("stall probe timed out")),
+          STALL_PROBE_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
+export function shouldShowReconnectedToast(input: {
+  readonly uiState: WsConnectionUiState;
+  readonly previousUiState: WsConnectionUiState;
+  readonly previousDisconnectedAt: string | null;
+  readonly connectedAt: string | null;
+  readonly debounceMs?: number;
+}): boolean {
+  if (
+    input.uiState !== "connected" ||
+    (input.previousUiState !== "offline" && input.previousUiState !== "reconnecting") ||
+    input.previousDisconnectedAt === null
+  ) {
+    return false;
+  }
+  // A sub-second blip shows no reconnecting toast, so it shows no Reconnected one either.
+  if (input.connectedAt === null) {
+    return false;
+  }
+  const debounceMs = input.debounceMs ?? RECONNECT_TOAST_DEBOUNCE_MS;
+  const durationMs =
+    new Date(input.connectedAt).getTime() - new Date(input.previousDisconnectedAt).getTime();
+  return Number.isFinite(durationMs) && durationMs >= debounceMs;
+}
+
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const lastForcedReconnectAtRef = useRef(0);
+  const lastStallReconnectAtRef = useRef(0);
+  const stallProbeInFlightRef = useRef(false);
+  const debounceTimerRef = useRef<number | null>(null);
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
   const previousUiStateRef = useRef<WsConnectionUiState>(getWsConnectionUiState(status));
@@ -271,12 +379,94 @@ export function WebSocketConnectionCoordinator() {
   ]);
 
   useEffect(() => {
+    if (getWsConnectionUiState(status) !== "connected") {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      // Re-read inside the tick; the closure holds render-time state. Gate on
+      // active thread work too: turns usually have no slow unary RPC.
+      const hasActiveWork = getSlowRpcAckRequests().length > 0 || hasActiveThreadDetailWork();
+      if (!hasActiveWork) {
+        return;
+      }
+      const currentStatus = getWsConnectionStatus();
+      if (
+        !shouldForceStallReconnect({
+          uiState: getWsConnectionUiState(currentStatus),
+          lastActivityMs: getLastWsStreamActivityMs(),
+          nowMs: Date.now(),
+          hasActiveWork: true,
+        })
+      ) {
+        return;
+      }
+      if (Date.now() - lastStallReconnectAtRef.current < FORCED_WS_RECONNECT_DEBOUNCE_MS) {
+        return;
+      }
+      if (stallProbeInFlightRef.current) {
+        return;
+      }
+      stallProbeInFlightRef.current = true;
+      void probePrimaryConnectionResponsive()
+        .then((responsive) => {
+          if (responsive) {
+            // Unary success doesn't prove streams are live (zombie fibers stay
+            // pending), so repair active streams and reset the silence clock.
+            repairActiveThreadDetailSubscriptionsAfterStall();
+            recordWsStreamActivity();
+            return;
+          }
+          lastStallReconnectAtRef.current = Date.now();
+          recordWsDiagnostic("stream-stalled", {
+            idleMs: Date.now() - getLastWsStreamActivityMs(),
+            slowRequests: getSlowRpcAckRequests().length,
+          });
+          runReconnect(false);
+        })
+        .finally(() => {
+          stallProbeInFlightRef.current = false;
+        });
+    }, 5_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [status]);
+
+  useEffect(() => {
     const uiState = getWsConnectionUiState(status);
     const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
-    const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
-    const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
-    const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
+    const disconnectedAtMs = status.disconnectedAt
+      ? new Date(status.disconnectedAt).getTime()
+      : null;
+    // Debounce blips: quick reconnects recover without any toast at all.
+    const isDebounced =
+      disconnectedAtMs === null || Date.now() - disconnectedAtMs >= RECONNECT_TOAST_DEBOUNCE_MS;
+    const wouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
+    const wouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
+    const wouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
+    const shouldShowReconnectToast = isDebounced && wouldShowReconnectToast;
+    const shouldShowOfflineToast = isDebounced && wouldShowOfflineToast;
+    const shouldShowExhaustedToast = isDebounced && wouldShowExhaustedToast;
+
+    // The retry countdown doesn't tick while offline, so schedule a timer or
+    // a sustained offline state would stay unannounced past the debounce window.
+    if (wouldShowReconnectToast || wouldShowOfflineToast || wouldShowExhaustedToast) {
+      if (!isDebounced && disconnectedAtMs !== null && debounceTimerRef.current === null) {
+        const remainingMs = Math.max(
+          0,
+          RECONNECT_TOAST_DEBOUNCE_MS - (Date.now() - disconnectedAtMs),
+        );
+        debounceTimerRef.current = window.setTimeout(() => {
+          debounceTimerRef.current = null;
+          setNowMs(Date.now());
+        }, remainingMs);
+      }
+    } else if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
 
     if (
       toastResetTimerRef.current !== null &&
@@ -306,7 +496,7 @@ export function WebSocketConnectionCoordinator() {
               data: {
                 hideCopyButton: true,
               },
-              description: describeExhaustedToast(),
+              description: describeExhaustedToast(status),
               timeout: 0,
               title: "Disconnected from T3 Server",
               type: "error",
@@ -319,10 +509,14 @@ export function WebSocketConnectionCoordinator() {
               data: {
                 hideCopyButton: true,
               },
-              description:
-                status.nextRetryAt === null
-                  ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
-                  : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
+              description: (() => {
+                const base =
+                  status.nextRetryAt === null
+                    ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
+                    : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`;
+                const detail = describeReconnectDetail(status);
+                return detail ? `${base} — ${detail}` : base;
+              })(),
               timeout: 0,
               title: buildReconnectTitle(status),
               type: "loading",
@@ -339,9 +533,12 @@ export function WebSocketConnectionCoordinator() {
     }
 
     if (
-      uiState === "connected" &&
-      (previousUiState === "offline" || previousUiState === "reconnecting") &&
-      previousDisconnectedAt !== null
+      shouldShowReconnectedToast({
+        uiState,
+        previousUiState,
+        previousDisconnectedAt,
+        connectedAt: status.connectedAt,
+      })
     ) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
@@ -374,6 +571,9 @@ export function WebSocketConnectionCoordinator() {
     return () => {
       if (toastResetTimerRef.current !== null) {
         window.clearTimeout(toastResetTimerRef.current);
+      }
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
       }
     };
   }, []);

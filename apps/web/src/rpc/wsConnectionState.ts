@@ -105,6 +105,10 @@ export function recordWsConnectionOpened(): WsConnectionStatus {
     connectedAt: isoNow(),
     disconnectedAt: null,
     hasConnected: true,
+    // A new connection owns its errors; the previous one's must not leak into
+    // the next disconnect's toast.
+    lastError: null,
+    lastErrorAt: null,
     nextRetryAt: null,
     phase: "connected",
     reconnectAttemptCount: 0,

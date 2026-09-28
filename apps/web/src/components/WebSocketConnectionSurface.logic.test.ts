@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { WsConnectionStatus } from "../rpc/wsConnectionState";
-import { shouldAutoReconnect, shouldRestartStalledReconnect } from "./WebSocketConnectionSurface";
+import {
+  shouldAutoReconnect,
+  shouldForceStallReconnect,
+  shouldRestartStalledReconnect,
+  shouldShowReconnectedToast,
+  WS_STALL_SILENCE_MS,
+} from "./WebSocketConnectionSurface";
 
 function makeStatus(overrides: Partial<WsConnectionStatus> = {}): WsConnectionStatus {
   return {
@@ -108,6 +114,83 @@ describe("WebSocketConnectionSurface.logic", () => {
         }),
         "2026-04-03T20:00:01.000Z",
       ),
+    ).toBe(false);
+  });
+
+  it("forces a stall reconnect only when connected with active work and silence", () => {
+    const nowMs = 1_000_000;
+    expect(
+      shouldForceStallReconnect({
+        uiState: "connected",
+        lastActivityMs: nowMs - WS_STALL_SILENCE_MS - 1,
+        nowMs,
+        hasActiveWork: true,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldForceStallReconnect({
+        uiState: "connected",
+        lastActivityMs: nowMs - 1_000,
+        nowMs,
+        hasActiveWork: true,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldForceStallReconnect({
+        uiState: "connected",
+        lastActivityMs: nowMs - WS_STALL_SILENCE_MS - 1,
+        nowMs,
+        hasActiveWork: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldForceStallReconnect({
+        uiState: "reconnecting",
+        lastActivityMs: nowMs - WS_STALL_SILENCE_MS - 1,
+        nowMs,
+        hasActiveWork: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("suppresses the reconnected toast for sub-second blips", () => {
+    expect(
+      shouldShowReconnectedToast({
+        uiState: "connected",
+        previousUiState: "reconnecting",
+        previousDisconnectedAt: "2026-04-03T20:00:00.000Z",
+        connectedAt: "2026-04-03T20:00:00.500Z",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldShowReconnectedToast({
+        uiState: "connected",
+        previousUiState: "reconnecting",
+        previousDisconnectedAt: "2026-04-03T20:00:00.000Z",
+        connectedAt: "2026-04-03T20:00:02.000Z",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldShowReconnectedToast({
+        uiState: "connected",
+        previousUiState: "connected",
+        previousDisconnectedAt: "2026-04-03T20:00:00.000Z",
+        connectedAt: "2026-04-03T20:00:02.000Z",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldShowReconnectedToast({
+        uiState: "connected",
+        previousUiState: "offline",
+        previousDisconnectedAt: "2026-04-03T20:00:00.000Z",
+        connectedAt: null,
+      }),
     ).toBe(false);
   });
 });

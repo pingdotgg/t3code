@@ -72,6 +72,8 @@ import {
 } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
+import { recordWsDiagnostic } from "../../rpc/wsDiagnostics";
+import { recordWsStreamActivity } from "../../rpc/wsActivity";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -563,6 +565,86 @@ export function retainThreadDetailSubscription(
   };
 }
 
+/** Whether any retained thread-detail subscription currently has active work. */
+export function hasActiveThreadDetailWork(): boolean {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.refCount > 0 && isNonIdleThreadDetailSubscription(entry)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Reconnect repair keyed on locally-held state, not server status. Re-attach
+ * every retained detail subscription whose transport stream is dead; the
+ * snapshot handler then reloads the timeline even when the server no longer
+ * reports the turn active.
+ */
+export function repairRetainedThreadDetailSubscriptionsAfterReconnect(
+  environmentId?: EnvironmentId,
+): { readonly retained: number; readonly reattached: number } {
+  let retained = 0;
+  let reattached = 0;
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.refCount <= 0) {
+      continue;
+    }
+    if (environmentId !== undefined && entry.environmentId !== environmentId) {
+      continue;
+    }
+    retained += 1;
+    entry.lastAccessedAt = Date.now();
+    if (entry.unsubscribe === NOOP) {
+      if (attachThreadDetailSubscription(entry)) {
+        reattached += 1;
+      } else {
+        watchThreadDetailSubscriptionReadiness(entry);
+      }
+    }
+  }
+  if (retained > 0) {
+    recordWsStreamActivity();
+    recordWsDiagnostic("reconnect-repair", { retained, reattached });
+  }
+  return { retained, reattached };
+}
+
+/**
+ * Stall repair for zombie streams: re-subscribe every retained non-idle
+ * detail subscription so the fresh snapshot resyncs the frozen timeline.
+ * Idle subscriptions are left alone.
+ */
+export function repairActiveThreadDetailSubscriptionsAfterStall(environmentId?: EnvironmentId): {
+  readonly retained: number;
+  readonly resubscribed: number;
+} {
+  let retained = 0;
+  let resubscribed = 0;
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.refCount <= 0 || !isNonIdleThreadDetailSubscription(entry)) {
+      continue;
+    }
+    if (environmentId !== undefined && entry.environmentId !== environmentId) {
+      continue;
+    }
+    retained += 1;
+    entry.lastAccessedAt = Date.now();
+    entry.unsubscribe();
+    entry.unsubscribe = NOOP;
+    if (attachThreadDetailSubscription(entry)) {
+      resubscribed += 1;
+    } else {
+      watchThreadDetailSubscriptionReadiness(entry);
+    }
+  }
+  if (retained > 0) {
+    recordWsStreamActivity();
+    recordWsDiagnostic("stall-repair", { retained, resubscribed });
+  }
+  return { retained, resubscribed };
+}
+
 function emitEnvironmentConnectionRegistryChange() {
   for (const listener of environmentConnectionListeners) {
     listener();
@@ -955,7 +1037,13 @@ function createPrimaryEnvironmentClient(
     );
   }
 
-  return createWsRpcClient(new WsTransport(wsBaseUrl));
+  return createWsRpcClient(
+    new WsTransport(wsBaseUrl, {
+      onProtocolConnected: () => {
+        repairRetainedThreadDetailSubscriptionsAfterReconnect();
+      },
+    }),
+  );
 }
 
 function createSavedEnvironmentClient(
@@ -988,6 +1076,9 @@ function createSavedEnvironmentClient(
         },
         onClose: (details: { readonly code: number; readonly reason: string }) => {
           setRuntimeDisconnected(record.environmentId, details.reason);
+        },
+        onProtocolConnected: () => {
+          repairRetainedThreadDetailSubscriptionsAfterReconnect(record.environmentId);
         },
       },
     ),
