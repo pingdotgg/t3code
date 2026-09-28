@@ -1335,6 +1335,16 @@ describe("AcpAdapterV2", () => {
             item.changes[0]?.oldPath === "/workspace/old.ts",
         ),
       );
+      const read = items.find((item) => item.type === "dynamic_tool" && item.toolName === "Read");
+      assert.deepEqual(
+        read?.type === "dynamic_tool" ? { title: read.title, input: read.input } : null,
+        { title: "Read src/env.ts", input: { path: "src/env.ts" } },
+      );
+      const search = items.find((item) => item.type === "file_search");
+      assert.deepEqual(
+        search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
+        { title: "Searched TODO in web", pattern: "apps/web" },
+      );
       const completedCompaction = items.find(
         (item) =>
           item.type === "compaction" &&

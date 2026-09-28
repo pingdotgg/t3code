@@ -1,6 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
@@ -3367,6 +3368,20 @@ export function makeClaudeAdapterV2(
             startedAt: input.startedAt,
             completedAt,
           };
+          const readPath = ["read", "read file"].includes(input.classification.normalizedName)
+            ? firstStringInputField(input.toolInput, ["file_path", "path"])?.trim()
+            : undefined;
+          const nativeToolInput = claudeNativeToolInputValue(input.toolInput);
+          const searchTitle = ["grep", "glob", "ls"].includes(input.classification.normalizedName)
+            ? formatSearchToolLabel({
+                input:
+                  nativeToolInput !== null &&
+                  typeof nativeToolInput === "object" &&
+                  !Array.isArray(nativeToolInput)
+                    ? (nativeToolInput as Record<string, unknown>)
+                    : undefined,
+              })
+            : undefined;
           const itemBase = {
             id: turnItemId,
             threadId: input.threadId,
@@ -3378,7 +3393,7 @@ export function makeClaudeAdapterV2(
             parentItemId: null,
             ordinal: input.ordinal,
             status: input.status,
-            title: null,
+            title: readPath !== undefined ? formatReadToolLabel(readPath) : (searchTitle ?? null),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,
@@ -3399,9 +3414,6 @@ export function makeClaudeAdapterV2(
             | "completedAt"
             | "updatedAt"
           >;
-          const readPath = ["read", "read file"].includes(input.classification.normalizedName)
-            ? firstStringInputField(input.toolInput, ["file_path", "path"])?.trim()
-            : undefined;
           const viewedImagePath =
             readPath &&
             readPath.length <= 4096 &&
@@ -4690,6 +4702,10 @@ export function makeClaudeAdapterV2(
               });
             });
           }
+          // Rate-limit frames park with the wake output so the drain can
+          // replay them to the turn that was still starting when they
+          // arrived; the offer gate below keeps them from requesting a
+          // continuation on their own.
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
@@ -4697,7 +4713,8 @@ export function makeClaudeAdapterV2(
             isNewSubagentTaskStarted ||
             message.type === "assistant" ||
             message.type === "user" ||
-            message.type === "result";
+            message.type === "result" ||
+            message.type === "rate_limit_event";
           if (!isWakeEvidence) {
             return;
           }
@@ -4892,6 +4909,18 @@ export function makeClaudeAdapterV2(
               });
             }
             const context = yield* Ref.get(activeTurn);
+            if (context === null) {
+              // A rejected window can open the CLI's notification wake,
+              // before the continuation turn exists to record it on. Park
+              // the frame with the wake output so the drain replays it to
+              // the turn; dropping it here loses the reset time the
+              // provider just reported.
+              yield* bufferWakeMessage({
+                nativeThreadId: liveQuery.nativeThreadId,
+                message,
+              });
+              return;
+            }
             const overageAllowed =
               rateLimitInfo.overageStatus === "allowed" ||
               rateLimitInfo.overageStatus === "allowed_warning" ||
@@ -4899,28 +4928,26 @@ export function makeClaudeAdapterV2(
               rateLimitInfo.overageInUse === true;
             const blocked = rateLimitInfo.status === "rejected" && !overageAllowed;
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
-            if (context !== null) {
-              if (blocked) {
-                context.rejectedRateLimitTypes.add(limitType);
-                const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
-                context.rateLimitResetTimes.set(
-                  limitType,
-                  Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
-                    ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                    : null,
-                );
-              } else if (
-                rateLimitInfo.status === "allowed" ||
-                rateLimitInfo.status === "allowed_warning" ||
-                overageAllowed
-              ) {
-                context.rejectedRateLimitTypes.delete(limitType);
-                context.rateLimitResetTimes.delete(limitType);
-              }
+            if (blocked) {
+              context.rejectedRateLimitTypes.add(limitType);
+              const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
+              context.rateLimitResetTimes.set(
+                limitType,
+                Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
+                  ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
+                  : null,
+              );
+            } else if (
+              rateLimitInfo.status === "allowed" ||
+              rateLimitInfo.status === "allowed_warning" ||
+              overageAllowed
+            ) {
+              context.rejectedRateLimitTypes.delete(limitType);
+              context.rateLimitResetTimes.delete(limitType);
             }
             // Rejected windows pause the SDK without ending its turn. Overage
             // and warnings keep running; repeats of a window need only one notice.
-            if (context !== null && blocked) {
+            if (blocked) {
               const limitKey = `${limitType}:${rateLimitInfo.resetsAt ?? "unknown"}`;
               if (!context.announcedUsageLimits.has(limitKey)) {
                 context.announcedUsageLimits.add(limitKey);

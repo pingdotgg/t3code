@@ -20,6 +20,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -57,6 +58,79 @@ it("keeps historical plan detail accessible from its paged turn item", () => {
   )[0];
   expect(activity?.detail).toBe("Full historical plan text");
   expect(activity?.getFullDetail()).toContain("Full historical plan text");
+});
+
+it("shows only the structured path in expanded mobile read details", () => {
+  const item: OrchestrationV2TurnItem = {
+    ...base("read-detail", "2026-06-20T00:00:03.000Z", 2),
+    type: "dynamic_tool",
+    toolName: "Read",
+    title: "Read src/env.ts",
+    input: { path: "src/env.ts" },
+    output: "---\nname: env\n---\nsecret content",
+  };
+  const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  )[0];
+
+  expect(activity?.getFullDetail()).toBe("src/env.ts");
+  expect(activity?.canExpand).toBe(true);
+  expect(activity?.getCopyText()).not.toContain("secret content");
+  expect(activity?.getFullDetail()).not.toContain("sourceThreadId");
+
+  const withoutPath = buildThreadFeed([
+    projected({ ...item, id: TurnItemId.make("read-without-path"), input: {} }, 0),
+  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))[0];
+  expect(withoutPath?.getFullDetail()).toBeNull();
+  expect(withoutPath?.canExpand).toBe(false);
+});
+
+it("labels file searches with the adapter title and its search target", () => {
+  const item: OrchestrationV2TurnItem = {
+    ...base("file-search", "2026-06-20T00:00:03.000Z", 2),
+    type: "file_search",
+    title: "Searched TODO in web",
+    pattern: "TODO",
+  };
+  const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  )[0];
+
+  expect(activity?.summary).toBe("Searched TODO in web");
+  expect(activity ? workEntryRowLabel(activity.workEntry) : null).toBe("Searched TODO in web");
+});
+
+it("keeps approval prompts rather than presenting them as tool work", () => {
+  const approval = (
+    id: string,
+    requestKind: "file-read" | "command" | "file-change",
+    ordinal: number,
+  ) =>
+    ({
+      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
+      type: "approval_request",
+      requestId: RuntimeRequestId.make(`request-${id}`),
+      requestKind,
+      prompt: `Allow ${requestKind}?`,
+    }) satisfies OrchestrationV2TurnItem;
+  const feed = buildThreadFeed([
+    projected(approval("approve-read", "file-read", 1), 0),
+    projected(approval("approve-command", "command", 2), 1),
+    projected(approval("approve-edit", "file-change", 3), 2),
+  ]);
+  const activities = feed.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+
+  expect(activities.map((activity) => workEntryRowLabel(activity.workEntry))).toEqual([
+    "Allow file-read?",
+    "Allow command?",
+    "Allow file-change?",
+  ]);
+  expect(activities[0]?.canExpand).toBe(true);
+  expect(
+    summarizeToolGroup(activities.slice(1).map((activity) => activity.workEntry)).summary,
+  ).not.toMatch(/Ran|changed/);
 });
 
 function base(id: string, updatedAt: string, ordinal: number) {
@@ -2047,6 +2121,21 @@ it("uses a compact reasoning preview and a short expanded heading", () => {
   expect(workEntryRowLabel(entry)).toBe("Check **ordering**. Then run the test.");
   expect(workEntryRowLabel(entry, true)).toBe("Thinking");
   expect(workEntryRowLabel({ ...entry, toolLifecycleStatus: "completed" }, true)).toBe("Thought");
+});
+
+it("keeps search output in expanded details rather than the compact label", () => {
+  const entry = {
+    id: "search",
+    label: "Grep",
+    toolTitle: "Grep",
+    createdAt: "2026-09-17T12:00:00Z",
+    itemType: "dynamic_tool" as const,
+    tone: "tool" as const,
+    detail: "---\nfile body",
+    toolData: {},
+  };
+  expect(workEntryRowLabel(entry)).toBe("Grep");
+  expect(workEntryRowLabel(entry, true)).toBe("---\nfile body");
 });
 
 it.each(["First paragraph.\n\nSecond paragraph.", ""])(

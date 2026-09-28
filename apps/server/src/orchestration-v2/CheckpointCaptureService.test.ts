@@ -62,13 +62,11 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         const staleDelegatedCompletion = {
           disposition: "open" as const,
           nextGeneration: 1,
-          settledDeliveryCount: 0,
           delivery: null,
         };
         const newerCohort = {
           disposition: "open" as const,
           nextGeneration: 2,
-          settledDeliveryCount: 1,
           delivery: {
             generation: 1,
             messageId: deliveryMessageId,

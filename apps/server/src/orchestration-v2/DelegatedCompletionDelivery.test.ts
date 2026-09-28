@@ -232,7 +232,6 @@ const seedParentWithTerminalTask = (input: {
             delegatedCompletion: {
               disposition: "open",
               nextGeneration: 2,
-              settledDeliveryCount: 1,
               delivery:
                 input.deliveryTaskIds === undefined
                   ? null
@@ -361,10 +360,6 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       const cohort = accepted.runs.find((row) => row.id === runId)?.delegatedCompletion;
       assert.deepEqual(cohort?.delivery?.taskIds, pendingIds);
       assert.equal(cohort?.delivery?.generation, 2);
-      assert.equal(
-        cohort?.settledDeliveryCount,
-        projection.runs.find((row) => row.id === runId)?.delegatedCompletion?.settledDeliveryCount,
-      );
       for (const id of pendingIds) {
         assert.deepEqual(accepted.subagents.find((row) => row.id === id)?.completionDelivery, {
           state: "claimed",
@@ -473,7 +468,6 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       assert.deepEqual(parentRun?.delegatedCompletion, {
         disposition: "open",
         nextGeneration: 2,
-        settledDeliveryCount: 1,
         delivery: null,
       });
       assert.isFalse(
