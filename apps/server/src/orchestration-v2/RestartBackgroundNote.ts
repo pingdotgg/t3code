@@ -48,17 +48,25 @@ export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | und
   }
 }
 
+function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind"] {
+  switch (task.kind) {
+    case "command":
+      return "shell";
+    case "subagent":
+      return "subagent";
+    case "monitor":
+      return "monitor";
+    case "background_task":
+      return "task";
+    default:
+      task satisfies never;
+      return "task";
+  }
+}
+
 /** Describes a provider-reported background task (the provider-thread roster). */
 export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTask): Work {
-  const type = task.taskType ?? "";
-  const kind =
-    type === "local_bash" || type === "command_execution"
-      ? "shell"
-      : type === "local_agent" || type === "subagent"
-        ? "subagent"
-        : type.includes("monitor")
-          ? "monitor"
-          : "task";
+  const kind = restartWorkKind(task);
   const description = compactLabel(task.description);
   return {
     kind,
