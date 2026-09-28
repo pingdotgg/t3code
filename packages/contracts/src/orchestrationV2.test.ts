@@ -147,10 +147,11 @@ describe("orchestration V2 contracts", () => {
         sequence: 2,
         event: {
           id: "event-2",
-          type: "run.background-work-cancelled",
+          // A type no build of this client knows, standing in for a newer server's event.
+          type: "run.from-a-future-server",
           threadId: "thread-1",
           occurredAt: DateTime.formatIso(now),
-          payload: { runId: "run-1", restartCancelledBackgroundWork: [] },
+          payload: { runId: "run-1" },
         },
       },
       detached("event-3", 3),
@@ -160,7 +161,7 @@ describe("orchestration V2 contracts", () => {
     expect(items[1]).toEqual({
       kind: "unknown-event",
       sequence: 2,
-      eventType: "run.background-work-cancelled",
+      eventType: "run.from-a-future-server",
     });
     // A known type with a broken payload is a real defect, not a newer event.
     expect(() =>

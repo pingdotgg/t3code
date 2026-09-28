@@ -1778,7 +1778,7 @@ describe("EnvironmentThreads", () => {
       const unknown = (sequence: number): OrchestrationV2ThreadStreamItem => ({
         kind: "unknown-event",
         sequence,
-        eventType: "run.background-work-cancelled",
+        eventType: "run.from-a-future-server",
       });
       const occurredAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
       yield* Queue.offerAll(harness.inputs, [
