@@ -126,20 +126,26 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
-          : Effect.all([
-              snapshot.getSnapshot,
-              openCodeRuntime
-                .loadOpenCodeSkillsForCwd({
-                  binaryPath: effectiveConfig.binaryPath,
-                  cwd,
-                  serverUrl: effectiveConfig.serverUrl,
-                  ...(effectiveConfig.serverPassword
-                    ? { serverPassword: effectiveConfig.serverPassword }
-                    : {}),
-                  environment: processEnv,
-                })
-                .pipe(Effect.timeout("20 seconds")),
-            ]).pipe(
+          : Effect.all(
+              [
+                snapshot.getSnapshot,
+                openCodeRuntime
+                  .loadOpenCodeSkillsForCwd({
+                    binaryPath: effectiveConfig.binaryPath,
+                    cwd,
+                    serverUrl: effectiveConfig.serverUrl,
+                    ...(effectiveConfig.serverPassword
+                      ? { serverPassword: effectiveConfig.serverPassword }
+                      : {}),
+                    environment: processEnv,
+                  })
+                  .pipe(Effect.timeout("20 seconds")),
+              ],
+              // Independent reads: the in-memory snapshot and the per-cwd skills
+              // CLI probe share no state, so overlap them instead of summing
+              // their latencies. `Effect.all` is sequential by default.
+              { concurrency: "unbounded" },
+            ).pipe(
               Effect.map(([machineSnapshot, skills]) => ({
                 ...machineSnapshot,
                 skills: openCodeSkillsToServerProviderSkills(skills),
