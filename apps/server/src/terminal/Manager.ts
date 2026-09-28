@@ -2243,18 +2243,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             startedShell = spawnResult.shellLabel;
 
             const processPid = ptyProcess.pid;
-            const unsubscribeData = ptyProcess.onData((data) => {
-              if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
-                return;
-              }
-              runFork(drainProcessEvents(session, processPid));
-            });
-            const unsubscribeExit = ptyProcess.onExit((event) => {
-              if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
-                return;
-              }
-              runFork(drainProcessEvents(session, processPid));
-            });
+            let eventsActivated = false;
 
             let eventStamp: ReturnType<typeof advanceEventSequence> = {
               updatedAt: session.updatedAt,
@@ -2264,8 +2253,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.process = ptyProcess;
               session.pid = processPid;
               session.status = "running";
-              session.unsubscribeData = unsubscribeData;
-              session.unsubscribeExit = unsubscribeExit;
+              // onExit may replay an exit immediately; accept it before subscribing.
+              session.unsubscribeData = spawnResult.process.onData((data) => {
+                if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
+                  return;
+                }
+                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+              });
+              session.unsubscribeExit = spawnResult.process.onExit((event) => {
+                if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
+                  return;
+                }
+                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+              });
               eventStamp = advanceEventSequence(session);
               return [undefined, state] as const;
             });
@@ -2277,6 +2277,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               sequence: eventStamp.sequence,
               snapshot: snapshot(session),
             });
+            // Publish startup before draining any events replayed during subscription.
+            eventsActivated = true;
+            if (session.processEventDrainRunning) runFork(drainProcessEvents(session, processPid));
           }),
         ),
       ),
