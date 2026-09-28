@@ -181,6 +181,27 @@ describe("environment cache removal", () => {
 });
 
 describe("IndexedDB connection recovery", () => {
+  it.effect("reports an initial open failure from the cache operation", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const open = vi.fn(() => {
+        throw new DOMException("Storage is unavailable", "InvalidStateError");
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* EnvironmentCacheStore;
+        expect(open).not.toHaveBeenCalled();
+        const error = yield* Effect.flip(
+          cache.loadThread(EnvironmentId.make("env"), ThreadId.make("thread")),
+        );
+        expect(error.message).toContain("Storage is unavailable");
+      }).pipe(Effect.provide(connectionStorageLayer));
+
+      expect(open).toHaveBeenCalledOnce();
+    }),
+  );
+
   it.effect("reopens after a forced close and finalizes the current connection", () =>
     Effect.gen(function* () {
       vi.stubGlobal("window", {});
