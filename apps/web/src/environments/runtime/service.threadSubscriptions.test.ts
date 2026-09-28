@@ -353,6 +353,53 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
+  it("resubscribes retained non-idle threads on stall repair", async () => {
+    const {
+      repairActiveThreadDetailSubscriptionsAfterStall,
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const activeThreadId = ThreadId.make("thread-stall-active");
+    const idleThreadId = ThreadId.make("thread-stall-idle");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({ threadId: idleThreadId, sessionStatus: "idle" }),
+      environmentId,
+    );
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: makeThreadShellSnapshot({
+          threadId: activeThreadId,
+          sessionStatus: "running",
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    const releaseActive = retainThreadDetailSubscription(environmentId, activeThreadId);
+    const releaseIdle = retainThreadDetailSubscription(environmentId, idleThreadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+
+    // A successful unary probe must still repair the zombie stream: the active
+    // subscription is torn down and re-attached, while the idle one is untouched.
+    const repair = repairActiveThreadDetailSubscriptionsAfterStall(environmentId);
+    expect(repair).toEqual({ retained: 1, resubscribed: 1 });
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(3);
+
+    releaseActive();
+    releaseIdle();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
   it("repairs retained-but-unattached subscriptions on reconnect without dropping them", async () => {
     const {
       retainThreadDetailSubscription,

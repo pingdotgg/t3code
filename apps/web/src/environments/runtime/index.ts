@@ -23,6 +23,7 @@ export {
   hasActiveThreadDetailWork,
   readEnvironmentConnection,
   reconnectSavedEnvironment,
+  repairActiveThreadDetailSubscriptionsAfterStall,
   setSavedEnvironmentEnabled,
   removeSavedEnvironment,
   requireEnvironmentConnection,

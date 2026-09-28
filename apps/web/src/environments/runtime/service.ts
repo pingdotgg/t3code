@@ -623,6 +623,46 @@ export function repairRetainedThreadDetailSubscriptionsAfterReconnect(
   return { retained, reattached };
 }
 
+/**
+ * Stall repair for the zombie-stream failure mode.
+ *
+ * A half-open socket can leave a thread stream fiber pending forever without
+ * failing the transport subscription loop, while unary RPC still works — so a
+ * responsiveness probe succeeds and proves nothing about the stream. Tear down
+ * and re-subscribe every retained non-idle detail subscription; the fresh
+ * snapshot handler (`syncServerThreadDetail`) resyncs the frozen timeline.
+ * Idle retained subscriptions are left alone: they have no live turn to lose.
+ */
+export function repairActiveThreadDetailSubscriptionsAfterStall(environmentId?: EnvironmentId): {
+  readonly retained: number;
+  readonly resubscribed: number;
+} {
+  let retained = 0;
+  let resubscribed = 0;
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.refCount <= 0 || !isNonIdleThreadDetailSubscription(entry)) {
+      continue;
+    }
+    if (environmentId !== undefined && entry.environmentId !== environmentId) {
+      continue;
+    }
+    retained += 1;
+    entry.lastAccessedAt = Date.now();
+    entry.unsubscribe();
+    entry.unsubscribe = NOOP;
+    if (attachThreadDetailSubscription(entry)) {
+      resubscribed += 1;
+    } else {
+      watchThreadDetailSubscriptionReadiness(entry);
+    }
+  }
+  if (retained > 0) {
+    recordWsStreamActivity();
+    recordWsDiagnostic("stall-repair", { retained, resubscribed });
+  }
+  return { retained, resubscribed };
+}
+
 function emitEnvironmentConnectionRegistryChange() {
   for (const listener of environmentConnectionListeners) {
     listener();

@@ -20,6 +20,7 @@ export type WsDiagnosticEvent =
   | "stream-parked"
   | "stream-retry"
   | "stream-stalled"
+  | "stall-repair"
   | "reconnect-repair";
 
 export interface WsDiagnosticEntry {

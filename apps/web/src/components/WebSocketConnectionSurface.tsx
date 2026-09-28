@@ -21,6 +21,7 @@ import { reportClientWarning } from "../lib/clientLogger";
 import {
   getPrimaryEnvironmentConnection,
   hasActiveThreadDetailWork,
+  repairActiveThreadDetailSubscriptionsAfterStall,
 } from "../environments/runtime";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
@@ -422,8 +423,12 @@ export function WebSocketConnectionCoordinator() {
       void probePrimaryConnectionResponsive()
         .then((responsive) => {
           if (responsive) {
-            // Healthy socket with a legitimately long-running request: leave it
-            // alone and reset the silence clock instead of interrupting it.
+            // Unary success proves the socket answers, not that thread streams
+            // are live: a zombie stream fiber stays pending forever without
+            // failing its subscription loop. Repair active streams so the fresh
+            // snapshot resyncs the timeline, and reset the silence clock so a
+            // healthy long-running request isn't probed in a tight loop.
+            repairActiveThreadDetailSubscriptionsAfterStall();
             recordWsStreamActivity();
             return;
           }
