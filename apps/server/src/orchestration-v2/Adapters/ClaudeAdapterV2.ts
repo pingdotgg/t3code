@@ -2890,13 +2890,15 @@ export function makeClaudeAdapterV2(
         // wake result carries no task id, and its wake can run after a prompt the
         // user queued meanwhile, so reports survive one user turn and then expire:
         // a notification Claude folded into its own turn cannot name a later wake.
-        const wakeReportsByNativeThread = yield* Ref.make(
-          new Map<
+        // One Ref holds both, so a report cannot be stamped with a turn that
+        // has already been superseded.
+        const wakeReportsByNativeThread = yield* Ref.make<{
+          readonly userTurns: ReadonlyMap<string, number>;
+          readonly reports: ReadonlyMap<
             string,
             ReadonlyMap<string, { readonly report: BackgroundWorkReport; readonly turn: number }>
-          >(),
-        );
-        const userTurnCountByNativeThread = yield* Ref.make(new Map<string, number>());
+          >;
+        }>({ userTurns: new Map(), reports: new Map() });
         // Subagents Claude started in the background. Only their ends wake the root.
         const backgroundedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const recordWakeReport = (
@@ -2904,39 +2906,39 @@ export function makeClaudeAdapterV2(
           taskId: string,
           report: BackgroundWorkReport,
         ) =>
-          Effect.gen(function* () {
-            const turn = (yield* Ref.get(userTurnCountByNativeThread)).get(nativeThreadId) ?? 0;
-            yield* Ref.update(wakeReportsByNativeThread, (current) =>
-              new Map(current).set(
-                nativeThreadId,
-                new Map(current.get(nativeThreadId)).set(taskId, { report, turn }),
-              ),
-            );
-          });
+          Ref.update(wakeReportsByNativeThread, ({ userTurns, reports }) => ({
+            userTurns,
+            reports: new Map(reports).set(
+              nativeThreadId,
+              new Map(reports.get(nativeThreadId)).set(taskId, {
+                report,
+                turn: userTurns.get(nativeThreadId) ?? 0,
+              }),
+            ),
+          }));
         const startUserTurnForWakeReports = (nativeThreadId: string) =>
-          Effect.gen(function* () {
-            const turn =
-              ((yield* Ref.get(userTurnCountByNativeThread)).get(nativeThreadId) ?? 0) + 1;
-            yield* Ref.update(userTurnCountByNativeThread, (current) =>
-              new Map(current).set(nativeThreadId, turn),
-            );
-            yield* Ref.update(wakeReportsByNativeThread, (current) => {
-              const reports = current.get(nativeThreadId);
-              if (reports === undefined) return current;
-              const kept = new Map([...reports].filter(([, entry]) => entry.turn >= turn - 1));
-              const updated = new Map(current);
-              if (kept.size === 0) updated.delete(nativeThreadId);
-              else updated.set(nativeThreadId, kept);
-              return updated;
-            });
+          Ref.update(wakeReportsByNativeThread, ({ userTurns, reports }) => {
+            const turn = (userTurns.get(nativeThreadId) ?? 0) + 1;
+            const updatedTurns = new Map(userTurns).set(nativeThreadId, turn);
+            const threadReports = reports.get(nativeThreadId);
+            if (threadReports === undefined) return { userTurns: updatedTurns, reports };
+            const kept = new Map([...threadReports].filter(([, entry]) => entry.turn >= turn - 1));
+            const updatedReports = new Map(reports);
+            if (kept.size === 0) updatedReports.delete(nativeThreadId);
+            else updatedReports.set(nativeThreadId, kept);
+            return { userTurns: updatedTurns, reports: updatedReports };
+          });
+        /** Removes and returns a thread's reports. */
+        const takeWakeReports = (nativeThreadId: string) =>
+          Ref.modify(wakeReportsByNativeThread, (current) => {
+            const taken = current.reports.get(nativeThreadId);
+            if (taken === undefined) return [taken, current] as const;
+            const reports = new Map(current.reports);
+            reports.delete(nativeThreadId);
+            return [taken, { userTurns: current.userTurns, reports }] as const;
           });
         const clearWakeReports = (nativeThreadId: string) =>
-          Ref.update(wakeReportsByNativeThread, (current) => {
-            if (!current.has(nativeThreadId)) return current;
-            const updated = new Map(current);
-            updated.delete(nativeThreadId);
-            return updated;
-          });
+          takeWakeReports(nativeThreadId).pipe(Effect.asVoid);
         // Last roster entry per opaque task. An empty roster level can land before
         // the task's notification, and the wake still needs to name the task.
         const lastKnownOpaqueTasks = yield* Ref.make(
@@ -4930,8 +4932,7 @@ export function makeClaudeAdapterV2(
           }
           const detail =
             (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId)?.detail ?? null;
-          const reports = (yield* Ref.get(wakeReportsByNativeThread)).get(wakeInput.nativeThreadId);
-          yield* clearWakeReports(wakeInput.nativeThreadId);
+          const reports = yield* takeWakeReports(wakeInput.nativeThreadId);
           const notification = backgroundWorkNotification(
             [...(reports?.values() ?? [])].map((entry) => entry.report),
           );
