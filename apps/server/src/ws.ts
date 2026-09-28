@@ -575,7 +575,6 @@ const makeWsRpcLayer = (
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerVersionCache = yield* ProviderMaintenance.ProviderVersionCache;
       const providerService = yield* ProviderService.ProviderService;
-      const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
       const providerInstances = yield* ProviderInstanceRegistry;
@@ -637,6 +636,13 @@ const makeWsRpcLayer = (
         | WorkspacePaths.WorkspacePaths
       >();
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+      const agentSessionContext = yield* Effect.context<
+        | AgentSessionScanner.AgentSessionScanner
+        | OrchestrationEngine.OrchestrationEngineService
+        | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+        | ProviderSessionDirectory.ProviderSessionDirectory
+        | Crypto.Crypto
+      >();
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -3405,17 +3411,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentSessionsList]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentSessionsList,
-            listAgentSessions(input).pipe(
-              Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
-              Effect.provideService(
-                ProviderSessionDirectory.ProviderSessionDirectory,
-                providerSessionDirectory,
-              ),
-              Effect.provideService(
-                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                projectionSnapshotQuery,
-              ),
-            ),
+            listAgentSessions(input).pipe(Effect.provideContext(agentSessionContext)),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.agentSessionsAttach]: (input) =>
@@ -3423,20 +3419,7 @@ const makeWsRpcLayer = (
             WS_METHODS.agentSessionsAttach,
             attachAgentSession(input).pipe(
               agentSessionImportLock.withPermits(1),
-              Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
-              Effect.provideService(
-                OrchestrationEngine.OrchestrationEngineService,
-                orchestrationEngine,
-              ),
-              Effect.provideService(
-                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                projectionSnapshotQuery,
-              ),
-              Effect.provideService(Crypto.Crypto, crypto),
-              Effect.provideService(
-                ProviderSessionDirectory.ProviderSessionDirectory,
-                providerSessionDirectory,
-              ),
+              Effect.provideContext(agentSessionContext),
             ),
             { "rpc.aggregate": "workspace" },
           ),
@@ -3445,20 +3428,7 @@ const makeWsRpcLayer = (
             WS_METHODS.agentSessionsImport,
             importRecentAgentThreads(input).pipe(
               agentSessionImportLock.withPermits(1),
-              Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
-              Effect.provideService(
-                OrchestrationEngine.OrchestrationEngineService,
-                orchestrationEngine,
-              ),
-              Effect.provideService(
-                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                projectionSnapshotQuery,
-              ),
-              Effect.provideService(Crypto.Crypto, crypto),
-              Effect.provideService(
-                ProviderSessionDirectory.ProviderSessionDirectory,
-                providerSessionDirectory,
-              ),
+              Effect.provideContext(agentSessionContext),
             ),
             { "rpc.aggregate": "workspace" },
           ),

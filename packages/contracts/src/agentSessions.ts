@@ -31,6 +31,18 @@ export function isImportedAgentSessionMessageId(messageId: string): boolean {
   return messageId.startsWith("import:");
 }
 
+/** Imported threads get a deterministic id, so importing a session again finds the same thread. */
+export function importedAgentSessionThreadId(
+  providerInstanceId: string,
+  providerSessionId: string,
+): ThreadId {
+  return ThreadId.make(`import:${providerInstanceId}:${providerSessionId}`);
+}
+
+export function isImportedAgentSessionThreadId(threadId: string): boolean {
+  return threadId.startsWith("import:");
+}
+
 /**
  * Empty for now. Kept as a struct so future scan options (source filters,
  * explicit roots) can be added without a new method.

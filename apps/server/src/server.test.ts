@@ -6259,7 +6259,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 Effect.succeed(
                   ["native-thread", `import:codex:${ids[3]}`].map((threadId) => ({
                     threadId: ThreadId.make(threadId),
+                    projectId,
                     archived: false,
+                    importedHistory: false,
                   })),
                 ),
               getImportedAgentSessionSources: () =>

@@ -1,4 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  filterResumableSessions,
+  resumableSessionLocation,
+} from "@t3tools/client-runtime/state/agentSessions";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   ProviderDriverKind,
@@ -58,14 +62,9 @@ export function ResumeSessionPicker({ projectRef }: { projectRef: ScopedProjectR
     [open, projectRef.environmentId, projectRef.projectId],
   );
   const query = useEnvironmentQuery(queryAtom);
-  const normalizedSearch = search
-    .trim()
-    .replace(/^(?:codex\s+resume|claude\s+--resume)\s+/i, "")
-    .toLowerCase();
-  const sessions = (query.data?.sessions ?? []).filter((session) =>
-    [session.title, session.sessionId, session.branch, session.cwd, session.provider].some(
-      (value) => value?.toLowerCase().includes(normalizedSearch),
-    ),
+  const sessions = useMemo(
+    () => filterResumableSessions(query.data?.sessions ?? [], search),
+    [query.data, search],
   );
 
   const select = async (session: ResumableAgentSession) => {
@@ -169,7 +168,7 @@ export function ResumeSessionPicker({ projectRef }: { projectRef: ScopedProjectR
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm">{session.title}</div>
                         <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {providerName} · {session.branch ?? session.cwd.split(/[\\/]/).at(-1)}
+                          {providerName} · {resumableSessionLocation(session)}
                         </div>
                       </div>
                       <time

@@ -1,10 +1,10 @@
 import {
-  createEnvironmentRpcCommand,
-  createEnvironmentRpcQueryAtomFamily,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+  createAgentSessionResumeAtoms,
+  filterResumableSessions,
+  resumableSessionLocation,
+} from "@t3tools/client-runtime/state/agentSessions";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
-  WS_METHODS,
   ProviderDriverKind,
   PROVIDER_DISPLAY_NAMES,
   type ResumableAgentSession,
@@ -12,7 +12,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as Effect from "effect/Effect";
 import { FlatList, Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -20,30 +19,12 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { connectionAtomRuntime } from "../../connection/runtime";
+import { relativeTime } from "../../lib/time";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const sessionList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
-  label: "mobile:agent-sessions:list",
-  tag: WS_METHODS.agentSessionsList,
-  staleTimeMs: 0,
-  idleTtlMs: 30_000,
-});
-const sessionAttach = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "mobile:agent-sessions:attach",
-  tag: WS_METHODS.agentSessionsAttach,
-  onSuccess: ({ environmentId, input }, registry) =>
-    Effect.sync(() => {
-      registry.refresh(sessionList({ environmentId, input: { projectId: input.projectId } }));
-    }),
-});
-const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" });
-function lastRan(updatedAt: string) {
-  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(updatedAt)) / 60_000));
-  if (minutes < 60) return relativeTime.format(-minutes, "minute");
-  if (minutes < 1440) return relativeTime.format(-Math.floor(minutes / 60), "hour");
-  return relativeTime.format(-Math.floor(minutes / 1440), "day");
-}
+const { list: sessionList, attach: sessionAttach } =
+  createAgentSessionResumeAtoms(connectionAtomRuntime);
 
 export function ResumeSessionPicker(props: {
   projectRef: ScopedProjectRef;
@@ -75,14 +56,9 @@ export function ResumeSessionPicker(props: {
   );
   const query = useEnvironmentQuery(queryAtom);
   const attach = useAtomCommand(sessionAttach, { reportFailure: false });
-  const normalized = search
-    .trim()
-    .replace(/^(?:codex\s+resume|claude\s+--resume)\s+/i, "")
-    .toLowerCase();
-  const sessions = (query.data?.sessions ?? []).filter((session) =>
-    [session.title, session.sessionId, session.branch, session.cwd, session.provider].some(
-      (value) => value?.toLowerCase().includes(normalized),
-    ),
+  const sessions = useMemo(
+    () => filterResumableSessions(query.data?.sessions ?? [], search),
+    [query.data, search],
   );
   const close = () => {
     if (!busy.current) setOpen(false);
@@ -208,10 +184,12 @@ export function ResumeSessionPicker(props: {
                   <Text numberOfLines={1} className="text-xs text-foreground-muted">
                     {PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make(item.provider)] ??
                       item.provider}{" "}
-                    · {item.branch ?? item.cwd.split(/[\\/]/).at(-1)}
+                    · {resumableSessionLocation(item)}
                   </Text>
                 </View>
-                <Text className="text-xs text-foreground-muted">{lastRan(item.updatedAt)}</Text>
+                <Text className="text-xs text-foreground-muted">
+                  {relativeTime(item.updatedAt)}
+                </Text>
               </Pressable>
             )}
           />

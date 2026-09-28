@@ -2,6 +2,7 @@ import {
   AgentSessionImportSource,
   ApprovalRequestId,
   ChatAttachment,
+  importedAgentSessionThreadId,
   OrchestrationMessageContext,
   CheckpointRef,
   IsoDateTime,
@@ -209,7 +210,9 @@ const ProjectionImportedAgentSessionSourcesRowSchema = Schema.Struct({
 });
 const ProjectionProviderBoundThreadRowSchema = Schema.Struct({
   threadId: ThreadId,
+  projectId: ProjectId,
   archived: Schema.Number,
+  importedHistory: Schema.Number,
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
@@ -1278,7 +1281,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           threads.thread_id AS "threadId",
-          threads.archived_at IS NOT NULL AS archived
+          threads.project_id AS "projectId",
+          threads.archived_at IS NOT NULL AS archived,
+          threads.thread_id GLOB 'import:*' AND EXISTS (
+            SELECT 1
+            FROM projection_thread_messages AS messages
+            WHERE messages.thread_id = threads.thread_id
+              AND messages.message_id GLOB 'import:*'
+          ) AS "importedHistory"
         FROM projection_threads AS threads
         INNER JOIN provider_session_runtime AS runtime
           ON runtime.thread_id = threads.thread_id
@@ -3201,7 +3211,10 @@ pending_approval_requests AS (
           if (
             Option.isNone(source) ||
             row.threadId !==
-              `import:${source.value.providerInstanceId}:${source.value.providerSessionId}`
+              importedAgentSessionThreadId(
+                source.value.providerInstanceId,
+                source.value.providerSessionId,
+              )
           ) {
             return [];
           }
@@ -3219,7 +3232,12 @@ pending_approval_requests AS (
         ),
       ),
       Effect.map((rows) =>
-        rows.map((row) => ({ threadId: row.threadId, archived: row.archived !== 0 })),
+        rows.map((row) => ({
+          threadId: row.threadId,
+          projectId: row.projectId,
+          archived: row.archived !== 0,
+          importedHistory: row.importedHistory !== 0,
+        })),
       ),
     );
 

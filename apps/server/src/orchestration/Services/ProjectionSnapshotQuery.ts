@@ -228,11 +228,16 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
-  /** Read non-deleted threads, archived included, that hold a provider session binding. */
+  /**
+   * Read non-deleted threads, archived included, that hold a provider session binding.
+   * `importedHistory` is true for imported threads whose history was published.
+   */
   readonly getProviderBoundThreads: () => Effect.Effect<
     ReadonlyArray<{
       readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
       readonly archived: boolean;
+      readonly importedHistory: boolean;
     }>,
     ProjectionRepositoryError
   >;

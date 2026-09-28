@@ -85,6 +85,23 @@ const MAX_METADATA_BYTES_PER_SOURCE = 64 * 1024 * 1024;
 const MAX_METADATA_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
 const MAX_METADATA_RECORDS_PER_SOURCE = 100_000;
 const MAX_METADATA_RECORDS_PER_TRANSCRIPT = 1_000;
+/** The Resume picker lists at most this many sessions, reading a bounded prefix of each. */
+const SESSION_LIST_LIMIT = 200;
+const SESSION_PREFIX_BYTES = 256 * 1024;
+/** Claude resumes only by a UUID session ID. */
+export const CLAUDE_SESSION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TRANSCRIPT_UUID_PATTERN =
+  /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+/** Codex records its injected instructions as user messages; they make poor titles. */
+const CODEX_INJECTED_PROMPT_PATTERN =
+  /^(?:# AGENTS\.md|<(?:environment_context|permissions instructions|recommended_plugins|skills_instructions|turn_aborted|INSTRUCTIONS)\b)/;
+
+/** Keys a native session for `listSessions` exclusions. */
+export const agentSessionKey = (provider: string, providerInstanceId: string, sessionId: string) =>
+  `${provider}:${providerInstanceId}:${sessionId}`;
+
+const firstLine = (text: string) => text.trim().split("\n")[0]?.slice(0, 100).trim();
 const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Large tool results (especially screenshots) can make an otherwise ordinary
@@ -511,7 +528,7 @@ function parseAgentSessionRecords(
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
     : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
-  const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
+  const derivedTitle = firstLine(visibleFirstUserMessage.text);
 
   return {
     source: input.source,
@@ -704,6 +721,17 @@ export const make = Effect.gen(function* () {
     return `path:${normalizeProjectPathForComparison(realPath)}`;
   });
 
+  /** Follows a `.git` entry to its git directory. A `.git` file is a `gitdir:` pointer. */
+  const readGitDir = Effect.fn("AgentSessionScanner.readGitDir")(function* (
+    dotGit: string,
+    stats: FileSystem.File.Info,
+  ) {
+    if (stats.type === "Directory") return dotGit;
+    const pointer = yield* fileSystem.readFileString(dotGit).pipe(Effect.orElseSucceed(() => ""));
+    const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+    return target ? path.resolve(path.dirname(dotGit), target) : null;
+  });
+
   /**
    * Git identity of a directory, or the reason it has none. Reads `.git`
    * directly instead of spawning git so a scan over hundreds of candidates
@@ -723,16 +751,10 @@ export const make = Effect.gen(function* () {
     const gitPath = path.join(directory, ".git");
     const gitStats = yield* statOption(gitPath);
     if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
-    let gitDir = gitPath;
-    if (gitStats.value.type !== "Directory") {
-      const pointer = yield* fileSystem
-        .readFileString(gitPath)
-        .pipe(Effect.orElseSucceed(() => ""));
-      const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
-      if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
-      gitDir = path.resolve(directory, target);
-      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) return { _tag: "Worktree" } as const;
-    }
+    const gitDir = yield* readGitDir(gitPath, gitStats.value);
+    if (gitDir === null) return { _tag: "NotGit" } as const;
+    if (gitStats.value.type !== "Directory" && /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir))
+      return { _tag: "Worktree" } as const;
     const configText = yield* fileSystem
       .readFileString(path.join(gitDir, "config"))
       .pipe(Effect.orElseSucceed(() => ""));
@@ -1521,15 +1543,8 @@ export const make = Effect.gen(function* () {
       const dotGit = path.join(root, ".git");
       const gitStats = yield* statOption(dotGit);
       if (Option.isSome(gitStats)) {
-        let gitDir = dotGit;
-        if (gitStats.value.type !== "Directory") {
-          const pointer = yield* fileSystem
-            .readFileString(dotGit)
-            .pipe(Effect.orElseSucceed(() => ""));
-          const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
-          if (!target) return null;
-          gitDir = path.resolve(root, target);
-        }
+        const gitDir = yield* readGitDir(dotGit, gitStats.value);
+        if (gitDir === null) return null;
         const common = yield* fileSystem
           .readFileString(path.join(gitDir, "commondir"))
           .pipe(Effect.orElseSucceed(() => ""));
@@ -1549,28 +1564,43 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const belongsToProject = Effect.fn("AgentSessionScanner.belongsToProject")(function* (
+  const realPathOrResolved = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+
+  /** Reads the project facts every candidate directory is compared against. */
+  const readProjectScope = Effect.fn("AgentSessionScanner.readProjectScope")(function* (
     workspaceRoot: string,
+  ) {
+    const identity = yield* directoryIdentity(workspaceRoot);
+    const checkout = yield* checkoutIdentity(workspaceRoot);
+    return {
+      identity,
+      checkout,
+      // A project rooted in a subdirectory does not own its siblings or the whole
+      // repository's worktrees. Only checkout-root projects span linked worktrees.
+      isCheckoutRoot: checkout !== null && (yield* directoryIdentity(checkout.root)) === identity,
+      realPath: yield* realPathOrResolved(workspaceRoot),
+    };
+  });
+  type ProjectScope = Effect.Success<ReturnType<typeof readProjectScope>>;
+
+  /** The branch checked out at `cwd` when it belongs to the project, otherwise `undefined`. */
+  const matchProject = Effect.fn("AgentSessionScanner.matchProject")(function* (
+    project: ProjectScope,
     cwd: string,
   ) {
     const stats = yield* statOption(cwd);
-    if (Option.isNone(stats) || stats.value.type !== "Directory") return false;
-    if ((yield* directoryIdentity(cwd)) === (yield* directoryIdentity(workspaceRoot))) return true;
-    const project = yield* checkoutIdentity(workspaceRoot);
+    if (Option.isNone(stats) || stats.value.type !== "Directory") return undefined;
     const candidate = yield* checkoutIdentity(cwd);
-    if (project === null || candidate === null || project.common !== candidate.common) return false;
-    // A project rooted in a subdirectory does not own its siblings or the whole
-    // repository's worktrees. Only checkout-root projects span linked worktrees.
-    if ((yield* directoryIdentity(project.root)) === (yield* directoryIdentity(workspaceRoot)))
-      return true;
-    const projectPath = yield* fileSystem
-      .realPath(workspaceRoot)
-      .pipe(Effect.orElseSucceed(() => path.resolve(workspaceRoot)));
-    const candidatePath = yield* fileSystem
-      .realPath(cwd)
-      .pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
-    const relative = path.relative(projectPath, candidatePath);
-    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    const branch = candidate?.branch ?? null;
+    if ((yield* directoryIdentity(cwd, stats.value)) === project.identity) return branch;
+    if (project.checkout === null || candidate === null) return undefined;
+    if (project.checkout.common !== candidate.common) return undefined;
+    if (project.isCheckoutRoot) return branch;
+    const relative = path.relative(project.realPath, yield* realPathOrResolved(cwd));
+    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+      ? branch
+      : undefined;
   });
 
   const discoverSessions = Effect.fn("AgentSessionScanner.discoverSessions")(function* (
@@ -1579,6 +1609,9 @@ export const make = Effect.gen(function* () {
     selectedSession?: { providerInstanceId: ProviderInstanceId; sessionId: string },
   ) {
     const collected = yield* collectCandidates();
+    const project = yield* readProjectScope(workspaceRoot);
+    // Claude and Codex can both have run in one directory.
+    const branchByCwd = new Map<string, string | null | undefined>();
     const eligible: Array<{
       candidate: RawCandidate;
       transcript: RawCandidate["transcripts"][number];
@@ -1587,29 +1620,28 @@ export const make = Effect.gen(function* () {
     for (const candidate of collected.candidates) {
       if (selectedSession && candidate.providerInstanceId !== selectedSession.providerInstanceId)
         continue;
-      if (
-        !path.isAbsolute(candidate.cwd) ||
-        !(yield* belongsToProject(workspaceRoot, candidate.cwd))
-      )
-        continue;
-      const checkout = yield* checkoutIdentity(candidate.cwd);
-      for (const transcript of candidate.transcripts) {
-        // Both providers name their transcript with the native session ID.
-        // Selection must not be limited by the picker's recent-summary budget.
-        if (selectedSession && !transcript.filePath.endsWith(`${selectedSession.sessionId}.jsonl`))
-          continue;
-        const fileSessionId =
-          /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(
-            transcript.filePath,
-          )?.[1];
+      // Both providers name their transcript with the native session ID.
+      // Selection must not be limited by the picker's recent-summary budget.
+      const transcripts = selectedSession
+        ? candidate.transcripts.filter((transcript) =>
+            transcript.filePath.endsWith(`${selectedSession.sessionId}.jsonl`),
+          )
+        : candidate.transcripts;
+      if (transcripts.length === 0 || !path.isAbsolute(candidate.cwd)) continue;
+      if (!branchByCwd.has(candidate.cwd))
+        branchByCwd.set(candidate.cwd, yield* matchProject(project, candidate.cwd));
+      const branch = branchByCwd.get(candidate.cwd);
+      if (branch === undefined) continue;
+      for (const transcript of transcripts) {
+        const fileSessionId = TRANSCRIPT_UUID_PATTERN.exec(transcript.filePath)?.[1];
         if (
           fileSessionId &&
           excludedSessions.has(
-            `${candidate.source}:${candidate.providerInstanceId}:${fileSessionId}`,
+            agentSessionKey(candidate.source, candidate.providerInstanceId, fileSessionId),
           )
         )
           continue;
-        eligible.push({ candidate, transcript, branch: checkout?.branch ?? null });
+        eligible.push({ candidate, transcript, branch });
       }
     }
     eligible.sort(
@@ -1621,21 +1653,23 @@ export const make = Effect.gen(function* () {
     const seen = new Set<string>();
     // The picker reads only prefixes, never complete histories. Full history is
     // read once a session is selected. Keep the aggregate read budget bounded.
-    const limit = 200;
-    let remainingBytes = limit * 256 * 1024;
+    let remainingBytes = SESSION_LIST_LIMIT * SESSION_PREFIX_BYTES;
     let inspected = 0;
     for (const { candidate, transcript, branch } of eligible) {
-      if (sessions.length >= limit || remainingBytes <= 0) break;
+      if (sessions.length >= SESSION_LIST_LIMIT || remainingBytes <= 0) break;
       inspected += 1;
       const prefix = yield* Effect.scoped(
         Effect.gen(function* () {
           const file = yield* fileSystem.open(transcript.filePath, { flag: "r" });
-          const bytes = yield* file.readAlloc(Math.min(256 * 1024, remainingBytes));
+          const requested = Math.min(SESSION_PREFIX_BYTES, remainingBytes);
+          const bytes = yield* file.readAlloc(requested);
           if (Option.isNone(bytes)) return "";
           remainingBytes -= bytes.value.byteLength;
           const text = new TextDecoder().decode(bytes.value);
-          const size = Number((yield* file.stat).size);
-          return bytes.value.byteLength >= size ? text : text.slice(0, text.lastIndexOf("\n") + 1);
+          // A short read reached the end; otherwise drop the partial last record.
+          return bytes.value.byteLength < requested
+            ? text
+            : text.slice(0, text.lastIndexOf("\n") + 1);
         }),
       ).pipe(Effect.orElseSucceed(() => ""));
       const prefixRecords = prefix
@@ -1652,17 +1686,15 @@ export const make = Effect.gen(function* () {
       );
       if (parsed === null) continue;
       if (!transcript.filePath.endsWith(`${parsed.providerSessionId}.jsonl`)) continue;
-      if (
-        excludedSessions.has(
-          `${parsed.source}:${parsed.providerInstanceId}:${parsed.providerSessionId}`,
-        )
-      )
-        continue;
+      const key = agentSessionKey(
+        parsed.source,
+        parsed.providerInstanceId,
+        parsed.providerSessionId,
+      );
+      if (excludedSessions.has(key) || seen.has(key)) continue;
       if (
         parsed.source === "claudeAgent" &&
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          parsed.providerSessionId,
-        )
+        !CLAUDE_SESSION_ID_PATTERN.test(parsed.providerSessionId)
       )
         continue;
       const canonicalPrompt = prefixRecords.find(
@@ -1672,18 +1704,13 @@ export const make = Effect.gen(function* () {
         canonicalPrompt ??
         parsed.messages.find(
           (message) =>
-            message.role === "user" &&
-            !/^(?:# AGENTS\.md|<(?:environment_context|permissions instructions|recommended_plugins|skills_instructions|turn_aborted|INSTRUCTIONS)\b)/.test(
-              message.text.trim(),
-            ),
+            message.role === "user" && !CODEX_INJECTED_PROMPT_PATTERN.test(message.text.trim()),
         )?.text;
       const title =
         parsed.source === "claudeAgent"
           ? parsed.title
-          : prompt?.trim().split("\n")[0]?.slice(0, 100).trim() ||
+          : (prompt && firstLine(prompt)) ||
             `Codex session ${parsed.providerSessionId.slice(0, 8)}`;
-      const key = `${parsed.providerInstanceId}\0${parsed.providerSessionId}`;
-      if (seen.has(key)) continue;
       seen.add(key);
       sessions.push({
         filePath: transcript.filePath,
@@ -1742,11 +1769,11 @@ export const make = Effect.gen(function* () {
       MAX_IMPORT_RECORDS,
       selected.session.provider,
     ).pipe(importReadLock.withPermits(1));
+    // Discovery above already matched the listed directory to this project.
     const cwd = snapshot?.records.map(extractDecodedCwd).find((value) => value !== null);
     if (
       !snapshot ||
       !cwd ||
-      !(yield* belongsToProject(workspaceRoot, cwd)) ||
       (yield* directoryIdentity(cwd)) !== (yield* directoryIdentity(selected.session.cwd))
     ) {
       return yield* new AgentSessionResumeError({

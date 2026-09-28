@@ -175,7 +175,7 @@ const makeProjectedThread = (input: {
 const makeSnapshotsLayer = (input: {
   readonly project?: OrchestrationProjectShell;
   readonly getThread?: (threadId: ThreadId) => Option.Option<OrchestrationThread>;
-  readonly boundThreadIds?: ReadonlyArray<ThreadId>;
+  readonly boundThreads?: ReadonlyArray<OrchestrationThread>;
 }) =>
   Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getProjectShellById: () =>
@@ -183,7 +183,12 @@ const makeSnapshotsLayer = (input: {
     getImportedAgentSessionSources: () => Effect.succeed([]),
     getProviderBoundThreads: () =>
       Effect.succeed(
-        (input.boundThreadIds ?? []).map((threadId) => ({ threadId, archived: false })),
+        (input.boundThreads ?? []).map((thread) => ({
+          threadId: thread.id,
+          projectId: thread.projectId,
+          archived: thread.archivedAt !== null,
+          importedHistory: false,
+        })),
       ),
     getThreadDetailById: (threadId) => Effect.succeed(input.getThread?.(threadId) ?? Option.none()),
   });
@@ -231,11 +236,22 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
             Layer.mergeAll(
               makeSnapshotsLayer({
                 project: makeProject(),
-                getThread: () => Option.some(thread),
-                boundThreadIds: [thread.id],
+                boundThreads: [thread],
               }),
               Layer.mock(AgentSessionScanner.AgentSessionScanner)({
-                listSessions: () => Effect.succeed({ sessions: [session], truncated: false }),
+                listSessions: (_root, excluded) =>
+                  Effect.succeed({
+                    sessions: excluded?.has(
+                      AgentSessionScanner.agentSessionKey(
+                        session.provider,
+                        session.providerInstanceId,
+                        session.sessionId,
+                      ),
+                    )
+                      ? []
+                      : [session],
+                    truncated: false,
+                  }),
               }),
               Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
                 listBindings: () =>
