@@ -1,10 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
+import { hasCloudPublicConfig } from "../features/cloud/publicConfig";
 import { useConnectionController } from "../features/connection/useConnectionController";
 import { environmentPresentations } from "./presentation";
 import { useWorkspaceState } from "../state/workspace";
@@ -111,6 +113,7 @@ export function useRemoteConnectionStatus() {
 
 export function useRemoteConnections() {
   const controller = useConnectionController();
+  const navigation = useNavigation();
   const connectionPairingUrl = useAtomValue(connectionPairingUrlAtom);
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
   const { connectedEnvironments, connectionError, connectionState } = useRemoteConnectionStatus();
@@ -171,22 +174,37 @@ export function useRemoteConnections() {
       if (!environment) {
         return;
       }
+      const remove = {
+        text: "Remove",
+        style: "destructive",
+        onPress: () => {
+          void controller.removeEnvironment(environmentId);
+        },
+      } as const;
+      // Removing a T3 Connect environment here leaves its account registration
+      // and host space, so point to where it can be deregistered.
+      if (environment.isRelayManaged && hasCloudPublicConfig()) {
+        Alert.alert(
+          "Remove from this device?",
+          `Forget ${environment.environmentLabel} and its cached threads on this device. It stays registered to your T3 Connect account and keeps using a host space. To remove it from your account and free that space, deregister it under T3 Account → T3 Connect.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Open T3 Account",
+              onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+            },
+            remove,
+          ],
+        );
+        return;
+      }
       Alert.alert(
         "Remove from this device?",
         `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: () => {
-              void controller.removeEnvironment(environmentId);
-            },
-          },
-        ],
+        [{ text: "Cancel", style: "cancel" }, remove],
       );
     },
-    [connectedEnvironments, controller],
+    [connectedEnvironments, controller, navigation],
   );
 
   return {
