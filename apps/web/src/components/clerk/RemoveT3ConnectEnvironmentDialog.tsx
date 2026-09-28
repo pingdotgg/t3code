@@ -9,7 +9,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { useT3ConnectAccountPage } from "./T3ConnectAccountPages";
 
 /**
@@ -50,16 +50,14 @@ export function RemoveT3ConnectEnvironmentDialog({
             <AlertDialogDescription>
               It stays on your T3 Connect account and keeps its host space. Deregister it in{" "}
               {openAccountPage ? (
-                <button
-                  type="button"
-                  className="cursor-pointer text-foreground underline underline-offset-4"
+                <InlineButton
                   onClick={() => {
                     onCancel();
                     openAccountPage();
                   }}
                 >
                   T3 Connect settings
-                </button>
+                </InlineButton>
               ) : (
                 "T3 Connect settings"
               )}{" "}
