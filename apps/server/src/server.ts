@@ -127,6 +127,7 @@ import { pullRequestHttpApiRoutesLayer } from "./pullRequest/http.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import { layer as PullRequestProviderRegistryLive } from "./pullRequest/PullRequestProviderRegistry.ts";
 import { layer as PullRequestServiceLive } from "./pullRequest/PullRequestService.ts";
+import { GitHubApiUsageLive } from "./gitHubUsage/GitHubApiUsage.ts";
 import { layer as pullRequestMonitorFeedbackServiceLayer } from "./pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
 import { layer as pullRequestMonitorAssociationReactorLayer } from "./pullRequestMonitor/PullRequestMonitorAssociationReactor.ts";
 import { layer as pullRequestAssociationRecoveryLayer } from "./pullRequestMonitor/PullRequestAssociationRecovery.ts";
@@ -284,6 +285,7 @@ const GitLayerLive = Layer.empty.pipe(
 const PullRequestLayerLive = PullRequestServiceLive.pipe(
   Layer.provideMerge(PullRequestProviderRegistryLive),
   Layer.provideMerge(PullRequestReadCache.layer),
+  Layer.provideMerge(GitHubApiUsageLive),
 );
 
 const PullRequestMonitorFeedbackServiceLive = pullRequestMonitorFeedbackServiceLayer.pipe(

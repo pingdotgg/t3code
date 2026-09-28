@@ -20,6 +20,7 @@ export * from "./sidebarState.ts";
 export * from "./settings.ts";
 export * from "./git.ts";
 export * from "./gitHubRateLimit.ts";
+export * from "./gitHubUsage.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";

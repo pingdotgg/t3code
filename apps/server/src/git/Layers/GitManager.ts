@@ -901,6 +901,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       const stdout = yield* gitHubCli
         .execute({
           cwd,
+          usage: { feature: "association" },
           args: [
             "pr",
             "list",

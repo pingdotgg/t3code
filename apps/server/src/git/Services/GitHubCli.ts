@@ -31,6 +31,20 @@ export interface GitHubRepositoryCloneUrls {
 }
 
 /**
+ * Where a `gh` invocation came from, for the rolling API usage report. Only
+ * the caller kind travels here — never argv, bodies, or output. Callers that
+ * know the host, repository, or PR number pass them; the seam records
+ * "unknown" rather than resolving them with extra requests.
+ */
+export interface GitHubCliUsageAttribution {
+  /** Caller kind: `list`, `detail`, `diff`, `monitor`, `association`, … */
+  readonly feature: string;
+  readonly host?: string | undefined;
+  readonly repository?: string | null | undefined;
+  readonly prNumber?: number | null | undefined;
+}
+
+/**
  * GitHubCliShape - Service API for executing GitHub CLI commands.
  */
 export interface GitHubCliShape {
@@ -49,6 +63,7 @@ export interface GitHubCliShape {
      */
     readonly maxOutputBytes?: number;
     readonly truncateOutputAtMaxBytes?: boolean;
+    readonly usage?: GitHubCliUsageAttribution | undefined;
   }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
 
   /**

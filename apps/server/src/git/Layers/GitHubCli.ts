@@ -1,7 +1,17 @@
 import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
-import { rewriteGitHubRateLimitDetail, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  isGitHubRateLimitMessage,
+  rewriteGitHubRateLimitDetail,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 
 import { runProcess } from "../../processRunner.ts";
+import { GitHubApiUsage } from "../../gitHubUsage/GitHubApiUsage.ts";
+import {
+  parseGhDebugTelemetry,
+  stripGhDebugLines,
+  summarizeGhArgs,
+} from "../../gitHubUsage/ghDebugTelemetry.ts";
 import { GitHubCliError } from "@t3tools/contracts";
 import {
   GitHubCli,
@@ -69,12 +79,19 @@ function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown
     }
 
     const retryAfterAt = retryAfterAtFromMessage(error.message);
+    // `GH_DEBUG=api` writes its request/response trace to stderr, which the
+    // process runner embeds in the failure message. Strip every diagnostic
+    // line before it reaches the detail so failures stay small and never
+    // carry headers, tokens, or query dumps.
+    const cleaned = stripGhDebugLines(error.message);
     return new GitHubCliError({
       operation,
       // An exhausted quota fails every call identically until the reset, so say that once in
       // stable words the PR caches and the client can match on — instead of echoing the raw
       // `gh` argv and stderr on every failure.
-      detail: rewriteGitHubRateLimitDetail(`GitHub CLI command failed: ${error.message}`),
+      detail: rewriteGitHubRateLimitDetail(
+        `GitHub CLI command failed: ${cleaned.length > 0 ? cleaned : (error.message.split("\n")[0] ?? "unknown error")}`,
+      ),
       ...(retryAfterAt ? { retryAfterAt } : {}),
       cause: error,
     });
@@ -239,21 +256,77 @@ function decodeGitHubJson<S extends Schema.Top>(
 
 const makeGitHubCli = Effect.sync(() => {
   const execute: GitHubCliShape["execute"] = (input) =>
-    Effect.tryPromise({
-      try: () =>
-        runProcess("gh", input.args, {
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          ...(input.allowNonZeroExit ? { allowNonZeroExit: true } : {}),
-          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-          ...(input.maxOutputBytes === undefined
-            ? {}
-            : {
-                maxBufferBytes: input.maxOutputBytes,
-                outputMode: input.truncateOutputAtMaxBytes === true ? "truncate" : "error",
-              }),
-        }),
-      catch: (error) => normalizeGitHubCliError("execute", error),
+    Effect.gen(function* () {
+      // No extra quota is spent to observe usage: `GH_DEBUG=api` makes `gh`
+      // itself report each HTTP request and the response rate-limit headers
+      // on stderr. Tokens arrive redacted (`token ████`) and debug lines are
+      // stripped from failure details before they reach any caller.
+      const startedAt = Date.now();
+      const attempt = yield* Effect.tryPromise({
+        try: () =>
+          runProcess("gh", input.args, {
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            env: { ...process.env, GH_DEBUG: "api" },
+            ...(input.allowNonZeroExit ? { allowNonZeroExit: true } : {}),
+            ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+            ...(input.maxOutputBytes === undefined
+              ? {}
+              : {
+                  maxBufferBytes: input.maxOutputBytes,
+                  outputMode: input.truncateOutputAtMaxBytes === true ? "truncate" : "error",
+                }),
+          }),
+        catch: (error: unknown) => error,
+      }).pipe(
+        Effect.map((result) => ({ status: "ok" as const, result })),
+        Effect.catch((raw: unknown) => Effect.succeed({ status: "failed" as const, raw })),
+      );
+      const latencyMs = Date.now() - startedAt;
+      const usage = yield* Effect.serviceOption(GitHubApiUsage);
+      const attribution = {
+        operation: summarizeGhArgs(input.args),
+        feature: input.usage?.feature ?? "unknown",
+        host: input.usage?.host ?? "unknown",
+        ...(input.usage?.repository == null ? {} : { repository: input.usage.repository }),
+        ...(input.usage?.prNumber == null ? {} : { prNumber: input.usage.prNumber }),
+      };
+
+      if (attempt.status === "ok") {
+        if (usage._tag === "Some") {
+          const telemetry = parseGhDebugTelemetry(attempt.result.stderr);
+          yield* usage.value.record({
+            ...attribution,
+            httpRequests: telemetry.httpRequestCount,
+            outcome: "success",
+            latencyMs,
+            rateLimits: telemetry.rateLimits,
+          });
+        }
+        return attempt.result;
+      }
+
+      const raw = attempt.raw;
+      const failure =
+        raw instanceof Error ? raw : new Error("GitHub CLI command failed with no detail.");
+      // The runner embeds stderr — including the debug trace — in the message,
+      // so the measured request count survives even on failure.
+      const telemetry = parseGhDebugTelemetry(failure.message);
+      const normalized = normalizeGitHubCliError("execute", failure);
+      if (usage._tag === "Some") {
+        const outcome = isGitHubRateLimitMessage(normalized.detail) ? "rate-limited" : "failure";
+        const retryAfterAtMs =
+          normalized.retryAfterAt !== undefined ? Date.parse(normalized.retryAfterAt) : Number.NaN;
+        yield* usage.value.record({
+          ...attribution,
+          httpRequests: telemetry.httpRequestCount,
+          outcome,
+          latencyMs,
+          rateLimits: telemetry.rateLimits,
+          ...(Number.isFinite(retryAfterAtMs) ? { retryAfterAtMs } : {}),
+        });
+      }
+      return yield* normalized;
     });
 
   const service = {
@@ -261,6 +334,7 @@ const makeGitHubCli = Effect.sync(() => {
     listOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "association" },
         args: [
           "pr",
           "list",
@@ -298,6 +372,7 @@ const makeGitHubCli = Effect.sync(() => {
     listRepositoryOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "association" },
         args: [
           "pr",
           "list",
@@ -340,6 +415,7 @@ const makeGitHubCli = Effect.sync(() => {
               : [];
           const result = yield* execute({
             cwd: input.cwd,
+            usage: { feature: "association" },
             args: [
               "pr",
               "view",
@@ -364,6 +440,7 @@ const makeGitHubCli = Effect.sync(() => {
         const result = yield* execute({
           cwd: input.cwd,
           allowNonZeroExit: true,
+          usage: { feature: "association", host: reference.hostname },
           args: [
             "api",
             "--hostname",
@@ -434,12 +511,14 @@ const makeGitHubCli = Effect.sync(() => {
           : [];
       return execute({
         cwd: input.cwd,
+        usage: { feature: "diff" },
         args: ["pr", "diff", input.reference, ...repositoryArgs],
       }).pipe(Effect.map((result) => result.stdout));
     },
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "repository" },
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -456,6 +535,7 @@ const makeGitHubCli = Effect.sync(() => {
     createPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "create" },
         args: [
           "pr",
           "create",
@@ -472,6 +552,7 @@ const makeGitHubCli = Effect.sync(() => {
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "repository" },
         args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
       }).pipe(
         Effect.map((value) => {
@@ -482,6 +563,7 @@ const makeGitHubCli = Effect.sync(() => {
     checkoutPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "checkout" },
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
   } satisfies GitHubCliShape;

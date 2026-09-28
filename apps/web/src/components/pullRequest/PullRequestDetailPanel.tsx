@@ -833,9 +833,18 @@ export function PullRequestDetailPanel({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-destructive">{errorMessage(detailQuery.error)}</p>
-        <Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()}>
-          Retry
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()}>
+            Retry
+          </Button>
+          {isRateLimitQueryError(detailQuery.error) ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              render={<Link to="/settings/pull-request-collaboration">See API usage</Link>}
+            />
+          ) : null}
+        </div>
       </div>
     );
   }

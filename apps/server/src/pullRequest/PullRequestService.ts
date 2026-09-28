@@ -42,6 +42,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { GitHubApiUsage } from "../gitHubUsage/GitHubApiUsage.ts";
 import {
   type ProviderChangeRequest,
   type ProviderListCursor,
@@ -403,6 +404,17 @@ export const make = Effect.gen(function* () {
   const registry = yield* PullRequestProviderRegistry;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
+  // Optional so unit tests composing this service alone keep working: without
+  // the usage layer, cache-hit telemetry quietly no-ops while outbound calls
+  // still record through the `gh` seam wherever that layer is present.
+  const gitHubUsage = yield* Effect.serviceOption(GitHubApiUsage);
+  /**
+   * A read answered without leaving the process. The host is known only where
+   * the caller already filtered by it: resolving it here would cost the very
+   * lookup caching avoids, so other hits honestly report `unknown`.
+   */
+  const recordCacheHit = (feature: string, host: string): Effect.Effect<void> =>
+    gitHubUsage._tag === "Some" ? gitHubUsage.value.recordCacheHit({ feature, host }) : Effect.void;
 
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "host">,
@@ -618,6 +630,15 @@ export const make = Effect.gen(function* () {
       const viewers: Record<string, string> = {};
       for (const result of viewerResults) {
         if (result.viewer !== null) viewers[result.host] = result.viewer;
+      }
+      // Quota is shown per account identity: the login is already resolved
+      // here, so it is handed to the usage seam with no extra request.
+      if (gitHubUsage._tag === "Some") {
+        for (const result of viewerResults) {
+          if (result.viewer !== null) {
+            yield* gitHubUsage.value.setIdentity(result.host, result.viewer);
+          }
+        }
       }
 
       // One summary per host, which is what the viewer lookup already answers for: two GitHub
@@ -1458,18 +1479,52 @@ export const make = Effect.gen(function* () {
         }
         held.set(key, { at, value });
       });
-    return <E>(key: string, read: Effect.Effect<A, E>): Effect.Effect<A, E> => {
-      const recorded = read.pipe(Effect.tap((value) => record(key, value)));
+    return <E>(
+      key: string,
+      read: Effect.Effect<A, E>,
+      onStaleHit?: Effect.Effect<void>,
+      /**
+       * What the background refresh runs. Defaults to the foreground read;
+       * pass the uncounted lookup where the foreground read records cache
+       * hits, so one served answer is never counted twice.
+       */
+      backgroundRead?: Effect.Effect<A, E>,
+    ): Effect.Effect<A, E> => {
+      const refresh = (backgroundRead ?? read).pipe(Effect.tap((value) => record(key, value)));
       return Effect.flatMap(Clock.currentTimeMillis, (now) => {
         const snapshot = held.get(key);
-        if (snapshot === undefined || now - snapshot.at > staleMs) return recorded;
+        if (snapshot === undefined || now - snapshot.at > staleMs) {
+          return read.pipe(Effect.tap((value) => record(key, value)));
+        }
         // Run as its own fiber rather than a child: the caller is answered and gone before the
         // refresh lands. The read still coalesces on the cache key, so ten stale reads in one
         // window cost one host request — and a failed refresh costs nothing but the retry.
-        return Effect.sync(() => runFork(Effect.ignore(recorded))).pipe(Effect.as(snapshot.value));
+        const backgrounded = Effect.sync(() => runFork(Effect.ignore(refresh)));
+        const served =
+          onStaleHit === undefined ? backgrounded : onStaleHit.pipe(Effect.andThen(backgrounded));
+        return Effect.as(served, snapshot.value);
       });
     };
   };
+
+  /**
+   * A read served from the in-TTL cache rather than from the host: one cache
+   * peek, then either the held answer (counted as a cache hit) or the passed
+   * lookup — which for diffs carries the oversized-patch eviction, so the
+   * miss path must run it rather than re-entering the cache directly.
+   * Concurrent identical reads still coalesce inside `Cache.get` into one
+   * outbound request. The peek can race expiry; at worst a hit is counted for
+   * a read that then goes outbound, never the reverse.
+   */
+  const cachedRead = <A, E>(
+    cache: Cache.Cache<string, A, E>,
+    key: string,
+    lookup: Effect.Effect<A, E>,
+    onHit: Effect.Effect<void>,
+  ): Effect.Effect<A, E> =>
+    Cache.getSuccess(cache, key).pipe(
+      Effect.flatMap((held) => (held._tag === "Some" ? Effect.as(onHit, held.value) : lookup)),
+    );
 
   // Epochs are the invalidation mechanism: a key carries its scope's epoch, so bumping the
   // epoch strands every entry made under the old one — no enumerating a cache whose keys
@@ -1557,7 +1612,9 @@ export const make = Effect.gen(function* () {
         ? null
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
     ]);
-    return staleList(key, Cache.get(listCache, key));
+    const lookup = Cache.get(listCache, key);
+    const hit = recordCacheHit("list", input.host ?? "unknown");
+    return staleList(key, cachedRead(listCache, key, lookup, hit), hit, lookup);
   };
 
   const persistedRead = Effect.fn("PullRequestService.persistedRead")(function* <A>(
@@ -1636,7 +1693,9 @@ export const make = Effect.gen(function* () {
   );
   const detail: PullRequestService["Service"]["detail"] = (input) => {
     const key = JSON.stringify([refEpoch(input), input.projectId, input.repository, input.number]);
-    return staleDetail(key, Cache.get(detailCache, key));
+    const lookup = Cache.get(detailCache, key);
+    const hit = recordCacheHit("detail", "unknown");
+    return staleDetail(key, cachedRead(detailCache, key, lookup, hit), hit, lookup);
   };
 
   const activityCache = yield* Cache.makeWith(
@@ -1655,7 +1714,9 @@ export const make = Effect.gen(function* () {
   );
   const activity: PullRequestService["Service"]["activity"] = (input) => {
     const key = JSON.stringify([refEpoch(input), input.projectId, input.repository, input.number]);
-    return staleActivity(key, Cache.get(activityCache, key));
+    const lookup = Cache.get(activityCache, key);
+    const hit = recordCacheHit("activity", "unknown");
+    return staleActivity(key, cachedRead(activityCache, key, lookup, hit), hit, lookup);
   };
 
   const diffCache = yield* Cache.makeWith(
@@ -1715,7 +1776,8 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
-    return staleDiff(key, read);
+    const hit = recordCacheHit("diff", "unknown");
+    return staleDiff(key, cachedRead(diffCache, key, read, hit), hit, read);
   };
 
   const listStatsCache = yield* Cache.makeWith(
@@ -1761,9 +1823,19 @@ export const make = Effect.gen(function* () {
         missing.set(key, ref);
       }
     }
-    if (missing.size === 0) return { stats: held };
+    if (missing.size === 0) {
+      yield* recordCacheHit("stats", "unknown");
+      return { stats: held };
+    }
     const key = statsBatchKey(missing.values());
-    const { result, at } = yield* staleListStats(key, Cache.get(listStatsCache, key)).pipe(
+    const lookup = Cache.get(listStatsCache, key);
+    const hit = recordCacheHit("stats", "unknown");
+    const { result, at } = yield* staleListStats(
+      key,
+      cachedRead(listStatsCache, key, lookup, hit),
+      hit,
+      lookup,
+    ).pipe(
       Effect.flatMap((value) =>
         Clock.currentTimeMillis.pipe(Effect.map((at) => ({ result: value, at }))),
       ),

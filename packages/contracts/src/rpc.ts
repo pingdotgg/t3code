@@ -300,6 +300,13 @@ import {
   PullRequestMonitorSubmitFindingsResult,
   PullRequestMonitorTransferInput,
 } from "./pullRequestMonitor.ts";
+import {
+  GitHubApiQuotaRefreshInput,
+  GitHubApiQuotaRefreshResult,
+  GitHubApiUsageError,
+  GitHubApiUsageReport,
+  GitHubApiUsageReportInput,
+} from "./gitHubUsage.ts";
 import { WorkflowRunError, WorkflowRunResult } from "./agentWorkflows.ts";
 import { WorkflowRunInput } from "./workflowRuntime.ts";
 
@@ -451,6 +458,8 @@ export const WS_METHODS = {
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
+  pullRequestsUsageReport: "pullRequests.usageReport",
+  pullRequestsQuotaRefresh: "pullRequests.quotaRefresh",
   pullRequestMonitorsStart: "pullRequestMonitors.start",
   pullRequestMonitorsStop: "pullRequestMonitors.stop",
   pullRequestMonitorsStatus: "pullRequestMonitors.status",
@@ -766,6 +775,18 @@ export const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequest
   payload: PullRequestReviewerRequestInput,
   success: Schema.Void,
   error: PullRequestRpcError,
+});
+
+export const WsPullRequestsUsageReportRpc = Rpc.make(WS_METHODS.pullRequestsUsageReport, {
+  payload: GitHubApiUsageReportInput,
+  success: GitHubApiUsageReport,
+  error: GitHubApiUsageError,
+});
+
+export const WsPullRequestsQuotaRefreshRpc = Rpc.make(WS_METHODS.pullRequestsQuotaRefresh, {
+  payload: GitHubApiQuotaRefreshInput,
+  success: GitHubApiQuotaRefreshResult,
+  error: GitHubApiUsageError,
 });
 
 export const WsPullRequestMonitorsStartRpc = Rpc.make(WS_METHODS.pullRequestMonitorsStart, {
@@ -1508,6 +1529,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
+  WsPullRequestsUsageReportRpc,
+  WsPullRequestsQuotaRefreshRpc,
   WsPullRequestMonitorsStartRpc,
   WsPullRequestMonitorsStopRpc,
   WsPullRequestMonitorsStatusRpc,

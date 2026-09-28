@@ -579,6 +579,23 @@ export const make = Effect.gen(function* () {
   ];
 
   /**
+   * Usage attribution for the rolling API report. The host, repository, and
+   * PR number are already in scope at every read, so they travel to the seam
+   * without extra lookups or extra requests.
+   */
+  const usageFor = (input: {
+    readonly feature: string;
+    readonly host: string;
+    readonly repository?: string | undefined;
+    readonly number?: number | undefined;
+  }) => ({
+    feature: input.feature,
+    host: input.host,
+    ...(input.repository === undefined ? {} : { repository: input.repository }),
+    ...(input.number === undefined ? {} : { prNumber: input.number }),
+  });
+
+  /**
    * A GraphQL mutation whose answer is not read back. `gh` exits non-zero on a GraphQL error,
    * so a failed mutation is already a failed command rather than a body to inspect.
    *
@@ -591,10 +608,14 @@ export const make = Effect.gen(function* () {
     readonly host: string;
     readonly query: string;
     readonly variables: Readonly<Record<string, string>>;
+    readonly feature: string;
+    readonly repository?: string | undefined;
+    readonly number?: number | undefined;
   }) =>
     github
       .execute({
         cwd: input.cwd,
+        usage: usageFor(input),
         args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
         stdin: encodeGraphQlRequestJson({ query: input.query, variables: input.variables }),
       })
@@ -605,6 +626,9 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly host: string;
     readonly operation: string;
+    readonly feature: string;
+    readonly repository?: string | undefined;
+    readonly number?: number | undefined;
     /** Variables as `-f` flags, for values this module composed itself. */
     readonly variables?: ReadonlyArray<readonly [string, string]>;
     /**
@@ -621,6 +645,7 @@ export const make = Effect.gen(function* () {
         input.privateVariables === undefined
           ? {
               cwd: input.cwd,
+              usage: usageFor(input),
               args: [
                 "api",
                 "graphql",
@@ -633,6 +658,7 @@ export const make = Effect.gen(function* () {
             }
           : {
               cwd: input.cwd,
+              usage: usageFor(input),
               args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
               stdin: encodeGraphQlRequestJson({
                 query: input.query,
@@ -679,6 +705,7 @@ export const make = Effect.gen(function* () {
     return github
       .execute({
         cwd: input.cwd,
+        usage: usageFor({ feature: "diff", host: input.host, repository: input.repository }),
         args: [
           "api",
           "--hostname",
@@ -738,6 +765,7 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({ feature: "viewer", host: input.host }),
           args: ["api", "--hostname", input.host, "user", "--jq", ".login"],
         })
         .pipe(
@@ -760,6 +788,7 @@ export const make = Effect.gen(function* () {
         github
           .execute({
             cwd: input.cwd,
+            usage: usageFor({ feature: "list", host: input.host, repository: input.repository }),
             args: [
               "pr",
               "list",
@@ -855,6 +884,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         host: input.host,
         operation: "searchPullRequests",
+        feature: "list",
         // The reader's own words are in the query, so it travels over stdin rather than in argv.
         privateVariables: { q: query },
         query: pullRequestSearchGraphQlQuery(rows),
@@ -890,6 +920,7 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             host: input.host,
             operation: "listPullRequestStats",
+            feature: "stats",
             query,
             decode: decodePullRequestStatsJson,
           }).pipe(
@@ -909,6 +940,12 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "detail",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           args: [
             "pr",
             "view",
@@ -938,6 +975,12 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "activity",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           args: [
             "pr",
             "view",
@@ -991,6 +1034,12 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "diff",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           args: ["pr", "diff", String(input.number), ...repositoryArgs(input), "--color", "never"],
           maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
           truncateOutputAtMaxBytes: true,
@@ -1026,6 +1075,9 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             host: input.host,
             operation: "listReviewThreadComments",
+            feature: "threads",
+            repository: input.repository,
+            number: input.number,
             variables: [
               ["-f", `owner=${owner}`],
               ["-f", `name=${name}`],
@@ -1049,6 +1101,9 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             host: input.host,
             operation: "listReviewThreadComments",
+            feature: "threads",
+            repository: input.repository,
+            number: input.number,
             variables: [["-f", `threadId=${threadId}`], cursorVariable(cursor)],
             query: REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
             decode: decodeReviewThreadCommentsJson,
@@ -1129,6 +1184,7 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({ feature: "avatars", host: input.host, repository: input.repository }),
           args: [
             "api",
             "graphql",
@@ -1162,6 +1218,9 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         host: input.host,
         operation: "getViewerAccess",
+        feature: "access",
+        repository: input.repository,
+        number: input.number,
         variables: [
           ["-f", `owner=${owner}`],
           ["-f", `name=${name}`],
@@ -1178,6 +1237,9 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         host: input.host,
         operation: "listReviewerCandidates",
+        feature: "reviewers",
+        repository: input.repository,
+        number: input.number,
         variables: [
           ["-f", `owner=${owner}`],
           ["-f", `name=${name}`],
@@ -1193,6 +1255,12 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "reviewers",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           // Posting to a login GitHub has already been asked about is what a re-request is, so
           // there is nothing to say here about somebody who has reviewed once already. The body
           // travels over stdin for the reason every other one does: argv is visible in process
@@ -1217,6 +1285,12 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "action",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           args: ["pr", subcommand!, String(input.number), ...repositoryArgs(input), ...flags],
         })
         .pipe(Effect.asVoid);
@@ -1226,6 +1300,12 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "comment",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           // The body travels over stdin: argv is visible in process listings and is echoed
           // back inside process-runner failure messages.
           args: [
@@ -1245,6 +1325,12 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          usage: usageFor({
+            feature: "review",
+            host: input.host,
+            repository: input.repository,
+            number: input.number,
+          }),
           // The whole review is one request, so nothing is visible to anyone else until the
           // verdict is sent. The payload travels over stdin for the same reason a comment
           // body does: argv is visible in process listings and echoed back in failures.
@@ -1271,6 +1357,8 @@ export const make = Effect.gen(function* () {
       graphql({
         cwd: input.cwd,
         host: input.host,
+        feature: "threads",
+        repository: input.repository,
         query: REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
         variables: { threadId: input.threadId, body: input.body },
       }),
@@ -1279,6 +1367,8 @@ export const make = Effect.gen(function* () {
       graphql({
         cwd: input.cwd,
         host: input.host,
+        feature: "threads",
+        repository: input.repository,
         query: input.resolved
           ? RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION
           : UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,

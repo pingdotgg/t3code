@@ -118,6 +118,7 @@ import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { DeviceSettings } from "./DeviceSettings";
+import { GitHubApiUsagePanel } from "./GitHubApiUsagePanel";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useLocalRebuildState, useRequestLocalRebuild } from "../../hooks/useLocalRebuild";
@@ -4239,6 +4240,7 @@ export function PullRequestCollaborationSettingsPanel() {
   return (
     <SettingsPageContainer>
       <CollaborativeAcceptanceSettingsPanel />
+      <GitHubApiUsagePanel />
     </SettingsPageContainer>
   );
 }

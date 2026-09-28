@@ -20,6 +20,7 @@ import {
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+import { GitHubApiUsageLive, GitHubApiUsage } from "../gitHubUsage/GitHubApiUsage.ts";
 import { PullRequestProviderRegistry, fromProviders } from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 
@@ -158,6 +159,52 @@ function makeService(
     ),
   );
 }
+
+it.effect("records cache-served reads separately from outbound traffic", () =>
+  Effect.gen(function* () {
+    const readCacheLayer = Layer.effect(
+      PullRequestReadCache.PullRequestReadCache,
+      PullRequestReadCache.make,
+    ).pipe(
+      Layer.provide(Persistence.layerKvs),
+      Layer.provide(KeyValueStore.layerMemory),
+      Layer.provide(NodeServices.layer),
+    );
+    const live = (() => {
+      const deps = Layer.mergeAll(
+        Layer.succeed(PullRequestProviderRegistry, fromProviders([provider()])),
+        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+          getShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 1,
+              projects: [project],
+              threads: [],
+              updatedAt: "2026-08-10T00:00:00Z",
+            }),
+        }),
+        readCacheLayer,
+        // One shared instance: the same layer object below is memoized into
+        // a single store for both the service and the report reader.
+        GitHubApiUsageLive,
+      );
+      return Layer.mergeAll(PullRequestService.layer.pipe(Layer.provide(deps)), GitHubApiUsageLive);
+    })();
+    const program = Effect.gen(function* () {
+      const service = yield* PullRequestService.PullRequestService;
+      const usage = yield* GitHubApiUsage;
+      // The fake provider never touches `gh`, so the only telemetry is the
+      // service's own cache accounting: one miss, then one TTL hit.
+      yield* service.list({ state: "open" });
+      yield* service.list({ state: "open" });
+      return yield* usage.report({ window: "5m" });
+    }).pipe(Effect.provide(live));
+    const report = yield* program;
+    assert.strictEqual(report.totals.invocations, 1);
+    assert.strictEqual(report.totals.servedFromCache, 1);
+    assert.strictEqual(report.totals.httpRequests, 0);
+    assert.strictEqual(report.byFeature[0]?.key, "list");
+  }),
+);
 
 it.effect("marks a team request only on a server-selected Reviewing result", () =>
   Effect.gen(function* () {
