@@ -1,4 +1,4 @@
-import { OrchestrationDispatchCommandError } from "./orchestration.ts";
+import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -126,7 +126,7 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
-} from "./orchestration.ts";
+} from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,

@@ -309,33 +309,7 @@ describe("buildThreadFeed", () => {
     expect(messageEntry?.message.sourceThreadId).toBe(threadId);
   });
 
-  it("adds local feedback messages to an otherwise server-authored feed", () => {
-    const feed = buildThreadFeed([], {
-      localMessages: [
-        {
-          id: MessageId.make("feedback-local"),
-          role: "assistant",
-          text: "Feedback sent to OpenAI.\n\nThread ID: `codex-thread-1`",
-          turnId: null,
-          streaming: false,
-          createdAt: "2026-08-29T00:00:00.000Z",
-          updatedAt: "2026-08-29T00:00:00.000Z",
-        },
-      ],
-    });
-
-    expect(feed).toHaveLength(1);
-    expect(feed[0]).toMatchObject({
-      type: "message",
-      message: {
-        id: "feedback-local",
-        role: "assistant",
-        text: expect.stringContaining("codex-thread-1"),
-      },
-    });
-  });
-
-  it("anchors feedback before later committed turns and appends true optimistic messages", () => {
+  it("anchors feedback before later committed turns", () => {
     const laterUser = {
       ...userMessage("2026-08-29T00:00:05.000Z"),
       id: TurnItemId.make("item-later-user"),
@@ -371,12 +345,6 @@ describe("buildThreadFeed", () => {
           localMessage("feedback-assistant", "assistant"),
           localMessage("message-later-user", "user"),
         ],
-        localMessages: [
-          {
-            ...localMessage("optimistic-user", "user"),
-            createdAt: "2026-08-29T00:00:00.000Z",
-          },
-        ],
       },
     );
     const messages = feed.filter((entry) => entry.type === "message");
@@ -387,7 +355,6 @@ describe("buildThreadFeed", () => {
       "feedback-assistant",
       "message-later-user",
       "message-later-assistant",
-      "optimistic-user",
     ]);
     expect(
       messages

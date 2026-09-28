@@ -66,6 +66,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as Statement from "effect/unstable/sql/Statement";
 
 import {
   isThreadHistoryUserTurn,
@@ -557,14 +558,22 @@ export function upsertProviderTurn(
   });
 }
 
-function preserveDelegatedCompletion(
+/** A stale run snapshot must not erase fields that other events recorded on the run. */
+function preserveRunRecordedFields(
   current: OrchestrationV2Run | undefined,
   next: OrchestrationV2Run,
 ): OrchestrationV2Run {
-  if (next.delegatedCompletion !== undefined || current?.delegatedCompletion === undefined) {
-    return next;
-  }
-  return { ...next, delegatedCompletion: current.delegatedCompletion };
+  if (current === undefined) return next;
+  return {
+    ...next,
+    ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
+      ? { delegatedCompletion: current.delegatedCompletion }
+      : {}),
+    ...(next.restartCancelledBackgroundWork === undefined &&
+    current.restartCancelledBackgroundWork !== undefined
+      ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
+      : {}),
+  };
 }
 
 function preserveCompletionDelivery(
@@ -663,12 +672,24 @@ export function applyToProjection(
         ...base,
         runs: upsertById(
           base.runs,
-          preserveDelegatedCompletion(
+          preserveRunRecordedFields(
             base.runs.find((run) => run.id === event.payload.id),
             event.payload,
           ),
         ),
       });
+    case "run.background-work-cancelled":
+      return {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.id === event.payload.runId
+            ? {
+                ...run,
+                restartCancelledBackgroundWork: event.payload.restartCancelledBackgroundWork,
+              }
+            : run,
+        ),
+      };
     case "run-attempt.created":
     case "run-attempt.updated":
       return withLocalVisibleTurnItems({
@@ -920,6 +941,9 @@ const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
 );
 const encodeRunPayload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2RunJsonSchema));
+const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2RunJsonSchema.fields.restartCancelledBackgroundWork),
+);
 const encodeRunAttemptPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
 );
@@ -1620,6 +1644,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
+    // For run upserts: a snapshot without `path` keeps the value another event recorded there.
+    const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
+      CASE
+        WHEN json_type(excluded.payload_json, ${path}) IS NULL
+          AND json_type(orchestration_v2_projection_runs.payload_json, ${path}) IS NOT NULL
+        THEN json_set(
+          ${payload},
+          ${path},
+          json_extract(orchestration_v2_projection_runs.payload_json, ${path})
+        )
+        ELSE ${payload}
+      END
+    `;
+
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
@@ -1733,19 +1771,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = CASE
-                  WHEN json_type(excluded.payload_json, '$.delegatedCompletion') IS NULL
-                    AND json_type(orchestration_v2_projection_runs.payload_json, '$.delegatedCompletion') IS NOT NULL
-                  THEN json_set(
-                    excluded.payload_json,
-                    '$.delegatedCompletion',
-                    json_extract(
-                      orchestration_v2_projection_runs.payload_json,
-                      '$.delegatedCompletion'
-                    )
-                  )
-                  ELSE excluded.payload_json
-                END
+                payload_json = ${keepRecordedRunField(
+                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                  "$.restartCancelledBackgroundWork",
+                )}
+            `;
+            break;
+          }
+          case "run.background-work-cancelled": {
+            // Only this field changes, so a concurrent lifecycle write is never regressed.
+            const workJson = yield* encodeRestartCancelledBackgroundWork(
+              event.payload.restartCancelledBackgroundWork,
+            );
+            yield* sql`
+              UPDATE orchestration_v2_projection_runs
+              SET payload_json = json_set(
+                payload_json,
+                '$.restartCancelledBackgroundWork',
+                json(${workJson})
+              )
+              WHERE run_id = ${event.payload.runId} AND thread_id = ${event.threadId}
             `;
             break;
           }

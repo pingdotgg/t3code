@@ -16,8 +16,12 @@ import {
 } from "@t3tools/shared/hostProcess";
 
 import { OpenCodeRuntime, OpenCodeRuntimeLive } from "./opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
-const testLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+const testLayer = OpenCodeRuntimeLive.pipe(
+  Layer.provide(OpenCodeServerLedger.layerTest),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
   it.effect("aborts pending SDK requests when inventory loading is interrupted", () =>

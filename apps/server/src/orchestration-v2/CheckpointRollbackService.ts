@@ -185,8 +185,15 @@ export const layer: Layer.Layer<
       });
 
       const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+      // Stopped and failed runs after the target leave the provider
+      // conversation too, so they must not stay visible.
       const runsToRollback = projection.runs.filter(
-        (run) => run.ordinal > targetOrdinal && run.status === "completed",
+        (run) =>
+          run.ordinal > targetOrdinal &&
+          (run.status === "completed" ||
+            run.status === "interrupted" ||
+            run.status === "failed" ||
+            run.status === "cancelled"),
       );
       // Rolled-back turns stay in the audit history, but no longer exist in
       // the provider conversation and must not be counted by a later rewind.

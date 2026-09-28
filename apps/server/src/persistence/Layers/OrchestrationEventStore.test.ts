@@ -23,7 +23,7 @@ import * as Statement from "effect/unstable/sql/Statement";
 import {
   LIVE_STREAM_MAX_ITEMS,
   LiveStreamBufferError,
-} from "../../orchestration/LiveStreamBudget.ts";
+} from "../../orchestration-v2/LiveStreamBudget.ts";
 import { PersistenceDecodeError } from "../Errors.ts";
 import { toShellApplicationEvent } from "../../orchestration-v2/ShellStream.ts";
 import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
@@ -108,7 +108,7 @@ layer("OrchestrationEventStore", (it) => {
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-01-01T00:00:00.000Z";
 
-      const appended = yield* eventStore.append({
+      const appended = yield* eventStore.appendProjectEvent({
         type: "project.created",
         eventId: EventId.make("evt-store-roundtrip"),
         aggregateKind: "project",
@@ -148,13 +148,23 @@ layer("OrchestrationEventStore", (it) => {
       assert.equal(typeof storedRows[0]?.payloadJson, "string");
       assert.equal(typeof storedRows[0]?.metadataJson, "string");
 
-      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
-        Effect.map((chunk) => Array.from(chunk)),
-      );
+      const replayed = yield* eventStore
+        .readApplicationEvents({
+          afterSequence: appended.sequence - 1,
+          throughSequence: appended.sequence,
+        })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunk) => Array.from(chunk)),
+        );
       assert.equal(replayed.length, 1);
-      assert.equal(replayed[0]?.type, "project.created");
-      assert.equal(replayed[0]?.metadata.adapterKey, "codex");
-      assert.deepEqual(replayed[0]?.metadata.origin, { surface: "cli" });
+      const [project] = replayed;
+      if (project === undefined || !("aggregateKind" in project)) {
+        return assert.fail("Expected a project event");
+      }
+      assert.equal(project.type, "project.created");
+      assert.equal(project.metadata.adapterKey, "codex");
+      assert.deepEqual(project.metadata.origin, { surface: "cli" });
     }),
   );
 
@@ -196,16 +206,16 @@ layer("OrchestrationEventStore", (it) => {
       `;
 
       const replayResult = yield* Effect.result(
-        Stream.runCollect(eventStore.readFromSequence(0, 10)),
+        Stream.runCollect(
+          eventStore.readApplicationEvents({
+            afterSequence: 0,
+            throughSequence: Number.MAX_SAFE_INTEGER,
+          }),
+        ),
       );
       assert.equal(replayResult._tag, "Failure");
       if (replayResult._tag === "Failure") {
         assert.ok(isPersistenceDecodeError(replayResult.failure));
-        assert.ok(
-          replayResult.failure.operation.includes(
-            "OrchestrationEventStore.readFromSequence:decodeRows",
-          ),
-        );
       }
     }),
   );
@@ -220,7 +230,7 @@ layer("OrchestrationEventStore", (it) => {
       const now = DateTime.formatIso(occurredAt);
       const baselineSequence = yield* eventStore.latestApplicationSequence;
 
-      const projectEvent = yield* eventStore.append({
+      const projectEvent = yield* eventStore.appendProjectEvent({
         type: "project.created",
         eventId: EventId.make("event-project-shared-stream"),
         aggregateKind: "project",
@@ -307,15 +317,6 @@ layer("OrchestrationEventStore", (it) => {
         finiteReplay.map((event) => event.sequence),
         [projectEvent.sequence, threadEvent!.sequence],
       );
-
-      const legacyReplay = yield* eventStore.readFromSequence(projectEvent.sequence - 1).pipe(
-        Stream.runCollect,
-        Effect.map((chunk) => Array.from(chunk)),
-      );
-      assert.deepEqual(
-        legacyReplay.map((event) => event.type),
-        ["project.created"],
-      );
     }),
   );
   it.effect("measures only a bounded thread replay before decoding its payloads", () =>
@@ -380,6 +381,15 @@ layer("OrchestrationEventStore", (it) => {
         rawPayloadBytes: 0,
         hasCreateEvent: false,
       });
+      // The application range skips V1 rows, which a shell resume never replays.
+      assert.deepEqual(
+        yield* store.getReplayStats({ afterSequence: baseline, throughSequence: head }),
+        {
+          eventCount: 3,
+          rawPayloadBytes:
+            Buffer.byteLength(unicodePayload) + 2 * Buffer.byteLength(oversizedPayload),
+        },
+      );
     }),
   );
 });
@@ -391,7 +401,7 @@ for (const phase of ["high-water", "replay"] as const) {
         const store = yield* OrchestrationEventStore;
         const now = "2026-01-03T00:00:00.000Z";
         const projectId = ProjectId.make(`project:blocked-${phase}`);
-        const projectEvent = yield* store.append({
+        const projectEvent = yield* store.appendProjectEvent({
           type: "project.created",
           eventId: EventId.make(`event:blocked-${phase}:created`),
           aggregateKind: "project",
@@ -464,7 +474,7 @@ it.effect("releases consumed application replay pages", () =>
     yield* Effect.forEach(
       Array.from({ length: 1501 }, (_, index) => index),
       (index) =>
-        store.append({
+        store.appendProjectEvent({
           type: "project.created",
           eventId: EventId.make(`retention-${index}`),
           aggregateKind: "project",

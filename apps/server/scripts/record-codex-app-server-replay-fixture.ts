@@ -103,6 +103,7 @@ const SCENARIO_NAMES = [
   "turn_interrupt_mid_tool",
   "thread_rollback",
   "thread_rollback_after_restart",
+  "thread_rollback_to_stopped_turn",
   "thread_fork_native_continue",
   "thread_fork_native_siblings",
   "thread_merge_back_continue",
@@ -829,6 +830,51 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
             {
               type: "rollback",
               label: "rollback-latest-turn",
+              numTurns: 1,
+            },
+            {
+              type: "turn",
+              label: "post-rollback",
+              prompt: THREAD_ROLLBACK_AFTER_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "thread_rollback_to_stopped_turn",
+      fileName: "thread_rollback_to_stopped_turn.ndjson",
+      description:
+        "One completed turn, one turn stopped mid-tool, one completed turn, thread/revert back to the stopped turn, then a post-rollback turn.",
+      runs: [
+        {
+          name: "rollback-to-stopped-turn",
+          description:
+            "Edit the message after a stopped turn: revert the turn after it and keep the stopped turn.",
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "first-before-rollback",
+              prompt: THREAD_ROLLBACK_FIRST_PROMPT,
+            },
+            {
+              type: "interruptedTurn",
+              label: "stopped-mid-tool",
+              prompt: TURN_INTERRUPT_MID_TOOL_PROMPT,
+              interruptAfterCommandExecutionStarted: true,
+            },
+            {
+              type: "turn",
+              label: "second-before-rollback",
+              prompt: THREAD_ROLLBACK_SECOND_PROMPT,
+            },
+            {
+              type: "rollback",
+              label: "rollback-to-stopped-turn",
               numTurns: 1,
             },
             {

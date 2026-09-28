@@ -7,10 +7,6 @@
  * @module OrchestrationCommandReceiptRepository
  */
 import { CommandId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
-import {
-  OrchestrationAggregateKind,
-  OrchestrationCommandReceiptStatus,
-} from "@t3tools/contracts/legacy-orchestration";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Context from "effect/Context";
@@ -20,12 +16,12 @@ import type { OrchestrationCommandReceiptRepositoryError } from "../Errors.ts";
 
 export const OrchestrationCommandReceipt = Schema.Struct({
   commandId: CommandId,
-  aggregateKind: OrchestrationAggregateKind,
+  aggregateKind: Schema.Literals(["project", "thread"]),
   aggregateId: Schema.Union([ProjectId, ThreadId]),
   commandType: Schema.String,
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,
-  status: OrchestrationCommandReceiptStatus,
+  status: Schema.Literals(["accepted", "rejected"]),
   error: Schema.NullOr(Schema.String),
 });
 export type OrchestrationCommandReceipt = typeof OrchestrationCommandReceipt.Type;

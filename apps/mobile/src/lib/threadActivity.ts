@@ -35,7 +35,7 @@ import type {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2ExecutionNode,
-  OrchestrationMessage,
+  OrchestrationMessageContext,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2RunAttempt,
   OrchestrationV2RunStatus,
@@ -122,6 +122,18 @@ export interface ThreadFeedMessage {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
+}
+
+/** A message shown before the server has it: a pending creation or local feedback. */
+export interface LocalThreadMessage {
+  readonly id: MessageId;
+  readonly role: string;
+  readonly text: string;
+  readonly context?: OrchestrationMessageContext | undefined;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  readonly streaming: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 type RawThreadFeedEntry =
@@ -259,7 +271,7 @@ const projectedEntriesCache = new WeakMap<
   }
 >();
 const localMessageEntriesCache = new WeakMap<
-  OrchestrationMessage,
+  LocalThreadMessage,
   Extract<RawThreadFeedEntry, { readonly type: "message" }>
 >();
 const activityGroupsCache = new WeakMap<ThreadFeedActivity, ThreadFeedActivityGroup>();
@@ -1565,8 +1577,7 @@ export function buildPendingUserInputAnswers(
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
-    readonly localMessages?: ReadonlyArray<OrchestrationMessage>;
-    readonly anchoredMessages?: ReadonlyArray<OrchestrationMessage>;
+    readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   },
@@ -1665,7 +1676,7 @@ export function buildThreadFeed(
     ...foldedAnswerMessageIds,
     ...entries.flatMap((entry) => (entry.type === "message" ? [entry.id] : [])),
   ]);
-  const appendLocalMessage = (message: OrchestrationMessage): RawThreadFeedEntry => {
+  const appendLocalMessage = (message: LocalThreadMessage): RawThreadFeedEntry => {
     const cached = localMessageEntriesCache.get(message);
     if (cached) return cached;
     const entry: Extract<RawThreadFeedEntry, { readonly type: "message" }> = {
@@ -1698,11 +1709,6 @@ export function buildThreadFeed(
     );
     if (insertionIndex === -1) entries.push(entry);
     else entries.splice(insertionIndex, 0, entry);
-  }
-  for (const message of options?.localMessages ?? []) {
-    if (retainedMessageIds.has(message.id)) continue;
-    retainedMessageIds.add(message.id);
-    entries.push(appendLocalMessage(message));
   }
   return groupAdjacentActivities(entries);
 }

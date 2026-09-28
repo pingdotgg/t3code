@@ -13,7 +13,7 @@ import {
   LiveStreamBufferError,
   makeLiveStreamBudget,
   type RetainedLiveItem,
-} from "../orchestration/LiveStreamBudget.ts";
+} from "./LiveStreamBudget.ts";
 
 const COALESCE_WINDOW = Duration.millis(50);
 const MAX_PENDING_UPDATES = 512;

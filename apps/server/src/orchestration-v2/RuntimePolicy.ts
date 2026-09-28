@@ -11,12 +11,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2RuntimePolicy as ProviderAdapterV2RuntimePolicyType,
 } from "./ProviderAdapter.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 
 /**
  * ERRORS
@@ -87,14 +87,14 @@ function providerRuntimeMode(
     : "approval-required";
 }
 
-export const layerFromProjectRepository: Layer.Layer<
+export const layerFromProjectStore: Layer.Layer<
   RuntimePolicyV2,
   never,
-  ProjectionProjects.ProjectionProjectRepository | ProviderInstanceRegistry
+  ProjectStore.ProjectStoreV2 | ProviderInstanceRegistry
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
-    const projects = yield* ProjectionProjects.ProjectionProjectRepository;
+    const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry;
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
@@ -105,7 +105,7 @@ export const layerFromProjectRepository: Layer.Layer<
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
         const cwd =
           input.thread.worktreePath ??
-          (yield* projects.getById({ projectId: input.thread.projectId }).pipe(
+          (yield* projects.get(input.thread.projectId).pipe(
             Effect.mapError(
               (cause) =>
                 new RuntimePolicyResolveError({

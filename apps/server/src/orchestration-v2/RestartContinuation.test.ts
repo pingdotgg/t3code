@@ -139,6 +139,108 @@ it("recovers an admitted continuation after another crash before provider start"
   assert.equal(restartContinuationRun(starting)?.id, runId);
 });
 
+it("continues a settled root run only when the restart cancelled its background work", () => {
+  const projection = makeProjection();
+  const settled = {
+    ...projection,
+    runs: [{ ...projection.runs[0]!, status: "completed" as const }],
+    providerThreads: [{ ...projection.providerThreads[0]!, status: "idle" as const }],
+    providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" as const }],
+    providerTurns: [],
+  };
+  const lostWork = new Set([providerThreadId]);
+  assert.isUndefined(restartContinuationRun(settled));
+  assert.equal(restartContinuationRun(settled, lostWork)?.id, runId);
+  // Work an older provider thread launched (before a provider switch) is not
+  // this run's: its provider was never told about it and cannot continue it.
+  assert.isUndefined(
+    restartContinuationRun(settled, new Set([ProviderThreadId.make("provider-thread:claude")])),
+  );
+  for (const invalid of [
+    { ...settled, thread: { ...settled.thread, archivedAt: {} } },
+    { ...settled, thread: { ...settled.thread, deletedAt: {} } },
+    { ...settled, runs: [{ ...settled.runs[0]!, status: "failed" as const }] },
+    {
+      ...settled,
+      providerThreads: [{ ...settled.providerThreads[0]!, nativeThreadRef: null }],
+    },
+  ])
+    assert.isUndefined(
+      restartContinuationRun(invalid as OrchestrationV2ThreadProjection, lostWork),
+    );
+});
+
+it.effect("prompts a settled thread's continuation with the note of its lost work", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const work = [{ kind: "shell" as const, label: "sleep 25 && echo DONE" }];
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "completed", restartCancelledBackgroundWork: work }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.lengthOf(commands, 1);
+    const command = commands[0]!;
+    assert.equal(
+      command.type === "message.dispatch" ? command.restartContinuationOfRunId : null,
+      runId,
+    );
+    assert.include(
+      command.type === "message.dispatch" ? command.text : "",
+      "sleep 25 && echo DONE",
+    );
+    assert.notInclude(command.type === "message.dispatch" ? command.text : "", "Continue where");
+  }),
+);
+
+it.effect("does not continue a failed run that lost background work", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const projection = {
+      ...base,
+      runs: [
+        {
+          ...base.runs[0]!,
+          status: "failed",
+          restartCancelledBackgroundWork: [{ kind: "shell" as const, label: "sleep 25" }],
+        },
+      ],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "failed" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.lengthOf(commands, 0);
+  }),
+);
+
 for (const [enabled, projectOverride] of [
   [false, undefined],
   [true, undefined],
@@ -247,6 +349,84 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
       ),
     );
     assert.lengthOf(commands, 1);
+  }),
+);
+
+it.effect("prepares no continuation for background work another provider thread launched", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const claudeThreadId = ProviderThreadId.make("provider-thread:claude");
+    // A Claude turn left a background subagent open, then the thread switched
+    // to Codex and its turn settled. Recovery would cancel Claude's work.
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "completed" }],
+      providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+      turnItems: [
+        {
+          id: "turn-item:claude-subagent",
+          runId: RunId.make("run:claude"),
+          providerThreadId: claudeThreadId,
+          type: "subagent",
+          status: "running",
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const writes: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0][] = [];
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                writes.push(input);
+                return [];
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        ),
+      ),
+    );
+    yield* recovery.prepareForShutdown;
+    assert.lengthOf(writes, 0);
+    // The same work on the Codex run's own provider thread is continued.
+    const ownWork = {
+      ...projection,
+      turnItems: [{ ...projection.turnItems[0]!, providerThreadId }],
+    } as OrchestrationV2ThreadProjection;
+    const ownRecovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(ownWork),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                writes.push(input);
+                return [];
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+        ),
+      ),
+    );
+    yield* ownRecovery.prepareForShutdown;
+    assert.deepEqual(
+      writes.map((write) => write.effects[0]?.request),
+      [{ type: "provider-runtime.continue", sourceRunId: runId }],
+    );
   }),
 );
 

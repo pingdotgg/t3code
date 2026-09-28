@@ -2,7 +2,7 @@ import type { GitRunStackedActionInput, GitRunStackedActionResult } from "@t3too
 import * as Effect from "effect/Effect";
 
 import * as OrchestratorV2 from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 
 export const refreshPushedPullRequests = Effect.fn("refreshPushedPullRequests")(
@@ -24,8 +24,7 @@ export const refreshPushedPullRequests = Effect.fn("refreshPushedPullRequests")(
       yield* pullRequests.refreshAfterTurn(input.projectId);
       return;
     }
-    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const projects = yield* snapshots.getProjectShellsWithoutEnrichment();
+    const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
     yield* Effect.forEach(
       projects.filter((project) => project.workspaceRoot === input.cwd),
       (project) => pullRequests.refreshAfterTurn(project.id),

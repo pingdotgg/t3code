@@ -11,6 +11,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type UserInputAttachments,
 } from "@t3tools/contracts";
@@ -30,7 +31,7 @@ const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
-const failingDispatch = (captured: OrchestrationV2Command[]) =>
+const failingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService)({
     dispatch: (command) => {
       captured.push(command);
@@ -132,7 +133,7 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
       NodePath.join(config.attachmentsDir, `${id}.png`),
       new Uint8Array([1, 2, 3]),
     );
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-1"),
@@ -176,7 +177,7 @@ it.effect("rolls back earlier question claims when a later pending upload is mis
       NodePath.join(config.attachmentsDir, `${existingId}.png`),
       new Uint8Array([9, 9, 9, 9]),
     );
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     const result = yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-missing-pending"),
@@ -237,7 +238,7 @@ it.effect("rolls back earlier question claims when attachment path preparation f
       NodePath.join(config.attachmentsDir, `${pendingId}.png`),
       new Uint8Array([1, 2, 3]),
     );
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     const result = yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-missing-claimed"),
@@ -289,7 +290,7 @@ it.effect("retains claimed copies when dispatch failure may have been accepted",
       NodePath.join(config.attachmentsDir, `${pendingId}.png`),
       new Uint8Array([1, 2, 3]),
     );
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     const result = yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-ambiguous"),
@@ -624,7 +625,7 @@ it.effect("releases claimed copies when preparation dies with a defect", () =>
         throw new Error("poisoned");
       },
     };
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     const result = yield* dispatchCommand({
       type: "runtime-request.respond",
       commandId: CommandId.make("answer-defect"),
@@ -692,7 +693,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
         ],
       },
     };
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     const first = yield* dispatchCommand(command).pipe(
       Effect.provide(failingDispatch(captured)),
       Effect.result,
@@ -747,7 +748,7 @@ it.effect("applies the image budget across all questions before dispatch", () =>
       mimeType: "image/png",
       sizeBytes: 10 * 1024 * 1024,
     }));
-    const captured: OrchestrationV2Command[] = [];
+    const captured: OrchestrationV2ServerCommand[] = [];
     const result = yield* Effect.exit(
       dispatchCommand({
         type: "runtime-request.respond",
