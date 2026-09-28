@@ -15,6 +15,15 @@ This includes:
 - Any other style that is inconsistent with the file
 - Unnecessary emoji usage
 
+## Useful comments only
+
+Keep a comment only when it explains what the code cannot show: a
+non-obvious why, a contract the reader must honor, or a trap that looks
+correct but is not. Remove comments that restate the code, narrate obvious
+behavior, or preserve review-thread explanations once the change has landed.
+Prefer one line; a paragraph must earn its length with a decision a future
+reader could otherwise reverse.
+
 Only touch changes introduced in this branch; do not reformat or refactor surrounding code. Report at the end with only a 1-3 sentence summary of what you changed.
 
 Ported from [Hona/opencode](https://github.com/Hona/opencode/blob/main/.opencode/command/rmslop.md).
