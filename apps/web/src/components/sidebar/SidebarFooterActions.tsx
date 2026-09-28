@@ -70,8 +70,8 @@ export function SidebarFooterActions() {
     ? "Checking for source updates…"
     : rebuildBehind
       ? staleness.behindBy !== null && staleness.behindBy !== undefined
-        ? `${remoteRef} has ${staleness.behindBy} new ${staleness.behindBy === 1 ? "commit" : "commits"} — rebuild and restart`
-        : `${remoteRef} has newer changes — rebuild and restart`
+        ? `${remoteRef} has ${staleness.behindBy} new ${staleness.behindBy === 1 ? "commit" : "commits"} — pull, rebuild and restart`
+        : `${remoteRef} has newer changes — pull, rebuild and restart`
       : staleness.error
         ? `Could not check for source updates: ${staleness.error}`
         : "No rebuild needed";
@@ -160,7 +160,7 @@ export function SidebarFooterActions() {
                     )}
                     data-testid="sidebar-footer-rebuild"
                     disabled={!rebuildBehind || rebuildBusy}
-                    onClick={requestLocalRebuild}
+                    onClick={() => requestLocalRebuild({ pullLatest: true })}
                     // Native fallback: disabled buttons do not fire the hover
                     // events the popup relies on.
                     title={rebuildTooltip}
