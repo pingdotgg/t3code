@@ -166,11 +166,11 @@ export function SidebarThreadHeader({
               Hide dispatched bot threads
             </MenuCheckboxItem>
             <MenuSeparator />
-            <MenuGroupLabel>LLM account</MenuGroupLabel>
             <MenuRadioGroup
               value={selectedAccountKey ?? ""}
               onValueChange={(value) => onAccountChange(value || null)}
             >
+              <MenuGroupLabel>LLM account</MenuGroupLabel>
               <MenuRadioItem value="">
                 <span className="flex items-center gap-2">
                   All accounts
