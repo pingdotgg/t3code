@@ -68,28 +68,10 @@ export function SourceControlIcon(props: {
       );
     case "azure-devops":
       return (
-        <Svg width={size} height={size} viewBox="0 0 96 96">
-          <Defs>
-            <LinearGradient id="azure-a" x1="42.83" x2="15.79" y1="12.69" y2="92.57">
-              <Stop offset="0" stopColor="#114A8B" />
-              <Stop offset="1" stopColor="#0669BC" />
-            </LinearGradient>
-            <LinearGradient id="azure-b" x1="47.84" x2="77.52" y1="10.36" y2="89.44">
-              <Stop offset="0" stopColor="#3CCBF4" />
-              <Stop offset="1" stopColor="#2892DF" />
-            </LinearGradient>
-          </Defs>
+        <Svg width={size} height={size} viewBox="0 0 24 24">
           <Path
-            fill="url(#azure-a)"
-            d="M33.34 6.54h26.04l-27.03 80.1a4.15 4.15 0 0 1-3.94 2.81H8.15a4.14 4.14 0 0 1-3.93-5.47L29.4 9.38a4.15 4.15 0 0 1 3.94-2.83z"
-          />
-          <Path
-            fill="#0078D4"
-            d="M71.17 60.26H29.88a1.91 1.91 0 0 0-1.3 3.31l26.53 24.76a4.17 4.17 0 0 0 2.85 1.13h23.38z"
-          />
-          <Path
-            fill="url(#azure-b)"
-            d="M66.6 9.36a4.14 4.14 0 0 0-3.93-2.82H33.65a4.15 4.15 0 0 1 3.93 2.82l25.18 74.62a4.15 4.15 0 0 1-3.93 5.48h29.02a4.15 4.15 0 0 0 3.93-5.48z"
+            fill="#0078D7"
+            d="M0 8.877L2.247 5.91l8.405-3.416V.022l7.37 5.393L2.966 8.338v8.225L0 15.707zm24-4.45v14.651l-5.753 4.9-9.303-3.057v3.056l-5.978-7.416 15.057 1.798V5.415z"
           />
         </Svg>
       );
