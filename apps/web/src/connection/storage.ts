@@ -170,7 +170,6 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
           }),
         ),
   );
-  yield* get;
   const close = lock.withPermits(1)(
     Effect.sync(() => {
       current?.close();
