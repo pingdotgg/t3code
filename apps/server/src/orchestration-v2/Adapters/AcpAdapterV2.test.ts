@@ -11070,6 +11070,160 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect("a wake names work that ended while the previous wake was queued", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const continuationRequests: Array<ProviderContinuationRequest> = [];
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      let applyMutation: AcpAdapterV2ExtensionContext["applyBackgroundTaskMutation"] | undefined;
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          deferFinalizeForBackgroundWork: true,
+          registerExtensions: (context) =>
+            Effect.sync(() => {
+              applyMutation = context.applyBackgroundTaskMutation;
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () => Deferred.await(promptGate),
+            }),
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+        continuationRequests: {
+          offer: (request) =>
+            Effect.sync(() => {
+              continuationRequests.push(request);
+            }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-wake-report-while-queued");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-wake-report-while-queued"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const awaitTerminal = (ordinal: number) =>
+        Effect.gen(function* () {
+          const providerTurnId = idAllocator.derive.providerTurn({
+            driver: ACP_TEST_DRIVER,
+            nativeTurnId: acpScopedNativeId(instanceId, `mock-session-1:turn:${ordinal}`),
+          });
+          while (true) {
+            const event = yield* Queue.take(events);
+            if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
+              return event.status;
+            }
+          }
+        });
+      yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      assert.equal(yield* awaitTerminal(1), "completed");
+      if (applyMutation === undefined || sessionUpdateHandler === undefined) {
+        return yield* Effect.die("extensions and session handler must be wired");
+      }
+      const endCommand = (taskId: string, label: string) =>
+        applyMutation!({
+          sessionId: "mock-session-1",
+          taskId,
+          status: "completed",
+          report: { kind: "command", label },
+        });
+      const agentText = (text: string) =>
+        sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+        });
+
+      yield* endCommand("task-a", "sleep a");
+      yield* agentText("A_DONE");
+      assert.lengthOf(continuationRequests, 1);
+      assert.equal(continuationRequests[0]?.notification?.summary, 'Command "sleep a" finished');
+      // B ends while A's wake waits for its turn; that wake is already named.
+      yield* endCommand("task-b", "sleep b");
+      assert.lengthOf(continuationRequests, 1);
+
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+          messageText: "Background task completed.",
+        }),
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(yield* awaitTerminal(2), "completed");
+
+      // B's own wake names it.
+      yield* agentText("B_DONE");
+      assert.lengthOf(continuationRequests, 2);
+      assert.deepEqual(continuationRequests[1]?.notification, {
+        source: { kind: "command" },
+        outcome: "completed",
+        summary: 'Command "sleep b" finished',
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("mid-turn completed mutation defers offer until finalize only when unhandled", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

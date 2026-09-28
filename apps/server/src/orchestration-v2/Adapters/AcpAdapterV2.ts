@@ -1872,8 +1872,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         } | null>(null);
         const wakeBuffer = yield* Ref.make<Array<EffectAcpSchema.SessionNotification>>([]);
         // Background work that ended after the prompt settled, keyed by task or
-        // child session id. The next continuation offer names it for the user.
-        const wakeReports = yield* Ref.make<ReadonlyMap<string, BackgroundWorkReport>>(new Map());
+        // child session id. The next continuation offer names it for the user;
+        // `offered` holds the keys that offer named. Work that ends while the
+        // offer waits for its turn is named by the offer after it.
+        const noWakeReports = {
+          reports: new Map<string, BackgroundWorkReport>(),
+          offered: new Set<string>(),
+        };
+        const wakeReports = yield* Ref.make<{
+          readonly reports: ReadonlyMap<string, BackgroundWorkReport>;
+          readonly offered: ReadonlySet<string>;
+        }>(noWakeReports);
         const recordWakeReport = Effect.fnUntraced(function* (
           key: string,
           report: BackgroundWorkReport,
@@ -1881,7 +1890,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const context = yield* Ref.get(activeTurn);
           // An open prompt reports the work itself; no continuation follows.
           if (context !== null && !context.promptSettled && !context.finalized) return;
-          yield* Ref.update(wakeReports, (current) => new Map(current).set(key, report));
+          yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+            reports: new Map(reports).set(key, report),
+            offered,
+          }));
         });
         const continuationRequested = yield* Ref.make(false);
         const continuationGeneration = yield* Ref.make(0);
@@ -3585,7 +3597,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 continuationGeneration,
                 (value) => value + 1,
               );
-              const reports = yield* Ref.getAndSet(wakeReports, new Map());
+              const reports = yield* Ref.modify(wakeReports, ({ reports }) => [
+                reports,
+                { reports, offered: new Set(reports.keys()) },
+              ]);
               return Option.some({ route, generation, reports });
             }),
           );
@@ -6351,7 +6366,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               yield* Ref.update(continuationGeneration, (value) => value + 1);
               yield* Ref.set(stoppedRunQuarantine, true);
               yield* Ref.set(wakeBuffer, []);
-              yield* Ref.set(wakeReports, new Map());
+              yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -6757,7 +6772,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 // traffic, and exempt app-owned sibling wakes entirely.
                 if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
                   yield* Ref.set(wakeBuffer, []);
-                  yield* Ref.set(wakeReports, new Map());
+                  yield* Ref.set(wakeReports, noWakeReports);
                 }
                 if (preserveBufferedContinuation) return wasRequested;
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -6899,8 +6914,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             // terminal-and-projected lineage still expires with this turn.
             if (isContinuationTurn) {
               yield* Ref.set(continuationRequested, false);
-              // Work that ended after the offer is read by this turn with the buffer.
-              yield* Ref.set(wakeReports, new Map());
+              // This turn delivers what its offer named. Work that ended after
+              // the offer keeps its report for the next one.
+              yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+                reports: new Map([...reports].filter(([key]) => !offered.has(key))),
+                offered: noWakeReports.offered,
+              }));
               const drainedWakeCount = yield* Ref.modify(wakeBuffer, (current) => {
                 const next: Array<EffectAcpSchema.SessionNotification> = [];
                 return [
@@ -7712,7 +7731,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                             yield* Ref.update(continuationGeneration, (value) => value + 1);
                             yield* Ref.set(stoppedRunQuarantine, false);
                             yield* Ref.set(wakeBuffer, []);
-                            yield* Ref.set(wakeReports, new Map());
+                            yield* Ref.set(wakeReports, noWakeReports);
                             yield* Ref.set(continuationRequested, false);
                             yield* Ref.set(runningBackgroundTaskIds, new Set());
                             yield* Ref.set(endedBackgroundTaskIds, new Set());
