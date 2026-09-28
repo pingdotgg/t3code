@@ -1952,7 +1952,7 @@ const WorkEntryDetails = memo(function WorkEntryDetails({
     toolName === "create_nested_threads";
   if (!detail && !hasAuditEvidence) return null;
   return (
-    <div className="ml-[0.5em] border-l border-border/50 pl-[1em] py-1">
+    <div className="chat-work-details ml-[0.5em] border-l border-border/50 pl-[1em] py-1">
       {detail ? (
         <pre
           data-tool-command-details
