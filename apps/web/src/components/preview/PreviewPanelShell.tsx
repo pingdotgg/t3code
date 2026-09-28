@@ -1,11 +1,4 @@
-import {
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 
 import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
@@ -16,31 +9,21 @@ export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
 const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
 const PREVIEW_PANEL_MIN_WIDTH = 360;
-/**
- * Upper bound as a fraction of the viewport; only binds on wide screens.
- * On narrow windows the container clamp below is what preserves the
- * sibling column's space.
- */
-const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
 const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
 /**
  * Width reserved for the sibling column (chat, pull-request list) sharing the
- * panel's flex row. The viewport fraction alone is not enough: the app
- * sidebar sits outside the row, so on narrow windows (any MacBook, even
- * fullscreen) the remaining 30% of the viewport minus the sidebar left the
- * sibling below its usable width and the composer overflowed.
+ * panel's flex row. This is the only upper bound on the panel, so the chat
+ * keeps the same minimum whether or not the app sidebar is open. A cap based
+ * on the viewport would ignore the sidebar and bind only once it collapses.
  */
 const SIBLING_COLUMN_MIN_WIDTH = 360;
 
-export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
-  const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);
-  const containerCap =
-    containerWidth === undefined ? Infinity : Math.floor(containerWidth) - SIBLING_COLUMN_MIN_WIDTH;
+export function getPreviewPanelMaxWidth(rowWidth: number): number {
   // Never below the panel's own minimum: when the row cannot fit both
   // columns' minimums the sibling yields, and useResizableWidth's clamp
   // must not see max < min (it would resolve the inversion to min and,
   // via drag-end persistence, overwrite the user's stored width).
-  return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.min(fractionCap, containerCap));
+  return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.floor(rowWidth) - SIBLING_COLUMN_MIN_WIDTH);
 }
 
 /**
@@ -155,7 +138,7 @@ export function PreviewPanelShell(props: {
 }
 
 /**
- * Track viewport and flex-row widths to derive an upper bound for the panel.
+ * Track the flex-row width to derive an upper bound for the panel.
  * Resize-aware so dragging the OS window narrower (or expanding the app
  * sidebar) re-clamps the stored width on the next render (the hook's clamp
  * picks this up automatically). The row is observed rather than the panel
@@ -164,25 +147,7 @@ export function PreviewPanelShell(props: {
  * never apply the resulting width, so they skip the observer entirely.
  */
 function useClampedMaxWidth(hostRef: RefObject<HTMLDivElement | null>, enabled: boolean): number {
-  const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
-  const [containerWidth, setContainerWidth] = useState<number | undefined>(undefined);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    let frame = 0;
-    const onResize = () => {
-      // Coalesce rapid resize events into one rAF tick.
-      if (frame !== 0) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        setVw(window.innerWidth);
-      });
-    };
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      if (frame !== 0) window.cancelAnimationFrame(frame);
-    };
-  }, []);
+  const [rowWidth, setRowWidth] = useState<number | undefined>(undefined);
   useLayoutEffect(() => {
     if (!enabled) return;
     const parent = hostRef.current?.parentElement;
@@ -192,7 +157,7 @@ function useClampedMaxWidth(hostRef: RefObject<HTMLDivElement | null>, enabled: 
     // (the panel would flash over-wide on every mount). clientWidth is
     // integral, so sub-pixel resize deltas bail out of re-rendering.
     const measure = () => {
-      setContainerWidth(parent.clientWidth);
+      setRowWidth(parent.clientWidth);
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -202,5 +167,9 @@ function useClampedMaxWidth(hostRef: RefObject<HTMLDivElement | null>, enabled: 
       observer.disconnect();
     };
   }, [hostRef, enabled]);
-  return getPreviewPanelMaxWidth(vw, containerWidth);
+  // Unmeasured only before the first layout effect or in modes that never
+  // apply the width; the viewport is an upper bound on the row.
+  return getPreviewPanelMaxWidth(
+    rowWidth ?? (typeof window === "undefined" ? 1280 : window.innerWidth),
+  );
 }
