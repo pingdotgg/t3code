@@ -281,6 +281,40 @@ it("includes imported runless history when selecting fork context through a run"
   );
 });
 
+// Recovery records the work, then a run.updated snapshot taken before it lands.
+const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
+  const store = yield* ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("restart-cancelled-work-stale-update");
+  const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const now = yield* DateTime.now;
+  const work = [{ kind: "subagent" as const, label: "Background subagent test" }];
+  yield* store.apply({
+    id: EventId.make("event:restart-cancelled-work-stale-update:recorded"),
+    type: "run.background-work-cancelled",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: { runId: run.id, restartCancelledBackgroundWork: work },
+  });
+  yield* store.apply({
+    id: EventId.make("event:restart-cancelled-work-stale-update:completed"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: { ...run, status: "completed", completedAt: now },
+  });
+  const updated = (yield* store.getThreadProjection(threadId)).runs[0];
+  assert.equal(updated?.status, "completed");
+  assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
+});
+
+it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
+  restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
 it.effect("memory recovery selection ignores unfinished items from rolled-back runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStoreV2;
@@ -300,6 +334,10 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 );
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "keeps restart-cancelled work through a stale run.updated",
+    () => restartCancelledWorkSurvivesStaleRunUpdate,
+  );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStoreV2;

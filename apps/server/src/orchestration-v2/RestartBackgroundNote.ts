@@ -59,7 +59,10 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
   const description = compactLabel(task.description);
   return {
     kind,
-    label: description === undefined ? task.taskId : `${description} (id ${task.taskId})`,
+    label:
+      compactLabel(
+        description === undefined ? task.taskId : `${description} (id ${task.taskId})`,
+      ) ?? "background task",
   };
 }
 

@@ -65,6 +65,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type * as Statement from "effect/unstable/sql/Statement";
 
 import {
   isThreadHistoryUserTurn,
@@ -556,14 +557,22 @@ export function upsertProviderTurn(
   });
 }
 
-function preserveDelegatedCompletion(
+/** A stale run snapshot must not erase fields that other events recorded on the run. */
+function preserveRunRecordedFields(
   current: OrchestrationV2Run | undefined,
   next: OrchestrationV2Run,
 ): OrchestrationV2Run {
-  if (next.delegatedCompletion !== undefined || current?.delegatedCompletion === undefined) {
-    return next;
-  }
-  return { ...next, delegatedCompletion: current.delegatedCompletion };
+  if (current === undefined) return next;
+  return {
+    ...next,
+    ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
+      ? { delegatedCompletion: current.delegatedCompletion }
+      : {}),
+    ...(next.restartCancelledBackgroundWork === undefined &&
+    current.restartCancelledBackgroundWork !== undefined
+      ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
+      : {}),
+  };
 }
 
 function preserveCompletionDelivery(
@@ -662,7 +671,7 @@ export function applyToProjection(
         ...base,
         runs: upsertById(
           base.runs,
-          preserveDelegatedCompletion(
+          preserveRunRecordedFields(
             base.runs.find((run) => run.id === event.payload.id),
             event.payload,
           ),
@@ -1622,6 +1631,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
+    // For run upserts: a snapshot without `path` keeps the value another event recorded there.
+    const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
+      CASE
+        WHEN json_type(excluded.payload_json, ${path}) IS NULL
+          AND json_type(orchestration_v2_projection_runs.payload_json, ${path}) IS NOT NULL
+        THEN json_set(
+          ${payload},
+          ${path},
+          json_extract(orchestration_v2_projection_runs.payload_json, ${path})
+        )
+        ELSE ${payload}
+      END
+    `;
+
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
@@ -1735,19 +1758,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = CASE
-                  WHEN json_type(excluded.payload_json, '$.delegatedCompletion') IS NULL
-                    AND json_type(orchestration_v2_projection_runs.payload_json, '$.delegatedCompletion') IS NOT NULL
-                  THEN json_set(
-                    excluded.payload_json,
-                    '$.delegatedCompletion',
-                    json_extract(
-                      orchestration_v2_projection_runs.payload_json,
-                      '$.delegatedCompletion'
-                    )
-                  )
-                  ELSE excluded.payload_json
-                END
+                payload_json = ${keepRecordedRunField(
+                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                  "$.restartCancelledBackgroundWork",
+                )}
             `;
             break;
           }
