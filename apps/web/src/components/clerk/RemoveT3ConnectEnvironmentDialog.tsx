@@ -45,9 +45,12 @@ export function RemoveT3ConnectEnvironmentDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {shownLabel} from this device?</AlertDialogTitle>
             <AlertDialogDescription>
-              This forgets its pairing, credentials, and cached threads here. It stays registered to
-              your T3 Connect account and keeps using a host space. To remove it from your account
-              and free that space, deregister it in your T3 Connect account settings.
+              This forgets its pairing, credentials, and cached threads here.
+            </AlertDialogDescription>
+            <AlertDialogDescription>
+              It stays registered to your T3 Connect account and keeps using a host space. To remove
+              it from your account and free that space, deregister it in your T3 Connect account
+              settings.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
