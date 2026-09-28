@@ -1,6 +1,6 @@
 import { DEFAULT_SPEECH_POST_PROCESSING_PROMPT, ProviderDriverKind } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import {
   getCustomModelOptionsByInstance,
@@ -29,6 +29,7 @@ const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export function VoicePostProcessingSettings() {
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
+  const [editingCustomInstructions, setEditingCustomInstructions] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environment, connectedEnvironments } = useSettingsScope();
@@ -61,10 +62,12 @@ export function VoicePostProcessingSettings() {
   );
   const provider: ProviderDriverKind = instanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const hasServerTargets = connectedEnvironments.length > 0;
-  const customInstructions =
-    settings.speechPostProcessingPrompt.customInstructions === DEFAULT_SPEECH_POST_PROCESSING_PROMPT
-      ? ""
-      : settings.speechPostProcessingPrompt.customInstructions;
+  const customInstructions = settings.speechPostProcessingPrompt.customInstructions;
+  const promptMode = editingCustomInstructions
+    ? "custom"
+    : settings.speechPostProcessingPrompt.mode === "custom" && !customInstructions.trim()
+      ? "default"
+      : settings.speechPostProcessingPrompt.mode;
 
   return (
     <SettingsSection title="Improve transcripts">
@@ -170,15 +173,23 @@ export function VoicePostProcessingSettings() {
         description="Use the built-in transcript cleanup prompt or write your own instructions."
         control={
           <Select
-            value={settings.speechPostProcessingPrompt.mode}
+            value={promptMode}
             onValueChange={(mode) => {
               if (!mode) return;
+              if (mode === "custom" && !customInstructions.trim()) {
+                setEditingCustomInstructions(true);
+                return;
+              }
+              setEditingCustomInstructions(false);
               const nextInstructions =
-                customInstructionsRef.current?.value.trim() ?? customInstructions;
+                customInstructionsRef.current?.value.trim() || customInstructions;
               updateSettings({
                 speechPostProcessingPrompt: {
                   mode: mode as "default" | "custom",
-                  customInstructions: nextInstructions,
+                  customInstructions:
+                    mode === "default" && nextInstructions === DEFAULT_SPEECH_POST_PROCESSING_PROMPT
+                      ? ""
+                      : nextInstructions,
                 },
               });
             }}
@@ -189,9 +200,7 @@ export function VoicePostProcessingSettings() {
               aria-label="Voice post-processing prompt"
             >
               <SelectValue>
-                {settings.speechPostProcessingPrompt.mode === "custom"
-                  ? "Custom instructions"
-                  : "Improve transcription"}
+                {promptMode === "custom" ? "Custom instructions" : "Improve transcription"}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -201,9 +210,10 @@ export function VoicePostProcessingSettings() {
           </Select>
         }
       >
-        {settings.speechPostProcessingPrompt.mode === "custom" ? (
+        {promptMode === "custom" ? (
           <div className="w-full pt-3 pb-2">
             <Textarea
+              autoFocus
               key={customInstructions}
               ref={customInstructionsRef}
               defaultValue={customInstructions}
@@ -212,9 +222,27 @@ export function VoicePostProcessingSettings() {
               placeholder="Write instructions for cleaning voice transcripts."
               aria-label="Custom voice post-processing instructions"
               onBlur={(event) => {
-                const customInstructions = event.target.value.trim();
-                if (customInstructions !== settings.speechPostProcessingPrompt.customInstructions)
-                  updateSettings({ speechPostProcessingPrompt: { customInstructions } });
+                const nextInstructions = event.target.value.trim();
+                if (!nextInstructions) {
+                  setEditingCustomInstructions(false);
+                  if (settings.speechPostProcessingPrompt.mode === "custom") {
+                    updateSettings({
+                      speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
+                    });
+                  }
+                  return;
+                }
+                if (
+                  nextInstructions !== customInstructions ||
+                  settings.speechPostProcessingPrompt.mode !== "custom"
+                ) {
+                  updateSettings({
+                    speechPostProcessingPrompt: {
+                      mode: "custom",
+                      customInstructions: nextInstructions,
+                    },
+                  });
+                }
               }}
             />
           </div>
