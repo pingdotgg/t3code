@@ -118,42 +118,50 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       );
       return;
     }
-    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.addEventListener("upgradeneeded", () => {
-      if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
-        request.result.createObjectStore(CATALOG_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(SHELL_STORE_NAME)) {
-        request.result.createObjectStore(SHELL_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(THREAD_STORE_NAME)) {
-        request.result.createObjectStore(THREAD_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
-        request.result.createObjectStore(SERVER_CONFIG_STORE_NAME);
-      }
-      if (!request.result.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
-        request.result.createObjectStore(VCS_REFS_STORE_NAME);
-      }
-    });
-    request.addEventListener("error", () => {
-      resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
-    });
-    request.addEventListener("success", () => {
-      resume(Effect.succeed(request.result));
-    });
+    try {
+      const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+      request.addEventListener("upgradeneeded", () => {
+        if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
+          request.result.createObjectStore(CATALOG_STORE_NAME);
+        }
+        if (!request.result.objectStoreNames.contains(SHELL_STORE_NAME)) {
+          request.result.createObjectStore(SHELL_STORE_NAME);
+        }
+        if (!request.result.objectStoreNames.contains(THREAD_STORE_NAME)) {
+          request.result.createObjectStore(THREAD_STORE_NAME);
+        }
+        if (!request.result.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
+          request.result.createObjectStore(SERVER_CONFIG_STORE_NAME);
+        }
+        if (!request.result.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
+          request.result.createObjectStore(VCS_REFS_STORE_NAME);
+        }
+      });
+      request.addEventListener("error", () => {
+        resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
+      });
+      request.addEventListener("success", () => {
+        resume(Effect.succeed(request.result));
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("open", cause)));
+    }
   });
 });
 
 function readDatabaseValue(database: IDBDatabase, storeName: string, key: IDBValidKey) {
   return Effect.callback<unknown, ConnectionTransientError>((resume) => {
-    const request = database.transaction(storeName, "readonly").objectStore(storeName).get(key);
-    request.addEventListener("error", () => {
-      resume(Effect.fail(catalogError("read", request.error ?? "Unknown IndexedDB read error")));
-    });
-    request.addEventListener("success", () => {
-      resume(Effect.succeed(request.result));
-    });
+    try {
+      const request = database.transaction(storeName, "readonly").objectStore(storeName).get(key);
+      request.addEventListener("error", () => {
+        resume(Effect.fail(catalogError("read", request.error ?? "Unknown IndexedDB read error")));
+      });
+      request.addEventListener("success", () => {
+        resume(Effect.succeed(request.result));
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("read", cause)));
+    }
   }).pipe(Effect.withSpan("web.connectionStorage.readDatabaseValue"));
 }
 
@@ -164,61 +172,81 @@ function writeDatabaseValue(
   value: unknown,
 ) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
-    const transaction = database.transaction(storeName, "readwrite");
-    // Every failed write fires "abort". A failed commit, such as
-    // QuotaExceededError, fires only "abort" and no "error".
-    transaction.addEventListener("abort", () => {
-      resume(
-        Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
-      );
-    });
-    transaction.addEventListener("complete", () => {
-      resume(Effect.void);
-    });
-    transaction.objectStore(storeName).put(value, key);
+    try {
+      const transaction = database.transaction(storeName, "readwrite");
+      // Every failed write fires "abort". A failed commit, such as
+      // QuotaExceededError, fires only "abort" and no "error".
+      transaction.addEventListener("abort", () => {
+        resume(
+          Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
+        );
+      });
+      transaction.addEventListener("complete", () => {
+        resume(Effect.void);
+      });
+      transaction.objectStore(storeName).put(value, key);
+    } catch (cause) {
+      resume(Effect.fail(catalogError("write", cause)));
+    }
   }).pipe(Effect.withSpan("web.connectionStorage.writeDatabaseValue"));
 }
 
 function removeDatabaseValue(database: IDBDatabase, storeName: string, key: IDBValidKey) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
-    const transaction = database.transaction(storeName, "readwrite");
-    transaction.addEventListener("error", () => {
-      resume(
-        Effect.fail(catalogError("remove", transaction.error ?? "Unknown IndexedDB remove error")),
-      );
-    });
-    transaction.addEventListener("complete", () => {
-      resume(Effect.void);
-    });
-    transaction.objectStore(storeName).delete(key);
+    try {
+      const transaction = database.transaction(storeName, "readwrite");
+      transaction.addEventListener("error", () => {
+        resume(
+          Effect.fail(
+            catalogError("remove", transaction.error ?? "Unknown IndexedDB remove error"),
+          ),
+        );
+      });
+      transaction.addEventListener("complete", () => {
+        resume(Effect.void);
+      });
+      transaction.objectStore(storeName).delete(key);
+    } catch (cause) {
+      resume(Effect.fail(catalogError("remove", cause)));
+    }
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValue"));
 }
 
 function removeDatabaseValuesInRange(database: IDBDatabase, storeName: string, range: IDBKeyRange) {
   return Effect.callback<void, ConnectionTransientError>((resume) => {
-    const transaction = database.transaction(storeName, "readwrite");
-    transaction.addEventListener("error", () => {
-      resume(
-        Effect.fail(catalogError("remove", transaction.error ?? "Unknown IndexedDB cursor error")),
-      );
-    });
-    transaction.addEventListener("complete", () => {
-      resume(Effect.void);
-    });
-    const request = transaction.objectStore(storeName).openCursor(range);
-    request.addEventListener("error", () => {
-      resume(
-        Effect.fail(catalogError("remove", request.error ?? "Unknown IndexedDB cursor error")),
-      );
-    });
-    request.addEventListener("success", () => {
-      const cursor = request.result;
-      if (cursor === null) {
-        return;
-      }
-      cursor.delete();
-      cursor.continue();
-    });
+    try {
+      const transaction = database.transaction(storeName, "readwrite");
+      transaction.addEventListener("error", () => {
+        resume(
+          Effect.fail(
+            catalogError("remove", transaction.error ?? "Unknown IndexedDB cursor error"),
+          ),
+        );
+      });
+      transaction.addEventListener("complete", () => {
+        resume(Effect.void);
+      });
+      const request = transaction.objectStore(storeName).openCursor(range);
+      request.addEventListener("error", () => {
+        resume(
+          Effect.fail(catalogError("remove", request.error ?? "Unknown IndexedDB cursor error")),
+        );
+      });
+      request.addEventListener("success", () => {
+        const cursor = request.result;
+        if (cursor === null) {
+          return;
+        }
+        try {
+          cursor.delete();
+          cursor.continue();
+        } catch (cause) {
+          resume(Effect.fail(catalogError("remove", cause)));
+        }
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("remove", cause)));
+    }
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValuesInRange"));
 }
 
