@@ -2485,7 +2485,8 @@ it.layer(
 
   it.effect("subscribes terminal metadata with an initial snapshot and live deltas", () =>
     Effect.gen(function* () {
-      const { manager } = yield* createManager();
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.nextPid = 0;
       yield* manager.open(openInput({ threadId: "existing-thread" }));
 
       const metadataEvents = yield* Ref.make<ReadonlyArray<TerminalMetadataStreamEvent>>([]);
@@ -2501,6 +2502,7 @@ it.layer(
           {
             threadId: "existing-thread",
             terminalId: DEFAULT_TERMINAL_ID,
+            pid: null,
           },
         ],
       });
