@@ -4831,6 +4831,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT item.payload_json
                 FROM orchestration_v2_projection_turn_items item
+                  INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 INNER JOIN orchestration_v2_projection_runs r ON r.run_id = item.run_id
                 WHERE r.run_id = (
                   SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -4838,6 +4839,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ORDER BY latest.ordinal DESC, latest.run_id DESC LIMIT 1
                 )
                   AND r.status = 'failed'
+                  AND item.thread_id = t.thread_id
                   AND item.type = 'error' AND item.status = 'failed'
                   AND item.node_id IS json_extract(r.payload_json, '$.rootNodeId')
                 ORDER BY item.updated_at DESC, item.ordinal DESC, item.turn_item_id DESC
@@ -4850,7 +4852,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (
                 SELECT item.payload_json
                 FROM orchestration_v2_projection_turn_items item
-                WHERE item.run_id = blocked.run_id
+                  INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+                WHERE item.thread_id = t.thread_id
+                  AND item.run_id = blocked.run_id
                   AND item.type = 'error' AND item.status = 'failed'
                   AND item.node_id IS json_extract(blocked.payload_json, '$.rootNodeId')
                 ORDER BY item.updated_at DESC, item.ordinal DESC, item.turn_item_id DESC
