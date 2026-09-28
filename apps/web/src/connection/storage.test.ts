@@ -78,7 +78,7 @@ describe("makeCatalogBackend", () => {
           throw new DOMException("The database connection is closing.", "InvalidStateError");
         },
       } as unknown as IDBDatabase;
-      const backend = makeCatalogBackend(database);
+      const backend = makeCatalogBackend(Effect.succeed(database));
 
       const readError = yield* Effect.flip(backend.read);
       const writeError = yield* Effect.flip(backend.write("{}"));
@@ -98,7 +98,7 @@ describe("makeCatalogBackend", () => {
           setConnectionCatalog,
         },
       });
-      const backend = makeCatalogBackend({} as IDBDatabase);
+      const backend = makeCatalogBackend(Effect.succeed({} as IDBDatabase));
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
@@ -123,7 +123,9 @@ describe("makeCatalogBackend", () => {
           },
         }),
       });
-      const backend = makeCatalogBackend({ transaction: () => transaction } as never);
+      const backend = makeCatalogBackend(
+        Effect.succeed({ transaction: () => transaction } as never),
+      );
 
       const error = yield* backend.write("{}").pipe(Effect.flip);
 
@@ -137,7 +139,7 @@ describe("environment cache removal", () => {
     Effect.gen(function* () {
       vi.stubGlobal("window", {});
       vi.stubGlobal("IDBKeyRange", { bound: () => ({}) });
-      const database = {
+      const database = Object.assign(new EventTarget(), {
         transaction: () => {
           const transaction = Object.assign(new EventTarget(), {
             error: new DOMException("Commit aborted", "AbortError"),
@@ -152,7 +154,7 @@ describe("environment cache removal", () => {
           return transaction;
         },
         close: vi.fn(),
-      } as unknown as IDBDatabase;
+      }) as unknown as IDBDatabase;
       const openRequest = Object.assign(new EventTarget(), { result: database, error: null });
       vi.stubGlobal("indexedDB", {
         open: () => {
@@ -174,6 +176,62 @@ describe("environment cache removal", () => {
       expect(threadError.message).toContain("Commit aborted");
       expect(refsError.message).toContain("Commit aborted");
       expect(database.close).toHaveBeenCalledOnce();
+    }),
+  );
+});
+
+describe("IndexedDB connection recovery", () => {
+  it.effect("reopens after a forced close and finalizes the current connection", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      const makeDatabase = () =>
+        Object.assign(new EventTarget(), {
+          close: vi.fn(),
+          transaction: () => ({
+            objectStore: () => ({
+              get: () => {
+                const request = Object.assign(new EventTarget(), {
+                  result: undefined,
+                  error: null,
+                });
+                queueMicrotask(() => request.dispatchEvent(new Event("success")));
+                return request;
+              },
+            }),
+          }),
+        }) as unknown as IDBDatabase;
+      const first = makeDatabase();
+      const second = makeDatabase();
+      const databases = [first, second];
+      let openCount = 0;
+      const open = vi.fn(() => {
+        const request = Object.assign(new EventTarget(), {
+          result: databases[openCount++],
+          error: null,
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* EnvironmentCacheStore;
+        const environmentId = EnvironmentId.make("env");
+        const threadId = ThreadId.make("thread");
+        expect(Option.isNone(yield* cache.loadThread(environmentId, threadId))).toBe(true);
+        expect(open).toHaveBeenCalledTimes(1);
+
+        first.dispatchEvent(new Event("close"));
+        const recovered = yield* Effect.all(
+          [cache.loadThread(environmentId, threadId), cache.loadThread(environmentId, threadId)],
+          { concurrency: 2 },
+        );
+        expect(recovered.every(Option.isNone)).toBe(true);
+        expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(connectionStorageLayer));
+
+      expect(first.close).not.toHaveBeenCalled();
+      expect(second.close).toHaveBeenCalledOnce();
     }),
   );
 });
