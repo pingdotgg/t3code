@@ -8,12 +8,14 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 
 interface RecordedRegistration {
   readonly directories: string[];
   readonly files: Array<{ readonly path: string; readonly content: string }>;
+  readonly icons: Array<{ readonly path: string; readonly content: Uint8Array }>;
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
 }
 
@@ -27,7 +29,10 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
-    path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
+    path: {
+      join: (...parts: ReadonlyArray<string>) => parts.join("/"),
+      dirname: (path: string) => path.slice(0, path.lastIndexOf("/")),
+    },
     ...overrides,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -53,14 +58,44 @@ const makeHandlerLayer = (
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
+    readonly bundledIcon?: Uint8Array;
+    readonly existingIcon?: Uint8Array;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, makeEnvironment(input.environment)),
+        Layer.succeed(
+          DesktopAssets.DesktopAssets,
+          DesktopAssets.DesktopAssets.of({
+            iconPaths: Effect.succeed({
+              ico: Option.none(),
+              icns: Option.none(),
+              png: input.bundledIcon ? Option.some(BUNDLED_ICON_PATH) : Option.none(),
+            }),
+            resolveResourcePath: () => Effect.succeedNone,
+          }),
+        ),
         FileSystem.layerNoop({
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          readFile: (path) => {
+            const content = path === BUNDLED_ICON_PATH ? input.bundledIcon : input.existingIcon;
+            return content
+              ? Effect.succeed(content)
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFile",
+                    pathOrDescriptor: path,
+                  }),
+                );
+          },
+          writeFile: (path, content) =>
+            Effect.sync(() => {
+              recorded.icons.push({ path, content });
+            }),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -90,6 +125,9 @@ const makeHandlerLayer = (
     ),
   );
 
+const BUNDLED_ICON_PATH = "/tmp/.mount_T3/resources/icon.png";
+const INSTALLED_ICON_PATH = "/home/alice/.local/share/icons/com.t3tools.T3Code.png";
+
 const runRegister = (
   recorded: RecordedRegistration,
   input: Parameters<typeof makeHandlerLayer>[1] = {},
@@ -102,6 +140,7 @@ const runRegister = (
 const emptyRecording = (): RecordedRegistration => ({
   directories: [],
   files: [],
+  icons: [],
   commands: [],
 });
 
@@ -110,6 +149,7 @@ describe("DesktopLinuxUrlHandler", () => {
     const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
       displayName: "T3 Code (Nightly)",
       execTarget: '/home/al ice/Apps/T3 "100%" $HOME\\x.AppImage',
+      iconPath: INSTALLED_ICON_PATH,
       scheme: "t3code",
     });
 
@@ -122,6 +162,7 @@ describe("DesktopLinuxUrlHandler", () => {
       entry,
       'Exec="/home/al ice/Apps/T3 \\\\"100%%\\\\" \\\\$HOME\\\\\\\\x.AppImage" %U',
     );
+    assert.include(entry, `Icon=${INSTALLED_ICON_PATH}`);
     assert.include(entry, "NoDisplay=true");
     assert.notInclude(entry, "StartupWMClass=");
     assert.include(entry, "MimeType=x-scheme-handler/t3code;");
@@ -180,6 +221,23 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
+  it.effect("installs the bundled icon the entry points at, only when it changed", () => {
+    const fresh = emptyRecording();
+    const current = emptyRecording();
+    const icon = new Uint8Array([137, 80, 78, 71]);
+
+    return Effect.gen(function* () {
+      yield* runRegister(fresh, { bundledIcon: icon });
+      yield* runRegister(current, { bundledIcon: icon, existingIcon: icon.slice() });
+
+      assert.include(fresh.files[0]?.content, `Icon=${INSTALLED_ICON_PATH}`);
+      assert.deepEqual(fresh.icons, [{ path: INSTALLED_ICON_PATH, content: icon }]);
+      assert.include(fresh.directories, "/home/alice/.local/share/icons");
+      assert.deepEqual(current.icons, []);
+      assert.equal(current.commands.length, 1);
+    });
+  });
+
   it.effect("falls back to the process executable outside an AppImage", () => {
     const recorded = emptyRecording();
 
@@ -201,6 +259,7 @@ describe("DesktopLinuxUrlHandler", () => {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
+          iconPath: INSTALLED_ICON_PATH,
           scheme: "t3code",
         }),
       });

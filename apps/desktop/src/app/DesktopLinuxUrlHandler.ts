@@ -8,6 +8,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -63,11 +64,18 @@ export function escapeDesktopEntryExecArgument(value: string): string {
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
-// The AppImage integration entry owns the window identity and icon. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+// The AppImage mount is transient, so the entry's icon is copied here. Kept
+// outside the hicolor theme so any icon size resolves without theme lookup.
+export const resolveDesktopEntryIconPath = (dataHome: string, desktopEntryName: string): string =>
+  `${dataHome}/icons/${desktopEntryName.replace(/\.desktop$/, "")}.png`;
+
+// setDesktopName makes Chromium use this entry's id as the window's WM_CLASS
+// and Wayland app_id, so shells take the window icon from this entry. It stays
+// hidden so it never duplicates the AppImage integration's launcher.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
+  readonly iconPath: string;
   readonly scheme: string;
 }): string {
   return [
@@ -75,6 +83,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Type=Application",
     `Name=${escapeDesktopEntryString(input.displayName)}`,
     `Exec=${escapeDesktopEntryExecArgument(input.execTarget)} %U`,
+    `Icon=${escapeDesktopEntryString(input.iconPath)}`,
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
@@ -93,12 +102,17 @@ export class DesktopLinuxUrlHandler extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const assets = yield* DesktopAssets.DesktopAssets;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
   const desktopEntryPath = environment.path.join(
     environment.linuxApplicationsDir,
+    environment.linuxDesktopEntryName,
+  );
+  const iconPath = resolveDesktopEntryIconPath(
+    environment.path.dirname(environment.linuxApplicationsDir),
     environment.linuxDesktopEntryName,
   );
 
@@ -109,6 +123,7 @@ export const make = Effect.gen(function* () {
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
+      iconPath,
       scheme,
     });
     // Pre-ready setup normally wrote this already. Avoid truncating a valid
@@ -128,6 +143,28 @@ export const make = Effect.gen(function* () {
           desktopEntryPath,
           cause,
         }),
+    ),
+  );
+
+  const installIcon = Effect.gen(function* () {
+    const source = Option.getOrUndefined((yield* assets.iconPaths).png);
+    if (source === undefined) return;
+    const content = yield* fileSystem.readFile(source);
+    const existing = yield* fileSystem.readFile(iconPath).pipe(Effect.orElseSucceed(() => null));
+    if (
+      existing !== null &&
+      existing.length === content.length &&
+      existing.every((byte, index) => byte === content[index])
+    ) {
+      return;
+    }
+    yield* fileSystem.makeDirectory(environment.path.dirname(iconPath), { recursive: true });
+    yield* fileSystem.writeFile(iconPath, content);
+  }).pipe(
+    // A missing icon only degrades the shell's window icon; never block the
+    // URL handler registration on it.
+    Effect.catch((error) =>
+      logWarning("desktop entry icon install failed", { iconPath, message: error.message }),
     ),
   );
 
@@ -169,6 +206,7 @@ export const make = Effect.gen(function* () {
       return;
     }
     yield* writeDesktopEntry;
+    yield* installIcon;
     if (!environment.isPackaged) return;
     yield* setDefaultHandler;
     yield* logInfo("registered URL scheme handler", { scheme });
