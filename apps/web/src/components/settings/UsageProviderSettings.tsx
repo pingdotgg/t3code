@@ -3,7 +3,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useClientSettingsHydrated,
+  useUpdateClientSettings,
+  useUpdateEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -36,6 +41,9 @@ export function UsageProviderSettings({
   readonly readOnly: boolean;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const showAccountNames = useClientSettings((settings) => settings.usageShowAccountNames);
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const updateClientSettings = useUpdateClientSettings();
   const updateCursorSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "update Cursor account usage",
   });
@@ -91,6 +99,21 @@ export function UsageProviderSettings({
             }
           />
         ) : null}
+        <SettingsRow
+          id={searchableSetting("usage-account-names").id}
+          title="Show account names"
+          description="Label hub accounts in Limits by the part of their email before the @, instead of initials. Applies to this device."
+          control={
+            <Switch
+              aria-label="Show account names"
+              checked={showAccountNames}
+              disabled={!clientSettingsHydrated}
+              onCheckedChange={(usageShowAccountNames) =>
+                updateClientSettings({ usageShowAccountNames })
+              }
+            />
+          }
+        />
         {entries.length === 0 ? (
           <SettingsRow title="No hubs configured." />
         ) : (
