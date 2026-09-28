@@ -3,7 +3,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useUpdateClientSettings,
+  useUpdateEnvironmentSettings,
+} from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -44,6 +48,8 @@ export function UsageProviderSettings({
   });
   const platform = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment
     .platform;
+  const showAccountNames = useClientSettings((settings) => settings.usageShowAccountNames);
+  const updateClientSettings = useUpdateClientSettings();
   const [adding, setAdding] = useState(false);
   const [updatingCursor, setUpdatingCursor] = useState(false);
   const entries = Object.entries(sources);
@@ -76,6 +82,19 @@ export function UsageProviderSettings({
           ) : null
         }
       >
+        <SettingsRow
+          {...searchableSetting("usage-account-names")}
+          description="Label pooled usage accounts by the part of their email before the @ instead of initials. Applies to this device."
+          control={
+            <Switch
+              aria-label="Show account names"
+              checked={showAccountNames}
+              onCheckedChange={(checked) =>
+                void updateClientSettings({ usageShowAccountNames: checked })
+              }
+            />
+          }
+        />
         {platform?.os === "darwin" ? (
           <SettingsRow
             id="cursor-keychain-usage"

@@ -563,6 +563,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     macProviderSettingsOnly: true,
   },
   {
+    id: "usage-account-names",
+    title: "Show account names",
+    to: "/settings/providers",
+    searchTerms: ["usage limits hub accounts email initials reset credit privacy"],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",

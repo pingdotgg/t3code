@@ -620,6 +620,17 @@ describe("ClientSettings context window meter", () => {
   });
 });
 
+describe("ClientSettings usage account names", () => {
+  it("defaults to initials and accepts an explicit opt-in", () => {
+    expect(decodeClientSettings({}).usageShowAccountNames).toBe(false);
+    expect(decodeClientSettings({ usageShowAccountNames: true }).usageShowAccountNames).toBe(true);
+    expect(decodeClientSettingsPatch({ usageShowAccountNames: true }).usageShowAccountNames).toBe(
+      true,
+    );
+    expect(() => decodeClientSettingsPatch({ usageShowAccountNames: "yes" })).toThrow();
+  });
+});
+
 describe("ClientSettings send shortcut", () => {
   it("defaults to Enter and validates the supported choices", () => {
     expect(decodeClientSettings({}).sendShortcut).toBe("enter");
