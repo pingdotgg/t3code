@@ -68,9 +68,7 @@ import {
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
-import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Button } from "~/components/ui/button";
-import { Checkbox } from "~/components/ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -83,7 +81,6 @@ import {
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -117,6 +114,7 @@ import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControl
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { CommitFileSelection } from "./CommitFileSelection";
 import { RewriteCommitMessagesDialog } from "./RewriteCommitMessagesDialog";
 
 interface GitActionsControlProps {
@@ -284,135 +282,6 @@ function getMenuActionDisabledReason({
 const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
-
-type WorkingTreeFile = VcsStatusResult["workingTree"]["files"][number];
-
-function CommitFileSelection({
-  files,
-  excludedFiles,
-  isEditing,
-  onExcludedFilesChange,
-  onEditingChange,
-  onOpenFile,
-  canOpenFile,
-}: {
-  files: readonly WorkingTreeFile[];
-  excludedFiles: ReadonlySet<string>;
-  isEditing: boolean;
-  onExcludedFilesChange: (files: ReadonlySet<string>) => void;
-  onEditingChange: (editing: boolean) => void;
-  onOpenFile: (path: string) => void;
-  canOpenFile: boolean;
-}) {
-  const selectedFiles = files.filter((file) => !excludedFiles.has(file.path));
-  const allSelected = excludedFiles.size === 0;
-  const noneSelected = selectedFiles.length === 0;
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {isEditing && files.length > 0 && (
-            <Checkbox
-              aria-label="Select all files"
-              checked={allSelected}
-              indeterminate={!allSelected && !noneSelected}
-              onCheckedChange={() => {
-                onExcludedFilesChange(
-                  allSelected ? new Set(files.map((file) => file.path)) : new Set(),
-                );
-              }}
-            />
-          )}
-          <span className="text-muted-foreground">Files</span>
-          {!allSelected && !isEditing && (
-            <span className="text-muted-foreground">
-              ({selectedFiles.length} of {files.length})
-            </span>
-          )}
-        </div>
-        {files.length > 0 && (
-          <Button variant="ghost" size="xs" onClick={() => onEditingChange(!isEditing)}>
-            {isEditing ? "Done" : "Edit"}
-          </Button>
-        )}
-      </div>
-      {files.length === 0 ? (
-        <p className="font-medium">none</p>
-      ) : (
-        <div className="space-y-2">
-          <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
-            <ScrollArea>
-              <div className="space-y-1 p-1">
-                {files.map((file) => {
-                  const isExcluded = excludedFiles.has(file.path);
-                  return (
-                    <div
-                      key={file.path}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
-                    >
-                      {isEditing && (
-                        <Checkbox
-                          aria-label={`Include ${file.path}`}
-                          checked={!isExcluded}
-                          onCheckedChange={() => {
-                            const next = new Set(excludedFiles);
-                            if (next.has(file.path)) {
-                              next.delete(file.path);
-                            } else {
-                              next.add(file.path);
-                            }
-                            onExcludedFilesChange(next);
-                          }}
-                        />
-                      )}
-                      <button
-                        type="button"
-                        className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                        disabled={!canOpenFile}
-                        aria-label={`Open ${file.path} in editor`}
-                        onClick={() => onOpenFile(file.path)}
-                      >
-                        <StartTruncatedPath
-                          path={file.path}
-                          className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
-                        />
-                        <span className="shrink-0">
-                          {isExcluded ? (
-                            <span className="text-muted-foreground">Excluded</span>
-                          ) : (
-                            <>
-                              <span className="text-diff-addition">
-                                +{formatDiffCount(file.insertions)}
-                              </span>
-                              <span className="text-muted-foreground"> / </span>
-                              <span className="text-diff-deletion">
-                                -{formatDiffCount(file.deletions)}
-                              </span>
-                            </>
-                          )}
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-          </div>
-          <div className="flex justify-end font-mono">
-            <span className="text-diff-addition">
-              +{formatDiffCount(selectedFiles.reduce((sum, file) => sum + file.insertions, 0))}
-            </span>
-            <span className="text-muted-foreground"> / </span>
-            <span className="text-diff-deletion">
-              -{formatDiffCount(selectedFiles.reduce((sum, file) => sum + file.deletions, 0))}
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function GitActionItemIcon({
   icon,
