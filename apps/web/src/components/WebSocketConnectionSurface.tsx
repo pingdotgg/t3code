@@ -25,11 +25,7 @@ import {
 } from "../environments/runtime";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
-/**
- * A socket that stays "open" while delivering zero bytes (no FIN/RST) parks
- * reads forever, so the reconnect loop never re-enters. Force a reconnect
- * after this long without any socket/stream activity while work is pending.
- */
+/** Silence while work is pending before the watchdog suspects a dead socket. */
 export const WS_STALL_SILENCE_MS = 45_000;
 /** Suppress toast flicker for blips that recover within this window. */
 const RECONNECT_TOAST_DEBOUNCE_MS = 1_000;
@@ -201,12 +197,9 @@ export function shouldForceStallReconnect(input: {
   );
 }
 /**
- * Probe whether the primary connection still answers unary RPC before the
- * stall watchdog forces a reconnect. Silence alone is not evidence of a broken
- * socket: a legitimately long-running RPC (some are allowed minutes before
- * they even count as slow) produces no stream values while healthy.
- * Resolves true when the server answers, false on any failure or timeout so
- * the caller can reconnect only an actually unresponsive connection.
+ * True when the server still answers unary RPC within the timeout. Silence
+ * alone doesn't prove a broken socket, so the watchdog probes before
+ * reconnecting and only reconnects an actually unresponsive connection.
  */
 async function probePrimaryConnectionResponsive(): Promise<boolean> {
   let connection: ReturnType<typeof getPrimaryEnvironmentConnection>;
@@ -250,8 +243,7 @@ export function shouldShowReconnectedToast(input: {
   ) {
     return false;
   }
-  // Same debounce as the reconnecting/offline toasts: a sub-second blip shows
-  // no reconnecting toast, so it must not show a "Reconnected" toast either.
+  // A sub-second blip shows no reconnecting toast, so it shows no Reconnected one either.
   if (input.connectedAt === null) {
     return false;
   }
@@ -390,14 +382,9 @@ export function WebSocketConnectionCoordinator() {
     if (getWsConnectionUiState(status) !== "connected") {
       return;
     }
-
     const intervalId = window.setInterval(() => {
-      // Re-read fresh inside the tick: the effect closure captures render-time
-      // state, so work that finishes before the next tick must not trigger a
-      // reconnect. Active turns usually have no slow unary RPC
-      // (`subscribeThread` is excluded from slow-request tracking and the
-      // turn-start request may already have completed), so gate on locally
-      // active thread work as well as slow requests.
+      // Re-read inside the tick; the closure holds render-time state. Gate on
+      // active thread work too: turns usually have no slow unary RPC.
       const hasActiveWork = getSlowRpcAckRequests().length > 0 || hasActiveThreadDetailWork();
       if (!hasActiveWork) {
         return;
@@ -423,11 +410,8 @@ export function WebSocketConnectionCoordinator() {
       void probePrimaryConnectionResponsive()
         .then((responsive) => {
           if (responsive) {
-            // Unary success proves the socket answers, not that thread streams
-            // are live: a zombie stream fiber stays pending forever without
-            // failing its subscription loop. Repair active streams so the fresh
-            // snapshot resyncs the timeline, and reset the silence clock so a
-            // healthy long-running request isn't probed in a tight loop.
+            // Unary success doesn't prove streams are live (zombie fibers stay
+            // pending), so repair active streams and reset the silence clock.
             repairActiveThreadDetailSubscriptionsAfterStall();
             recordWsStreamActivity();
             return;
@@ -466,9 +450,8 @@ export function WebSocketConnectionCoordinator() {
     const shouldShowOfflineToast = isDebounced && wouldShowOfflineToast;
     const shouldShowExhaustedToast = isDebounced && wouldShowExhaustedToast;
 
-    // A sustained offline state produces no countdown ticks (the retry
-    // countdown only runs while waiting with a nextRetryAt), so without a
-    // timer the suppressed toast would never appear after the debounce window.
+    // The retry countdown doesn't tick while offline, so schedule a timer or
+    // a sustained offline state would stay unannounced past the debounce window.
     if (wouldShowReconnectToast || wouldShowOfflineToast || wouldShowExhaustedToast) {
       if (!isDebounced && disconnectedAtMs !== null && debounceTimerRef.current === null) {
         const remainingMs = Math.max(

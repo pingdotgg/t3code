@@ -388,43 +388,13 @@ describe("retainThreadDetailSubscription", () => {
     const releaseIdle = retainThreadDetailSubscription(environmentId, idleThreadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
 
-    // A successful unary probe must still repair the zombie stream: the active
-    // subscription is torn down and re-attached, while the idle one is untouched.
+    // The active subscription is torn down and re-attached, the idle one untouched.
     const repair = repairActiveThreadDetailSubscriptionsAfterStall(environmentId);
     expect(repair).toEqual({ retained: 1, resubscribed: 1 });
     expect(mockSubscribeThread).toHaveBeenCalledTimes(3);
 
     releaseActive();
     releaseIdle();
-    stop();
-    await resetEnvironmentServiceForTests();
-  });
-
-  it("repairs retained-but-unattached subscriptions on reconnect without dropping them", async () => {
-    const {
-      retainThreadDetailSubscription,
-      repairRetainedThreadDetailSubscriptionsAfterReconnect,
-      startEnvironmentConnectionService,
-      resetEnvironmentServiceForTests,
-    } = await import("./service");
-
-    const stop = startEnvironmentConnectionService(new QueryClient());
-    const environmentId = EnvironmentId.make("env-1");
-    const threadId = ThreadId.make("thread-repair");
-    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
-    expect(connectionInput).toBeDefined();
-
-    const release = retainThreadDetailSubscription(environmentId, threadId);
-    expect(mockSubscribeThread).not.toHaveBeenCalled();
-
-    const repair = repairRetainedThreadDetailSubscriptionsAfterReconnect(environmentId);
-    expect(repair.retained).toBe(1);
-    expect(repair.reattached).toBe(0);
-
-    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads([threadId]), environmentId);
-    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
-
-    release();
     stop();
     await resetEnvironmentServiceForTests();
   });

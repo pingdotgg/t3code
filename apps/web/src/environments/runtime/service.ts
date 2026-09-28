@@ -565,15 +565,7 @@ export function retainThreadDetailSubscription(
   };
 }
 
-/**
- * Whether any retained thread-detail subscription currently has active work.
- *
- * Used by the connection-surface stall watchdog: an active turn typically has
- * no slow unary RPC (`subscribeThread` is excluded from slow-request tracking
- * and the turn-start request may already have completed), so silence on a
- * half-open socket would otherwise go undetected and the timeline would stay
- * frozen until a manual reload.
- */
+/** Whether any retained thread-detail subscription currently has active work. */
 export function hasActiveThreadDetailWork(): boolean {
   for (const entry of threadDetailSubscriptions.values()) {
     if (entry.refCount > 0 && isNonIdleThreadDetailSubscription(entry)) {
@@ -584,15 +576,10 @@ export function hasActiveThreadDetailWork(): boolean {
 }
 
 /**
- * Reconnect repair keyed on locally-held state, not server status.
- *
- * The transport already restarts every live stream on reconnect, but a
- * retained subscription that failed for a non-transport reason parks until
- * the next reconnect, and a turn that finished during the outage leaves the
- * timeline frozen while status already reads `idle`. Re-attach every retained
- * (refCount > 0) detail subscription whose transport stream is dead; the
- * snapshot handler (`syncServerThreadDetail`) then reloads the locally-held
- * timeline even when the server no longer reports the turn active.
+ * Reconnect repair keyed on locally-held state, not server status. Re-attach
+ * every retained detail subscription whose transport stream is dead; the
+ * snapshot handler then reloads the timeline even when the server no longer
+ * reports the turn active.
  */
 export function repairRetainedThreadDetailSubscriptionsAfterReconnect(
   environmentId?: EnvironmentId,
@@ -624,14 +611,9 @@ export function repairRetainedThreadDetailSubscriptionsAfterReconnect(
 }
 
 /**
- * Stall repair for the zombie-stream failure mode.
- *
- * A half-open socket can leave a thread stream fiber pending forever without
- * failing the transport subscription loop, while unary RPC still works — so a
- * responsiveness probe succeeds and proves nothing about the stream. Tear down
- * and re-subscribe every retained non-idle detail subscription; the fresh
- * snapshot handler (`syncServerThreadDetail`) resyncs the frozen timeline.
- * Idle retained subscriptions are left alone: they have no live turn to lose.
+ * Stall repair for zombie streams: re-subscribe every retained non-idle
+ * detail subscription so the fresh snapshot resyncs the frozen timeline.
+ * Idle subscriptions are left alone.
  */
 export function repairActiveThreadDetailSubscriptionsAfterStall(environmentId?: EnvironmentId): {
   readonly retained: number;
