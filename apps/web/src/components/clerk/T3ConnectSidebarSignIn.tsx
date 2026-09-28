@@ -1,7 +1,8 @@
 import { UserButton, useAuth } from "@clerk/react";
 import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { canUseCloudAuth, hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
 import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
@@ -9,12 +10,24 @@ import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
 export function T3ConnectSidebarSignIn() {
   if (!hasCloudPublicConfig()) return null;
+  if (!canUseCloudAuth()) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton render={<Link to="/settings/connections" />}>
+            <ServerIcon />
+            <span>Set up T3 Connect</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
 
   return <ConfiguredT3ConnectSidebarSignIn />;
 }
 
 export function T3ConnectSidebarAvatar() {
-  if (!hasCloudPublicConfig()) return null;
+  if (!canUseCloudAuth()) return null;
 
   return <ConfiguredT3ConnectSidebarAvatar />;
 }
