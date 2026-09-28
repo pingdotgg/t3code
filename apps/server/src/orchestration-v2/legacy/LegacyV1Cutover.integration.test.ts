@@ -26,38 +26,38 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../persistence/Migrations.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
-import Migration0042 from "../persistence/Migrations/042_ProjectionThreadLinkedPullRequest.ts";
-import Migration0043 from "../persistence/Migrations/043_ProjectionThreadsUnsettledAt.ts";
-import Migration0044 from "../persistence/Migrations/044_ClearAutomaticProjectModelDefaults.ts";
-import Migration0045 from "../persistence/Migrations/045_ProjectionProjectsAutoPull.ts";
-import Migration0046 from "../persistence/Migrations/046_RepairAutomaticSettlementTimestamps.ts";
-import Migration0047 from "../persistence/Migrations/047_ProjectionProjectIcon.ts";
-import Migration0048 from "../persistence/Migrations/048_ProjectionThreadBranchPullRequest.ts";
-import Migration0049 from "../persistence/Migrations/049_ProjectionThreadsActiveOrderKey.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { layer as eventSinkLayer } from "./EventSink.ts";
-import { layer as eventStoreLayer } from "./EventStore.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
+import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
+import Migration0042 from "../../persistence/Migrations/042_ProjectionThreadLinkedPullRequest.ts";
+import Migration0043 from "../../persistence/Migrations/043_ProjectionThreadsUnsettledAt.ts";
+import Migration0044 from "../../persistence/Migrations/044_ClearAutomaticProjectModelDefaults.ts";
+import Migration0045 from "../../persistence/Migrations/045_ProjectionProjectsAutoPull.ts";
+import Migration0046 from "../../persistence/Migrations/046_RepairAutomaticSettlementTimestamps.ts";
+import Migration0047 from "../../persistence/Migrations/047_ProjectionProjectIcon.ts";
+import Migration0048 from "../../persistence/Migrations/048_ProjectionThreadBranchPullRequest.ts";
+import Migration0049 from "../../persistence/Migrations/049_ProjectionThreadsActiveOrderKey.ts";
+import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
+import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
+import { layer as eventSinkLayer } from "../EventSink.ts";
+import { layer as eventStoreLayer } from "../EventStore.ts";
 import {
   LegacyV1ThreadImporter,
   layer as legacyV1ThreadImporterLayer,
 } from "./LegacyV1ThreadImporter.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import { OrchestratorV2 } from "../Orchestrator.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
-} from "./ProjectionMaintenance.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+} from "../ProjectionMaintenance.ts";
+import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
-} from "./ProviderAdapter.ts";
-import { makeSingleLayer } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+} from "../ProviderAdapter.ts";
+import { makeSingleLayer } from "../ProviderAdapterRegistry.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 
 const PROJECT_ID = "project:cutover";
 const ACTIVE_THREAD = "thread:cutover:active";

@@ -29,7 +29,7 @@ import { IdAllocatorV2, layer as idAllocatorLayer } from "../orchestration-v2/Id
 import {
   LegacyV1ThreadImporter,
   layer as legacyImporterLayer,
-} from "../orchestration-v2/LegacyV1ThreadImporter.ts";
+} from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,

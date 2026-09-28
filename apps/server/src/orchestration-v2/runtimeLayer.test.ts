@@ -49,7 +49,10 @@ import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
-import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
+import {
+  LegacyV1ThreadImporter,
+  LegacyV1ThreadImportError,
+} from "./legacy/LegacyV1ThreadImporter.ts";
 import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,

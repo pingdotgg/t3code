@@ -25,7 +25,7 @@ import { SourceControlProviderRegistry } from "../sourceControl/SourceControlPro
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
-import { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
+import { LegacyV1ThreadImporter } from "./legacy/LegacyV1ThreadImporter.ts";
 import { OrchestrationV2LayerLive, ProjectServiceLayerLive } from "./runtimeLayer.ts";
 
 const projectId = ProjectId.make("project:upgrade");

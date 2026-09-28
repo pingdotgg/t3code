@@ -18,7 +18,10 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
-import { LegacyV1ThreadImporter, LegacyV1ThreadImportError } from "./LegacyV1ThreadImporter.ts";
+import {
+  LegacyV1ThreadImporter,
+  LegacyV1ThreadImportError,
+} from "./legacy/LegacyV1ThreadImporter.ts";
 import { OrchestratorProjectionError, OrchestratorV2 } from "./Orchestrator.ts";
 import {
   existingThreadIdsForCommand,

@@ -41,7 +41,7 @@ import {
 import {
   LegacyV1ThreadImporter,
   type LegacyV1ThreadImportError,
-} from "./LegacyV1ThreadImporter.ts";
+} from "./legacy/LegacyV1ThreadImporter.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 

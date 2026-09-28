@@ -6,10 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { listLinkedPullRequestThreads } from "../pullRequest/linkedThreads.ts";
-import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
-import { layer as eventStoreLayer } from "./EventStore.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
+import { EventSinkV2, layer as eventSinkLayer } from "../EventSink.ts";
+import { layer as eventStoreLayer } from "../EventStore.ts";
 import {
   LegacyV1ThreadImporter,
   layer as legacyV1ThreadImporterLayer,
@@ -17,8 +17,8 @@ import {
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
-} from "./ProjectionMaintenance.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+} from "../ProjectionMaintenance.ts";
+import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
 
 const databaseLayer = SqlitePersistenceMemory;
 const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer));

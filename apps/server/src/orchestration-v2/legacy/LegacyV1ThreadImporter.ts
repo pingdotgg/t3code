@@ -29,9 +29,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { EventSinkV2 } from "./EventSink.ts";
-import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
-import { randomUuidV4 } from "./RandomUuid.ts";
+import { EventSinkV2 } from "../EventSink.ts";
+import { makeKeyedSerialExecutor } from "../KeyedSerialExecutor.ts";
+import { randomUuidV4 } from "../RandomUuid.ts";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
 const TRANSCRIPT_EVENT_BATCH_SIZE = 100;
@@ -117,7 +117,7 @@ export interface LegacyV1ThreadImporterShape {
 export class LegacyV1ThreadImporter extends Context.Service<
   LegacyV1ThreadImporter,
   LegacyV1ThreadImporterShape
->()("t3/orchestration-v2/LegacyV1ThreadImporter") {}
+>()("t3/orchestration-v2/legacy/LegacyV1ThreadImporter") {}
 
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeAttachments = Schema.decodeUnknownOption(Schema.Array(ChatAttachment));
