@@ -109,6 +109,9 @@ jobs:
       # This repository is public, so Git needs no credentials. checkout's
       # credential cleanup runs submodule foreach even with submodules disabled,
       # which fails on the orphaned gitlinks in our vendored .repos tree.
+      # checkout.workers=0 writes the files on every core. Alternating both ways
+      # in one job on the Windows runners, it wrote the files about 10s faster
+      # (about 40% on arm64).
       - name: Checkout
         shell: bash
         env:
@@ -120,27 +123,20 @@ jobs:
           git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
           git sparse-checkout set --no-cone '/*' '!/.repos/'
-          git checkout --detach FETCH_HEAD
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
 
+      # Windows installs straight from the registry. There, linking the packages
+      # takes the time, not downloading them, so a ~700 MB package cache did not
+      # pay for its own restore. Across recent nightlies, restore plus install
+      # took 183-233s on arm64 and 116-172s on x64, while a plain install took
+      # 142-210s and 84-160s. The arm64 entries also filled 4 GB of the
+      # repository's 10 GB Actions cache.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: ${{ inputs.platform != 'win' }}
           run-install: false
-
-      - name: Resolve Windows package cache path
-        if: inputs.platform == 'win'
-        id: package_cache_path
-        shell: pwsh
-        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
-
-      - name: Cache Windows packages
-        if: inputs.platform == 'win'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ steps.package_cache_path.outputs.path }}
-          key: windows-release-packages-v1-${{ inputs.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       # pnpm checks the lockfile and policy before reusing this result. A missing
       # artifact leaves the cache empty, so installation runs the checks again.
