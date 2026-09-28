@@ -174,6 +174,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly executionTarget?: "cloud";
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
@@ -528,6 +529,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         branch: null,
         worktreePath: null,
+        ...(input?.executionTarget ? { executionTarget: input.executionTarget } : {}),
         createdAt: now,
       }),
     );
@@ -2969,12 +2971,15 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  effectIt.effect(
-    "rejects changing models after start when the provider requires a new thread",
-    () =>
+  for (const restriction of ["provider", "cloud"] as const) {
+    effectIt.effect(`rejects changing models after start for ${restriction} threads`, () =>
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() =>
-          createHarness({ requiresNewThreadForModelChange: true }),
+          createHarness(
+            restriction === "cloud"
+              ? { executionTarget: "cloud" }
+              : { requiresNewThreadForModelChange: true },
+          ),
         );
         const now = "2026-01-01T00:00:00.000Z";
 
@@ -2993,7 +2998,7 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
-        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        yield* Effect.promise(() => harness.drain());
 
         yield* harness.engine.dispatch({
           type: "thread.turn.start",
@@ -3014,19 +3019,7 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         });
 
-        yield* Effect.promise(() =>
-          waitFor(async () => {
-            const readModel = await harness.readModel();
-            const thread = readModel.threads.find(
-              (entry) => entry.id === ThreadId.make("thread-1"),
-            );
-            return (
-              thread?.activities.some(
-                (activity) => activity.kind === "provider.turn.start.failed",
-              ) ?? false
-            );
-          }),
-        );
+        yield* Effect.promise(() => harness.drain());
 
         expect(harness.sendTurn).toHaveBeenCalledTimes(1);
         const readModel = yield* Effect.promise(() => harness.readModel());
@@ -3041,7 +3034,8 @@ describe("ProviderCommandReactor", () => {
           },
         });
       }),
-  );
+    );
+  }
 
   it("starts a first turn on the requested provider instance even when it differs from the thread model", async () => {
     const harness = await createHarness({

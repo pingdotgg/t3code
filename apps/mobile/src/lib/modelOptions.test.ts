@@ -1,3 +1,4 @@
+import { cloudProviderSnapshot } from "@t3tools/client-runtime/provider-execution";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
@@ -13,6 +14,35 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("uses cloud models without requiring a local Cursor CLI", () => {
+    const selection: ModelSelection = {
+      instanceId: ProviderInstanceId.make("cursor"),
+      model: "cloud-model",
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: "cursor",
+          driver: "cursor",
+          enabled: true,
+          installed: false,
+          auth: { status: "unauthenticated" },
+          models: [{ slug: "local-model", name: "Local", isCustom: false, capabilities: null }],
+          cloud: {
+            available: true,
+            models: [{ slug: "cloud-model", name: "Cloud", isCustom: false, capabilities: null }],
+          },
+        },
+      ],
+    } as unknown as ServerConfig;
+    const cloudConfig = { ...config, providers: config.providers.map(cloudProviderSnapshot) };
+    expect(resolveSelectableModelSelection(cloudConfig, selection)).toEqual(selection);
+    const options = buildModelOptions(cloudConfig, selection);
+    expect(options).toHaveLength(1);
+    expect(options[0]).toMatchObject({ label: "Cloud", selection });
+    expect(options[0]?.isUnavailable).not.toBe(true);
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

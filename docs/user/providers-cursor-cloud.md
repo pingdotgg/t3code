@@ -17,9 +17,11 @@ The Cursor CLI also signs in with `CURSOR_API_KEY` when it is set.
 
 ## Start a cloud thread
 
-With Cursor selected in a new thread, choose **Cloud** instead of **Local** at the
+In the web or desktop app, with Cursor selected in a new thread, choose **Cloud** instead of **Local** at the
 start of the bar below the composer. If Cloud is not set up yet, **Set up Cloud**
 opens the provider settings. The choice is fixed once you send the first message.
+You can follow up in an existing cloud thread from the mobile app; its model stays
+fixed for the conversation.
 
 The branch picker chooses the pushed branch the agent starts from; it never
 changes your checkout. The project must be a git checkout with a GitHub remote,

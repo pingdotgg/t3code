@@ -11,6 +11,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ThreadExecutionTarget,
   type TurnId,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -539,6 +540,7 @@ const make = Effect.gen(function* () {
 
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
+    readonly executionTarget: ThreadExecutionTarget | undefined;
     readonly currentModelSelection: ModelSelection;
     readonly requestedModelSelection: ModelSelection | undefined;
   }) {
@@ -552,6 +554,7 @@ const make = Effect.gen(function* () {
     }
     const providers = yield* providerRegistry.getProviders;
     const requiresNewThread =
+      input.executionTarget === "cloud" ||
       providers.find((snapshot) => snapshot.instanceId === input.currentModelSelection.instanceId)
         ?.requiresNewThreadForModelChange === true ||
       providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
@@ -671,6 +674,7 @@ const make = Effect.gen(function* () {
     if (thread.session !== null) {
       yield* rejectStartedThreadModelChangeIfRequired({
         threadId,
+        executionTarget: thread.executionTarget,
         currentModelSelection:
           activeSession?.model !== undefined
             ? {

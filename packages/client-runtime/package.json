@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./provider-execution": {
+      "types": "./src/providerExecution.ts",
+      "default": "./src/providerExecution.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

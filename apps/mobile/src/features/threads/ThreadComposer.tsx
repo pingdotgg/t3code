@@ -1,3 +1,4 @@
+import { cloudProviderSnapshot } from "@t3tools/client-runtime/provider-execution";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
@@ -268,6 +269,17 @@ export function ComposerSurface(props: {
 }
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
+  const runsInCloud = props.selectedThread.executionTarget === "cloud";
+  const threadServerConfig = useMemo(
+    () =>
+      runsInCloud && props.serverConfig
+        ? {
+            ...props.serverConfig,
+            providers: props.serverConfig.providers.map(cloudProviderSnapshot),
+          }
+        : props.serverConfig,
+    [props.serverConfig, runsInCloud],
+  );
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
@@ -321,15 +333,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
     props.connectionState === "connected" &&
-    isModelSelectionUnavailable(props.serverConfig, currentModelSelection);
+    isModelSelectionUnavailable(threadServerConfig, currentModelSelection);
   const selectedProviderStatus = useMemo(() => {
-    if (!props.serverConfig) return null;
+    if (!threadServerConfig) return null;
     return (
-      props.serverConfig.providers.find(
+      threadServerConfig.providers.find(
         (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
       ) ?? null
     );
-  }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  }, [threadServerConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
@@ -350,15 +362,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
       selectedProviderStatus.driver,
-      props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
+      threadServerConfig?.providers ?? [],
+      threadServerConfig?.usageLimitSources ?? [],
     );
   // Answered locally from the last Limits snapshot; the agent never sees it.
   const openUsageLimits = useCallback(() => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
-      props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
+      threadServerConfig?.providers ?? [],
+      threadServerConfig?.usageLimitSources ?? [],
       Date.now(),
     );
     onShowUsageLimits(report);
@@ -366,7 +378,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
     }
     return report !== null;
-  }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
+  }, [currentModelSelection.instanceId, onShowUsageLimits, threadServerConfig]);
 
   const composerMenu = useComposerCommandMenu({
     draftMessage: props.draftMessage,
@@ -520,8 +532,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   // ── Model menu ───────────────────────────────────────────
   const modelOptions = useMemo(
-    () => buildModelOptions(props.serverConfig, currentModelSelection),
-    [props.serverConfig, currentModelSelection],
+    () =>
+      buildModelOptions(threadServerConfig, currentModelSelection).filter(
+        (option) =>
+          !runsInCloud ||
+          (option.selection.instanceId === currentModelSelection.instanceId &&
+            option.selection.model === currentModelSelection.model),
+      ),
+    [threadServerConfig, currentModelSelection, runsInCloud],
   );
   const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   // An existing thread is bound to its harness: sessions can't move between
@@ -538,11 +556,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ) ?? null;
   const providerOptionDescriptors = useMemo(
     () =>
-      resolveProviderOptionDescriptors({
-        capabilities: currentModelOption?.capabilities,
-        selections: currentModelSelection.options,
-      }),
-    [currentModelOption?.capabilities, currentModelSelection.options],
+      runsInCloud
+        ? []
+        : resolveProviderOptionDescriptors({
+            capabilities: currentModelOption?.capabilities,
+            selections: currentModelSelection.options,
+          }),
+    [currentModelOption?.capabilities, currentModelSelection.options, runsInCloud],
   );
   const settingsOwnerId = composerOwnerKey;
   const settingsRouteSession = useMemo<ExistingThreadSettingsRouteSession>(

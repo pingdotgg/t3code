@@ -57,6 +57,33 @@ it.layer(NodeServices.layer)("resolveCursorCloudRepository", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("uses the selected remote's repository and branch", () =>
+    Effect.gen(function* () {
+      const { cwd, git } = yield* makeRepository("https://github.com/fork/widgets.git");
+      git("remote", "add", "upstream", "https://github.com/acme/widgets.git");
+      git("update-ref", "refs/remotes/upstream/feature/nested", "HEAD");
+      expect(yield* resolveCursorCloudRepository(cwd, "upstream/feature/nested")).toEqual({
+        url: "https://github.com/acme/widgets",
+        startingRef: "feature/nested",
+        hasUnpushedLocalWork: false,
+      });
+      expect(git("symbolic-ref", "--short", "HEAD")).toBe("main");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("prefers a local branch over a matching remote prefix", () =>
+    Effect.gen(function* () {
+      const { cwd, git } = yield* makeRepository("https://github.com/fork/widgets.git");
+      git("remote", "add", "upstream", "https://github.com/acme/widgets.git");
+      git("branch", "upstream/main");
+      git("update-ref", "refs/remotes/origin/upstream/main", "HEAD");
+      expect(yield* resolveCursorCloudRepository(cwd, "upstream/main")).toMatchObject({
+        url: "https://github.com/fork/widgets",
+        startingRef: "upstream/main",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses a chosen branch that is not on GitHub", () =>
     Effect.gen(function* () {
       const { cwd, git } = yield* makeRepository("https://github.com/acme/widgets.git");

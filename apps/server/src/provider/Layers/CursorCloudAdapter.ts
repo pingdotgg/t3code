@@ -433,6 +433,7 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
             if (error.status === 400 || error.status === 410) {
               lastEventId = undefined;
               replaying = true;
+              streamedReply = false;
             }
           }),
         ),
@@ -446,6 +447,7 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
         // The stream closed without a result. Ask the run directly before reconnecting.
         const current = yield* Effect.result(ctx.api.getRun(agentId, run.runId));
         if (Result.isSuccess(current) && isTerminalRunStatus(current.success.status)) {
+          streamedReply = false;
           terminal = {
             status: current.success.status,
             text: current.success.result ?? undefined,
@@ -470,6 +472,7 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
       });
 
     return loop(0).pipe(
+      Effect.andThen(closeAssistantItem),
       Effect.andThen(
         Effect.suspend(() =>
           terminal ? finishRun(ctx, run, { ...terminal, streamedReply }) : Effect.void,

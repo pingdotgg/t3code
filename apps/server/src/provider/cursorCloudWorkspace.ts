@@ -50,9 +50,20 @@ export const resolveCursorCloudRepository = Effect.fn("resolveCursorCloudReposit
   }
 
   const checkedOut = yield* git(["symbolic-ref", "--quiet", "--short", "HEAD"]);
-  const branch = selectedBranch ?? checkedOut;
+  const localBranch = selectedBranch
+    ? yield* git(["show-ref", "--verify", "--quiet", `refs/heads/${selectedBranch}`])
+    : undefined;
+  const remotes = (yield* git(["remote"]))?.split("\n") ?? [];
+  const selectedRemote =
+    localBranch === undefined && selectedBranch
+      ? remotes
+          .sort((a, b) => b.length - a.length)
+          .find((name) => selectedBranch.startsWith(`${name}/`))
+      : undefined;
+  const branch = selectedRemote ? undefined : (selectedBranch ?? checkedOut);
   const trackedRemote = branch ? yield* git(["config", `branch.${branch}.remote`]) : undefined;
-  const remote = trackedRemote && trackedRemote !== "." ? trackedRemote : "origin";
+  const remote =
+    selectedRemote ?? (trackedRemote && trackedRemote !== "." ? trackedRemote : "origin");
   const remoteUrl = yield* git(["remote", "get-url", remote]);
   const nameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl ?? null);
   if (!nameWithOwner) {
@@ -65,9 +76,8 @@ export const resolveCursorCloudRepository = Effect.fn("resolveCursorCloudReposit
 
   const mergeRef = branch ? yield* git(["config", `branch.${branch}.merge`]) : undefined;
   // The branch picker can hand over a remote ref such as `origin/feature`.
-  const remoteQualified = selectedBranch?.startsWith(`${remote}/`)
-    ? selectedBranch.slice(remote.length + 1)
-    : undefined;
+  const remoteQualified =
+    selectedRemote && selectedBranch ? selectedBranch.slice(selectedRemote.length + 1) : undefined;
   const upstreamBranch = mergeRef?.startsWith("refs/heads/")
     ? mergeRef.slice("refs/heads/".length)
     : (remoteQualified ?? selectedBranch);
