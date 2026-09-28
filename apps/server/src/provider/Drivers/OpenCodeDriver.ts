@@ -141,9 +141,6 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                   })
                   .pipe(Effect.timeout("20 seconds")),
               ],
-              // Independent reads: the in-memory snapshot and the per-cwd skills
-              // CLI probe share no state, so overlap them instead of summing
-              // their latencies. `Effect.all` is sequential by default.
               { concurrency: "unbounded" },
             ).pipe(
               Effect.map(([machineSnapshot, skills]) => ({
