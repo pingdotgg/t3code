@@ -146,8 +146,11 @@ const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 /**
  * Cold guests can reject capturePage with UnknownVizError or never settle it.
  * Bound each attempt so snapshots release control even when Chromium stalls.
+ * UnknownVizError is retried for a time budget instead, because a compositor that
+ * throttles hidden windows (niri while locked) delivers frames only every ~1-2 s.
  */
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
+const CAPTURE_PAGE_UNKNOWN_VIZ_BUDGET_MS = 2_500;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
@@ -735,11 +738,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* requireCurrentGuest;
       return image;
     });
+    const isUnknownViz = (error: unknown) =>
+      isPreviewOperationError(error) &&
+      (error.cause instanceof Error ? error.cause.message : String(error.cause)).includes(
+        "UnknownVizError",
+      );
     return yield* capture.pipe(
       Effect.retry({
         times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
         schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
-        while: isPreviewOperationError,
+        while: (error) => isPreviewOperationError(error) && !isUnknownViz(error),
+      }),
+      Effect.retry({
+        schedule: Schedule.max([
+          Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+          Schedule.during(CAPTURE_PAGE_UNKNOWN_VIZ_BUDGET_MS),
+        ]),
+        while: isUnknownViz,
       }),
     );
   });
