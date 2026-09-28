@@ -17,7 +17,6 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/unstable/ai";
 
-import { OrchestrationCommandInvariantError } from "../../../orchestration/Errors.ts";
 import {
   OrchestratorV2,
   type OrchestratorV2Shape,
@@ -134,7 +133,8 @@ function makeLink(
 interface HarnessOptions {
   readonly thread?: OrchestrationThreadShell | null;
   readonly project?: OrchestrationProjectShell | null;
-  readonly reject?: (command: OrchestrationCommand) => OrchestrationCommandInvariantError | null;
+  /** A rejection the orchestrator reports as the dispatch error's cause. */
+  readonly reject?: (command: OrchestrationCommand) => string | null;
 }
 
 const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
@@ -326,12 +326,7 @@ describe("pull request toolkit handlers", () => {
       const harness = yield* makeHarness({
         thread: makeThread([makeLink(123)]),
         reject: (command) =>
-          command.type === "thread.pull-request.link"
-            ? new OrchestrationCommandInvariantError({
-                commandType: command.type,
-                detail: "already linked",
-              })
-            : null,
+          command.type === "thread.pull-request.link" ? "already linked" : null,
       });
       const result = yield* harness.call("link_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/123",
@@ -346,10 +341,7 @@ describe("pull request toolkit handlers", () => {
         thread: makeThread([makeLink(5)]),
         reject: (command) =>
           command.type === "thread.pull-request.unlink" && command.number !== 5
-            ? new OrchestrationCommandInvariantError({
-                commandType: command.type,
-                detail: "not linked",
-              })
+            ? "not linked"
             : null,
       });
       const linked = yield* harness.call("unlink_pull_request", {

@@ -26,8 +26,8 @@ import { TestClock } from "effect/testing";
 
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
-import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+import { OrchestratorV2, type OrchestratorV2Shape } from "./Orchestrator.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";

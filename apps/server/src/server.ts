@@ -3,7 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
-import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
+import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 

@@ -27,11 +27,8 @@ import * as Stream from "effect/Stream";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
-import {
-  ProjectionStoreV2,
-  type ProjectionThreadPullRequests,
-} from "../orchestration-v2/ProjectionStore.ts";
+import { OrchestratorV2 } from "./Orchestrator.ts";
+import { ProjectionStoreV2, type ProjectionThreadPullRequests } from "./ProjectionStore.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 
@@ -124,7 +121,7 @@ export class PullRequestSyncReactor extends Context.Service<
     /** Force the next sweep to re-read this pull request, even when its snapshot is terminal. */
     readonly requestSync: (key: ThreadPullRequestKey) => Effect.Effect<void>;
   }
->()("t3/orchestration/PullRequestSyncReactor") {}
+>()("t3/orchestration-v2/PullRequestSyncReactor") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
