@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  codexStoredLoginEmail,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -160,4 +164,19 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("reads the email claim from a stored ChatGPT login", () => {
+  const claims = Buffer.from(JSON.stringify({ email: "pooled@example.com" })).toString("base64url");
+  const authJson = JSON.stringify({ tokens: { id_token: `header.${claims}.signature` } });
+  assert.strictEqual(codexStoredLoginEmail(authJson), "pooled@example.com");
+  assert.strictEqual(
+    codexStoredLoginEmail(JSON.stringify({ OPENAI_API_KEY: "sk-test" })),
+    undefined,
+  );
+  assert.strictEqual(codexStoredLoginEmail("not json"), undefined);
+  assert.strictEqual(
+    codexStoredLoginEmail(JSON.stringify({ tokens: { id_token: "no-payload" } })),
+    undefined,
+  );
 });

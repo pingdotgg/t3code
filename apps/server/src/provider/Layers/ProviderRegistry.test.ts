@@ -481,6 +481,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           }),
       );
 
+      it.effect("reports the stored login email when a custom provider hides the account", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: { account: null, requiresOpenaiAuth: false },
+                storedLoginEmail: "pooled@example.com",
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(status.auth.email, "pooled@example.com");
+        }),
+      );
+
       it.effect("returns an api key label for codex api key auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
