@@ -6586,9 +6586,6 @@ export function makeClaudeAdapterV2(
               });
               return updated;
             });
-            if (!isClaudeProviderContinuationTurn(turnInput)) {
-              yield* startUserTurnForWakeReports(nativeThreadId);
-            }
             yield* rememberProviderThread(turnInput.providerThread);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
@@ -6662,6 +6659,8 @@ export function makeClaudeAdapterV2(
               // A user turn that races a wake leaves the buffer alone: the
               // continuation run the worker queued behind this run drains it
               // afterwards with correct attribution.
+              // Counted only here, so a turn that failed to start does not age reports.
+              yield* startUserTurnForWakeReports(nativeThreadId);
               yield* querySession.query.offer(userMessage);
               return;
             }

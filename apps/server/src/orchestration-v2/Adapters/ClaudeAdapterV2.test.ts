@@ -5139,6 +5139,67 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("a turn that fails to start does not expire a queued wake's report", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const userTurn = (
+          attempt: string,
+          providerTurnOrdinal: number,
+          attachments: ProviderAdapterV2TurnInput["message"]["attachments"] = [],
+        ) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: "Go on.",
+              attachments,
+              providerTurnOrdinal,
+            }),
+          );
+
+        yield* userTurn("attempt-failed-start-1", 1);
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+        // The command ends idle; Claude has not started its wake yet.
+        yield* Queue.offer(harness.sdkMessages, wakeNotification);
+        let notificationYields = 0;
+        yield* awaitUntil(() => notificationYields++ >= 50, "notification to be recorded");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+
+        // The next prompt names an attachment that is gone, so it never reaches Claude.
+        const missing = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make("thread-claude-wake-12345678-1234-1234-1234-123456789abc"),
+          name: "gone.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        });
+        const failed = yield* Effect.exit(userTurn("attempt-failed-start-2", 2, [missing]));
+        assert.isTrue(Exit.isFailure(failed));
+
+        // The user's next prompt runs before Claude's wake does.
+        yield* userTurn("attempt-failed-start-3", 2);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000911", result: "Answered." }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
+
+        yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "command wake");
+        assert.equal(
+          harness.continuationRequests[0]?.notification?.summary,
+          `Command "${WAKE_TASK_DESCRIPTION}" finished`,
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("keeps a subagent a queued wake turn launches with its continuation", () =>
     Effect.scoped(
       Effect.gen(function* () {
