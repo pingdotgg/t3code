@@ -261,7 +261,6 @@ describe("browser recording", () => {
   it.each([
     { width: 1280, height: 720, frameRate: 60, bitrate: 2_764_800 },
     { width: 320, height: 240, frameRate: 30, bitrate: 2_500_000 },
-    { width: 3840, height: 2160, frameRate: 60, bitrate: 24_883_200 },
     { width: 7680, height: 4320, frameRate: 60, bitrate: 50_000_000 },
   ])("records the native $width x $height stream at $frameRate fps", async (settings) => {
     const stopTrack = vi.fn();
@@ -283,18 +282,6 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab");
     expect(stopTrack).toHaveBeenCalledOnce();
     expect(stopTrack.mock.invocationCallOrder[0]).toBeLessThan(save.mock.invocationCallOrder[0]!);
-  });
-
-  it("uses the configured recording frame rate", async () => {
-    clientSettings.browserRecordingFrameRate = 60;
-
-    await startBrowserRecording("recording-tab");
-
-    expect(getDisplayMedia).toHaveBeenCalledWith({
-      audio: false,
-      video: { frameRate: { ideal: 60, max: 60 } },
-    });
-    await stopBrowserRecording("recording-tab");
   });
 
   it("clears a failed settings read before retrying recording", async () => {

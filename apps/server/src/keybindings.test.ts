@@ -525,6 +525,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const [first, second] = yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings.Keybindings;
         const firstLoad = (yield* keybindings.loadConfigState).keybindings;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+shift+y", command: "script.run-tests.run" },
+        ]);
         const secondLoad = (yield* keybindings.loadConfigState).keybindings;
         return [firstLoad, secondLoad] as const;
       });

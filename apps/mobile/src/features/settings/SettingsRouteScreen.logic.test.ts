@@ -9,11 +9,4 @@ describe("resolveAgentAwarenessPlatformPresentation", () => {
       subtitle: undefined,
     });
   });
-
-  it("leaves supported iOS settings unchanged", () => {
-    expect(resolveAgentAwarenessPlatformPresentation("ios")).toEqual({
-      supported: true,
-      subtitle: undefined,
-    });
-  });
 });

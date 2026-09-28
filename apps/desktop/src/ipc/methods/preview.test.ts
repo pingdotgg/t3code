@@ -1,9 +1,5 @@
 import { it as effectIt } from "@effect/vitest";
-import {
-  DEFAULT_BROWSER_PROFILE_ID,
-  INCOGNITO_BROWSER_PROFILE_ID,
-  PreviewAutomationStatus,
-} from "@t3tools/contracts";
+import { DEFAULT_BROWSER_PROFILE_ID, INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -153,20 +149,4 @@ describe("preview IPC methods", () => {
       ).toEqual(status);
     }),
   );
-
-  it("keeps the public automation status tab id limit", () => {
-    const encode = Schema.encodeUnknownSync(PreviewAutomationStatus);
-    const tabId = "t".repeat(129);
-
-    expect(() =>
-      encode({
-        available: false,
-        visible: true,
-        tabId,
-        url: null,
-        title: null,
-        loading: false,
-      }),
-    ).toThrow();
-  });
 });

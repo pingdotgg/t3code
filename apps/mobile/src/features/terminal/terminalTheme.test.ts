@@ -6,23 +6,6 @@ import { themeColorToNativeColor } from "../../lib/mobileTheme";
 import { buildGhosttyThemeConfig, getMobileTerminalTheme } from "./terminalTheme";
 
 describe("getMobileTerminalTheme", () => {
-  it("uses the shared default light terminal colors", () => {
-    expect(getMobileTerminalTheme("t3-code", "light")).toMatchObject({
-      background: "#fcfcfc",
-      foreground: "#27272a",
-      cursorForeground: "#26384e",
-      cursorBackground: "#fcfcfc",
-    });
-  });
-
-  it("uses the shared default dark terminal colors", () => {
-    expect(getMobileTerminalTheme("t3-code", "dark")).toMatchObject({
-      background: "#0a0a0a",
-      foreground: "#f5f5f5",
-      cursorForeground: "#b4cbff",
-      cursorBackground: "#0a0a0a",
-    });
-  });
   it("applies the selected palette without replacing ANSI status colors", () => {
     const standard = getMobileTerminalTheme("t3-code", "dark");
     const ocean = getMobileTerminalTheme("ocean", "dark");

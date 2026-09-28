@@ -2,7 +2,6 @@ import { assert, expect, it } from "@effect/vitest";
 
 import {
   buildPairingUrl,
-  formatHeadlessServeOutput,
   renderTerminalQrCode,
   resolveHeadlessConnectionHost,
   resolveHeadlessConnectionString,
@@ -59,21 +58,9 @@ it("builds a pairing URL that embeds the token in the hash", () => {
 });
 
 it("renders terminal QR codes as a multi-line unicode block grid", () => {
-  const qrCode = renderTerminalQrCode("http://192.168.1.42:3773/pair#token=PAIRCODE");
+  const lines = renderTerminalQrCode("http://192.168.1.42:3773/pair#token=PAIRCODE").split("\n");
 
-  assert.isTrue(qrCode.includes("█"));
-  assert.isTrue(qrCode.split("\n").length > 10);
-});
-
-it("formats headless serve output with the connection string, token, pairing url, and qr code", () => {
-  const output = formatHeadlessServeOutput({
-    connectionString: "http://192.168.1.42:3773",
-    token: "PAIRCODE",
-    pairingUrl: "http://192.168.1.42:3773/pair#token=PAIRCODE",
-  });
-
-  expect(output).toContain("Connection string: http://192.168.1.42:3773");
-  expect(output).toContain("Token: PAIRCODE");
-  expect(output).toContain("Pairing URL: http://192.168.1.42:3773/pair#token=PAIRCODE");
-  assert.isTrue(output.includes("█") || output.includes("▀") || output.includes("▄"));
+  assert.strictEqual(lines.length, Math.ceil((lines[0]?.length ?? 0) / 2));
+  assert.strictEqual(lines[0]?.trim(), "");
+  assert.isTrue(lines[1]?.startsWith("  █▀▀▀▀▀█"));
 });

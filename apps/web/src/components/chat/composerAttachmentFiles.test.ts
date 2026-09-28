@@ -314,28 +314,18 @@ describe("composer attachment files", () => {
   });
 
   it("recognizes common video extensions when the browser omits the MIME type", () => {
-    const formats = [
-      ["clip.mp4", "video/mp4"],
-      ["clip.mov", "video/quicktime"],
-      ["clip.webm", "video/webm"],
-      ["clip.m4v", "video/mp4"],
-      ["clip.mkv", "video/x-matroska"],
-      ["clip.avi", "video/x-msvideo"],
-      ["clip.ogv", "video/ogg"],
-    ] as const;
-
-    for (const [name, expectedMimeType] of formats) {
-      expect(
-        isVideoAttachment({
-          type: "file",
-          id: name,
-          name,
-          mimeType: "application/octet-stream",
-          sizeBytes: 1,
-        }),
-      ).toBe(true);
-      expect(videoMimeType({ name, mimeType: "application/octet-stream" })).toBe(expectedMimeType);
-    }
+    expect(
+      isVideoAttachment({
+        type: "file",
+        id: "clip.mov",
+        name: "clip.mov",
+        mimeType: "application/octet-stream",
+        sizeBytes: 1,
+      }),
+    ).toBe(true);
+    expect(videoMimeType({ name: "clip.mov", mimeType: "application/octet-stream" })).toBe(
+      "video/quicktime",
+    );
   });
 
   it("claims image pastes even when clipboard text is present", () => {

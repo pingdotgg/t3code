@@ -227,7 +227,7 @@ export function resolveDesktopTelemetrySnapshotStaleAfterMs(
   );
 }
 
-export function initialDesktopTelemetryContactAt(
+function initialDesktopTelemetryContactAt(
   desktopTelemetryFd: number | undefined,
   nowMs: number,
 ): Option.Option<number> {

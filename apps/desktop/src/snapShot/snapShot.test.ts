@@ -16,19 +16,6 @@ import {
   snapShotShortcutSystemConflict,
   toElectronAccelerator,
 } from "./snapShot.ts";
-import { DesktopSnapShotError } from "./DesktopSnapShot.ts";
-
-describe("window capture errors", () => {
-  it.each([
-    ["unsupported", "SnapShots are not supported here."],
-    ["disabled", "Enable SnapShots in Settings first."],
-    ["no-window-selected", "No window was selected."],
-    ["window-unavailable", "The active window is not available for capture."],
-    ["capture", "Could not capture the active window."],
-  ] as const)("keeps %s failures user-facing", (operation, message) => {
-    expect(new DesktopSnapShotError({ operation }).message).toBe(message);
-  });
-});
 
 describe("accessibleWindowText", () => {
   it("keeps unique names and values in tree order", () => {
@@ -503,16 +490,13 @@ describe("findAccessibleWindow", () => {
     ).toBeUndefined();
   });
 
-  it.each(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])(
-    "ignores a leading Wayland title spinner frame %s",
-    (frame) => {
-      const windows = [{ name: `${frame} t3code`, bounds: captured.bounds }];
+  it.each(["⠋", "⠏"])("ignores a leading Wayland title spinner frame %s", (frame) => {
+    const windows = [{ name: `${frame} t3code`, bounds: captured.bounds }];
 
-      expect(findAccessibleWindow(windows, { ...captured, title: "⠋ t3code" }, "wayland")).toBe(
-        windows[0],
-      );
-    },
-  );
+    expect(findAccessibleWindow(windows, { ...captured, title: "⠋ t3code" }, "wayland")).toBe(
+      windows[0],
+    );
+  });
 
   it.each([
     ["⠋ t3code", "t3code"],

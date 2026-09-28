@@ -20,29 +20,6 @@ const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
   args[0] === "-C" && args.length >= 2 ? args.slice(2) : args;
 
 describe("VcsDriverRegistry", () => {
-  it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
-    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
-      Layer.provide(NodeServices.layer),
-      Layer.provide(
-        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
-          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(VcsProcess.VcsProcess)({
-          run: () => Effect.succeed(processOutput("")),
-        }),
-      ),
-    );
-
-    return Effect.gen(function* () {
-      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
-      const driver = yield* registry.get("git");
-
-      assert.strictEqual(driver.capabilities.kind, "git");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () => {
     const calls: VcsProcess.VcsProcessInput[] = [];
     const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(

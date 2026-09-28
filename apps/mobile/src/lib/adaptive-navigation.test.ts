@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isBaseThreadRoute,
-  resolveFileSelectionNavigationAction,
   resolveThreadSelectionNavigationAction,
   resolveThreadSelectionOverlayState,
 } from "./adaptive-navigation";
@@ -51,20 +50,6 @@ describe("resolveThreadSelectionNavigationAction", () => {
         pathname: "/threads/environment/thread",
       }),
     ).toBe("push");
-  });
-});
-
-describe("resolveFileSelectionNavigationAction", () => {
-  it("replaces the wide file browser with the selected preview", () => {
-    expect(resolveFileSelectionNavigationAction({ hasPersistentFileInspector: true })).toBe(
-      "replace",
-    );
-  });
-
-  it("pushes a preview above the compact file browser", () => {
-    expect(resolveFileSelectionNavigationAction({ hasPersistentFileInspector: false })).toBe(
-      "push",
-    );
   });
 });
 

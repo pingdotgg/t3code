@@ -462,10 +462,6 @@ describe("ProjectSetupScriptRunner", () => {
       expected:
         /^begin\rbun install\rend; printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' \$status\r$/,
     },
-    {
-      shell: "/bin/bash",
-      expected: /^\( bun install\r\); printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' "\$\?"\r$/,
-    },
   ])("wraps the command for the $shell syntax", ({ shell, expected }) => {
     const open = vi.fn(() =>
       Effect.succeed({

@@ -12,7 +12,6 @@ vi.mock("~/state/projects", () => ({ projectEnvironment: { writeFile: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => writeFile }));
 vi.mock("./projectFilesQueryState", () => ({ confirmProjectFileQueryData: confirmFile }));
 
-import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 
 const environmentId = EnvironmentId.make("save-lifecycle-audit");
@@ -80,17 +79,6 @@ describe("file-save React lifecycle", () => {
       "AUDIT7907NATIVE\n",
     );
     expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
-  });
-
-  it("persists rendered Markdown task changes after StrictMode setup replay", async () => {
-    mount({ ...defaultProps, relativePath: "README.md" });
-    const nextContents = setMarkdownTaskChecked("- [ ] task\n", 2, true);
-    changeHandler()(nextContents);
-    await vi.advanceTimersByTimeAsync(500);
-    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
-      environmentId,
-      input: { cwd: "/workspace", relativePath: "README.md", contents: "- [x] task\n" },
-    });
   });
 
   it("keeps the debounce across rerenders of the same file", async () => {

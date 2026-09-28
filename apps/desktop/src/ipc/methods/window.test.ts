@@ -27,7 +27,6 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import type { DesktopSettings } from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
-  getWindowFullscreenState,
   pasteAsText,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -149,22 +148,6 @@ describe("getLocalEnvironmentBootstraps", () => {
       const result = yield* getLocalEnvironmentBootstraps.handler();
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
-  });
-});
-
-describe("getWindowFullscreenState", () => {
-  it.effect("reads the current native window state", () => {
-    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
-
-    return Effect.gen(function* () {
-      assert.isTrue(yield* getWindowFullscreenState.handler());
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({
-          currentMainOrFirst: Effect.succeedSome(window),
-        }),
-      ),
-    );
   });
 });
 

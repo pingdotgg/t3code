@@ -95,22 +95,6 @@ describe("model price writes", () => {
     expect([...results.values()].every((result) => result.status === "saved")).toBe(true);
   });
 
-  it("resets only the chosen model on the selected destination", async () => {
-    const write = vi.fn(async () => ({ _tag: "Success" as const }));
-    const onResult = vi.fn();
-    await writeUsagePrices({
-      targets: [target("selected")],
-      changes: new Map([[EnvironmentId.make("selected"), [{ model: "example", price: null }]]]),
-      write,
-      onResult,
-    });
-    expect(write).toHaveBeenCalledExactlyOnceWith({
-      environmentId: "selected",
-      input: { patch: { usagePriceOverrides: { example: null } } },
-    });
-    expect(onResult).toHaveBeenCalledWith("selected", { status: "saved" });
-  });
-
   it("reports thrown writes and permission/version restrictions without aborting other saves", async () => {
     const onResult = vi.fn();
     const write = vi.fn(async () => {

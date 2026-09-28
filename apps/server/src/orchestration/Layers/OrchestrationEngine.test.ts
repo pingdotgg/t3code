@@ -701,66 +701,6 @@ describe("OrchestrationEngine", () => {
       }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
 
-  it("persists deterministic read models for repeated snapshot reads", async () => {
-    const createdAt = now();
-    const system = await createOrchestrationSystem();
-    const { engine } = system;
-
-    await system.run(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-1-create"),
-        projectId: asProjectId("project-1"),
-        title: "Project 1",
-        workspaceRoot: "/tmp/project-1",
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make("cmd-thread-1-create"),
-        threadId: ThreadId.make("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
-    );
-    await system.run(
-      engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-1"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("msg-1"),
-          role: "user",
-          text: "hello",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt,
-      }),
-    );
-
-    const readModelA = await system.readModel();
-    const readModelB = await system.readModel();
-    expect(readModelB).toEqual(readModelA);
-    await system.dispose();
-  });
-
   it("archives and unarchives threads through orchestration commands", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

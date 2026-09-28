@@ -143,16 +143,15 @@ describe("price table edits", () => {
     ).toBe("Enter a model ID.");
   });
 
-  it.each(["Offline", "Read-only access", "Update server to edit prices"])(
-    "does not let %s destinations block a valid edit elsewhere",
-    (unavailable) => {
-      const edits = [draft({ inputCostPerMillionTokens: "3" })];
-      const writable = target("writable", { example: price });
-      const other = target("other", {});
-      expect(usagePriceTableErrors([writable, { ...other, unavailable }], edits).size).toBe(0);
-      expect(usagePriceTableErrors([writable, other], edits).has("model:example")).toBe(true);
-    },
-  );
+  it("does not let Offline destinations block a valid edit elsewhere", () => {
+    const edits = [draft({ inputCostPerMillionTokens: "3" })];
+    const writable = target("writable", { example: price });
+    const other = target("other", {});
+    expect(
+      usagePriceTableErrors([writable, { ...other, unavailable: "Offline" }], edits).size,
+    ).toBe(0);
+    expect(usagePriceTableErrors([writable, other], edits).has("model:example")).toBe(true);
+  });
 
   it("does not write unchanged rates and rejects invalid edited cells", () => {
     const environment = target("a", { example: price });

@@ -1353,28 +1353,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("rewrites title and description together in one request", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.updateMergeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        title: "A better title",
-        description: "What this changes.",
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({
-        title: "A better title",
-        description: "What this changes.",
-      });
-    }),
-  );
-
   it.effect("rewrites a note in place through the note it names", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("{}")));

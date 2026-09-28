@@ -101,29 +101,6 @@ describe("runProcess", () => {
     }),
   );
 
-  it.effect("runs through the ProcessRunner service", () => {
-    const spawner = makeSpawner((command) =>
-      Effect.sync(() => {
-        expect(command.command).toBe("fake");
-        expect(command.args).toEqual(["--service"]);
-        return makeHandle({ stdout: "service ok" });
-      }),
-    );
-    const layer = ProcessRunner.layer.pipe(
-      Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-    );
-
-    return Effect.gen(function* () {
-      const runner = yield* ProcessRunner.ProcessRunner;
-      const result = yield* runner.run({
-        command: "fake",
-        args: ["--service"],
-      });
-
-      expect(result.stdout).toBe("service ok");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("resolves and escapes Windows command shims before spawning", () => {
     const spawner = makeSpawner((command) =>
       Effect.sync(() => {

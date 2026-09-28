@@ -24,12 +24,6 @@ describe("thread action ownership", () => {
     expect(firstUnpin.isCurrent()).toBe(false);
   });
 
-  it("rejects a late unpin completion after a newer pin started", () => {
-    const pendingUnpin = ThreadUndo.begin("pin", "env/late");
-    ThreadUndo.invalidate("pin", "env/late");
-    expect(pendingUnpin.isCurrent()).toBe(false);
-  });
-
   it("expires an Undo without invalidating another environment or thread", () => {
     const first = ThreadUndo.begin("pin", "one/thread");
     const otherEnvironment = ThreadUndo.begin("pin", "two/thread");

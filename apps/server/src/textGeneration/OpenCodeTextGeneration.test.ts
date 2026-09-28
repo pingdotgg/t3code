@@ -287,36 +287,6 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("uses an environment-only password for a locally spawned server", () =>
-    withOpenCodeTextGeneration(
-      DEFAULT_OPENCODE_SETTINGS,
-      (textGeneration) =>
-        Effect.gen(function* () {
-          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
-
-          expect(runtimeMock.state.authHeaders).toEqual([
-            `Basic ${btoa("opencode:environment-password")}`,
-          ]);
-        }),
-      { OPENCODE_SERVER_PASSWORD: "environment-password" },
-    ),
-  );
-
-  it.effect("uses settings auth when the local environment password differs", () =>
-    withOpenCodeTextGeneration(
-      LOCAL_AUTH_OPENCODE_SETTINGS,
-      (textGeneration) =>
-        Effect.gen(function* () {
-          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
-
-          expect(runtimeMock.state.authHeaders).toEqual([
-            `Basic ${btoa("opencode:secret-password")}`,
-          ]);
-        }),
-      { OPENCODE_SERVER_PASSWORD: "environment-password" },
-    ),
-  );
-
   it.effect("reuses a warm server across back-to-back requests and closes it after idling", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {

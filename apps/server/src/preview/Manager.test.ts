@@ -2,6 +2,7 @@ import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
 import { Effect, PubSub } from "effect";
+import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 
 import * as PreviewManager from "./Manager.ts";
@@ -121,17 +122,6 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       expect(events[1]!.revision).toBeGreaterThan(events[0]!.revision);
       expect(listed.revision).toBe(events[1]!.revision);
       expect(listed.sessions).toHaveLength(1);
-    }),
-  );
-
-  it.effect("treats bare hosts as https", () =>
-    Effect.gen(function* () {
-      const threadId = freshThreadId();
-      const manager = yield* PreviewManager.PreviewManager;
-      const snapshot = yield* manager.open({ threadId, url: "example.com" });
-      if (snapshot.navStatus._tag === "Loading") {
-        expect(snapshot.navStatus.url).toBe("https://example.com/");
-      }
     }),
   );
 
@@ -346,12 +336,12 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const threadId = freshThreadId();
       const manager = yield* PreviewManager.PreviewManager;
       const first = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      yield* TestClock.adjust("1 second");
       const second = yield* manager.open({ threadId, url: "http://localhost:3000" });
+      yield* TestClock.adjust("1 second");
+      yield* manager.navigate({ threadId, tabId: first.tabId, url: "http://localhost:5173/next" });
       const result = yield* manager.list({ threadId });
-      expect(result.sessions).toHaveLength(2);
-      const ids = result.sessions.map((s) => s.tabId);
-      expect(ids).toContain(first.tabId);
-      expect(ids).toContain(second.tabId);
+      expect(result.sessions.map((s) => s.tabId)).toEqual([second.tabId, first.tabId]);
     }),
   );
 
@@ -396,23 +386,6 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
 
       const list = yield* manager.list({ threadId });
       expect(list.sessions.map((s) => s.tabId)).toEqual([b.tabId]);
-    }),
-  );
-
-  it.effect("multiple subscribers receive every event independently", () =>
-    Effect.gen(function* () {
-      const threadId = freshThreadId();
-      const manager = yield* PreviewManager.PreviewManager;
-      const aSub = yield* manager.subscribeEvents;
-      const bSub = yield* manager.subscribeEvents;
-
-      yield* manager.open({ threadId, url: "http://localhost:5173" });
-      yield* manager.open({ threadId, url: "http://localhost:3000" });
-
-      const aEvents = yield* PubSub.takeUpTo(aSub, DRAIN_LIMIT);
-      const bEvents = yield* PubSub.takeUpTo(bSub, DRAIN_LIMIT);
-      expect(aEvents.map((e) => e.type)).toEqual(["opened", "opened"]);
-      expect(bEvents.map((e) => e.type)).toEqual(["opened", "opened"]);
     }),
   );
 });

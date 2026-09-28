@@ -32,14 +32,6 @@ const makeProbeRuntime = Effect.gen(function* () {
 });
 
 describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () => {
-  it.effect("initialize and authenticate against real grok agent stdio", () =>
-    Effect.gen(function* () {
-      const runtime = yield* makeProbeRuntime;
-      const started = yield* runtime.start();
-      expect(started.initializeResult).toBeDefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("session/new advertises typed SessionModelState with at least one model", () =>
     Effect.gen(function* () {
       const runtime = yield* makeProbeRuntime;

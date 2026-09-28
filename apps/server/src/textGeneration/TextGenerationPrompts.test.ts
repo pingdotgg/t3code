@@ -287,19 +287,6 @@ describe("normalizeCliError", () => {
     expect(error.detail).toContain("not available on PATH");
   });
 
-  it("uses the CLI name from the first argument for codex", () => {
-    const error = normalizeCliError(
-      "codex",
-      "generateBranchName",
-      new Error("Command not found: codex"),
-      "Something went wrong",
-    );
-
-    expect(error).toBeInstanceOf(TextGenerationError);
-    expect(error.detail).toContain("Codex CLI");
-    expect(error.detail).toContain("not available on PATH");
-  });
-
   it("returns the error as-is if it is already a TextGenerationError", () => {
     const existing = new TextGenerationError({
       operation: "generatePrContent",

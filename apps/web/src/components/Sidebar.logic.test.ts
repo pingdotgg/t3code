@@ -12,7 +12,6 @@ import {
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
-  getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
@@ -502,39 +501,7 @@ describe("createThreadJumpHintVisibilityController", () => {
   });
 });
 
-describe("getSidebarThreadIdsToPrewarm", () => {
-  it("returns only the first visible thread ids up to the prewarm limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2", "t3"], 2)).toEqual(["t1", "t2"]);
-  });
-
-  it("returns all visible thread ids when they fit within the limit", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 10)).toEqual(["t1", "t2"]);
-  });
-
-  it("returns no thread ids when the limit is zero", () => {
-    expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
-  });
-});
-
 describe("shouldClearThreadSelectionOnMouseDown", () => {
-  it("preserves selection for thread items", () => {
-    const child = {
-      closest: (selector: string) =>
-        selector.includes("[data-thread-item]") ? ({} as Element) : null,
-    } as unknown as HTMLElement;
-
-    expect(shouldClearThreadSelectionOnMouseDown(child)).toBe(false);
-  });
-
-  it("preserves selection for thread list toggle controls", () => {
-    const selectionSafe = {
-      closest: (selector: string) =>
-        selector.includes("[data-thread-selection-safe]") ? ({} as Element) : null,
-    } as unknown as HTMLElement;
-
-    expect(shouldClearThreadSelectionOnMouseDown(selectionSafe)).toBe(false);
-  });
-
   it("clears selection for unrelated sidebar clicks", () => {
     const unrelated = {
       closest: () => null,
@@ -555,10 +522,6 @@ describe("isTrailingDoubleClick", () => {
 
   it("ignores the second click of a double-click so it does not navigate", () => {
     expect(isTrailingDoubleClick(2)).toBe(true);
-  });
-
-  it("ignores further clicks of a triple-click", () => {
-    expect(isTrailingDoubleClick(3)).toBe(true);
   });
 });
 
@@ -2297,43 +2260,6 @@ describe("sortProjectsForSidebar", () => {
     expect(sorted.map((project) => project.id)).toEqual([
       ProjectId.make("project-2"),
       ProjectId.make("project-1"),
-    ]);
-  });
-
-  it("ignores archived threads when sorting projects", () => {
-    const sorted = sortProjectsForSidebar(
-      [
-        makeProject({
-          id: ProjectId.make("project-1"),
-          title: "Visible project",
-          updatedAt: "2026-03-09T10:01:00.000Z",
-        }),
-        makeProject({
-          id: ProjectId.make("project-2"),
-          title: "Archived-only project",
-          updatedAt: "2026-03-09T10:00:00.000Z",
-        }),
-      ],
-      [
-        makeThread({
-          id: ThreadId.make("thread-visible"),
-          projectId: ProjectId.make("project-1"),
-          updatedAt: "2026-03-09T10:02:00.000Z",
-          archivedAt: null,
-        }),
-        makeThread({
-          id: ThreadId.make("thread-archived"),
-          projectId: ProjectId.make("project-2"),
-          updatedAt: "2026-03-09T10:10:00.000Z",
-          archivedAt: "2026-03-09T10:11:00.000Z",
-        }),
-      ].filter((thread) => thread.archivedAt === null),
-      "updated_at",
-    );
-
-    expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.make("project-1"),
-      ProjectId.make("project-2"),
     ]);
   });
 

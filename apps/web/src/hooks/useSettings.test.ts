@@ -213,20 +213,6 @@ describe("persistClientSettingsUpdate", () => {
     expect(getClientSettings().timestampFormat).toBe("12-hour");
   });
 
-  it("keeps the current snapshot and propagates persistence failure", async () => {
-    const failure = new Error("disk full");
-    const setClientSettings = vi.fn().mockRejectedValue(failure);
-    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
-
-    await expect(
-      persistClientSettingsUpdate(
-        (current) => ({ ...current, timestampFormat: "12-hour" }),
-        setClientSettings,
-      ),
-    ).rejects.toBe(failure);
-    expect(getClientSettings()).toBe(DEFAULT_CLIENT_SETTINGS);
-  });
-
   it("preserves an optimistic write made while an awaited update persists", async () => {
     let finishFirstPersistence!: () => void;
     let durableSettings = DEFAULT_CLIENT_SETTINGS;

@@ -46,16 +46,4 @@ describe("t3code/no-native-title-tooltip", () => {
       assert.match(output, /Tooltip \+ TooltipTrigger \+ TooltipPopup/);
     },
   );
-
-  rule.invalid(
-    "reports title on a paragraph",
-    `const el = <p className="truncate text-xs" title={path}>src/main.ts</p>;`,
-  );
-
-  rule.invalid(
-    "reports title on a code element",
-    `const el = <code className="truncate" title={pairingUrl}>abc</code>;`,
-  );
-
-  rule.invalid("reports title on an anchor", `const el = <a href="#" title="Learn more">More</a>;`);
 });

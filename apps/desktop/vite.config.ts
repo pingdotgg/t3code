@@ -1,4 +1,4 @@
-import "vite-plus/test/config";
+import { configDefaults } from "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
@@ -146,6 +146,9 @@ export default defineConfig({
     // The Windows lane runs workspace suites concurrently; filesystem-heavy
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
+    // The KDE capture scripts ship inside the desktop app but live beside their
+    // native helper, so their tests sit outside this package root.
+    include: [...configDefaults.include, "../../native/kde-snap-shot/src/*.test.ts"],
     setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
   },
 });

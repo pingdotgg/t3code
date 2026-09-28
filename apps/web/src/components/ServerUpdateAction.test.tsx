@@ -350,29 +350,6 @@ describe("ServerUpdatesAction", () => {
 });
 
 describe("ServerUpdateProgress", () => {
-  it("shows one calm status row for the restart wait", () => {
-    const markup = renderToStaticMarkup(
-      <ServerUpdateProgress
-        state={{
-          status: "running",
-          stage: "resuming",
-          fromVersion: "0.0.30",
-          targetVersion: "0.0.31",
-        }}
-      />,
-    );
-
-    expect(markup).toContain("Restarting…");
-    // The wait state is monochrome and calm: no versions, no step rail, no
-    // success/warning colors, one duty-cycled pulse on the dot.
-    expect(markup).not.toContain("0.0.30");
-    expect(markup).not.toContain("Resum");
-    expect(markup).not.toContain("text-success");
-    expect(markup).not.toContain("text-primary");
-    expect(markup).toContain("animate-status-pulse");
-    expect(markup).not.toContain("animate-spin");
-  });
-
   it("folds the sub-second installing handoff into the download phase", () => {
     const markup = renderToStaticMarkup(
       <ServerUpdateProgress

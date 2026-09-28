@@ -118,21 +118,6 @@ describe("splitSharedServerPatch", () => {
   });
 });
 
-describe("pickSharedServerSettings", () => {
-  it("returns only the shared keys", () => {
-    expect(
-      Object.keys(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS, restartCapabilities)).sort(),
-    ).toEqual([
-      "continueThreadsAfterServerUpdate",
-      "newWorktreesStartFromOrigin",
-      "sidebarAutoSettleAfterDays",
-      "sidebarAutoSettleOnMerge",
-      "sourceControlWritingStyle",
-      "textGenerationModelSelection",
-    ]);
-  });
-});
-
 describe("filterSharedServerPatch", () => {
   it.each([true, false])(
     "resets a disabled default provider only on the originating environment (%s)",

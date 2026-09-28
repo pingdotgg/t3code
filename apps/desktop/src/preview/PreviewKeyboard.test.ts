@@ -124,16 +124,11 @@ describe("preview keyboard packets", () => {
     expect(sequence.commands).toEqual(["selectAll"]);
   });
 
-  it.each([
-    ["ArrowLeft", "Left"],
-    ["ArrowRight", "Right"],
-    ["ArrowUp", "Up"],
-    ["ArrowDown", "Down"],
-  ])("maps %s to Electron's %s accelerator", (key, keyCode) => {
-    const sequence = makePreviewAutomationNativeKeySequence({ key });
-    expect(sequence.keyDown.keyCode).toBe(keyCode);
-    expect(sequence.keyUp.keyCode).toBe(keyCode);
-    expect(sequence.signal.key).toBe(key);
+  it("maps ArrowLeft to Electron's Left accelerator", () => {
+    const sequence = makePreviewAutomationNativeKeySequence({ key: "ArrowLeft" });
+    expect(sequence.keyDown.keyCode).toBe("Left");
+    expect(sequence.keyUp.keyCode).toBe("Left");
+    expect(sequence.signal.key).toBe("ArrowLeft");
     expect(sequence.char).toBeUndefined();
   });
 

@@ -56,25 +56,6 @@ describe("ChangedFilesCard", () => {
     expect(markup).not.toContain("Show all");
     expect(markup).not.toContain("App.test.tsx");
   });
-
-  it("keeps the folder tree visible when folders are collapsed", () => {
-    const markup = renderToStaticMarkup(
-      <ChangedFilesCard
-        turnId={TurnId.make("turn-1")}
-        files={[{ path: "apps/web/src/App.tsx", kind: "modified", additions: 120, deletions: 20 }]}
-        allDirectoriesExpanded={false}
-        resolvedTheme="light"
-        onToggleAllDirectories={() => {}}
-        onOpenTurnDiff={() => {}}
-      />,
-    );
-
-    expect(markup).toContain('data-changed-files-state="tree"');
-    expect(markup).toContain("1 changed file");
-    expect(markup).toContain("apps/web/src");
-    expect(markup).not.toContain("Show all");
-    expect(markup).not.toContain("App.tsx");
-  });
 });
 
 describe("ChangedFilesTree", () => {

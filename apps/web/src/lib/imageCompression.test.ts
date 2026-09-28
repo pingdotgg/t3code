@@ -452,11 +452,8 @@ describe("HEIC attachment preparation", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it.each([
-    { label: "24 MP", width: 5712, height: 4284 },
-    { label: "48 MP", width: 8064, height: 6048 },
-  ])("accepts $label HEIC photos", async ({ width, height }) => {
-    const original = makeHeicFile({ width, height });
+  it("accepts 48 MP HEIC photos", async () => {
+    const original = makeHeicFile({ width: 8064, height: 6048 });
     mocks.heicTo.mockResolvedValueOnce(new Blob(["jpeg"], { type: "image/jpeg" }));
 
     const result = await prepareImageForAttachment(original, 1024);

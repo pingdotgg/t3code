@@ -341,15 +341,6 @@ describe("composer rich text document model", () => {
     expect(roundTripPlain(value).value).toBe(value);
   });
 
-  it("maps every document offset through collapsed coordinates and back", () => {
-    const value = "hi **bold** @README.md bye";
-    const map = roundTrip(value);
-    expect(map.value).toBe(value);
-    for (let flat = 0; flat <= map.docLength; flat += 1) {
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
-    }
-  });
-
   it("maps markdown offsets at styled edges onto document text", () => {
     const value = "a **bold** c";
     const map = roundTrip(value);

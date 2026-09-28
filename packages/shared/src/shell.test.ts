@@ -20,7 +20,6 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   resolveCommandPath,
-  resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
@@ -312,26 +311,6 @@ describe("mergePathValues", () => {
     expect(mergePathValues("/usr/local/bin:/usr/bin", "/usr/bin:/USR/BIN", "linux")).toBe(
       "/usr/local/bin:/usr/bin:/USR/BIN",
     );
-  });
-});
-
-describe("resolveKnownWindowsCliDirs", () => {
-  it("returns known Windows CLI install directories in priority order", () => {
-    expect(
-      resolveKnownWindowsCliDirs({
-        APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
-        LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
-        USERPROFILE: "C:\\Users\\testuser",
-      }),
-    ).toEqual([
-      "C:\\Users\\testuser\\AppData\\Roaming\\npm",
-      "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
-      "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
-      "C:\\Users\\testuser\\AppData\\Local\\pnpm",
-      "C:\\Users\\testuser\\.local\\bin",
-      "C:\\Users\\testuser\\.bun\\bin",
-      "C:\\Users\\testuser\\scoop\\shims",
-    ]);
   });
 });
 

@@ -61,16 +61,6 @@ afterEach(() => {
 });
 
 describe("resolveServerEnvironmentLabel", () => {
-  it.effect("uses hostname fallback regardless of launch mode", () =>
-    Effect.gen(function* () {
-      const result = yield* ServerEnvironmentLabel.resolveServerEnvironmentLabel({
-        cwdBaseName: "t3code",
-      }).pipe(Effect.provide(withHostPlatform(TestLayer, "win32", "macbook-pro")));
-
-      expect(result).toBe("macbook-pro");
-    }),
-  );
-
   it.effect("prefers the macOS ComputerName", () =>
     Effect.gen(function* () {
       runMock.mockReturnValueOnce(

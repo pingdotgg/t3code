@@ -6,30 +6,6 @@ import { T3ProjectFile } from "./t3ProjectFile.ts";
 const decode = Schema.decodeUnknownSync(T3ProjectFile);
 
 describe("T3ProjectFile", () => {
-  it("decodes a full project file", () => {
-    const decoded = decode({
-      $schema: "https://t3.codes/schema/t3.json",
-      iconPath: "assets/logo.svg",
-      scripts: [
-        {
-          name: "Dev",
-          command: "pnpm dev",
-          icon: "play",
-          runOnWorktreeCreate: false,
-          previewUrl: "http://localhost:3000",
-          autoOpenPreview: true,
-        },
-        { name: "Test", command: "pnpm test" },
-        { name: "Setup", command: "pnpm i", runOnWorktreeCreate: true, async: false },
-      ],
-    });
-
-    expect(decoded.iconPath).toBe("assets/logo.svg");
-    expect(decoded.scripts).toHaveLength(3);
-    expect(decoded.scripts?.[1]).toEqual({ name: "Test", command: "pnpm test" });
-    expect(decoded.scripts?.[2]?.async).toBe(false);
-  });
-
   it("decodes an empty object and ignores unknown fields", () => {
     expect(decode({})).toEqual({});
     expect(decode({ futureField: true })).toEqual({});

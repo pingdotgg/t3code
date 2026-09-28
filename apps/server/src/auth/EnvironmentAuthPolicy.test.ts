@@ -138,21 +138,4 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       ),
     ),
   );
-
-  it.effect("uses remote-reachable policy for non-loopback web hosts", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
-
-      expect(descriptor.policy).toBe("remote-reachable");
-      expect(descriptor.sessionCookieName).toMatch(/^t3_session_[a-f0-9]{12}$/);
-    }).pipe(
-      Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
-          mode: "web",
-          host: "192.168.1.50",
-        }),
-      ),
-    ),
-  );
 });

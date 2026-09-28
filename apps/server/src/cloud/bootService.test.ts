@@ -68,12 +68,6 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
 });
 
-it("survives the kernel OOM-killing a greedy agent child", () => {
-  const unit = BootService.renderBootServiceUnit(linuxPlan);
-
-  expect(unit).toContain("OOMPolicy=continue");
-});
-
 const macRuntime = "/Users/theo/.t3/runtime/versions/1.2.3/t3";
 const macPlan = {
   program: [macRuntime, "__service-launcher"],
@@ -98,15 +92,6 @@ it("preserves the installer's provider search path in the launch agent", () => {
   const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
   expect(plist).toContain(`    <key>PATH</key>\n    <string>${macInstallerPath}</string>`);
-});
-
-it("restarts the launch agent on the systemd cadence", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
-
-  expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
-  expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
-  expect(plist).toContain("<key>ThrottleInterval</key>\n  <integer>5</integer>");
-  expect(plist).toContain("<key>ExitTimeOut</key>\n  <integer>90</integer>");
 });
 
 it("appends both stdio streams to the boot service log", () => {

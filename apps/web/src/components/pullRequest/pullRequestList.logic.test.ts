@@ -324,22 +324,6 @@ describe("pull request involvement filtering", () => {
     ).toEqual([2]);
   });
 
-  it("does not treat a matching login on another host as the viewer", () => {
-    // The same name on GitLab is a different account, and its viewer is unknown here.
-    const mixed = [
-      entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
-      entry({
-        number: 2,
-        provider: "gitlab",
-        host: "gitlab.com",
-        author: { login: "Bilal", name: null, avatarUrl: null },
-      }),
-    ];
-    expect(
-      filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
-    ).toEqual([1]);
-  });
-
   it("leaves the superset untouched for All", () => {
     expect(filterPullRequestsByInvolvement(entries, VIEWERS, "all")).toHaveLength(3);
   });
@@ -1392,16 +1376,6 @@ describe('who "I" am, per server', () => {
       filterPullRequestsByInvolvement(merged.entries, merged.viewers, "authored").map(
         (row) => row.number,
       ),
-    ).toEqual([1]);
-  });
-
-  it("still reads a single server's host-keyed viewers, which is what a snapshot carries", () => {
-    expect(
-      filterPullRequestsByInvolvement(
-        [entry({ number: 1, author: byBilal })],
-        { "github.com": "Bilal" },
-        "authored",
-      ).map((row) => row.number),
     ).toEqual([1]);
   });
 

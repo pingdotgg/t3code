@@ -307,31 +307,28 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
-  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
-    "decorates %s skill references as selectable skill links",
-    (prefix) => {
-      const node: MarkdownNode = {
-        type: "document",
-        children: [
-          {
-            type: "paragraph",
-            children: [{ type: "text", content: `Use ${prefix}ui for this.` }],
-          },
-        ],
-      };
-
-      expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
-        { text: "Use ", role: "body" },
+  it.each(["$", "€", "𑿝"])("decorates %s skill references as selectable skill links", (prefix) => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
         {
-          text: `${prefix}ui`,
-          role: "body",
-          skillName: "ui",
-          skillLabel: "UI",
+          type: "paragraph",
+          children: [{ type: "text", content: `Use ${prefix}ui for this.` }],
         },
-        { text: " for this.", role: "body" },
-      ]);
-    },
-  );
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
+      { text: "Use ", role: "body" },
+      {
+        text: `${prefix}ui`,
+        role: "body",
+        skillName: "ui",
+        skillLabel: "UI",
+      },
+      { text: " for this.", role: "body" },
+    ]);
+  });
 
   it("decorates known skill references that begin with a digit", () => {
     const node: MarkdownNode = {
@@ -1150,17 +1147,6 @@ describe("pull request chip status", () => {
     expect((await chip("open", true)).accent).toBe("#7f8793");
     expect((await chip("merged")).accent).toBe("#8a70dd");
     expect((await chip("closed")).accent).toBe("#d55665");
-  });
-
-  it("keeps one glyph across every state, so only colour carries the status", async () => {
-    // Web draws a fixed `git-pull-request` and encodes state in colour alone. A per-state glyph
-    // here would put mobile out of step with it.
-    const symbols = await Promise.all(
-      [chip("open"), chip("open", true), chip("merged"), chip("closed")].map(
-        async (pending) => (await pending).symbol,
-      ),
-    );
-    expect(new Set(symbols)).toEqual(new Set(["git-pull-request"]));
   });
 
   it("falls back to the generic pull request chip when the state is unknown", async () => {

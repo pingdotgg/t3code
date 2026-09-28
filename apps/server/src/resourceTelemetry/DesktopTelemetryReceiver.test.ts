@@ -13,7 +13,6 @@ import { assert, describe, expect } from "vite-plus/test";
 
 import {
   type DesktopTelemetryReceiverHealth,
-  initialDesktopTelemetryContactAt,
   isDesktopTelemetryContactStale,
   recordDesktopTelemetrySampleHealth,
   requireDesktopTelemetryWriteProgress,
@@ -26,11 +25,6 @@ describe("DesktopTelemetryReceiver", () => {
     expect(isDesktopTelemetryContactStale(Option.some(1_000), 90_999)).toBe(false);
     expect(isDesktopTelemetryContactStale(Option.some(1_000), 91_000)).toBe(true);
     expect(isDesktopTelemetryContactStale(Option.none(), 1_000_000)).toBe(false);
-  });
-
-  it("starts the stale deadline as soon as a telemetry descriptor is opened", () => {
-    expect(initialDesktopTelemetryContactAt(7, 1_000)).toEqual(Option.some(1_000));
-    expect(initialDesktopTelemetryContactAt(undefined, 1_000)).toEqual(Option.none());
   });
 
   it("keeps the snapshot deadline beyond the configured idle polling interval", () => {

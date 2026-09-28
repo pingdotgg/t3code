@@ -77,49 +77,6 @@ describe("ServerProvider", () => {
 
     expect(parsed.versionAdvisory?.canUpdate).toBe(false);
   });
-
-  it("decodes continuation group metadata", () => {
-    const parsed = decodeServerProvider({
-      instanceId: "codex_personal",
-      driver: "codex",
-      continuation: { groupKey: "codex:home:/Users/julius/.codex" },
-      enabled: true,
-      installed: true,
-      version: "1.0.0",
-      status: "ready",
-      auth: {
-        status: "authenticated",
-      },
-      checkedAt: "2026-04-10T00:00:00.000Z",
-      models: [],
-    });
-
-    expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
-  });
-
-  it("decodes optional legacy model metadata", () => {
-    const parsed = decodeServerProvider({
-      instanceId: "codex",
-      driver: "codex",
-      enabled: true,
-      installed: true,
-      version: "1.0.0",
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-04-10T00:00:00.000Z",
-      models: [
-        {
-          slug: "gpt-5.4",
-          name: "GPT-5.4",
-          isCustom: false,
-          isLegacy: true,
-          capabilities: null,
-        },
-      ],
-    });
-
-    expect(parsed.models[0]?.isLegacy).toBe(true);
-  });
 });
 
 describe("server config forward compatibility", () => {

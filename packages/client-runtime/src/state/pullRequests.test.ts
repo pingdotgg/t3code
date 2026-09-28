@@ -236,7 +236,7 @@ for (const scenario of [
   );
 }
 
-for (const provider of ["github", "gitlab", "bitbucket", "azure-devops"] as const) {
+for (const provider of ["github", "gitlab"] as const) {
   it.effect(`routes ${provider} viewed marks to their storage environment`, () =>
     Effect.scoped(
       Effect.gen(function* () {

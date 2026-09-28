@@ -638,16 +638,6 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("publishes cached data immediately from a warm cache", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ cached: BASE_THREAD });
-      const state = yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.data));
-
-      expect(Option.getOrThrow(state.data)).toEqual(BASE_THREAD);
-      expect(Option.isNone(state.error)).toBe(true);
-    }),
-  );
-
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_THREAD });

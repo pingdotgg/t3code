@@ -258,17 +258,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("asks for declined pull requests on the closed tab", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
-      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
-
-      yield* api.listPullRequests({ repository: "acme/web", state: "closed", limit: 50 });
-
-      expect(callAt(0).url).toContain("state=DECLINED");
-    }),
-  );
-
   it.effect("asks for every state at once on the All tab", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));

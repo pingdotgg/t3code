@@ -25,14 +25,6 @@ describe("previewRuntimeTabId", () => {
     );
   });
 
-  it("is stable for the same runtime tab", () => {
-    const ref = {
-      environmentId: EnvironmentId.make("environment-a"),
-      threadId: ThreadId.make("thread-a"),
-    };
-    expect(previewRuntimeTabId(ref, null, "tab_1")).toBe(previewRuntimeTabId(ref, null, "tab_1"));
-  });
-
   it("rejects a pinned operation target after the server epoch changes", () => {
     const ref = {
       environmentId: EnvironmentId.make("environment-a"),

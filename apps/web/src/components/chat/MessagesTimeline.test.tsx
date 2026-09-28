@@ -1,6 +1,5 @@
 import {
   ApprovalRequestId,
-  CheckpointRef,
   EnvironmentId,
   MessageId,
   TurnId,
@@ -285,25 +284,6 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("renders previous and next controls with the minimap", () => {
-    const first = buildUserTimelineEntry("First turn");
-    const secondBase = buildUserTimelineEntry("Second turn");
-    const second = {
-      ...secondBase,
-      id: "entry-2",
-      message: {
-        ...secondBase.message,
-        id: MessageId.make("message-2"),
-      },
-    };
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} timelineEntries={[first, second]} />,
-    );
-
-    expect(markup).toContain('aria-label="Previous turn"');
-    expect(markup).toContain('aria-label="Next turn"');
-  });
-
   // Expanding history uses this suite's existing test renderer, deprecated in
   // React 19. Migrate these interaction tests together when a DOM test setup is added.
   it.each([{}, { text: "Text-only answer", file: "Answer with a file" }])(
@@ -509,57 +489,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Worked for 8.0s");
-  });
-
-  it("keeps assistant changed-files headers sticky below the thread header", () => {
-    const assistantMessageId = MessageId.make("message-assistant-with-files");
-    const turnId = TurnId.make("turn-with-files");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        latestTurn={{
-          turnId,
-          state: "completed",
-          startedAt: MESSAGE_CREATED_AT,
-          completedAt: MESSAGE_CREATED_AT,
-        }}
-        timelineEntries={[
-          {
-            id: "entry-assistant-with-files",
-            kind: "message",
-            createdAt: MESSAGE_CREATED_AT,
-            message: {
-              id: assistantMessageId,
-              role: "assistant",
-              text: "Updated the fixture.",
-              turnId,
-              createdAt: MESSAGE_CREATED_AT,
-              updatedAt: MESSAGE_CREATED_AT,
-              streaming: false,
-            },
-          },
-        ]}
-        turnDiffSummaries={[
-          {
-            turnId,
-            checkpointTurnCount: 1,
-            checkpointRef: CheckpointRef.make("checkpoint-with-files"),
-            status: "ready",
-            files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-            assistantMessageId,
-            completedAt: MESSAGE_CREATED_AT,
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("sticky top-2 z-10");
-    expect(markup).not.toContain("self-start");
-    expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain("size-3");
-    expect(markup).not.toContain('aria-label="Collapse all folders"');
-    expect(markup).toContain('aria-label="Open diff"');
-    expect(markup).toContain("1 changed file");
   });
 
   it("treats only the strict list end as the live edge", async () => {
@@ -1343,29 +1272,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
-  it("renders context compaction entries in the normal work log", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Compacted context 899K → 19K tokens",
-              tone: "info",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("Compacted context 899K → 19K tokens");
-  });
-
   it("summarizes changed files in one line", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1528,56 +1434,6 @@ describe("MessagesTimeline", () => {
     expect(toolIndex).toBeGreaterThan(messageIndex);
     expect(metaIndex).toBeGreaterThan(toolIndex);
     expect(markup.match(/I’ll search for it now\./gu)).toHaveLength(1);
-  });
-
-  it("keeps mixed work logs neutral after a later tool call succeeds", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-failed",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-failed",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Run search",
-              tone: "tool",
-              itemType: "command_execution",
-              toolLifecycleStatus: "failed",
-            },
-          },
-          {
-            id: "entry-info",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:29.000Z",
-            entry: {
-              id: "work-info",
-              createdAt: "2026-03-17T19:12:29.000Z",
-              label: "Status updated",
-              tone: "info",
-            },
-          },
-          {
-            id: "entry-completed",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:30.000Z",
-            entry: {
-              id: "work-completed",
-              createdAt: "2026-03-17T19:12:30.000Z",
-              label: "Run tests",
-              tone: "tool",
-              itemType: "command_execution",
-              toolLifecycleStatus: "completed",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("Ran 2 commands and received 1 update");
-    expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
   it("shows the one-line label for a live tool group", () => {

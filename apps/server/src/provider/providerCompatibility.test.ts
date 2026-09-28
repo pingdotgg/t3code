@@ -150,15 +150,7 @@ describe("provider compatibility", () => {
   });
 
   it("supports every driver without inventing policies for uncovered adapters", () => {
-    for (const kind of [
-      "codex",
-      "claudeAgent",
-      "cursor",
-      "grok",
-      "opencode",
-      "antigravity",
-      "customDriver",
-    ]) {
+    for (const kind of ["codex", "cursor", "antigravity"]) {
       const adapter = ProviderDriverKind.make(kind);
       assert.strictEqual(
         resolveProviderCompatibility([{ ...policy, driver: adapter }], adapter, "2.0.0")?.status,

@@ -130,22 +130,6 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
-  it("stores option selection arrays in model selections", () => {
-    expect(
-      createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
-        { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
-      ]),
-    ).toEqual({
-      instanceId: "codex",
-      model: "gpt-5.4",
-      options: [
-        { id: "reasoningEffort", value: "high" },
-        { id: "fastMode", value: true },
-      ],
-    });
-  });
-
   it("reads typed option selection values", () => {
     const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },

@@ -157,9 +157,8 @@ describe("archive Undo", () => {
 
   it("shows no Undo when the archive failed", async () => {
     commands.archive.mockResolvedValue({ _tag: "Failure", cause: new Error("nope") });
-    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
     await useThreadActions().archiveThread(target);
-    expect(add).not.toHaveBeenCalled();
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
   });
 });
 

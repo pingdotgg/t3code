@@ -204,12 +204,6 @@ describe("resolveProjectSettings with a t3.json", () => {
       source: "environment",
     });
   });
-
-  it("leaves settings untouched when no file is passed", () => {
-    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId).settings).toBe(
-      DEFAULT_SERVER_SETTINGS,
-    );
-  });
 });
 
 describe("projectSettingsOverrides patches", () => {

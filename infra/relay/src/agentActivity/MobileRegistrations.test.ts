@@ -292,50 +292,6 @@ describe("MobileRegistrations", () => {
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
 
-  it.effect("unregisters the current user's device", () => {
-    let unregistered: Parameters<Devices.Devices["Service"]["unregister"]>[0] | null = null;
-
-    return Effect.gen(function* () {
-      const result = yield* Effect.gen(function* () {
-        const registrations = yield* MobileRegistrations.MobileRegistrations;
-        return yield* registrations.unregisterDevice({
-          userId: "dev:julius",
-          deviceId: "device-1",
-        });
-      }).pipe(
-        Effect.provide(
-          MobileRegistrations.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(
-                  Devices.Devices,
-                  makeDevices({
-                    unregister: (input) =>
-                      Effect.sync(() => {
-                        unregistered = input;
-                      }),
-                  }),
-                ),
-                Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
-                Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
-                Layer.succeed(
-                  AgentActivityPublisher.AgentActivityPublisher,
-                  makeAgentActivityPublisher(),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      expect(result).toEqual({ ok: true });
-      expect(unregistered).toEqual({
-        userId: "dev:julius",
-        deviceId: "device-1",
-      });
-    });
-  });
-
   it.effect("replays the latest activity state after registering a Live Activity token", () => {
     const liveActivity = {
       deviceId: "device-1" as const,

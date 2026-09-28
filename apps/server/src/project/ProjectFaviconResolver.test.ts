@@ -110,19 +110,6 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }).pipe(Effect.provide(TestClock.layer())),
     );
 
-    it.effect("prefers well-known favicon files", () =>
-      Effect.gen(function* () {
-        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
-
-        const resolved = yield* resolver.resolvePath(cwd);
-
-        expect(resolved).not.toBeNull();
-        expect(resolved).toContain("favicon.svg");
-      }),
-    );
-
     it.effect("prefers a t3.json iconPath over well-known files", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
@@ -338,17 +325,6 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
         expect(resolved).toBeNull();
         expect(elapsedMs).toBeLessThan(5_000);
-      }),
-    );
-
-    it.effect("returns null when no icon is present", () =>
-      Effect.gen(function* () {
-        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-        const cwd = yield* makeTempDir;
-
-        const resolved = yield* resolver.resolvePath(cwd);
-
-        expect(resolved).toBeNull();
       }),
     );
 

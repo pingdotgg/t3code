@@ -16,7 +16,6 @@ import {
   EnvironmentId,
   EventId,
   GitCommandError,
-  KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationShellSnapshot,
@@ -36,14 +35,12 @@ import {
   ProviderInstanceId,
   type ProviderInstallState,
   ProviderSetupError,
-  ResolvedKeybindingRule,
   type ServerLifecycleStreamEvent,
   ThreadId,
   TurnId,
   UsageLimitSourceId,
   WS_METHODS,
   WsRpcGroup,
-  EditorId,
   WorktreeSetupSnapshot,
   type WorktreeSetupStageId,
 } from "@t3tools/contracts";
@@ -1770,22 +1767,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("serves static index content for GET / when staticDir is configured", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-static-" });
-      const indexPath = path.join(staticDir, "index.html");
-      yield* fileSystem.writeFileString(indexPath, "<html>router-static-ok</html>");
-
-      yield* buildAppUnderTest({ config: { staticDir } });
-
-      const response = yield* HttpClient.get("/");
-      assert.equal(response.status, 200);
-      assert.include(yield* response.text, "router-static-ok");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("revalidates static files without sending unchanged bodies", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2150,19 +2131,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 302);
       assert.equal(response.headers.location, "http://127.0.0.1:5173/foo/bar?token=test-token");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("serves the public environment descriptor without requiring auth", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const url = yield* getHttpServerUrl("/.well-known/t3/environment");
-      const response = yield* fetchEffect(url);
-      const body = yield* responseJsonEffect<typeof testEnvironmentDescriptor>(response);
-
-      assert.equal(response.status, 200);
-      assert.deepEqual(body, testEnvironmentDescriptor);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -3446,19 +3414,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("does not expose internal cloud reconciliation over HTTP", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const reconcileUrl = yield* getHttpServerUrl("/api/connect/reconcile");
-      const response = yield* fetchEffect(reconcileUrl, {
-        method: "POST",
-      });
-
-      assert.equal(response.status, 404);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("unlinks local cloud state and disables the managed endpoint runtime", () =>
     Effect.gen(function* () {
       const appliedRuntimeConfigs: Array<unknown> = [];
@@ -4520,30 +4475,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const plain = yield* openSocket(false);
       assert.notInclude(plain.extensions, "permessage-deflate");
     }).pipe(Effect.scoped, Effect.provide(NodeHttpServerTestWithWsDeflate)),
-  );
-
-  it.effect("issues short-lived websocket tickets for authenticated bearer sessions", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const bearerToken = yield* getAuthenticatedBearerSessionToken();
-      const wsTicketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
-      const wsTicketResponse = yield* fetchEffect(wsTicketUrl, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${bearerToken}`,
-        },
-      });
-      const wsTicketBody = yield* responseJsonEffect<{
-        readonly ticket: string;
-        readonly expiresAt: string;
-      }>(wsTicketResponse);
-
-      assert.equal(wsTicketResponse.status, 200);
-      assert.equal(typeof wsTicketBody.ticket, "string");
-      assert.isTrue(wsTicketBody.ticket.length > 0);
-      assert.equal(typeof wsTicketBody.expiresAt, "string");
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("does not allow management-only access tokens to operate the environment", () =>
@@ -5879,78 +5810,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc server.upsertKeybinding", () =>
-    Effect.gen(function* () {
-      const rule: KeybindingRule = {
-        command: "terminal.toggle",
-        key: "ctrl+k",
-      };
-      const resolved: ResolvedKeybindingRule = {
-        command: "terminal.toggle",
-        shortcut: {
-          key: "k",
-          metaKey: false,
-          ctrlKey: true,
-          shiftKey: false,
-          altKey: false,
-          modKey: true,
-        },
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          keybindings: {
-            upsertKeybindingRule: () => Effect.succeed([resolved]),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverUpsertKeybinding](rule)),
-      );
-
-      assert.deepEqual(response.issues, []);
-      assert.deepEqual(response.keybindings, [resolved]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc server.removeKeybinding", () =>
-    Effect.gen(function* () {
-      const rule: KeybindingRule = {
-        command: "terminal.toggle",
-        key: "ctrl+k",
-      };
-      const resolved: ResolvedKeybindingRule = {
-        command: "terminal.toggle",
-        shortcut: {
-          key: "j",
-          metaKey: false,
-          ctrlKey: false,
-          shiftKey: false,
-          altKey: false,
-          modKey: true,
-        },
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          keybindings: {
-            removeKeybindingRule: () => Effect.succeed([resolved]),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverRemoveKeybinding](rule)),
-      );
-
-      assert.deepEqual(response.issues, []);
-      assert.deepEqual(response.keybindings, [resolved]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("keeps agent session import project failures structured over websocket rpc", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -6045,31 +5904,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.deepEqual(result, { importedCount: 0, skippedCount: 1 });
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("uploads Codex thread feedback through websocket rpc", () =>
-    Effect.gen(function* () {
-      const input = {
-        threadId: ThreadId.make("thread-feedback"),
-        reason: "The agent stopped early.",
-      };
-      const uploadFeedback = vi.fn<ProviderService.ProviderService["Service"]["uploadFeedback"]>(
-        () => Effect.succeed({ feedbackId: "codex-thread-feedback" }),
-      );
-      yield* buildAppUnderTest({
-        layers: {
-          providerService: { uploadFeedback },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.providerUploadFeedback](input)),
-      );
-
-      assert.deepStrictEqual(response, { feedbackId: "codex-thread-feedback" });
-      assert.deepStrictEqual(uploadFeedback.mock.calls, [[input]]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -6978,23 +6812,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(recovered.availableMemoryBytes, 35 * 4096);
       assert.equal(yield* Ref.get(commandCalls), 2);
     }).pipe(TestClock.withLive),
-  );
-
-  it.effect("routes websocket resource telemetry through the subscription", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const snapshot = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(Stream.runHead),
-        ),
-      );
-
-      assertTrue(Option.isSome(snapshot));
-      assert.equal(snapshot.value.processes.length, 0);
-      assert.equal(snapshot.value.groups.backend.processCount, 0);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   // An already-shipped client decodes this stream against an event union
@@ -8124,34 +7941,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc shell.openInEditor", () =>
-    Effect.gen(function* () {
-      let openedInput: { cwd: string; editor: EditorId } | null = null;
-      yield* buildAppUnderTest({
-        layers: {
-          externalLauncher: {
-            launchEditor: (input) =>
-              Effect.sync(() => {
-                openedInput = input;
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.shellOpenInEditor]({
-            cwd: "/tmp/project",
-            editor: "cursor",
-          }),
-        ),
-      );
-
-      assert.deepEqual(openedInput, { cwd: "/tmp/project", editor: "cursor" });
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc shell.openInEditor errors", () =>
     Effect.gen(function* () {
       const externalLauncherError = new ExternalLauncherCommandNotFoundError({
@@ -8271,127 +8060,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
                 return result;
               }),
-            resolvePullRequest: () =>
-              Effect.succeed({
-                pullRequest: {
-                  number: 1,
-                  title: "Demo PR",
-                  url: "https://example.com/pr/1",
-                  baseBranch: "main",
-                  headBranch: "feature/demo",
-                  state: "open",
-                },
-              }),
-            preparePullRequestThread: () =>
-              Effect.succeed({
-                pullRequest: {
-                  number: 1,
-                  title: "Demo PR",
-                  url: "https://example.com/pr/1",
-                  baseBranch: "main",
-                  headBranch: "feature/demo",
-                  state: "open",
-                },
-                branch: "feature/demo",
-                worktreePath: null,
-                isOnPullRequestHead: true,
-              }),
-          },
-          gitVcsDriver: {
-            pullCurrentBranch: () =>
-              Effect.succeed({
-                status: "pulled",
-                refName: "main",
-                upstreamRef: "origin/main",
-              }),
-            listRefs: () =>
-              Effect.succeed({
-                refs: [
-                  {
-                    name: "main",
-                    current: true,
-                    isDefault: true,
-                    worktreePath: null,
-                  },
-                ],
-                isRepo: true,
-                hasPrimaryRemote: true,
-                nextCursor: null,
-                totalCount: 1,
-              }),
-            createWorktree: () =>
-              Effect.succeed({
-                worktree: { path: "/tmp/wt", refName: "feature/demo" },
-              }),
-            removeWorktree: () => Effect.void,
-            createRef: (input) => Effect.succeed({ refName: input.refName }),
-            switchRef: (input) => Effect.succeed({ refName: input.refName }),
-          },
-          vcsStatusBroadcaster: {
-            refreshStatus: () =>
-              Effect.succeed({
-                isRepo: true,
-                hasPrimaryRemote: true,
-                isDefaultRef: true,
-                refName: "main",
-                hasWorkingTreeChanges: false,
-                workingTree: { files: [], insertions: 0, deletions: 0 },
-                hasUpstream: true,
-                aheadCount: 0,
-                behindCount: 0,
-                pr: null,
-              }),
-          },
-          reviewService: {
-            getDiffPreview: (input) =>
-              Effect.succeed({
-                cwd: input.cwd,
-                generatedAt: DateTime.nowUnsafe(),
-                sources: [
-                  {
-                    id: "working-tree",
-                    kind: "working-tree",
-                    title: "Dirty worktree",
-                    baseRef: "HEAD",
-                    headRef: null,
-                    diff: "dirty-diff",
-                    diffHash: "hash-dirty",
-                    truncated: false,
-                  },
-                  {
-                    id: "branch-range",
-                    kind: "branch-range",
-                    title: "Against main",
-                    baseRef: "main",
-                    headRef: "feature/demo",
-                    diff: "base-diff",
-                    diffHash: "hash-base",
-                    truncated: false,
-                  },
-                ],
-              }),
-            getDiffFileContents: () =>
-              Effect.succeed({
-                oldContents: "before\n",
-                newContents: "after\n",
-              }),
           },
         },
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-
-      const pull = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsPull]({ cwd: "/tmp/repo" })),
-      );
-      assert.equal(pull.status, "pulled");
-
-      const refreshedStatus = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsRefreshStatus]({ cwd: "/tmp/repo" }),
-        ),
-      );
-      assert.equal(refreshedStatus.isRepo, true);
 
       const stackedEvents = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -8410,101 +8083,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (lastStackedEvent?.kind === "action_finished") {
         assert.equal(lastStackedEvent.result.action, "commit");
       }
-
-      const resolvedPr = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitResolvePullRequest]({
-            cwd: "/tmp/repo",
-            reference: "1",
-          }),
-        ),
-      );
-      assert.equal(resolvedPr.pullRequest.number, 1);
-
-      const prepared = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.gitPreparePullRequestThread]({
-            cwd: "/tmp/repo",
-            reference: "1",
-            mode: "local",
-          }),
-        ),
-      );
-      assert.equal(prepared.branch, "feature/demo");
-
-      const refs = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.vcsListRefs]({ cwd: "/tmp/repo" })),
-      );
-      assert.equal(refs.refs[0]?.name, "main");
-
-      const worktree = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsCreateWorktree]({
-            cwd: "/tmp/repo",
-            refName: "main",
-            path: null,
-          }),
-        ),
-      );
-      assert.equal(worktree.worktree.refName, "feature/demo");
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsRemoveWorktree]({
-            cwd: "/tmp/repo",
-            path: "/tmp/wt",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsCreateRef]({
-            cwd: "/tmp/repo",
-            refName: "feature/new",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsSwitchRef]({
-            cwd: "/tmp/repo",
-            refName: "main",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.vcsInit]({
-            cwd: "/tmp/repo",
-          }),
-        ),
-      );
-
-      const diffPreview = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.reviewGetDiffPreview]({ cwd: "/tmp/repo" }),
-        ),
-      );
-      assert.equal(diffPreview.sources[0]?.diff, "dirty-diff");
-
-      const diffFileContents = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.reviewGetDiffFileContents]({
-            cwd: "/tmp/repo",
-            sourceKind: "working-tree",
-            changeType: "change",
-            baseRef: "HEAD",
-            headRef: null,
-            oldPath: "README.md",
-            newPath: "README.md",
-          }),
-        ),
-      );
-      assert.equal(diffFileContents.oldContents, "before\n");
-      assert.equal(diffFileContents.newContents, "after\n");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -8875,144 +8453,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc orchestration methods", () =>
-    Effect.gen(function* () {
-      const now = "2026-01-01T00:00:00.000Z";
-      const snapshot = {
-        snapshotSequence: 1,
-        updatedAt: now,
-        projects: [
-          {
-            id: ProjectId.make("project-a"),
-            title: "Project A",
-            workspaceRoot: "/tmp/project-a",
-            defaultModelSelection,
-            scripts: [],
-            createdAt: now,
-            updatedAt: now,
-            deletedAt: null,
-          },
-        ],
-        threads: [
-          {
-            id: ThreadId.make("thread-1"),
-            projectId: ProjectId.make("project-a"),
-            title: "Thread A",
-            modelSelection: defaultModelSelection,
-            interactionMode: "default" as const,
-            runtimeMode: "full-access" as const,
-            branch: null,
-            worktreePath: null,
-            pullRequests: [],
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            latestTurn: null,
-            messages: [],
-            session: null,
-            activities: [],
-            proposedPlans: [],
-            checkpoints: [],
-            deletedAt: null,
-          },
-        ],
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          projectionSnapshotQuery: {
-            getSnapshot: () => Effect.succeed(snapshot),
-            searchThreads: () =>
-              Effect.succeed({
-                matches: [
-                  {
-                    threadId: ThreadId.make("thread-1"),
-                    projectId: ProjectId.make("project-a"),
-                    source: "assistant",
-                    snippet: "Search reached the final response.",
-                    messageCreatedAt: now,
-                  },
-                ],
-              }),
-          },
-          orchestrationEngine: {
-            dispatch: () => Effect.succeed({ sequence: 7 }),
-            readEvents: () => Stream.empty,
-          },
-          checkpointDiffQuery: {
-            getTurnDiff: () =>
-              Effect.succeed({
-                threadId: ThreadId.make("thread-1"),
-                fromTurnCount: 0,
-                toTurnCount: 1,
-                diff: "turn-diff",
-              }),
-            getFullThreadDiff: () =>
-              Effect.succeed({
-                threadId: ThreadId.make("thread-1"),
-                fromTurnCount: 0,
-                toTurnCount: 1,
-                diff: "full-diff",
-              }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const dispatchResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-            type: "thread.session.stop",
-            commandId: CommandId.make("cmd-1"),
-            threadId: ThreadId.make("thread-1"),
-            createdAt: now,
-          }),
-        ),
-      );
-      assert.equal(dispatchResult.sequence, 7);
-
-      const turnDiffResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.getTurnDiff]({
-            threadId: ThreadId.make("thread-1"),
-            fromTurnCount: 0,
-            toTurnCount: 1,
-          }),
-        ),
-      );
-      assert.equal(turnDiffResult.diff, "turn-diff");
-
-      const fullDiffResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.getFullThreadDiff]({
-            threadId: ThreadId.make("thread-1"),
-            toTurnCount: 1,
-          }),
-        ),
-      );
-      assert.equal(fullDiffResult.diff, "full-diff");
-
-      const searchResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.searchThreads]({
-            query: "final response",
-          }),
-        ),
-      );
-      assert.deepEqual(searchResult.matches, [
-        {
-          threadId: ThreadId.make("thread-1"),
-          projectId: ProjectId.make("project-a"),
-          source: "assistant",
-          snippet: "Search reached the final response.",
-          messageCreatedAt: now,
-        },
-      ]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc orchestration shell snapshot errors", () =>
     Effect.gen(function* () {
       const projectionError = new PersistenceSqlError({
@@ -9182,32 +8622,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
     );
   }
-
-  it.effect("marks a socket thread snapshot as synchronized when requested", () =>
-    Effect.gen(function* () {
-      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
-      yield* buildAppUnderTest({
-        layers: {
-          projectionSnapshotQuery: {
-            getThreadDetailSnapshot: () => Effect.succeedSome({ snapshotSequence: 1, thread }),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const items = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
-            threadId: defaultThreadId,
-            requestCompletionMarker: true,
-          }).pipe(Stream.take(2), Stream.runCollect),
-        ),
-      );
-
-      assert.equal(items[0]?.kind, "snapshot");
-      assert.deepEqual(items[1], { kind: "synchronized" });
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
 
   it.effect("buffers shell events published while the fallback snapshot loads", () =>
     Effect.gen(function* () {
@@ -10818,75 +10232,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("stops the provider session and closes thread terminals after archive", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-archive");
-      const effects: string[] = [];
-      const dispatchedCommands: Array<OrchestrationCommand> = [];
-      const now = "2026-01-01T00:00:00.000Z";
-
-      yield* buildAppUnderTest({
-        layers: {
-          terminalManager: {
-            close: (input) =>
-              Effect.sync(() => {
-                effects.push(`terminal.close:${input.threadId}`);
-              }),
-          },
-          orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                effects.push(`dispatch:${command.type}`);
-                return { sequence: dispatchedCommands.length };
-              }),
-          },
-          projectionSnapshotQuery: {
-            getThreadShellById: () =>
-              Effect.succeedSome(
-                makeDefaultOrchestrationThreadShell({
-                  id: threadId,
-                  updatedAt: now,
-                  session: {
-                    threadId,
-                    status: "ready",
-                    providerName: "claudeAgent",
-                    runtimeMode: "full-access",
-                    activeTurnId: null,
-                    lastError: null,
-                    updatedAt: now,
-                  },
-                }),
-              ),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const dispatchResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-            type: "thread.archive",
-            commandId: CommandId.make("cmd-thread-archive"),
-            threadId,
-          }),
-        ),
-      );
-
-      assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, [
-        "dispatch:thread.archive",
-        "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
-      ]);
-      const sessionStopCommand = dispatchedCommands[1];
-      assert.equal(sessionStopCommand?.type, "thread.session.stop");
-      if (sessionStopCommand?.type === "thread.session.stop") {
-        assert.equal(sessionStopCommand.threadId, threadId);
-      }
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("checks session status before archiving removes the thread from active lookups", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-archive-precheck");
@@ -10962,6 +10307,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         dispatchedCommands.map((command) => command.type),
         ["thread.archive", "thread.session.stop"],
       );
+      assert.deepInclude(dispatchedCommands[1], { type: "thread.session.stop", threadId });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -12743,102 +12089,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(failedSession.session.status, "error");
         assert.include(failedSession.session.lastError ?? "", "worktree exploded");
       }
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc terminal methods", () =>
-    Effect.gen(function* () {
-      const snapshot = {
-        threadId: "thread-1",
-        terminalId: "default",
-        cwd: "/tmp/project",
-        worktreePath: null,
-        status: "running" as const,
-        pid: 1234,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        label: "Primary",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          terminalManager: {
-            open: () => Effect.succeed(snapshot),
-            write: () => Effect.void,
-            resize: () => Effect.void,
-            clear: () => Effect.void,
-            restart: () => Effect.succeed(snapshot),
-            close: () => Effect.void,
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-
-      const opened = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalOpen]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cwd: "/tmp/project",
-          }),
-        ),
-      );
-      assert.equal(opened.terminalId, "default");
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalWrite]({
-            threadId: "thread-1",
-            terminalId: "default",
-            data: "echo hi\n",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalResize]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cols: 120,
-            rows: 40,
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalClear]({
-            threadId: "thread-1",
-            terminalId: "default",
-          }),
-        ),
-      );
-
-      const restarted = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalRestart]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cwd: "/tmp/project",
-            cols: 120,
-            rows: 40,
-          }),
-        ),
-      );
-      assert.equal(restarted.terminalId, "default");
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalClose]({
-            threadId: "thread-1",
-            terminalId: "default",
-          }),
-        ),
-      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

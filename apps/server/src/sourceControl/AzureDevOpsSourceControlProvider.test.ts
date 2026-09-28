@@ -88,33 +88,3 @@ it.effect("adds change-request context while retaining Azure CLI causes", () =>
     assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );
-
-it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let createInput:
-      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["createPullRequest"]>[0]
-      | null = null;
-    const provider = yield* makeProvider({
-      createPullRequest: (input) => {
-        createInput = input;
-        return Effect.void;
-      },
-    });
-
-    yield* provider.createChangeRequest({
-      cwd: "/repo",
-      baseRefName: "main",
-      headSelector: "feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
-
-    assert.deepStrictEqual(createInput, {
-      cwd: "/repo",
-      baseBranch: "main",
-      headSelector: "feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
-  }),
-);

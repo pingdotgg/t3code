@@ -18,7 +18,6 @@ import {
 it.each([
   ["off", { snapShotPlaySound: false }],
   ["soft-pop", { snapShotPlaySound: true, snapShotSound: "soft-pop" }],
-  ["camera-shutter", { snapShotPlaySound: true, snapShotSound: "camera-shutter" }],
 ] as const)("maps %s to compatible capture settings", (sound, patch) => {
   expect(snapShotSoundPatch(sound)).toEqual(patch);
 });

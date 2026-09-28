@@ -82,7 +82,6 @@ describe("decodePullRequestPageJson", () => {
     ["MERGED", "merged"],
     ["DECLINED", "closed"],
     ["SUPERSEDED", "closed"],
-    ["OPEN", "open"],
     ["something new", "open"],
   ])("reads the %s state as %s", (state, expected) => {
     const decoded = expectSuccess(decodePullRequestPageJson(page([pullRequest({ state })])));

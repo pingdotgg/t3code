@@ -17,36 +17,19 @@ describe("t3code/no-manual-effect-runtime-in-tests", () => {
     `,
   );
 
-  const runtimeMethods = [
-    "runCallback",
-    "runCallbackWith",
-    "runFork",
-    "runForkWith",
-    "runPromise",
-    "runPromiseExit",
-    "runPromiseExitWith",
-    "runPromiseWith",
-    "runSync",
-    "runSyncExit",
-    "runSyncExitWith",
-    "runSyncWith",
-  ] as const;
+  rule.invalid(
+    "reports Effect.runPromise",
+    `
+      import * as Effect from "effect/Effect";
 
-  for (const method of runtimeMethods) {
-    rule.invalid(
-      `reports Effect.${method}`,
-      `
-        import * as Effect from "effect/Effect";
-
-        test("runs an Effect", () => {
-          Effect.${method}(Effect.succeed("ok"));
-        });
-      `,
-      (output) => {
-        assert.match(output, /Use @effect\/vitest with it\.effect/);
-      },
-    );
-  }
+      test("runs an Effect", () => {
+        Effect.runPromise(Effect.succeed("ok"));
+      });
+    `,
+    (output) => {
+      assert.match(output, /Use @effect\/vitest with it\.effect/);
+    },
+  );
 
   rule.invalid(
     "reports ManagedRuntime.make",

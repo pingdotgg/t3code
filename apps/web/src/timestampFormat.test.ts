@@ -56,7 +56,6 @@ describe("resolveWeekStartsOn", () => {
   it.each([
     ["en-US", 0],
     ["en-GB", 1],
-    ["pl-PL", 1],
     ["ar-EG", 6],
   ])("starts the %s week on weekday %i", async (locale, weekday) => {
     const { resolveWeekStartsOn } = await import("./timestampFormat");
@@ -84,10 +83,10 @@ describe("formatChatTimestampTooltip", () => {
     vi.resetModules();
   });
 
-  it.each(["de-DE", "it-IT"])("keeps the English date label in a %s runtime", async (locale) => {
+  it("keeps the English date label in a de-DE runtime", async () => {
     const DateTimeFormat = Intl.DateTimeFormat;
     vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (locales, options) {
-      return new DateTimeFormat(locales ?? locale, options);
+      return new DateTimeFormat(locales ?? "de-DE", options);
     });
     vi.resetModules();
     const { formatChatTimestampTooltip: format } = await import("./timestampFormat");

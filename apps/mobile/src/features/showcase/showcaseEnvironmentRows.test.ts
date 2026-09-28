@@ -24,23 +24,6 @@ function environment(
   };
 }
 
-it("presents showcase transports as remote endpoints", () => {
-  const environments = applyShowcaseLocalEnvironmentDisplayUrls([
-    environment("runtime-id-1", "Moonbase Terminal"),
-    environment("runtime-id-2", "Suspense Station"),
-    environment("runtime-id-3", "Kernel Cabin"),
-  ]);
-
-  assert.deepStrictEqual(
-    environments.map(({ displayUrl }) => displayUrl),
-    [
-      "https://moonbase.tail9f3a.ts.net/",
-      "https://suspense-vps.hel1.t3.sh/",
-      "http://100.82.16.5:3773/",
-    ],
-  );
-});
-
 it("leaves environments outside the showcase fixture unchanged", () => {
   const original = environment(
     "runtime-id-4",

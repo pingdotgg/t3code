@@ -2,14 +2,9 @@ import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRe
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { buildCheckpointDiffTargets, normalizeComposerPathSearchQuery } from "./queryTargets";
+import { buildCheckpointDiffTargets } from "./queryTargets";
 
 describe("appQueries", () => {
-  it("normalizes composer path search input", () => {
-    expect(normalizeComposerPathSearchQuery("  src/app  ")).toBe("src/app");
-    expect(normalizeComposerPathSearchQuery(null)).toBe("");
-  });
-
   it("routes the first turn range through the full-thread diff query", () => {
     const environmentId = EnvironmentId.make("environment-a");
     const threadId = ThreadId.make("thread-a");

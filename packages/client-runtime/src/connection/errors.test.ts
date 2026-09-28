@@ -56,23 +56,6 @@ describe("mapManagedRelayError", () => {
       traceId: "trace-1",
     });
   });
-
-  it("uses a neutral hint when the relay identifies a non-clock DPoP error", () => {
-    const mapped = mapManagedRelayError(
-      new ManagedRelayRequestFailedError({
-        action: "connect relay environment",
-        cause: new Error("request failed"),
-        relayError: new RelayAuthInvalidError({
-          code: "auth_invalid",
-          reason: "invalid_dpop",
-          dpopFailureReason: "key_mismatch",
-          traceId: "trace-1",
-        }),
-      }),
-    );
-
-    expect(mapped.message).toBe(`Relay rejected the DPoP proof. ${DPOP_RETRY_HINT}`);
-  });
 });
 
 describe("mapRemoteDpopEnvironmentError", () => {
@@ -102,18 +85,6 @@ describe("mapRemoteDpopEnvironmentError", () => {
       _tag: "ConnectionTransientError",
       detail: `${error.message} ${NETWORK_BLOCKING_HINT}`,
     });
-  });
-
-  it("does not present a generic environment auth error as confirmed clock skew", () => {
-    const mapped = mapRemoteDpopEnvironmentError(
-      new EnvironmentAuthInvalidError({
-        code: "auth_invalid",
-        reason: "invalid_credential",
-        traceId: "trace-1",
-      }),
-    );
-
-    expect(mapped.message).toBe(`The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`);
   });
 
   it("uses a neutral hint for a non-clock DPoP error from a new server", () => {

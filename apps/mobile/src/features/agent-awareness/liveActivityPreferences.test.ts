@@ -91,26 +91,6 @@ describe("liveActivityPreferences", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("pushes enabled Live Activity preferences to relay registrations", () =>
-    Effect.gen(function* () {
-      yield* setLiveActivityUpdatesEnabled({
-        enabled: true,
-        previousEnabled: false,
-        clerkToken: "clerk-token",
-        connections: [connection],
-      });
-
-      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledWith({
-        liveActivitiesEnabled: true,
-      });
-      expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledWith({
-        clerkToken: "clerk-token",
-        connection,
-        liveActivitiesEnabled: true,
-      });
-    }).pipe(Effect.provide(testLayer)),
-  );
-
   it.effect("keeps local preferences refreshable when signed out", () =>
     Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({

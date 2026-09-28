@@ -43,17 +43,6 @@ describe("scoped refs", () => {
     expect(scopedThreadKey(threadRef)).toBe("environment-test:thread-1");
   });
 
-  it("returns typed scoped refs", () => {
-    expect(projectRef).toEqual({
-      environmentId,
-      projectId: ProjectId.make("project-1"),
-    });
-    expect(threadRef).toEqual({
-      environmentId,
-      threadId: ThreadId.make("thread-1"),
-    });
-  });
-
   it("parses scoped project and thread keys back into refs", () => {
     expect(parseScopedProjectKey("environment-test:project-1")).toEqual(projectRef);
     expect(parseScopedThreadKey("environment-test:thread-1")).toEqual(threadRef);

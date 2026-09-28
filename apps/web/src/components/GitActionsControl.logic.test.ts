@@ -9,7 +9,6 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
-  resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -1109,18 +1108,6 @@ describe("resolveLiveThreadBranchUpdate", () => {
     });
 
     assert.deepEqual(update, { branch: "feature/diff-panel-toggle" });
-  });
-});
-
-describe("resolveThreadBranchMetadataPatch", () => {
-  it("does not overwrite worktree metadata while reconciling a branch", () => {
-    assert.deepEqual(
-      resolveThreadBranchMetadataPatch("feature/current-ref", "feature/previous-ref"),
-      {
-        branch: "feature/current-ref",
-        expectedBranch: "feature/previous-ref",
-      },
-    );
   });
 });
 

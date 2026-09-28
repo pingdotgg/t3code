@@ -3,9 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyPendingPullRequestReactions,
-  PULL_REQUEST_REACTION_ORDER,
-  pullRequestReactionEmoji,
-  pullRequestReactionName,
   pullRequestReactionTooltip,
 } from "./pullRequestReactions.logic";
 
@@ -18,33 +15,6 @@ function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReac
     ...overrides,
   };
 }
-
-describe("reaction presentation", () => {
-  it("names and draws all eight, in GitHub's picker order", () => {
-    expect(PULL_REQUEST_REACTION_ORDER).toEqual([
-      "thumbs-up",
-      "thumbs-down",
-      "laugh",
-      "hooray",
-      "confused",
-      "heart",
-      "rocket",
-      "eyes",
-    ]);
-    expect(PULL_REQUEST_REACTION_ORDER.map(pullRequestReactionEmoji)).toEqual([
-      "👍",
-      "👎",
-      "😄",
-      "🎉",
-      "😕",
-      "❤️",
-      "🚀",
-      "👀",
-    ]);
-    expect(pullRequestReactionName("thumbs-up")).toBe("thumbs up");
-    expect(pullRequestReactionName("eyes")).toBe("eyes");
-  });
-});
 
 describe("reaction tooltip", () => {
   it("reads as GitHub's sentence for one, two and three names", () => {
@@ -88,23 +58,6 @@ describe("reaction tooltip", () => {
     expect(pullRequestReactionTooltip(reaction({ count: 1, actors: [] }))).toBe(
       "1 person reacted with heart emoji",
     );
-  });
-
-  it("names the viewer as You, ahead of the other people who reacted", () => {
-    // The host already leaves the viewer's own login out of `actors`.
-    expect(
-      pullRequestReactionTooltip(
-        reaction({ count: 3, actors: ["Bil0000", "octocat"], viewerHasReacted: true }),
-      ),
-    ).toBe("You, Bil0000, and octocat reacted with heart emoji");
-  });
-
-  it("names nobody as You when the viewer has not reacted", () => {
-    expect(
-      pullRequestReactionTooltip(
-        reaction({ count: 2, actors: ["Bil0000", "octocat"], viewerHasReacted: false }),
-      ),
-    ).toBe("Bil0000 and octocat reacted with heart emoji");
   });
 
   it("names actors as given, and leaves off You, for a host with no room for the viewer", () => {

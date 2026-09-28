@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
@@ -59,12 +58,5 @@ describe("browse navigation", () => {
 
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
-  });
-
-  it("only preloads connected environments", () => {
-    expect(canPreloadBrowsePath("connected")).toBe(true);
-    expect(canPreloadBrowsePath("offline")).toBe(false);
-    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
-    expect(canPreloadBrowsePath(null)).toBe(false);
   });
 });

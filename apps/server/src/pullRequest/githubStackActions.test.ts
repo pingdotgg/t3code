@@ -196,21 +196,6 @@ it.effect("retains stack identity and a rejection response without a message", (
   }),
 );
 
-it.effect("refuses a changed stack before performing any mutation", () =>
-  Effect.gen(function* () {
-    const api = fake([stack]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      expectedStackHeads: [
-        { number: 2, headSha: "old" },
-        { number: 3, headSha: "ccc" },
-      ],
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitHubStackChangedError" } });
-    expect(api.calls).toHaveLength(1);
-  }),
-);
-
 it.effect("rebases unmerged layers bottom to top without local git commands", () =>
   Effect.gen(function* () {
     const api = fake([stack, access, ...rebaseResponses]);

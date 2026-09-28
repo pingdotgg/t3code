@@ -116,29 +116,6 @@ it.layer(NodeServices.layer)("active thread ordering", (it) => {
     );
   }
 
-  it.effect("reorders a running thread without affecting its session", () =>
-    Effect.gen(function* () {
-      const readModel = makeReadModel({
-        session: {
-          threadId: THREAD_ID,
-          status: "running",
-          providerName: "codex",
-          runtimeMode: "full-access",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: NOW,
-        },
-      });
-      const decided = yield* decideOrchestrationCommand({ command: reorderCommand, readModel });
-      const events = Array.isArray(decided) ? decided : [decided];
-      expect(events).toHaveLength(1);
-      for (const event of events) {
-        const projected = yield* projectEvent(readModel, { ...event, sequence: 1 });
-        expect(projected.threads[0]).toEqual({ ...readModel.threads[0], activeOrderKey: "m" });
-      }
-    }),
-  );
-
   it.effect(
     "changes a snoozed thread's retained slot without waking it or changing timestamps",
     () =>

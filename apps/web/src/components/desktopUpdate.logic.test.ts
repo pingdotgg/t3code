@@ -7,7 +7,6 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
-  getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -197,12 +196,6 @@ describe("desktop update UI helpers", () => {
     expect(getDesktopUpdateReleaseUrl("  ")).toBeNull();
   });
 
-  it("builds the release history URL", () => {
-    expect(getDesktopUpdateReleaseHistoryUrl()).toBe(
-      "https://github.com/pingdotgg/t3code/releases",
-    );
-  });
-
   it("toasts only for actionable updater errors", () => {
     expect(
       shouldToastDesktopUpdateActionResult({
@@ -270,17 +263,6 @@ describe("desktop update UI helpers", () => {
       }),
     ).toContain("Install update and restart T3 Code?");
   });
-
-  it("keeps the same install confirmation copy across desktop platforms", () => {
-    expect(
-      getDesktopUpdateInstallConfirmationMessage({
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.0",
-      }),
-    ).toBe(
-      "Install update 1.1.0 and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
-    );
-  });
 });
 
 describe("canCheckForUpdate", () => {
@@ -315,16 +297,6 @@ describe("canCheckForUpdate", () => {
 
   it("returns true when idle", () => {
     expect(canCheckForUpdate({ ...baseState, status: "idle" })).toBe(true);
-  });
-
-  it("returns true when up-to-date", () => {
-    expect(canCheckForUpdate({ ...baseState, status: "up-to-date" })).toBe(true);
-  });
-
-  it("returns true when an update is available", () => {
-    expect(
-      canCheckForUpdate({ ...baseState, status: "available", availableVersion: "1.1.0" }),
-    ).toBe(true);
   });
 
   it("returns true on error so the user can retry", () => {

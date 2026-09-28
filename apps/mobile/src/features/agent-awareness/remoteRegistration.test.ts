@@ -36,7 +36,6 @@ import {
   __resetAgentAwarenessRemoteRegistrationForTest,
   armAgentAwarenessLiveActivityForLocalWork,
   getAgentAwarenessRegistrationStatus,
-  mergeAgentAwarenessRegistrationPreferences,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   registerAgentAwarenessConnection,
@@ -329,13 +328,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     });
   });
 
-  it("routes development builds to the APNs sandbox", () => {
-    expect(resolveApsEnvironment("development")).toBe("sandbox");
-    expect(resolveApsEnvironment("preview")).toBe("production");
-    expect(resolveApsEnvironment("production")).toBe("production");
-    expect(resolveApsEnvironment(undefined)).toBe("production");
-  });
-
   it("disables push features in Personal Team relay registrations", () => {
     Constants.expoConfig!.extra = { iosPersonalTeamBuild: true };
 
@@ -385,15 +377,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         notifyOnFailure: true,
       },
     });
-  });
-
-  it("overrides persisted preferences for an in-flight registration", () => {
-    expect(
-      mergeAgentAwarenessRegistrationPreferences(
-        { liveActivitiesEnabled: false, baseFontSize: 18 },
-        { liveActivitiesEnabled: true },
-      ),
-    ).toEqual({ liveActivitiesEnabled: true, baseFontSize: 18 });
   });
 
   it.effect("registers at most one listener while a Live Activity push token is pending", () => {

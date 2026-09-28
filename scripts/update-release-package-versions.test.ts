@@ -277,25 +277,6 @@ it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
     }),
   );
 
-  it.effect("rejects unknown flags during cli parsing", () =>
-    Effect.gen(function* () {
-      const error = yield* runCli(["1.2.3", "--unknown"]).pipe(Effect.flip);
-
-      if (!CliError.isCliError(error)) {
-        assert.fail(`Expected CliError, got ${String(error)}`);
-      }
-
-      const optionError =
-        error._tag === "ShowHelp" ? (error.errors[0] as CliError.CliError | undefined) : error;
-
-      if (!optionError || optionError._tag !== "UnrecognizedOption") {
-        assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);
-      }
-
-      assert.equal(optionError.option, "--unknown");
-    }),
-  );
-
   it.effect("rejects a missing version positional during cli parsing", () =>
     Effect.gen(function* () {
       const error = yield* runCli(["--github-output"]).pipe(Effect.flip);

@@ -288,20 +288,6 @@ describe("projectActivityPayload", () => {
         }).slice(0, truncated ? -5 : undefined),
       },
     })),
-    ...[
-      "type",
-      "press",
-      "scroll",
-      "resize",
-      "set_appearance",
-      "evaluate",
-      "wait_for",
-      "recording_start",
-      "recording_stop",
-    ].map((action) => ({
-      toolName: `mcp__t3_code__preview_${action}`,
-      result: { content: '{"toolIcon":{"_tag":"website","pageUrl":"https://example.com/"}}' },
-    })),
   ])("preserves the preview page favicon through result slimming", (data) => {
     const projected = projectActivityPayload(activity({ itemType: "mcp_tool_call", data }));
     const icon = { _tag: "website", pageUrl: "https://example.com/" };

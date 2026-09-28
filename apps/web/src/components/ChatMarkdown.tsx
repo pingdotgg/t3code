@@ -247,7 +247,7 @@ export function canUseMarkdownFileShellActions(
   return environmentId !== null && isRemoteOpenResolved && remoteOpenMode === "local-exec";
 }
 
-export function hasMarkdownFilePrimaryAction(input: {
+function hasMarkdownFilePrimaryAction(input: {
   canOpenInEditor: boolean;
   canOpenInBrowser: boolean;
   canOpenInPanel: boolean;

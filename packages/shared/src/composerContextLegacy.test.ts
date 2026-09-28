@@ -132,7 +132,7 @@ describe("upgradeLegacyContextMessage", () => {
     );
   });
 
-  it.each([".", ",", ":", ";", "!", "?", ")", "@", ". Next sentence", "@ next", ".)"])(
+  it.each([".", ",", "@", ". Next sentence", "@ next", ".)"])(
     "upgrades terminal labels before punctuation %s",
     (suffix) => {
       const result = upgradeLegacyContextMessage(

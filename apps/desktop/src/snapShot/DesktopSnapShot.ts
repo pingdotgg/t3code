@@ -250,7 +250,7 @@ function captureMode(platform: NodeJS.Platform): DesktopSnapShotState["mode"] {
   return platform === "darwin" || platform === "win32" ? "direct" : "unavailable";
 }
 
-export function shouldAnimateSnapShot(settings: SnapShotSystemAnimationSettings): boolean {
+function shouldAnimateSnapShot(settings: SnapShotSystemAnimationSettings): boolean {
   return settings.shouldRenderRichAnimation && !settings.prefersReducedMotion;
 }
 
@@ -626,7 +626,7 @@ export class SnapShotFlash {
   }
 }
 
-export function snapShotFlashBounds(
+function snapShotFlashBounds(
   active: ActiveWindow | undefined,
   platform: NodeJS.Platform,
 ): Electron.Rectangle {

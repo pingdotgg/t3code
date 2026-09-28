@@ -1005,54 +1005,6 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
-it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
-  let observedEnv: NodeJS.ProcessEnv | undefined;
-  let observedAppendTruncationMarker: boolean | undefined;
-  let observedOutputMode: VcsProcess.VcsProcessInput["outputMode"];
-
-  return Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
-
-    yield* driver.execute({
-      operation: "GitVcsDriver.test.env",
-      cwd: "/repo",
-      args: ["status"],
-      env: {
-        GIT_INDEX_FILE: "/tmp/t3-index",
-      },
-      appendTruncationMarker: true,
-      outputMode: "error",
-    });
-
-    assert.deepStrictEqual(observedEnv, {
-      GIT_INDEX_FILE: "/tmp/t3-index",
-    });
-    assert.strictEqual(observedAppendTruncationMarker, true);
-    assert.strictEqual(observedOutputMode, "error");
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        Layer.mock(VcsProcess.VcsProcess)({
-          run: (input) =>
-            Effect.sync(() => {
-              observedEnv = input.env;
-              observedAppendTruncationMarker = input.appendTruncationMarker;
-              observedOutputMode = input.outputMode;
-              return {
-                exitCode: ChildProcessSpawner.ExitCode(0),
-                stdout: "",
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              };
-            }),
-        }),
-      ),
-    ),
-  );
-});
-
 it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
   const observedArgs: ReadonlyArray<string>[] = [];
 

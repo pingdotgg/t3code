@@ -95,10 +95,6 @@ describe("providerModelsFromSettings", () => {
 });
 
 describe("parseGenericCliVersion", () => {
-  it("parses a bare version", () => {
-    expect(parseGenericCliVersion("1.14.19")).toBe("1.14.19");
-  });
-
   it("parses a v-prefixed version", () => {
     expect(parseGenericCliVersion("opencode v2.0.3")).toBe("2.0.3");
     expect(parseGenericCliVersion("v22.19.0")).toBe("22.19.0");

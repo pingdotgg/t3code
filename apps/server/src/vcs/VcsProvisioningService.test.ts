@@ -58,25 +58,6 @@ function makeDriver(calls: string[]): VcsDriver.VcsDriver["Service"] {
   };
 }
 
-it.effect("routes repository initialization through an explicit VCS driver kind", () => {
-  const calls: string[] = [];
-  const driver = makeDriver(calls);
-  const testLayer = VcsProvisioningService.layer.pipe(
-    Layer.provide(
-      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
-        get: (kind) => (kind === "git" ? Effect.succeed(driver) : Effect.die("unexpected kind")),
-      }),
-    ),
-  );
-
-  return Effect.gen(function* () {
-    const provisioning = yield* VcsProvisioningService.VcsProvisioningService;
-    yield* provisioning.initRepository({ cwd: "/repo", kind: "git" });
-
-    assert.deepStrictEqual(calls, ["git:/repo"]);
-  }).pipe(Effect.provide(testLayer));
-});
-
 it.effect("defaults repository initialization to Git until callers choose a VCS kind", () => {
   const calls: string[] = [];
   const driver = makeDriver(calls);

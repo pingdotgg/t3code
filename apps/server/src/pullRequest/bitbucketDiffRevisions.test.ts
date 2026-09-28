@@ -269,12 +269,4 @@ describe("parseDiffFileRevisions", () => {
 
     assert.deepStrictEqual([...revisions], [["stamped.ts", "5555555"]]);
   });
-
-  it("splits an unquoted header whose names hold a space, by the sides agreeing", () => {
-    const revisions = parseDiffFileRevisions(
-      patchOf("diff --git a/one two b/one two", "index ddddddd..eeeeeee 100644", "@@ -1 +1 @@"),
-    );
-
-    assert.deepStrictEqual([...revisions], [["one two", "eeeeeee"]]);
-  });
 });

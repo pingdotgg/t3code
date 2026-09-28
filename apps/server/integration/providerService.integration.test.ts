@@ -188,43 +188,6 @@ it.live("replays typed runtime fixture events", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live("replays file-changing fixture turn events", () =>
-  Effect.gen(function* () {
-    const fixture = yield* makeIntegrationFixture();
-    const { join } = yield* Path.Path;
-    const { writeFileString } = yield* FileSystem.FileSystem;
-
-    yield* Effect.gen(function* () {
-      const provider = yield* ProviderService;
-      const session = yield* provider.startSession(ThreadId.make("thread-integration-tools"), {
-        threadId: ThreadId.make("thread-integration-tools"),
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        cwd: fixture.cwd,
-        runtimeMode: "full-access",
-      });
-      assert.equal((session.threadId ?? "").length > 0, true);
-
-      const observedEvents = yield* runTurn({
-        provider,
-        harness: fixture.harness,
-        threadId: session.threadId,
-        userText: "make a small change",
-        response: {
-          events: codexTurnToolFixture,
-          mutateWorkspace: ({ cwd }) =>
-            writeFileString(join(cwd, "README.md"), "v2\n").pipe(Effect.asVoid, Effect.ignore),
-        },
-      });
-
-      assert.deepEqual(
-        observedEvents.map((event) => event.type),
-        codexTurnToolFixture.map((event) => event.type),
-      );
-    }).pipe(Effect.provide(fixture.layer));
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 it.live("runs multi-turn tool/approval flow", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture();

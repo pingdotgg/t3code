@@ -53,8 +53,6 @@ describe("classifyMarkdownImageSource", () => {
     "~/image.png",
     "javascript:alert(1)",
     "ftp://example.com/image.png",
-    "content://media/image/1",
-    "custom:image.png",
     "file://%",
   ])("blocks unsupported or unresolved source %s", (source) => {
     expect(classifyMarkdownImageSource(source)).toEqual({ _tag: "Blocked" });

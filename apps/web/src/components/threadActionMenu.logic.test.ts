@@ -145,21 +145,6 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.at(-1)?.id).toBe("delete");
   });
 
-  it("keeps archive available even when the environment lacks every other capability", () => {
-    expect(
-      ids({
-        ...baseState,
-        supports: {
-          settlement: false,
-          autoSettleOptOut: false,
-          snooze: false,
-          pinning: false,
-          titleRegeneration: false,
-        },
-      }),
-    ).toContain("archive");
-  });
-
   it("disables archive while the thread is running", () => {
     const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
       (item) => item.id === "archive",

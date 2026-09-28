@@ -184,28 +184,6 @@ describe("instance-scoped model selection", () => {
     );
   });
 
-  it("does not inject an unknown selected slug into the stock instance list", () => {
-    const providers = [
-      provider({
-        instanceId: "claudeAgent",
-        models: ["claude-sonnet-4-6"],
-      }),
-      provider({
-        instanceId: "claude_openrouter",
-        models: ["claude-sonnet-4-6"],
-      }),
-    ];
-    const stock = deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.instanceId === "claudeAgent",
-    )!;
-
-    expect(
-      getAppModelOptionsForInstance(settingsWithProviderInstances(), stock).map(
-        (option) => option.slug,
-      ),
-    ).not.toContain("openai/gpt-5.5");
-  });
-
   it("hides server models from the instance option list", () => {
     const providers = [
       provider({

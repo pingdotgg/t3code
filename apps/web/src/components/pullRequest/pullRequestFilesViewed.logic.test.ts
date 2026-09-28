@@ -6,7 +6,6 @@ import {
   isStaleViewedState,
   revertFileViewedOverlay,
   settleFileViewedOverlay,
-  toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
 } from "./pullRequestFilesViewed.logic";
@@ -115,22 +114,6 @@ describe("settleFileViewedOverlay", () => {
   it("holds everything until the host has answered at all", () => {
     const overlay = new Map([["a.ts", true]]);
     expect(settleFileViewedOverlay(overlay, null, NOTHING_PENDING, NOTHING_ANSWERED)).toBe(overlay);
-  });
-});
-
-describe("toFileViewedBatch", () => {
-  it("carries both directions in one batch", () => {
-    expect(
-      toFileViewedBatch(
-        new Map([
-          ["a.ts", false],
-          ["b.ts", true],
-        ]),
-      ),
-    ).toEqual([
-      { path: "a.ts", viewed: false },
-      { path: "b.ts", viewed: true },
-    ]);
   });
 });
 

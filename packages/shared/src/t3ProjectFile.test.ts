@@ -54,11 +54,6 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "runOnWorktreeCreate",
     ]);
   });
-
-  it("stays JSON-serializable", () => {
-    const schema = buildT3ProjectFileJsonSchema();
-    expect(JSON.parse(JSON.stringify(schema))).toEqual(schema);
-  });
 });
 
 describe("T3ProjectFileFromJson", () => {

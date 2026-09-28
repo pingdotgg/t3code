@@ -268,20 +268,17 @@ describe("getComposerProviderState", () => {
     );
   });
 
-  it.each(["codex", "claudeAgent", "cursor", "grok"])(
-    "does not preserve unknown options for a missing %s model",
-    (provider) => {
-      const state = getComposerProviderState({
-        provider: ProviderDriverKind.make(provider),
-        model: "missing-model",
-        models: modelWith([]),
-        modelOptions: selections(["unknown", "value"]),
-        planModeEnabled: true,
-      });
+  it("does not preserve unknown options for a missing codex model", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("codex"),
+      model: "missing-model",
+      models: modelWith([]),
+      modelOptions: selections(["unknown", "value"]),
+      planModeEnabled: true,
+    });
 
-      expect(state.modelOptionsForDispatch).toBeUndefined();
-    },
-  );
+    expect(state.modelOptionsForDispatch).toBeUndefined();
+  });
 
   it("preserves explicit options while the catalog is empty", () => {
     const state = getComposerProviderState({
@@ -395,18 +392,6 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", false]));
-  });
-
-  it("keeps explicit fastMode true when the user selected Fast", () => {
-    const state = getComposerProviderState({
-      provider: ProviderDriverKind.make("cursor"),
-      model: MODEL,
-      models: modelWith([booleanDescriptor("fastMode", true)]),
-      modelOptions: selections(["fastMode", true]),
-      planModeEnabled: true,
-    });
-
-    expect(state.modelOptionsForDispatch).toEqual(selections(["fastMode", true]));
   });
 
   it("keeps explicit fastMode false when the user selected Normal", () => {

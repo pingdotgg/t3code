@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { connectionFloatingStatus } from "./floating-working-status";
 
@@ -49,18 +49,5 @@ describe("connectionFloatingStatus", () => {
     expect(status("error", { environmentLabel: null })).toMatchObject({
       label: "Failed to connect to Environment",
     });
-  });
-
-  it("carries the reconnect handler so the pill can trigger it", () => {
-    const onReconnect = vi.fn();
-    const pill = connectionFloatingStatus({
-      connectionError: null,
-      connectionState: "offline",
-      environmentLabel: "Mac mini",
-      onReconnect,
-    });
-    if (pill?.kind !== "connection") throw new Error("expected a connection pill");
-    pill.onPress();
-    expect(onReconnect).toHaveBeenCalledOnce();
   });
 });

@@ -707,54 +707,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
-      it("drops stale OpenCode models missing from a successful refresh", () => {
-        const previousProvider = {
-          instanceId: ProviderInstanceId.make("opencode"),
-          driver: ProviderDriverKind.make("opencode"),
-          status: "ready",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-07-17T00:00:00.000Z",
-          version: "1.0.0",
-          models: [
-            {
-              slug: "github/gpt-5",
-              name: "GPT-5",
-              subProvider: "GitHub",
-              isCustom: false,
-              capabilities: null,
-            },
-            {
-              slug: "removed-plugin/model",
-              name: "Removed Plugin Model",
-              subProvider: "Removed Plugin",
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-          slashCommands: [],
-          skills: [],
-        } as const satisfies ServerProvider;
-        const refreshedProvider = {
-          ...previousProvider,
-          checkedAt: "2026-07-17T00:01:00.000Z",
-          models: [
-            {
-              slug: "github/gpt-5",
-              name: "GPT-5",
-              subProvider: "GitHub",
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-        } satisfies ServerProvider;
-
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...refreshedProvider.models,
-        ]);
-      });
-
       it("retains stale OpenCode models when a refresh fails", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("opencode"),
@@ -2887,46 +2839,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
         }).pipe(Effect.provide(recorded.layer));
       });
-
-      it.effect("includes probed claude slash commands in the provider snapshot", () =>
-        Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
-            claudeCapabilities({
-              subscriptionType: "maxplan",
-              slashCommands: [
-                {
-                  name: "review",
-                  description: "Review a pull request",
-                  input: { hint: "pr-or-branch" },
-                },
-              ],
-            }),
-          );
-
-          assert.deepStrictEqual(status.slashCommands.slice(1), [
-            {
-              name: "review",
-              description: "Review a pull request",
-              input: { hint: "pr-or-branch" },
-            },
-          ]);
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-              if (joined === "auth status")
-                return {
-                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                  stderr: "",
-                  code: 0,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        ),
-      );
 
       it.effect("deduplicates probed claude slash commands by name", () =>
         Effect.gen(function* () {

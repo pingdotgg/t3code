@@ -21,45 +21,6 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
-  it("preserves complete causes for update poller and event failures", () => {
-    const cause = Cause.combine(
-      Cause.fail(new Error("updater failed")),
-      Cause.die(new Error("updater defect")),
-    );
-    const pollerError = new DesktopUpdates.DesktopUpdatePollerError({
-      poller: "startup",
-      cause,
-    });
-    const eventError = new DesktopUpdates.DesktopUpdateEventHandlingError({
-      event: "download-progress",
-      cause,
-    });
-    const reportedError = new DesktopUpdates.DesktopUpdaterReportedError({
-      operation: "download",
-      cause,
-    });
-    const unexpectedActionError = new DesktopUpdates.DesktopUpdateUnexpectedActionError({
-      action: "install",
-      cause,
-    });
-
-    assert.strictEqual(pollerError.cause, cause);
-    assert.equal(pollerError.poller, "startup");
-    assert.equal(pollerError.message, "Desktop update startup poller failed.");
-    assert.strictEqual(eventError.cause, cause);
-    assert.equal(eventError.event, "download-progress");
-    assert.equal(eventError.message, "Failed to handle desktop update download-progress event.");
-    assert.strictEqual(reportedError.cause, cause);
-    assert.equal(reportedError.operation, "download");
-    assert.equal(reportedError.message, "Desktop updater download operation reported an error.");
-    assert.strictEqual(unexpectedActionError.cause, cause);
-    assert.equal(unexpectedActionError.action, "install");
-    assert.equal(
-      unexpectedActionError.message,
-      "Desktop update install action failed unexpectedly.",
-    );
-  });
-
   it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();
 

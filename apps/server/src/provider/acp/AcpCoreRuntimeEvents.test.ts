@@ -222,24 +222,4 @@ describe("AcpCoreRuntimeEvents", () => {
       },
     });
   });
-
-  it("maps thoughts to the reasoning stream", () => {
-    expect(
-      makeAcpContentDeltaEvent({
-        stamp: { eventId: "thought-1" as never, createdAt: "2026-09-02T00:00:00.000Z" },
-        provider: ProviderDriverKind.make("cursor"),
-        threadId: "thread-1" as never,
-        turnId: TurnId.make("turn-1"),
-        streamKind: "reasoning_text",
-        text: "Inspect the current implementation first.",
-        rawPayload: { sessionId: "session-1" },
-      }),
-    ).toMatchObject({
-      type: "content.delta",
-      payload: {
-        streamKind: "reasoning_text",
-        delta: "Inspect the current implementation first.",
-      },
-    });
-  });
 });

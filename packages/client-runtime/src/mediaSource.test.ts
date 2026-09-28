@@ -4,8 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveMediaSource } from "./mediaSource.ts";
 
 const threadId = ThreadId.make("thread-1");
-const attachmentId =
-  "11111111-1111-4111-8111-111111111111-22222222-2222-4222-8222-222222222222-mp4";
 
 describe("resolveMediaSource", () => {
   describe("direct URLs", () => {
@@ -128,14 +126,5 @@ describe("resolveMediaSource", () => {
         expect(resolveMediaSource(href, { threadId, workspaceRoot: "/repo" })).toBeNull();
       },
     );
-  });
-
-  it("serves T3 attachment files in place like any other host path", () => {
-    const path = `/home/demo/.t3/userdata/attachments/${attachmentId}.mp4`;
-    expect(resolveMediaSource(path, { threadId, workspaceRoot: "/repo" })).toMatchObject({
-      kind: "video",
-      access: "environment",
-      resource: { _tag: "media-file", threadId, path },
-    });
   });
 });

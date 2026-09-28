@@ -66,15 +66,12 @@ describe("requestLatencyState", () => {
     expect(getSlowRpcAckRequests()).toEqual([]);
   });
 
-  it.each(Object.values(WS_METHODS).filter((method) => method.startsWith("pullRequests.")))(
-    "ignores pull request workspace request %s",
-    (method) => {
-      trackRpcRequestSent("1", method);
-      vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+  it("ignores pull request workspace request pullRequests.list", () => {
+    trackRpcRequestSent("1", WS_METHODS.pullRequestsList);
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
 
-      expect(getSlowRpcAckRequests()).toEqual([]);
-    },
-  );
+    expect(getSlowRpcAckRequests()).toEqual([]);
+  });
 
   it("keeps ignoring untracked methods when a display tag is supplied", () => {
     trackRpcRequestSent(

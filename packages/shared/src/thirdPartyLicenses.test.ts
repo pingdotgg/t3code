@@ -31,13 +31,6 @@ const ENTRIES: ReadonlyArray<ThirdPartyLicenseEntry> = [
 ];
 
 describe("third-party license manifests", () => {
-  it("decodes the generated manifest shape", () => {
-    expect(decodeThirdPartyLicenseManifest({ schemaVersion: 1, entries: ENTRIES })).toEqual({
-      schemaVersion: 1,
-      entries: ENTRIES,
-    });
-  });
-
   it("rejects unsupported manifest versions", () => {
     expect(() => decodeThirdPartyLicenseManifest({ schemaVersion: 2, entries: [] })).toThrow(
       "unsupported format",

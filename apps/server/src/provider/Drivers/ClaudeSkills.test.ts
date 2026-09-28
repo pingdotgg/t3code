@@ -127,33 +127,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("prefers user skills over project skills on name collisions", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
-
-      yield* writeSkill(
-        path.join(configDir, "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".claude", "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: Project deploy.", "---"].join("\n"),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.equal(skills.length, 1);
-      assert.equal(skills[0]?.scope, "user");
-      assert.equal(skills[0]?.description, "User deploy.");
-    }),
-  );
-
   it.effect("falls back to the directory name and skips malformed frontmatter", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

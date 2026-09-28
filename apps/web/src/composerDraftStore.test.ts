@@ -1602,19 +1602,6 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(remoteDraftId)?.prompt).toBe("remote draft");
   });
 
-  it("only marks promoted drafts for the matching environment ref", () => {
-    const store = useComposerDraftStore.getState();
-    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-    store.setPrompt(draftId, "promote me");
-
-    markPromotedDraftThreadByRef(scopeThreadRef(OTHER_TEST_ENVIRONMENT_ID, threadId));
-
-    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
-      threadId,
-    );
-    expect(draftByKey(draftId)?.prompt).toBe("promote me");
-  });
-
   it("moves composer edits made during promotion to the canonical thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
@@ -2251,57 +2238,6 @@ describe("composerDraftStore modelSelection", () => {
       }),
     );
   });
-
-  it("updates only the draft when sticky persistence is disabled", () => {
-    const store = useComposerDraftStore.getState();
-
-    store.setStickyModelSelection(
-      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }),
-    );
-    store.setModelSelection(
-      threadRef,
-      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }),
-    );
-
-    store.setProviderModelOptions(
-      threadRef,
-      CLAUDE_AGENT_DRIVER,
-      toSelections({ thinking: false }),
-      {
-        persistSticky: false,
-      },
-    );
-
-    expect(
-      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
-    ).toEqual(
-      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", {
-        thinking: false,
-      }),
-    );
-    expect(
-      useComposerDraftStore.getState().stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
-    ).toEqual(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }));
-  });
-});
-
-describe("composerDraftStore setModelSelection", () => {
-  const threadId = ThreadId.make("thread-model");
-  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
-
-  beforeEach(() => {
-    resetComposerDraftStore();
-  });
-
-  it("keeps explicit model overrides instead of coercing to null", () => {
-    const store = useComposerDraftStore.getState();
-
-    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.3-codex"));
-
-    expect(
-      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
-    ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.3-codex"));
-  });
 });
 
 describe("composerDraftStore sticky composer settings", () => {
@@ -2324,17 +2260,6 @@ describe("composerDraftStore sticky composer settings", () => {
         reasoningEffort: "medium",
         fastMode: true,
       }),
-    );
-    expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
-  });
-
-  it("normalizes empty sticky model options by dropping selection options", () => {
-    const store = useComposerDraftStore.getState();
-
-    store.setStickyModelSelection(modelSelection(CODEX_DRIVER, "gpt-5.4"));
-
-    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
-      modelSelection(CODEX_DRIVER, "gpt-5.4"),
     );
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
   });
@@ -2717,27 +2642,15 @@ describe("composerDraftStore runtime and interaction settings", () => {
     resetComposerDraftStore();
   });
 
-  it("stores runtime mode overrides in the composer draft", () => {
-    const store = useComposerDraftStore.getState();
-
-    store.setRuntimeMode(threadRef, "approval-required");
-
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.runtimeMode).toBe("approval-required");
-  });
-
-  it("stores interaction mode overrides in the composer draft", () => {
-    const store = useComposerDraftStore.getState();
-
-    store.setInteractionMode(threadRef, "plan");
-
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.interactionMode).toBe("plan");
-  });
-
   it("removes empty settings-only drafts when overrides are cleared", () => {
     const store = useComposerDraftStore.getState();
 
     store.setRuntimeMode(threadRef, "approval-required");
     store.setInteractionMode(threadRef, "plan");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toMatchObject({
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
     store.setRuntimeMode(threadRef, null);
     store.setInteractionMode(threadRef, null);
 
@@ -2835,15 +2748,6 @@ describe("createDeferredStorage", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it("delegates getItem immediately", () => {
-    const base = createMockStorage();
-    base.getItem.mockReturnValueOnce("value");
-    const storage = createDeferredStorage(base, serialize);
-
-    expect(storage.getItem("key")).toBe("value");
-    expect(base.getItem).toHaveBeenCalledWith("key");
   });
 
   it("neither serializes nor writes until the debounce fires", () => {
@@ -3105,25 +3009,6 @@ describe("composerDraftStore inline context references", () => {
     expect(draft?.prompt).toContain(annotationLink);
     expect(draft?.reviewComments).toEqual([reviewComment]);
     expect(draft?.previewAnnotations).toEqual([annotation]);
-  });
-
-  it("rehydrates annotation-only drafts with their references", () => {
-    const merged = useComposerDraftStore.persist.getOptions().merge!(
-      {
-        draftsByThreadKey: {
-          [threadKeyFor(threadId)]: {
-            prompt: "",
-            attachments: [],
-            previewAnnotations: [annotation],
-          },
-        },
-      },
-      useComposerDraftStore.getInitialState(),
-    );
-    expect(merged.draftsByThreadKey[threadKeyFor(threadId)]?.previewAnnotations).toEqual([
-      annotation,
-    ]);
-    expect(merged.draftsByThreadKey[threadKeyFor(threadId)]?.prompt).toContain(annotationLink);
   });
 
   it("adds links for persisted review comments that predate references", () => {

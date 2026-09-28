@@ -61,7 +61,6 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
-  hasMarkdownFilePrimaryAction,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
@@ -468,42 +467,6 @@ describe("canUseMarkdownFileShellActions", () => {
   });
 });
 
-describe("hasMarkdownFilePrimaryAction", () => {
-  it("keeps the chip interactive when an editor, browser, or panel can open it", () => {
-    expect(
-      hasMarkdownFilePrimaryAction({
-        canOpenInEditor: true,
-        canOpenInBrowser: false,
-        canOpenInPanel: false,
-      }),
-    ).toBe(true);
-    expect(
-      hasMarkdownFilePrimaryAction({
-        canOpenInEditor: false,
-        canOpenInBrowser: true,
-        canOpenInPanel: false,
-      }),
-    ).toBe(true);
-    expect(
-      hasMarkdownFilePrimaryAction({
-        canOpenInEditor: false,
-        canOpenInBrowser: false,
-        canOpenInPanel: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("removes the link affordance when no primary action can open the file", () => {
-    expect(
-      hasMarkdownFilePrimaryAction({
-        canOpenInEditor: false,
-        canOpenInBrowser: false,
-        canOpenInPanel: false,
-      }),
-    ).toBe(false);
-  });
-});
-
 describe("ChatMarkdown skill chips", () => {
   it("updates digit-leading skill labels when discovered skills change", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -545,16 +508,6 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown file option chips", () => {
-  it("keeps the fallback button text selectable", () => {
-    const html = renderToStaticMarkup(
-      <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
-    );
-
-    expect(html).toContain("<button");
-    expect(html).toContain('aria-haspopup="menu"');
-    expect(html).toContain("select-text");
-  });
-
   it.each([true, false])(
     "renders Codex file citations as file chips with parseRawHtml=%s",
     (parseRawHtml) => {

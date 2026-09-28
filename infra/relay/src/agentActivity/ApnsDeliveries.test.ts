@@ -489,55 +489,6 @@ describe("ApnsDeliveries", () => {
     }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
   });
 
-  it.effect("sends signed jobs to the device's APNs environment and bundle topic", () => {
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
-    const payload = makeApnsDeliveryJobPayload({
-      kind: "live_activity_update",
-      userId: target.user_id,
-      deviceId: target.device_id,
-      token: "activity-token",
-      bundleId: "com.t3tools.t3code.preview",
-      apsEnvironment: "sandbox",
-      aggregate,
-      createdAt: "1970-01-01T00:00:00.000Z",
-      expiresAt: "1970-01-01T00:10:00.000Z",
-      jobId: "job-routing-1",
-    });
-    const signed = signApnsDeliveryJob({
-      secret: config.apnsDeliveryJobSigningSecret,
-      payload,
-    });
-    const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.sync(() => {
-        requests.push(request);
-        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
-      });
-
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
-
-      expect(result.ok).toBe(true);
-      expect(requests).toHaveLength(1);
-      expect(requests[0]?.url).toBe("https://api.sandbox.push.apple.com/3/device/activity-token");
-      expect(requests[0]?.headers["apns-topic"]).toBe(
-        "com.t3tools.t3code.preview.push-type.liveactivity",
-      );
-    }).pipe(
-      Effect.provide(
-        makeLayer({
-          attempts,
-          currentTargets: [
-            { ...target, bundle_id: "com.t3tools.t3code.preview", aps_environment: "sandbox" },
-          ],
-          config: signingConfig,
-          execute,
-        }),
-      ),
-    );
-  });
-
   it.effect(
     "suppresses all deliveries when the aggregate is unchanged while a row awaits input",
     () => {

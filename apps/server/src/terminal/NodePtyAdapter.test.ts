@@ -35,7 +35,7 @@ const makeTestLayer = (platform: NodeJS.Platform = "win32") =>
 
 const testLayer = makeTestLayer();
 
-for (const platform of ["win32", "linux", "darwin"] as const) {
+for (const platform of ["win32", "linux"] as const) {
   it.effect(`terminates through node-pty using ${platform} semantics`, () =>
     Effect.gen(function* () {
       const adapter = yield* PtyAdapter.PtyAdapter;

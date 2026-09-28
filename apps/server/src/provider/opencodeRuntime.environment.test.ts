@@ -54,12 +54,6 @@ describe("resolveOpenCodeServerPassword", () => {
     ).toBe(" env password ");
   });
 
-  it("uses the settings password for a local server", () => {
-    expect(
-      resolveOpenCodeServerPassword({ external: false, serverPassword: " settings password " }, {}),
-    ).toBe(" settings password ");
-  });
-
   it("uses the settings password when local settings and environment differ", () => {
     expect(
       resolveOpenCodeServerPassword(

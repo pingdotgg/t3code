@@ -2,31 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
-  resolvePreferredThreadWorktreePath,
   resolveTerminalOpenLocation,
   stagePendingTerminalLaunch,
   takePendingTerminalLaunch,
 } from "./terminalLaunchContext";
-
-describe("resolvePreferredThreadWorktreePath", () => {
-  it("prefers thread detail worktree paths over thread shell paths", () => {
-    expect(
-      resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: "/repo/root",
-        threadDetailWorktreePath: "/repo/worktrees/feature",
-      }),
-    ).toBe("/repo/worktrees/feature");
-  });
-
-  it("falls back to the thread shell worktree path when detail is unavailable", () => {
-    expect(
-      resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: "/repo/worktrees/feature",
-        threadDetailWorktreePath: null,
-      }),
-    ).toBe("/repo/worktrees/feature");
-  });
-});
 
 describe("resolveTerminalOpenLocation", () => {
   it("uses the thread detail worktree path before the workspace root for a fresh mobile open", () => {

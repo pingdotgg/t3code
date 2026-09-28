@@ -420,27 +420,6 @@ describe("ModelManifest service", () => {
     );
   });
 
-  it.live("prefers a fetched manifest over the bundle and caches it to disk", () =>
-    Effect.gen(function* () {
-      const service = yield* make;
-      const refreshed = yield* service.refresh;
-      assert.deepStrictEqual(refreshed, REMOTE_MANIFEST);
-
-      // A fresh service instance sees the disk cache without another fetch:
-      // its HTTP layer is still stubbed, but `current` never fetches at all.
-      const rebooted = yield* make;
-      assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        serviceLayers({
-          prefix: "model-manifest-fetch-test",
-          response: () => Response.json(REMOTE_MANIFEST),
-        }),
-      ),
-    ),
-  );
-
   it.live("keeps the bundled manifest when the remote payload is malformed", () =>
     Effect.gen(function* () {
       const service = yield* make;

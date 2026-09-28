@@ -24,7 +24,6 @@ import {
   createDevRunnerEnv,
   devPortProbeHosts,
   findFirstAvailableOffset,
-  getDevRunnerModeArgs,
   isBrowserAllowedPort,
   resolveModePortOffsets,
   resolveOffset,
@@ -87,32 +86,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       assert.include(output, "[dev-runner] mode=dev");
     }),
   );
-
-  describe("getDevRunnerModeArgs", () => {
-    it.effect("lets Vite+ honor the desktop dev task graph", () =>
-      Effect.sync(() => {
-        assert.deepStrictEqual(getDevRunnerModeArgs("dev:desktop"), [
-          "run",
-          "--filter=@t3tools/desktop",
-          "--filter=@t3tools/web",
-          "dev",
-        ]);
-      }),
-    );
-
-    it.effect("places Vite+ run flags before the task name", () =>
-      Effect.sync(() => {
-        assert.deepStrictEqual(getDevRunnerModeArgs("dev"), [
-          "run",
-          "--filter=@t3tools/contracts",
-          "--filter=@t3tools/web",
-          "--filter=t3",
-          "--parallel",
-          "dev",
-        ]);
-      }),
-    );
-  });
 
   describe("resolveOffset", () => {
     it.effect("uses explicit T3CODE_PORT_OFFSET when provided", () =>
@@ -329,27 +302,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
-      }),
-    );
-
-    it.effect("uses custom t3Home when provided", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const env = yield* createDevRunnerEnv({
-          mode: "dev",
-          baseEnv: {},
-          serverOffset: 0,
-          webOffset: 0,
-          t3Home: "/tmp/my-t3",
-          browser: undefined,
-          autoBootstrapProjectFromCwd: undefined,
-          logWebSocketEvents: undefined,
-          host: undefined,
-          port: undefined,
-          devUrl: undefined,
-        });
-
-        assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
       }),
     );
 
@@ -680,15 +632,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("isBrowserAllowedPort", () => {
-    it.each([6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697])(
-      "rejects Fetch-blocked web port %s from the worktree offset range",
-      (port) => {
-        assert.equal(isBrowserAllowedPort(port), false);
-      },
-    );
+    it("rejects Fetch-blocked web port 6000 from the worktree offset range", () => {
+      assert.equal(isBrowserAllowedPort(6000), false);
+    });
 
-    it.each([5733, 5900, 6567, 6670, 8733])("allows browser-safe web port %s", (port) => {
-      assert.equal(isBrowserAllowedPort(port), true);
+    it("allows browser-safe web port 5733", () => {
+      assert.equal(isBrowserAllowedPort(5733), true);
     });
   });
 

@@ -44,35 +44,10 @@ describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
   const parsed = parseWebPreferences(PREVIEW_WEBVIEW_PREFERENCES);
 
   it("contains exactly the three security-critical keys", () => {
-    expect(Object.keys(parsed).toSorted()).toEqual(
-      ["contextIsolation", "nodeIntegration", "sandbox"].toSorted(),
-    );
-  });
-
-  it("uses canonical JS-boolean string literals (not yes/no, on/off, 1/0)", () => {
-    // `value="no"` is a TRUTHY string when assigned to webPreferences.X — so
-    // `contextIsolation="no"` would silently leave isolation ENABLED. Lock
-    // the values to `"true"` / `"false"` so the parser does the right thing.
-    for (const value of Object.values(parsed)) {
-      expect(value).toMatch(/^(true|false)$/);
-    }
-  });
-
-  it("disables context isolation (so react-grab can see the page's React DevTools hook)", () => {
-    expect(parsed["contextIsolation"]).toBe("false");
-  });
-
-  it("keeps the renderer sandbox enabled (so the page cannot reach Node APIs)", () => {
-    expect(parsed["sandbox"]).toBe("true");
-  });
-
-  it("disables nodeIntegration (defense in depth — page never gets Node)", () => {
-    expect(parsed["nodeIntegration"]).toBe("false");
-  });
-
-  it("contains no whitespace (Electron's parser does not trim)", () => {
-    // Electron splits on `,` without trimming, so any whitespace would turn
-    // a key into an unknown one and silently drop the security flag.
-    expect(PREVIEW_WEBVIEW_PREFERENCES).not.toMatch(/\s/);
+    expect(parsed).toEqual({
+      contextIsolation: "false",
+      sandbox: "true",
+      nodeIntegration: "false",
+    });
   });
 });

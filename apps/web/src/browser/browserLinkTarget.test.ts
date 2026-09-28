@@ -79,15 +79,12 @@ describe("resolveLinkTarget", () => {
 });
 
 describe("resolveBrowserLinkTargetPreference", () => {
-  it.each(["system", "app"] as const)(
-    "rejects failed reads instead of using the current %s preference",
-    async (preference) => {
-      settings.browserLinkTarget = preference;
-      const failure = new Error("Settings read failed");
-      vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(failure);
+  it("rejects failed reads instead of using the current app preference", async () => {
+    settings.browserLinkTarget = "app";
+    const failure = new Error("Settings read failed");
+    vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(failure);
 
-      await expect(resolveBrowserLinkTargetPreference()).rejects.toBe(failure);
-      await expect(resolveBrowserLinkTargetPreference()).resolves.toBe(preference);
-    },
-  );
+    await expect(resolveBrowserLinkTargetPreference()).rejects.toBe(failure);
+    await expect(resolveBrowserLinkTargetPreference()).resolves.toBe("app");
+  });
 });

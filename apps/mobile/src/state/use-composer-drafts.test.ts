@@ -2157,22 +2157,6 @@ describe("mobile composer drafts", () => {
     ).toEqual({});
   });
 
-  it("reads the latest selector state synchronously for send", () => {
-    const draftKey = "environment-1:thread-1";
-    const selectedDraft: ComposerDraft = {
-      text: "send this",
-      attachments: [],
-      modelSelection: {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.4",
-        options: [{ id: "reasoningEffort", value: "xhigh" }],
-      },
-    };
-    appAtomRegistry.set(composerDraftsAtom, { [draftKey]: selectedDraft });
-
-    expect(getComposerDraftSnapshot(draftKey)).toEqual(selectedDraft);
-  });
-
   it("drops another environment's upload stamp when a draft moves across machines", () => {
     const uploadedElsewhere: DraftComposerAttachment = {
       id: "image-1",

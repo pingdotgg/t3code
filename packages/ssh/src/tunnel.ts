@@ -252,7 +252,7 @@ function applyScriptPlaceholders(
 // (notably tunnel.test.ts) keep resolving it from here.
 export { describeReadinessCause };
 
-export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
+const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");
 const net = require("node:net");
 const filePath = process.argv[2] ?? "";
 const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);

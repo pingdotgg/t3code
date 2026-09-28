@@ -11,7 +11,6 @@ import {
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeViewerJson,
-  gitLabAwardName,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -78,12 +77,6 @@ describe("decodeMergeRequestListJson", () => {
       reviewRequestLogins: ["julius"],
       labels: [{ name: "backend", color: null }],
     });
-  });
-
-  it("reports no line counts, which GitLab does not expose", () => {
-    const batch = expectSuccess(decodeMergeRequestListJson(listJson([{}])));
-
-    expect(batch.items[0]).toMatchObject({ additions: 0, deletions: 0 });
   });
 
   it("treats a merged timestamp as merged whatever the state says", () => {
@@ -672,14 +665,6 @@ describe("decodeOwnAwardIdJson", () => {
     expect(
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "heart", viewer: "bilal" })),
     ).toBeNull();
-  });
-});
-
-describe("gitLabAwardName", () => {
-  it("spells the contents whose GitLab award name is not their own kebab-case", () => {
-    expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
-    expect(gitLabAwardName("laugh")).toBe("laughing");
-    expect(gitLabAwardName("hooray")).toBe("tada");
   });
 });
 

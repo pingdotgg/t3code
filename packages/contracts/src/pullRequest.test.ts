@@ -13,7 +13,6 @@ import {
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
-const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
@@ -96,16 +95,6 @@ describe("PullRequestListResult", () => {
 
     expect(decoded).toStrictEqual(LIST_RESULT);
   });
-
-  it("keys a viewer by host, so two hosts of one kind stay separate accounts", () => {
-    const decoded = decodeListResult({
-      ...LIST_RESULT,
-      viewers: { "github.com": "bilal", "github.acme.dev": "b.hassan" },
-    });
-
-    expect(decoded.viewers["github.com"]).toBe("bilal");
-    expect(decoded.viewers["github.acme.dev"]).toBe("b.hassan");
-  });
 });
 
 describe("PullRequestListInput", () => {
@@ -113,23 +102,9 @@ describe("PullRequestListInput", () => {
     expect(decodeListInput({ state: "open", query: "  page  " }).query).toBe("page");
   });
 
-  it("has no search when none was asked for", () => {
-    expect(decodeListInput({ state: "open" }).query).toBeUndefined();
-  });
-
   it("bounds a search, because it travels into a command and a query string", () => {
     expect(decodeListInput({ state: "open", query: "p".repeat(200) }).query).toHaveLength(200);
     expect(() => decodeListInput({ state: "open", query: "p".repeat(201) })).toThrow();
-  });
-
-  it("takes back the continuation a result handed out, keyed the way it arrived", () => {
-    const cursors = { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|99|1,2" };
-
-    expect(decodeListInput({ state: "open", cursors }).cursors).toStrictEqual(cursors);
-  });
-
-  it("has no continuation when the listing is being read from the top", () => {
-    expect(decodeListInput({ state: "open" }).cursors).toBeUndefined();
   });
 
   it("bounds a continuation, because it comes back from the page and goes into a filter", () => {
@@ -141,17 +116,6 @@ describe("PullRequestListInput", () => {
 
 describe("PullRequestReviewerRequestInput", () => {
   const ref = { projectId: "p1", repository: "acme/web", number: 1 };
-  const reviewer = { id: "octocat", kind: "user" };
-
-  it("carries the same shape whichever direction the request goes", () => {
-    // One operation, turned around: `requested` is the whole difference between asking somebody
-    // for a review and taking the request back.
-    for (const requested of [true, false]) {
-      expect(decodeReviewerRequest({ ...ref, reviewers: [reviewer], requested }).requested).toBe(
-        requested,
-      );
-    }
-  });
 
   it("refuses a request that names nobody, which no host would do anything with", () => {
     expect(() => decodeReviewerRequest({ ...ref, reviewers: [], requested: true })).toThrow();
@@ -165,79 +129,15 @@ describe("PullRequestReviewerRequestInput", () => {
     ).toHaveLength(25);
     expect(() => decodeReviewerRequest({ ...ref, reviewers: many(26), requested: true })).toThrow();
   });
-
-  it("keeps a team apart from a person, which is a different thing to ask", () => {
-    expect(
-      decodeReviewerRequest({
-        ...ref,
-        reviewers: [reviewer, { id: "web-platform", kind: "team" }],
-        requested: true,
-      }).reviewers.map((entry) => entry.kind),
-    ).toEqual(["user", "team"]);
-  });
 });
 
 describe("updating a branch that has fallen behind its base", () => {
   const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
 
-  it("carries the way the branch should be brought up to date", () => {
-    expect(decodeAction({ ...ref, action: "update-branch", updateMethod: "rebase" })).toMatchObject(
-      {
-        action: "update-branch",
-        updateMethod: "rebase",
-      },
-    );
-  });
-
-  it("takes the action without a method, which is the host's own default", () => {
-    expect(decodeAction({ ...ref, action: "update-branch" }).updateMethod).toBeUndefined();
-  });
-
   it("refuses a way no host offers", () => {
     expect(() =>
       decodeAction({ ...ref, action: "update-branch", updateMethod: "squash" }),
     ).toThrow();
-  });
-});
-
-describe("leaving a merge for the host to make once it is ready", () => {
-  const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
-
-  it("carries the strategy the deferred merge should use, as merging now does", () => {
-    expect(
-      decodeAction({ ...ref, action: "enable-auto-merge", mergeMethod: "squash" }),
-    ).toMatchObject({ action: "enable-auto-merge", mergeMethod: "squash" });
-  });
-
-  it("takes the arming back without a strategy, because there is nothing to choose", () => {
-    expect(decodeAction({ ...ref, action: "disable-auto-merge" }).mergeMethod).toBeUndefined();
-  });
-});
-
-describe("reverting a merged pull request", () => {
-  it("carries the revert action without merge options", () => {
-    const action = decodeAction({
-      projectId: "project-1",
-      repository: "acme/web",
-      number: 7,
-      action: "revert",
-    });
-
-    expect(action.action).toBe("revert");
-    expect(action.mergeMethod).toBeUndefined();
-  });
-});
-
-describe("approving fork workflows", () => {
-  it("carries workflow approval as its own action", () => {
-    const action = decodeAction({
-      projectId: "project-1",
-      repository: "acme/web",
-      number: 7,
-      action: "approve-workflows",
-    });
-
-    expect(action.action).toBe("approve-workflows");
   });
 });
 

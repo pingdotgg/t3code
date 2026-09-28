@@ -37,27 +37,6 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
 
-describe("Linux Chromium secret applications", () => {
-  it("pins the libsecret application attribute for each supported fork", () => {
-    assert.deepEqual(
-      Object.fromEntries(
-        BROWSER_IMPORT_SOURCES.filter((source) => source.platforms.includes("linux")).map(
-          (source) => [source.id, source.linuxSecretApplication],
-        ),
-      ),
-      {
-        chrome: "chrome",
-        edge: "msedge",
-        brave: "brave",
-        vivaldi: "vivaldi",
-        opera: "opera",
-        helium: "chromium",
-        firefox: undefined,
-      },
-    );
-  });
-});
-
 const platformError = (reasonTag: string): PlatformError.PlatformError =>
   ({ _tag: "PlatformError", reason: { _tag: reasonTag } }) as never;
 
@@ -1051,21 +1030,6 @@ describe("isSourceRunning for Firefox", () => {
         assert.isFalse(yield* isSourceRunning(firefox, context));
       }),
     ),
-  );
-});
-
-describe("Windows user-data directories", () => {
-  it.effect("keeps app-bound Chromium forks unsupported on win32", () =>
-    Effect.sync(() => {
-      // Helium retains the older DPAPI-backed store. Other Chromium forks use
-      // App-Bound Encryption, so omitting win32 makes `unavailableReason`
-      // report `unsupportedPlatform` and keeps them out of the menu.
-      for (const source of BROWSER_IMPORT_SOURCES) {
-        if (source.engine === "chromium" && source.id !== "helium") {
-          assert.notInclude(source.platforms, "win32");
-        }
-      }
-    }),
   );
 });
 

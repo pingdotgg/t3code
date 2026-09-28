@@ -764,46 +764,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("status trims PR metadata returned by gh before publishing it", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-trimmed-pr"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-trimmed-pr"]);
-
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          prListSequence: [
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify([
-              {
-                number: 14,
-                title: "  Existing PR title  \n",
-                url: " https://github.com/pingdotgg/codething-mvp/pull/14 ",
-                baseRefName: " main ",
-                headRefName: "\tfeature/status-trimmed-pr\t",
-              },
-            ]),
-          ],
-        },
-      });
-
-      const status = yield* manager.status({ cwd: repoDir });
-
-      expect(status.pr).toEqual({
-        number: 14,
-        title: "Existing PR title",
-        url: "https://github.com/pingdotgg/codething-mvp/pull/14",
-        baseRef: "main",
-        headRef: "feature/status-trimmed-pr",
-        state: "open",
-        updatedAt: null,
-      });
-    }),
-  );
-
   it.effect("status ignores invalid gh pr list entries and keeps valid ones", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

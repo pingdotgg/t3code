@@ -2175,23 +2175,26 @@ describe("buildThreadFeed", () => {
     expect(deriveThreadFeedPresentation(feed, null, new Set())).toEqual(collapsed);
   });
 
-  it.each(
-    [
-      "sudo -u root pnpm test",
-      "/bin/zsh -lc 'sudo -u root pnpm test'",
-      "/bin/bash -lc 'sudo -u root pnpm test'",
-    ].flatMap((command) =>
-      (
-        [
-          { lifecycleStatus: "inProgress", summary: "Running pnpm", shimmer: true },
-          { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: true },
-          { lifecycleStatus: "failed", summary: "Failed pnpm", shimmer: false },
-          { lifecycleStatus: "declined", summary: "Declined pnpm", shimmer: false },
-          { lifecycleStatus: "stopped", summary: "Stopped pnpm", shimmer: false },
-        ] as const
-      ).map((state) => ({ command, ...state })),
+  it.each([
+    ...(
+      [
+        { lifecycleStatus: "inProgress", summary: "Running pnpm", shimmer: true },
+        { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: true },
+        { lifecycleStatus: "failed", summary: "Failed pnpm", shimmer: false },
+        { lifecycleStatus: "declined", summary: "Declined pnpm", shimmer: false },
+        { lifecycleStatus: "stopped", summary: "Stopped pnpm", shimmer: false },
+      ] as const
+    ).map((state) => ({ command: "sudo -u root pnpm test", ...state })),
+    ...["/bin/zsh -lc 'sudo -u root pnpm test'", "/bin/bash -lc 'sudo -u root pnpm test'"].map(
+      (command) =>
+        ({
+          command,
+          lifecycleStatus: "inProgress",
+          summary: "Running pnpm",
+          shimmer: true,
+        }) as const,
     ),
-  )(
+  ])(
     "keeps the command summary in sync with $lifecycleStatus: $command",
     ({ command, lifecycleStatus, summary, shimmer }) => {
       const turnId = TurnId.make("turn-live-tools");

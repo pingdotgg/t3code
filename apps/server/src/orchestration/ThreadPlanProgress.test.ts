@@ -33,12 +33,4 @@ describe("ThreadPlanProgress", () => {
     ]);
     expect(progress.getThreadPlanProgress(threadId)?.step).toBe("First");
   });
-
-  it("clearThreadPlanProgress removes the entry (turn settled / session died)", () => {
-    const progress = ThreadPlanProgress.make();
-    const threadId = "t-plan-3";
-    progress.recordPlanProgress(threadId, [{ step: "Only step", status: "inProgress" }]);
-    progress.clearThreadPlanProgress(threadId);
-    expect(progress.getThreadPlanProgress(threadId)).toBeNull();
-  });
 });

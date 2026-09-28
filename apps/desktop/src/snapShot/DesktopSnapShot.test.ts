@@ -1939,30 +1939,6 @@ it.each([
   },
 );
 
-it("uses the primary display for portal flash feedback", () => {
-  assert.deepEqual(DesktopSnapShot.snapShotFlashBounds(undefined, "linux"), {
-    x: 0,
-    y: 0,
-    width: 1_440,
-    height: 900,
-  });
-});
-
-it("uses the operating system animation policy", () => {
-  assert.isTrue(
-    DesktopSnapShot.shouldAnimateSnapShot({
-      prefersReducedMotion: false,
-      shouldRenderRichAnimation: true,
-    }),
-  );
-  assert.isFalse(
-    DesktopSnapShot.shouldAnimateSnapShot({
-      prefersReducedMotion: true,
-      shouldRenderRichAnimation: true,
-    }),
-  );
-});
-
 it("scales transition timing with travel distance", () => {
   const source = { x: 0, y: 0, width: 200, height: 100 };
   assert.strictEqual(snapShotAnimationDurationMs(source, source), 280);

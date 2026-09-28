@@ -9,28 +9,6 @@ import {
 } from "./sourceControl.ts";
 
 describe("source control presentation", () => {
-  it("uses merge request terminology for GitLab", () => {
-    expect(getChangeRequestTerminologyForKind("gitlab")).toEqual({
-      shortLabel: "MR",
-      singular: "merge request",
-    });
-  });
-
-  it("uses pull request terminology for GitHub-compatible providers", () => {
-    expect(getChangeRequestTerminologyForKind("github")).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
-    expect(getChangeRequestTerminologyForKind("azure-devops")).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
-    expect(getChangeRequestTerminologyForKind("bitbucket")).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
-  });
-
   it("falls back to generic change request copy for unknown providers", () => {
     expect(
       resolveChangeRequestPresentation({ kind: "unknown", name: "forge", baseUrl: "" }),

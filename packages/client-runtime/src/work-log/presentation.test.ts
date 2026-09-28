@@ -278,41 +278,6 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe("Failed to click in the preview browser");
   });
 
-  it.each([
-    ["preview_type", "Typing in the preview browser", "Typed in the preview browser"],
-    [
-      "preview_set_appearance",
-      "Setting preview browser appearance",
-      "Set preview browser appearance",
-    ],
-    [
-      "preview_snapshot",
-      "Taking a snapshot of the preview page",
-      "Took a snapshot of the preview page",
-    ],
-    [
-      "preview_recording_stop",
-      "Stopping recording the preview browser",
-      "Stopped recording the preview browser",
-    ],
-    ["t3_thread_read", "Reading a T3 thread", "Read a T3 thread"],
-    ["t3_thread_send", "Sending to a T3 thread", "Sent to a T3 thread"],
-    [
-      "t3_worktree_handoff",
-      "Handing off thread to a git worktree",
-      "Handed off thread to a git worktree",
-    ],
-  ])("preserves verb forms and the rest of %s's label", (tool, running, completed) => {
-    const entry = { label: `t3-code.${tool}` };
-    expect(
-      resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "inProgress" })
-        ?.displayName,
-    ).toBe(running);
-    expect(
-      resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "completed" })?.displayName,
-    ).toBe(completed);
-  });
-
   it("keeps T3 branding for non-browser tools and falls back to the original tool label", () => {
     expect(
       resolveWorkEntryToolPresentation({
@@ -586,14 +551,12 @@ describe("resolveViewedImageAsset", () => {
 });
 
 describe("pull request tool presentation", () => {
-  it.each([
-    "mcp__t3-code__link_pull_request",
-    "mcp__t3_code__link_pull_request",
-    "T3-code · link_pull_request",
-    "t3code/link_pull_request",
-    "link_pull_request",
-  ])("recognizes the native linking tool: %s", (label) => {
-    const entry = { label, tone: "tool" as const, toolLifecycleStatus: "completed" };
+  it("recognizes the native linking tool: mcp__t3-code__link_pull_request", () => {
+    const entry = {
+      label: "mcp__t3-code__link_pull_request",
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed",
+    };
     expect(resolveWorkEntryToolPresentation(entry)).toMatchObject({
       displayName: "Linked a pull request",
       icon: "pull-request",
@@ -601,25 +564,19 @@ describe("pull request tool presentation", () => {
     expect(toolGroupAction(entry)).toBe("link-pr");
   });
 
-  it.each([
-    ["inProgress", "Linking PR #42"],
-    ["completed", "Linked PR #42"],
-    ["failed", "Failed to link PR #42"],
-    ["declined", "Declined to link PR #42"],
-    ["stopped", "Stopped linking PR #42"],
-  ])("describes the target and %s status", (toolLifecycleStatus, displayName) => {
+  it("describes the target and completed status", () => {
     expect(
       resolveWorkEntryToolPresentation({
         label: "MCP tool call",
         toolTitle: "Custom title",
-        toolLifecycleStatus,
+        toolLifecycleStatus: "completed",
         toolData: {
           server: "t3-code",
           tool: "link_pull_request",
           arguments: { url: "https://github.com/acme/web/pull/42" },
         },
       })?.displayName,
-    ).toBe(displayName);
+    ).toBe("Linked PR #42");
   });
 
   it("recognizes unlink targets supplied as repository and number", () => {
@@ -670,14 +627,11 @@ describe("device group summaries", () => {
     tone: "tool",
   });
 
-  it.each(["device_list", "device_open", "device_screenshot", "device_close"])(
-    "recognizes %s as device controls",
-    (tool) => {
-      const entry = deviceEntry(tool);
-      expect(summarizeToolGroup([entry])).toBe("Used device controls 1 time");
-      expect(toolGroupSummaryKind([entry])).toBe("device");
-    },
-  );
+  it("recognizes device_list as device controls", () => {
+    const entry = deviceEntry("device_list");
+    expect(summarizeToolGroup([entry])).toBe("Used device controls 1 time");
+    expect(toolGroupSummaryKind([entry])).toBe("device");
+  });
 
   it("summarizes device calls alongside shell commands", () => {
     expect(

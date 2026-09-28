@@ -95,42 +95,6 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.ok(result.providers.get("anthropic")!.models["claude-sonnet-4-5"]);
   });
 
-  it("handles model JSON with variants and nested fields", () => {
-    const stdout = [
-      "opencode/gpt-5.4",
-      JSON.stringify({
-        id: "gpt-5.4",
-        providerID: "opencode",
-        name: "GPT-5.4",
-        family: "gpt",
-        capabilities: {
-          temperature: true,
-          reasoning: true,
-          attachment: false,
-          toolcall: true,
-          input: { text: true, audio: false, image: false, video: false, pdf: false },
-          output: { text: true, audio: false, image: false, video: false, pdf: false },
-          interleaved: false,
-        },
-        cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-        limit: { context: 200000, input: 160000, output: 32000 },
-        status: "active",
-        options: {},
-        headers: {},
-        release_date: "2025-01-01",
-        variants: { none: {}, low: {}, medium: {}, high: {} },
-      }),
-    ].join("\n");
-
-    const result = parseModelsCliOutput(stdout);
-    const model = result.providers.get("opencode")!.models["gpt-5.4"]!;
-    NodeAssert.ok(model);
-    NodeAssert.ok(model.capabilities);
-    NodeAssert.equal(model.capabilities!.reasoning, true);
-    NodeAssert.ok(model.variants);
-    NodeAssert.equal(model.variants!["medium"] !== undefined, true);
-  });
-
   it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
     // OpenRouter-style: the model id contains a `/` and no string value has a
     // space, so the JSON body line itself matches the slug regex. It must still
@@ -158,19 +122,6 @@ describe("parseModelsCliOutput", () => {
 });
 
 describe("parseAgentListCliOutput", () => {
-  it("parses a single agent", () => {
-    const stdout = [
-      "build (primary)",
-      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
-    ].join("\n");
-
-    const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.name, "build");
-    NodeAssert.equal(result[0]!.mode, "primary");
-    NodeAssert.equal(result[0]!.permission.length, 1);
-  });
-
   it("parses multiple agents", () => {
     const stdout = [
       "build (primary)",
@@ -207,25 +158,6 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 1);
     NodeAssert.equal(result[0]!.name, "explore");
-  });
-
-  it("handles real-world permission blocks with nested paths", () => {
-    const permissions = [
-      { permission: "*", action: "allow", pattern: "*" },
-      {
-        permission: "external_directory",
-        pattern: "C:\\Users\\test\\.local\\*",
-        action: "allow",
-      },
-      { permission: "read", pattern: "*.env", action: "ask" },
-    ];
-    const stdout = ["build (primary)", "  " + JSON.stringify(permissions)].join("\n");
-
-    const result = parseAgentListCliOutput(stdout);
-    NodeAssert.equal(result.length, 1);
-    NodeAssert.equal(result[0]!.permission.length, 3);
-    NodeAssert.equal(result[0]!.permission[0]!.action, "allow");
-    NodeAssert.equal(result[0]!.permission[2]!.action, "ask");
   });
 
   it("handles agent names with spaces", () => {

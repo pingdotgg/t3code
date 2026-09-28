@@ -186,18 +186,6 @@ describe("buildPendingUserInputAnswers", () => {
     });
   });
 
-  it("returns arrays for answered multi-select prompts", () => {
-    expect(
-      buildPendingUserInputAnswers([multiSelectQuestion], {
-        areas: {
-          selectedOptionValues: ["Server", "Web"],
-        },
-      }),
-    ).toEqual({
-      areas: ["Server", "Web"],
-    });
-  });
-
   it("returns null when any question is unanswered", () => {
     expect(buildPendingUserInputAnswers([singleSelectQuestion], {})).toBeNull();
   });

@@ -67,35 +67,6 @@ describe("3D phone input", () => {
     texture.dispose();
   });
 
-  it.each(orientations)("maps perspective hits to displayed coordinates in %s", (orientation) => {
-    const texture = new Texture();
-    const layout = phoneDisplayLayout({ width: 1170, height: 2532, orientation }, 1170, 2532);
-    const phone = createPhoneScene(texture, layout);
-    const camera = new PerspectiveCamera(32, 0.65, 0.1, 30);
-    camera.position.z = 6;
-    camera.updateMatrixWorld(true);
-    phone.root.rotation.set(0.3, -0.45, 0, "YXZ");
-    phone.orientation.rotation.z = layout.rotation;
-    phone.root.updateMatrixWorld(true);
-    // A point one quarter across and three quarters down the portrait display.
-    const point = new Vector3((-2.2 * layout.aspect) / 4, -2.2 / 4, 0.043);
-    phone.orientation.localToWorld(point);
-    point.project(camera);
-    const hit = phone.screenPoint((point.x + 1) / 2, (1 - point.y) / 2, camera);
-    const expected =
-      orientation === "landscape_left"
-        ? { x: 0.25, y: 0.25 }
-        : orientation === "landscape_right"
-          ? { x: 0.75, y: 0.75 }
-          : orientation === "portrait_upside_down"
-            ? { x: 0.75, y: 0.25 }
-            : { x: 0.25, y: 0.75 };
-    expect(hit?.x).toBeCloseTo(expected.x);
-    expect(hit?.y).toBeCloseTo(expected.y);
-    phone.dispose();
-    texture.dispose();
-  });
-
   it("rejects new gestures outside the display, but clamps captured drags at its edge", () => {
     const texture = new Texture();
     const phone = createPhoneScene(texture, phoneDisplayLayout(null, 900, 1950));

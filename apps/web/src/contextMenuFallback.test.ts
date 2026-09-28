@@ -342,11 +342,6 @@ describe("dismissContextMenu", () => {
     expect(findButton("Rename")).toBeUndefined();
   });
 
-  it("is a no-op when no menu is open", async () => {
-    dismissContextMenu();
-    expect(findButton("Rename")).toBeUndefined();
-  });
-
   it("dismisses the prior menu when a new one opens", async () => {
     const firstPromise = showContextMenuFallback([{ id: "first", label: "First" }]);
     expect(findButton("First")).toBeTruthy();

@@ -187,17 +187,6 @@ describe("resolveOnboardingTargetEnvironment", () => {
       }),
     ).toBe(primaryEnvironment);
   });
-
-  it("falls back to the connected primary when no remote is available", () => {
-    expect(
-      resolveOnboardingTargetEnvironment({
-        mode: "connect",
-        environments: [primaryEnvironment],
-        primaryEnvironment,
-        pairedEnvironmentId: null,
-      }),
-    ).toBe(primaryEnvironment);
-  });
 });
 
 describe("isOnboardingRelayEnvironment", () => {

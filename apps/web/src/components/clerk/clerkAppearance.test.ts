@@ -9,7 +9,6 @@ import {
   themeColorToHex,
   type ThemeColors,
 } from "../../themePalette";
-import { clerkAppearance } from "./clerkAppearance";
 
 function contrastRatio(first: string, second: string): number {
   const toRgb = (value: string) => {
@@ -51,33 +50,6 @@ const builtInThemeModes = [
 );
 
 describe("clerkAppearance", () => {
-  it("maps theme colors without overriding Clerk's component structure", () => {
-    expect(clerkAppearance).toEqual({
-      variables: {
-        colorPrimary: "var(--update-foreground)",
-        colorPrimaryForeground: "var(--card)",
-        colorDanger: "var(--error)",
-        colorSuccess: "var(--success)",
-        colorWarning: "var(--warning)",
-        colorNeutral: "var(--contrast-foreground)",
-        colorForeground: "var(--contrast-foreground)",
-        colorMuted: "color-mix(in srgb, var(--card) 98%, var(--contrast-foreground))",
-        colorMutedForeground: "var(--contrast-muted-foreground)",
-        colorBackground: "var(--card)",
-        colorInputForeground: "var(--contrast-foreground)",
-        colorInput: "var(--secondary)",
-        colorRing: "var(--ring)",
-      },
-      elements: {
-        formFieldErrorText: { color: "var(--error-foreground)" },
-        formFieldWarningText: { color: "var(--warning-foreground)" },
-        formFieldSuccessText: { color: "var(--success-foreground)" },
-        otpCodeFieldErrorText: { color: "var(--error-foreground)" },
-        otpCodeFieldSuccessText: { color: "var(--success-foreground)" },
-      },
-    });
-  });
-
   it.each(builtInThemeModes)("keeps Clerk text readable across a built-in palette", (colors) => {
     const mutedSurface = mixThemeColors(colors.surface, colors.text, 0.98);
 

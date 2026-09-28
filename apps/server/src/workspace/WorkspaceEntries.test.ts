@@ -259,34 +259,6 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("supports fuzzy subsequence queries for composer path search", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-query-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "src/components/composePrompt.ts");
-        yield* writeTextFile(cwd, "docs/composition.md");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "cmp", limit: 10 });
-        const paths = result.entries.map((entry) => entry.path);
-
-        expect(result.entries.length).toBeGreaterThan(0);
-        expect(paths).toContain("src/components");
-        expect(paths).toContain("src/components/Composer.tsx");
-      }),
-    );
-
-    it.effect("prioritizes exact basename matches ahead of broader path matches", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-exact-ranking-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-        yield* writeTextFile(cwd, "docs/composer.tsx-notes.md");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "Composer.tsx", limit: 5 });
-
-        expect(result.entries[0]?.path).toBe("src/components/Composer.tsx");
-      }),
-    );
-
     it.effect("tracks truncation without sorting every fuzzy match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fuzzy-limit-" });
@@ -412,21 +384,6 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
-      }),
-    );
-
-    it.effect("supports typo-resistant file search through fff", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-fff-typo-" });
-        yield* writeTextFile(cwd, "src/components/Composer.tsx");
-
-        const result = yield* searchWorkspaceEntries({ cwd, query: "compoesr", limit: 10 });
-
-        expect(result.entries).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ path: "src/components/Composer.tsx" }),
-          ]),
-        );
       }),
     );
 

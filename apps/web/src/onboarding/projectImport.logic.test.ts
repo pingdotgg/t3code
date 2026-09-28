@@ -220,22 +220,6 @@ describe("resolveOnboardingProjectId", () => {
     ).toBeNull();
   });
 
-  it("finds an alias after the scanner returns its persisted project root", () => {
-    expect(
-      resolveOnboardingProjectId(
-        [
-          {
-            id: localProjectId,
-            environmentId: localEnvironmentId,
-            workspaceRoot: "/real/projects/repo",
-          },
-        ],
-        localEnvironmentId,
-        candidate("/real/projects/repo"),
-      ),
-    ).toBe(localProjectId);
-  });
-
   it("finds the current root owner when the scan has no project ID", () => {
     const recreatedProjectId = ProjectId.make("recreated-project");
     expect(
@@ -304,16 +288,6 @@ describe("resolveOnboardingLandingProject", () => {
         new Map([["/projects/empty", "empty"]]),
       ),
     ).toBe("empty");
-  });
-
-  it("keeps an earlier successful import available on retry", () => {
-    expect(
-      resolveOnboardingLandingProject(
-        ["/projects/imported", "/projects/retry"],
-        new Map([["/projects/imported", "imported"]]),
-        new Map([["/projects/imported", "imported"]]),
-      ),
-    ).toBe("imported");
   });
 
   it("ignores cached successes outside the current retry selection", () => {

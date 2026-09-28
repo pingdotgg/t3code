@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import {
-  filterProjectIconNames,
-  firstEmoji,
-  projectIconColorClassName,
-} from "./projectIconOptions";
+import { filterProjectIconNames, firstEmoji } from "./projectIconOptions";
 
 describe("projectIconOptions", () => {
   it("searches across the full Lucide set", () => {
@@ -16,9 +12,5 @@ describe("projectIconOptions", () => {
     expect(firstEmoji("🇺🇸 project")).toBe("🇺🇸");
     expect(firstEmoji("1️⃣ project")).toBe("1️⃣");
     expect(firstEmoji("plain text")).toBeNull();
-  });
-
-  it("maps persisted colors to theme-aware classes", () => {
-    expect(projectIconColorClassName("violet")).toBe("text-violet-600 dark:text-violet-400");
   });
 });

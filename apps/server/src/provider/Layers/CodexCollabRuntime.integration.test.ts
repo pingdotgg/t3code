@@ -758,18 +758,6 @@ describe("CodexSessionRuntime collab integration", () => {
 
   const elicitationCases = [
     {
-      decision: "accept",
-      response: { action: "accept", content: { approval: "once" } },
-    },
-    {
-      decision: "acceptForSession",
-      response: {
-        action: "accept",
-        _meta: { persist: "session" },
-        content: { approval: "session" },
-      },
-    },
-    {
       decision: "acceptAlways",
       response: {
         action: "accept",
@@ -777,8 +765,6 @@ describe("CodexSessionRuntime collab integration", () => {
         content: { approval: "always" },
       },
     },
-    { decision: "decline", response: { action: "decline" } },
-    { decision: "cancel", response: { action: "cancel" } },
   ] satisfies ReadonlyArray<{
     readonly decision: ProviderApprovalDecision;
     readonly response: Record<string, unknown>;

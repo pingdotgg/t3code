@@ -21,7 +21,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 /** Secret store name prefix of DPoP replay markers. The server prunes expired ones. */
 export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
 
-export const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailureReason => {
+const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailureReason => {
   switch (code) {
     case "time_window":
       return "time_window";

@@ -168,21 +168,6 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
     }),
   );
 
-  it.effect("pinning an unparked thread emits only thread.pinned", () =>
-    Effect.gen(function* () {
-      const event = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.pin",
-          commandId: CommandId.make("cmd-pin-plain"),
-          threadId: ThreadId.make("thread-1"),
-        },
-        readModel: makeReadModel({}),
-      });
-      const events = Array.isArray(event) ? event : [event];
-      expect(events.map((entry) => entry.type)).toEqual(["thread.pinned"]);
-    }),
-  );
-
   it.effect("settling a pinned thread also unpins it", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({

@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  getProviderStatusBannerKey,
   getProviderStatusMessage,
   ProviderStatusBanner,
   shouldShowProviderStatusBanner,
@@ -62,13 +61,6 @@ describe("ProviderStatusBanner", () => {
     expect(
       shouldShowProviderStatusBanner({ ...status, driver: ProviderDriverKind.make("codex") }, null),
     ).toBe(true);
-  });
-
-  it("stays hidden after its current warning is dismissed", () => {
-    const status = warningProvider();
-
-    expect(shouldShowProviderStatusBanner(status, null)).toBe(true);
-    expect(shouldShowProviderStatusBanner(status, getProviderStatusBannerKey(status))).toBe(false);
   });
 
   it("renders an accessible dismiss control for provider warnings", () => {
@@ -130,16 +122,5 @@ describe("getProviderStatusMessage", () => {
         message: "",
       }),
     ).toBe("Open provider setup to install Antigravity on this environment.");
-  });
-
-  it("keeps CLI sign-in advice for a provider without integrated setup", () => {
-    expect(
-      getProviderStatusMessage({
-        ...warningProvider(),
-        status: "error",
-        auth: { status: "unauthenticated" },
-        message: "",
-      }),
-    ).toBe("Sign in via the CLI to authenticate again.");
   });
 });

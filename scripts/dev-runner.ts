@@ -98,10 +98,6 @@ type PortAvailabilityCheck<R = never> = (
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
 
-export function getDevRunnerModeArgs(mode: DevMode): ReadonlyArray<string> {
-  return MODE_ARGS[mode];
-}
-
 export function isBrowserAllowedPort(port: number): boolean {
   return !FETCH_BAD_PORTS.has(port);
 }

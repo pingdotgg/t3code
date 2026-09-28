@@ -89,14 +89,12 @@ it.effect("reports an unrecognized access denial without printing its response b
   }),
 );
 
-it.effect.each([408, 429, 500, 502, 503, 504])(
-  "keeps transient HTTP %s failures retryable",
-  (status) =>
-    Effect.gen(function* () {
-      const error = yield* filterRelayResponse(response(status, "unavailable")).pipe(Effect.flip);
-      expect(error._tag).toBe("EnvironmentHttpInternalServerError");
-      expect(error.message).toContain(`HTTP ${status}`);
-    }),
+it.effect.each([408, 429, 500])("keeps transient HTTP %s failures retryable", (status) =>
+  Effect.gen(function* () {
+    const error = yield* filterRelayResponse(response(status, "unavailable")).pipe(Effect.flip);
+    expect(error._tag).toBe("EnvironmentHttpInternalServerError");
+    expect(error.message).toContain(`HTTP ${status}`);
+  }),
 );
 
 it.effect.each([

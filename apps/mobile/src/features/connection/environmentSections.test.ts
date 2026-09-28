@@ -90,39 +90,6 @@ describe("mobile environment settings sections", () => {
     expect(sections.availableCloudEnvironments).toEqual([]);
   });
 
-  it("keeps an available saved relay environment as a fallback when listing is unavailable", () => {
-    const cloud = connectedEnvironment({
-      environmentId: "environment-cloud",
-      isRelayManaged: true,
-      connectionState: "available",
-    });
-
-    const sections = splitEnvironmentSections({
-      connectedEnvironments: [cloud],
-      cloudEnvironments: null,
-    });
-
-    expect(sections.connectedCloudEnvironments).toEqual([cloud]);
-    expect(sections.availableCloudEnvironments).toEqual([]);
-  });
-
-  it("does not duplicate a saved relay environment in the available cloud listing", () => {
-    const cloud = connectedEnvironment({
-      environmentId: "environment-cloud",
-      isRelayManaged: true,
-      connectionState: "available",
-    });
-    const listedCloud = cloudEnvironment("environment-cloud");
-
-    const sections = splitEnvironmentSections({
-      connectedEnvironments: [cloud],
-      cloudEnvironments: [listedCloud],
-    });
-
-    expect(sections.connectedCloudEnvironments).toEqual([cloud]);
-    expect(sections.availableCloudEnvironments).toEqual([]);
-  });
-
   it("still offers a cloud environment saved directly as a local backend", () => {
     const local = connectedEnvironment({
       environmentId: "environment-cloud",
@@ -139,22 +106,5 @@ describe("mobile environment settings sections", () => {
     expect(
       sections.availableCloudEnvironments.map((environment) => environment.environmentId),
     ).toEqual([EnvironmentId.make("environment-cloud")]);
-  });
-
-  it("keeps failed relay environments in the local connection row", () => {
-    const cloud = connectedEnvironment({
-      environmentId: "environment-cloud",
-      isRelayManaged: true,
-      connectionState: "error",
-      connectionError: "Connection failed.",
-    });
-
-    const sections = splitEnvironmentSections({
-      connectedEnvironments: [cloud],
-      cloudEnvironments: [cloudEnvironment("environment-cloud")],
-    });
-
-    expect(sections.connectedCloudEnvironments).toEqual([cloud]);
-    expect(sections.availableCloudEnvironments).toEqual([]);
   });
 });

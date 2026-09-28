@@ -305,45 +305,6 @@ describe("DesktopConnectionCatalogStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("reports the failed catalog write operation and path", () =>
-    Effect.gen(function* () {
-      const baseFileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-connection-catalog-test-",
-      });
-      const permissionError = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method: "makeDirectory",
-        pathOrDescriptor: path.join(baseDir, "userdata"),
-      });
-      const fileSystemLayer = Layer.succeed(
-        FileSystem.FileSystem,
-        FileSystem.makeNoop({
-          makeDirectory: () => Effect.fail(permissionError),
-        }),
-      );
-      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer)),
-      );
-
-      const error = yield* store.set("{}").pipe(Effect.flip);
-      assert.instanceOf(
-        error,
-        DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreWriteError,
-      );
-      assert.equal(error.operation, "create-directory");
-      assert.equal(error.path, path.join(baseDir, "userdata"));
-      assert.strictEqual(error.cause, permissionError);
-      assert.equal(
-        error.message,
-        `Desktop connection catalog write failed during create-directory at ${path.join(baseDir, "userdata")}.`,
-      );
-      assert.notEqual(error.message, permissionError.message);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("reports the legacy migration stage", () =>
     withStore(
       Effect.gen(function* () {

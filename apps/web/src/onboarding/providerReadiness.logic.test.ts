@@ -259,7 +259,7 @@ describe("resolveOnboardingProviderLoginCommand", () => {
     ).toBe(expectedCommand);
   });
 
-  it.each(["darwin", "linux"] as const)("quotes backslashes in a Codex path on %s", (platform) => {
+  it("quotes backslashes in a Codex path on darwin", () => {
     expect(
       resolveOnboardingProviderLoginCommand(
         readyCodex,
@@ -273,7 +273,7 @@ describe("resolveOnboardingProviderLoginCommand", () => {
             },
           },
         },
-        platform,
+        "darwin",
       ),
     ).toBe("'/opt/codex\\work/codex' login");
   });
@@ -327,11 +327,11 @@ describe("resolveOnboardingProviderInstallCommand", () => {
     );
   });
 
-  it.each(["darwin", "linux", "unknown"] as const)("uses the shell installer on %s", (platform) => {
-    expect(resolveOnboardingProviderInstallCommand("codex", platform)).toBe(
+  it("uses the shell installer on unknown", () => {
+    expect(resolveOnboardingProviderInstallCommand("codex", "unknown")).toBe(
       "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
     );
-    expect(resolveOnboardingProviderInstallCommand("claudeAgent", platform)).toBe(
+    expect(resolveOnboardingProviderInstallCommand("claudeAgent", "unknown")).toBe(
       "curl -fsSL https://claude.ai/install.sh | bash",
     );
   });

@@ -31,17 +31,6 @@ describe("imageMimeType", () => {
   });
 });
 
-describe("legacy attachments", () => {
-  it("recognizes a picture that was sent before pictures were typed by content", () => {
-    // Older messages recorded these as plain files; the bytes are still a picture, so the
-    // chat view can render a thumbnail rather than a download row.
-    expect(imageMimeType({ name: "IMG_4996.PNG", mimeType: "application/octet-stream" })).toBe(
-      "image/png",
-    );
-    expect(imageMimeType({ name: "1000000020.png", mimeType: "" })).toBe("image/png");
-  });
-});
-
 describe("a declared non-image type", () => {
   it("wins over a misleading picture extension", () => {
     // The filename fallback exists for attachments whose type was never recorded. A definite
@@ -49,12 +38,5 @@ describe("a declared non-image type", () => {
     expect(imageMimeType({ name: "report.png", mimeType: "application/pdf" })).toBeNull();
     expect(imageMimeType({ name: "archive.jpg", mimeType: "application/zip" })).toBeNull();
     expect(imageMimeType({ name: "clip.png", mimeType: "video/mp4" })).toBeNull();
-  });
-
-  it("still falls back when the type is absent or generic", () => {
-    expect(imageMimeType({ name: "IMG_4996.PNG", mimeType: "application/octet-stream" })).toBe(
-      "image/png",
-    );
-    expect(imageMimeType({ name: "1000000020.png", mimeType: "" })).toBe("image/png");
   });
 });

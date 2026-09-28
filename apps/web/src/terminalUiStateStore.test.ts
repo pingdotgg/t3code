@@ -22,21 +22,6 @@ describe("terminalUiStateStore actions", () => {
     });
   });
 
-  it("returns an empty default terminal UI state for unknown threads", () => {
-    const terminalUiState = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      THREAD_REF,
-    );
-    expect(terminalUiState).toEqual({
-      terminalOpen: false,
-      terminalHeight: 280,
-      terminalIds: [],
-      activeTerminalId: "",
-      terminalGroups: [],
-      activeTerminalGroupId: "",
-    });
-  });
-
   it("opens and splits terminals into the active group", () => {
     const store = useTerminalUiStateStore.getState();
     store.setTerminalOpen(THREAD_REF, true);

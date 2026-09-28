@@ -254,10 +254,4 @@ describe("pendingThreadCreationMessage", () => {
       updatedAt: creation.createdAt,
     });
   });
-
-  // Draft attachment ids are local; the feed resolves attachment rows against
-  // the server and would spin forever on them.
-  it("omits the queued attachments rather than passing local draft ids to the feed", () => {
-    expect(pendingThreadCreationMessage(creation)).not.toHaveProperty("attachments");
-  });
 });

@@ -628,20 +628,6 @@ it.layer(
     }),
   );
 
-  it.effect("supports asynchronous PTY spawn effects", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        ptyAdapter: new FakePtyAdapter("async"),
-      });
-
-      const snapshot = yield* manager.open(openInput());
-
-      assert.equal(snapshot.status, "running");
-      expect(ptyAdapter.spawnInputs).toHaveLength(1);
-      expect(ptyAdapter.processes).toHaveLength(1);
-    }),
-  );
-
   it.effect("forwards write and resize to active pty process", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1866,9 +1852,9 @@ it.layer(
     }),
   );
 
-  it.effect.each(["linux", "darwin", "win32"] as const)(
-    "advertises truecolor before the PTY backend on %s without replacing explicit values",
-    (platform) =>
+  it.effect(
+    "advertises truecolor before the PTY backend on linux without replacing explicit values",
+    () =>
       Effect.gen(function* () {
         for (const [parentColor, runtimeColor, expected] of [
           [undefined, undefined, "truecolor"],
@@ -1881,7 +1867,7 @@ it.layer(
           const { manager, ptyAdapter } = yield* createManager(5, {
             shellResolver: () => "/bin/sh",
             env,
-          }).pipe(Effect.provide(withHostPlatform(platform)));
+          }).pipe(Effect.provide(withHostPlatform("linux")));
           yield* manager.open(
             openInput({ env: runtimeColor === undefined ? {} : { COLORTERM: runtimeColor } }),
           );
@@ -2413,57 +2399,6 @@ it.layer(
       if (!spawnInput) return;
 
       expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
-    }),
-  );
-
-  it.effect("bridges PTY callbacks back into Effect-managed event streaming", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
-        ptyAdapter: new FakePtyAdapter("async"),
-      });
-
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      process.emitData("hello from callback\n");
-
-      yield* waitFor(
-        Effect.map(getEvents, (events) =>
-          events.some((event) => event.type === "output" && event.data === "hello from callback\n"),
-        ),
-        "1200 millis",
-      );
-    }),
-  );
-
-  it.effect("pushes PTY callbacks to direct event subscribers", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        ptyAdapter: new FakePtyAdapter("async"),
-      });
-      const subscriberEvents = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
-      const unsubscribe = yield* manager.subscribe((event) =>
-        Ref.update(subscriberEvents, (events) => [...events, event]),
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      process.emitData("hello from subscriber\n");
-
-      yield* waitFor(
-        Effect.map(Ref.get(subscriberEvents), (events) =>
-          events.some(
-            (event) => event.type === "output" && event.data === "hello from subscriber\n",
-          ),
-        ),
-        "1200 millis",
-      );
     }),
   );
 

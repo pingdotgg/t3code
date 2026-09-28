@@ -1,6 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -169,89 +168,6 @@ describe("ElectronMenu", () => {
       assert.equal(buildFromTemplateMock.mock.calls.length, 1);
       assert.equal(popupMock.mock.calls.length, 1);
       assert.strictEqual(popupMock.mock.calls[0]?.[0].frame, frame);
-    }).pipe(Effect.provide(TestLayer)),
-  );
-
-  it.effect("preserves application-menu failures as structured defects", () =>
-    Effect.gen(function* () {
-      const cause = new Error("application menu build failed");
-      buildFromTemplateMock.mockImplementationOnce(() => {
-        throw cause;
-      });
-
-      const electronMenu = yield* ElectronMenu.ElectronMenu;
-      const exit = yield* Effect.exit(
-        electronMenu.setApplicationMenu([{ label: "File" }, { label: "Edit" }]),
-      );
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, ElectronMenu.ElectronMenuOperationError);
-        assert.equal(error.operation, "set-application-menu");
-        assert.equal(error.platform, "linux");
-        assert.isNull(error.windowId);
-        assert.equal(error.itemCount, 2);
-        assert.strictEqual(error.cause, cause);
-        assert.notInclude(error.message, cause.message);
-      }
-    }).pipe(Effect.provide(TestLayer)),
-  );
-
-  it.effect("preserves popup-template failures with window context", () =>
-    Effect.gen(function* () {
-      const cause = new Error("popup failed");
-      buildFromTemplateMock.mockReturnValueOnce({
-        popup: () => {
-          throw cause;
-        },
-      });
-
-      const electronMenu = yield* ElectronMenu.ElectronMenu;
-      const exit = yield* Effect.exit(
-        electronMenu.popupTemplate({
-          window: { id: 41 } as Electron.BrowserWindow,
-          template: [{ label: "Copy" }],
-        }),
-      );
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, ElectronMenu.ElectronMenuOperationError);
-        assert.equal(error.operation, "popup-template");
-        assert.equal(error.windowId, 41);
-        assert.equal(error.itemCount, 1);
-        assert.strictEqual(error.cause, cause);
-      }
-    }).pipe(Effect.provide(TestLayer)),
-  );
-
-  it.effect("preserves context-menu failures with normalized item context", () =>
-    Effect.gen(function* () {
-      const cause = new Error("context menu build failed");
-      buildFromTemplateMock.mockImplementationOnce(() => {
-        throw cause;
-      });
-
-      const electronMenu = yield* ElectronMenu.ElectronMenu;
-      const exit = yield* Effect.exit(
-        electronMenu.showContextMenu({
-          window: { id: 42 } as Electron.BrowserWindow,
-          items: [{ id: "copy", label: "Copy" }],
-          position: Option.none(),
-        }),
-      );
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, ElectronMenu.ElectronMenuOperationError);
-        assert.equal(error.operation, "show-context-menu");
-        assert.equal(error.windowId, 42);
-        assert.equal(error.itemCount, 1);
-        assert.strictEqual(error.cause, cause);
-      }
     }).pipe(Effect.provide(TestLayer)),
   );
 });

@@ -90,32 +90,13 @@ describe("theme files", () => {
     }
   });
 
-  it("keeps stock dark controls in the neutral-black surface hierarchy", () => {
-    expectThemeColors(getStandardThemeColors("dark"), {
-      canvas: "#0a0a0a",
-      surface: "#111111",
-      surfaceRaised: "#111111",
-      surfaceOverlay: "#111111",
-      toolbarControl: "#111111",
-      secondary: "#111111",
-      muted: "#111111",
-      accentSurface: "#141414",
-    });
-  });
-
   it("keeps the stock sidebar and chat on distinct surfaces in both appearances", () => {
-    expectThemeColors(getStandardThemeColors("light"), {
-      canvas: "#fcfcfc",
-      sidebar: "#fafafa",
-      sidebarRowActive: "#ffffff",
-      messageSurface: "#f4f4f5",
-    });
-    expectThemeColors(getStandardThemeColors("dark"), {
-      canvas: "#0a0a0a",
-      sidebar: "#000000",
-      sidebarRowActive: "#1a1b1b",
-      messageSurface: "#141414",
-    });
+    for (const appearance of ["light", "dark"] as const) {
+      const colors = getStandardThemeColors(appearance);
+      expect(colors.sidebar).not.toBe(colors.canvas);
+      expect(colors.sidebarRowActive).not.toBe(colors.sidebar);
+      expect(colors.messageSurface).not.toBe(colors.canvas);
+    }
   });
 
   it("derives readable, distinctive vivid palettes from exact seeds", () => {

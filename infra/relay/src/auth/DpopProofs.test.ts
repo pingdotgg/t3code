@@ -1,4 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -73,15 +75,13 @@ describe("DpopProofReplay", () => {
   });
 
   it.effect("prunes expired proof rows from the maintenance path", () => {
-    const calls: Array<string> = [];
+    const conditions: Array<SQL> = [];
     const fakeDb = {
       delete: (table: unknown) => {
         expect(table).toBe(relayDpopProofs);
-        calls.push("delete");
         return {
-          where: (condition: unknown) => {
-            expect(condition).toBeDefined();
-            calls.push("delete.where");
+          where: (condition: SQL) => {
+            conditions.push(condition);
             return Effect.void;
           },
         };
@@ -91,7 +91,10 @@ describe("DpopProofReplay", () => {
     return Effect.gen(function* () {
       const replay = yield* DpopProofs.DpopProofReplay;
       yield* replay.pruneExpired;
-      expect(calls).toEqual(["delete", "delete.where"]);
+      const now = DateTime.formatIso(yield* DateTime.now);
+      expect(conditions.map((condition) => new PgDialect().sqlToQuery(condition))).toEqual([
+        { sql: '"relay_dpop_proofs"."expires_at" < $1', params: [now] },
+      ]);
     }).pipe(
       Effect.provide(DpopProofs.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb)))),
     );

@@ -11,16 +11,6 @@ const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
 
 describe("clearBrowserProfileData", () => {
-  it("waits for cookie and cache cleanup", async () => {
-    const clearCookies = vi.fn().mockResolvedValue(undefined);
-    const clearCache = vi.fn().mockResolvedValue(undefined);
-
-    await clearBrowserProfileData({ clearCookies, clearCache }, [environmentId], "profile-a");
-
-    expect(clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
-    expect(clearCache).toHaveBeenCalledWith(environmentId, "profile-a");
-  });
-
   it("clears every known environment before succeeding", async () => {
     const clearCookies = vi.fn().mockResolvedValue(undefined);
     const clearCache = vi.fn().mockResolvedValue(undefined);

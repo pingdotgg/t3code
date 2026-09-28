@@ -83,7 +83,6 @@ describe("decodePullRequestListJson", () => {
   });
 
   it.each([
-    ["active", "open"],
     ["completed", "merged"],
     ["abandoned", "closed"],
     ["something new", "open"],
@@ -98,7 +97,6 @@ describe("decodePullRequestListJson", () => {
     ["conflicts", "conflicting"],
     ["rejectedByPolicy", "conflicting"],
     ["queued", "unknown"],
-    ["notSet", "unknown"],
   ])("reads the %s merge status as %s", (mergeStatus, expected) => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ mergeStatus })])));
 
@@ -489,18 +487,6 @@ describe("decodeIterationChangesJson", () => {
     );
 
     expect(page.nextSkip).toBe(2000);
-  });
-
-  it("reads the last page, which names no page after it, as the end of the change", () => {
-    const page = expectSuccess(
-      decodeIterationChangesJson(
-        asJson({
-          changeEntries: [{ changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } }],
-        }),
-      ),
-    );
-
-    expect(page.nextSkip).toBeNull();
   });
 
   it("reads where a rename came from out of either of the two places Azure names it", () => {

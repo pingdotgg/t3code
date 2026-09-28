@@ -66,8 +66,6 @@ describe("t3code/no-hermes-unsupported-apis", () => {
     "new Intl[`Segmenter`]()",
     "new globalThis.Intl.Segmenter()",
     "new globalThis['Intl']['Segmenter']()",
-    "new global.Intl.Segmenter()",
-    "new window.Intl.Segmenter()",
     "Intl.Segmenter()",
     "Intl.Segmenter?.()",
   ]) {

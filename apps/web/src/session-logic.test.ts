@@ -2,7 +2,6 @@ import {
   classifyTaskAgentKind,
   EventId,
   MessageId,
-  ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
@@ -17,7 +16,6 @@ import {
   deriveTimelineEntriesWithState,
   deriveWorkLogEntries,
   findLatestProposedPlan,
-  hasActionableProposedPlan,
   isLatestTurnSettled,
   selectHandoffImageResources,
   selectMessageImageResources,
@@ -404,36 +402,6 @@ describe("findLatestProposedPlan", () => {
     );
 
     expect(latestPlan?.planMarkdown).toBe("# Latest");
-  });
-});
-
-describe("hasActionableProposedPlan", () => {
-  it("returns true for an unimplemented proposed plan", () => {
-    expect(
-      hasActionableProposedPlan({
-        id: "plan-1",
-        turnId: TurnId.make("turn-1"),
-        planMarkdown: "# Plan",
-        implementedAt: null,
-        implementationThreadId: null,
-        createdAt: "2026-02-23T00:00:00.000Z",
-        updatedAt: "2026-02-23T00:00:01.000Z",
-      }),
-    ).toBe(true);
-  });
-
-  it("returns false for a proposed plan already implemented elsewhere", () => {
-    expect(
-      hasActionableProposedPlan({
-        id: "plan-1",
-        turnId: TurnId.make("turn-1"),
-        planMarkdown: "# Plan",
-        implementedAt: "2026-02-23T00:00:02.000Z",
-        implementationThreadId: ThreadId.make("thread-implement"),
-        createdAt: "2026-02-23T00:00:00.000Z",
-        updatedAt: "2026-02-23T00:00:02.000Z",
-      }),
-    ).toBe(false);
   });
 });
 

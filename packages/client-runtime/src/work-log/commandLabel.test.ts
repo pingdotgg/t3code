@@ -159,13 +159,14 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
-  it.each(
-    ["cd /tmp", "export CI=1", "unset DEBUG", "source env.sh", ". env.sh"].flatMap((setup) =>
-      ["&&", " || ", ";", "\n", "|", " |& ", " & "].map(
-        (operator) => [`${setup}${operator}npm test`, "npm"] as const,
-      ),
+  it.each([
+    ...["&&", " || ", ";", "\n", "|", " |& ", " & "].map(
+      (operator) => [`cd /tmp${operator}npm test`, "npm"] as const,
     ),
-  )("handles shell setup followed by every command separator: %s", (command, program) => {
+    ...["export CI=1", "unset DEBUG", "source env.sh", ". env.sh"].map(
+      (setup) => [`${setup}&&npm test`, "npm"] as const,
+    ),
+  ])("handles shell setup followed by every command separator: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 

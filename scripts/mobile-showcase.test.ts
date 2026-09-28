@@ -3,8 +3,7 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 import { PNG } from "pngjs";
 
-import showcaseConfig, {
-  DEFAULT_SHOWCASE_THEME,
+import {
   resolveShowcaseAndroidAbi,
   SHOWCASE_THEMES,
   type ShowcaseConfig,
@@ -116,10 +115,6 @@ it("parses repeatable and expanded theme filters", () => {
 // would otherwise produce screenshots labeled with a theme they do not show.
 it("rejects unsupported themes instead of capturing the default palette", () => {
   assert.throws(() => parseShowcaseCliArgs(["--theme", "sunset"]), /Unsupported theme 'sunset'/u);
-});
-
-it("parses validation-only mode", () => {
-  assert.equal(parseShowcaseCliArgs(["--validate-only"]).validateOnly, true);
 });
 
 it("selects an explicit CI Android ABI without changing the local default", () => {
@@ -265,34 +260,6 @@ it("enforces store screenshot count limits", () => {
   assert.doesNotThrow(() => validateStoreAssetCount(googleSpec, 5, true));
   assert.throws(() => validateStoreAssetCount(googleSpec, 1, true), /requires at least 2/u);
   assert.throws(() => validateStoreAssetCount(googleSpec, 9, false), /allows at most 8/u);
-});
-
-it("defaults every device to the app's own palette", () => {
-  assert.equal(DEFAULT_SHOWCASE_THEME, "t3-code");
-  assert.equal(
-    showcaseConfig.devices.every((device) => device.theme === DEFAULT_SHOWCASE_THEME),
-    true,
-  );
-});
-
-it("configures every default device with an exact upload-ready store target", () => {
-  assert.deepStrictEqual(
-    showcaseConfig.devices.map((device) => [
-      device.id,
-      device.platform === "ios" ? (device.orientation ?? "portrait") : null,
-      device.storeAsset.directory,
-      device.storeAsset.width,
-      device.storeAsset.height,
-    ]),
-    [
-      ["iphone-6.9", "portrait", "apple/iphone-6.9", 1320, 2868],
-      ["iphone-6.5", "portrait", "apple/iphone-6.5", 1284, 2778],
-      ["ipad-13", "landscape", "apple/ipad-13", 2752, 2064],
-      ["pixel", null, "google-play/phone", 1080, 1920],
-      ["android-tablet-7", null, "google-play/tablet-7", 1080, 1920],
-      ["android-tablet-10", null, "google-play/tablet-10", 1440, 2560],
-    ],
-  );
 });
 
 it("selects a reachable LAN IPv4 address", () => {

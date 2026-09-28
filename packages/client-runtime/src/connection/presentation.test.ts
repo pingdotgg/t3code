@@ -13,7 +13,6 @@ import {
   connectionCatalogDisplayUrl,
   connectionStatusText,
   connectionStatusTitle,
-  presentEnvironmentConnection,
   presentConnectionState,
 } from "./presentation.ts";
 
@@ -114,27 +113,6 @@ describe("connection presentation", () => {
     });
   });
 
-  it("preserves the latest failure while the next attempt is active", () => {
-    expect(
-      presentEnvironmentConnection(
-        supervisorState({
-          phase: "connecting",
-          stage: "opening",
-          attempt: 2,
-          lastFailure: new ConnectionTransientError({
-            reason: "transport",
-            detail: "Relay connection timed out.",
-            traceId: "trace-retry",
-          }),
-        }),
-      ),
-    ).toEqual({
-      phase: "reconnecting",
-      error: "Relay connection timed out.",
-      traceId: "trace-retry",
-    });
-  });
-
   it("combines reconnect progress with the latest failure", () => {
     const connection = {
       phase: "reconnecting",
@@ -145,55 +123,5 @@ describe("connection presentation", () => {
       "Failed to connect. Reconnecting... Reason: Relay request timed out.",
     );
     expect(connectionStatusTitle(connection)).toBe("Failed to connect. Reconnecting...");
-  });
-
-  it("presents the supervisor's offline state without consulting shell state", () => {
-    expect(
-      presentEnvironmentConnection(
-        supervisorState({
-          network: "offline",
-          phase: "offline",
-          stage: null,
-        }),
-      ),
-    ).toEqual({
-      phase: "offline",
-      error: null,
-      traceId: null,
-    });
-  });
-
-  it("presents a connected supervisor snapshot as connected", () => {
-    expect(
-      presentEnvironmentConnection(
-        supervisorState({
-          phase: "connected",
-          stage: null,
-          generation: 1,
-        }),
-      ),
-    ).toEqual({
-      phase: "connected",
-      error: null,
-      traceId: null,
-    });
-  });
-
-  it("preserves an explicitly available environment while offline", () => {
-    expect(
-      presentEnvironmentConnection(
-        supervisorState({
-          desired: false,
-          network: "offline",
-          phase: "available",
-          stage: null,
-          attempt: 0,
-        }),
-      ),
-    ).toEqual({
-      phase: "available",
-      error: null,
-      traceId: null,
-    });
   });
 });

@@ -500,34 +500,11 @@ describe("ManagedEndpointProvider", () => {
     );
   });
 
-  it.effect("checks the managed tunnel limit before reserving an allocation", () => {
-    const limitCalls: Array<{ readonly userId: string; readonly environmentId: string }> = [];
-
-    return Effect.gen(function* () {
-      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-      yield* provider.provision({
-        userId: "user_ABC",
-        environmentId: "env_ABC",
-        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-      });
-
-      expect(limitCalls).toEqual([{ userId: "user_ABC", environmentId: "env_ABC" }]);
-    }).pipe(
-      Effect.provide(
-        providerLayer(
-          makeTunnelClient(),
-          makeDnsClient(),
-          makeAllocations(),
-          makeTunnelLimits(limitCalls),
-        ),
-      ),
-    );
-  });
-
   it.effect("refuses to provision past the managed tunnel limit without side effects", () => {
     const tunnelCalls: TunnelCall[] = [];
     const dnsCalls: DnsCall[] = [];
     const allocationCalls: AllocationCall[] = [];
+    const limitCalls: Array<{ readonly userId: string; readonly environmentId: string }> = [];
     const exceeded = new ManagedTunnelLimits.ManagedTunnelLimitExceeded({
       userId: "user_ABC",
       environmentId: "env_ABC",
@@ -546,6 +523,7 @@ describe("ManagedEndpointProvider", () => {
       );
 
       expect(error).toBe(exceeded);
+      expect(limitCalls).toEqual([{ userId: "user_ABC", environmentId: "env_ABC" }]);
       expect(tunnelCalls).toEqual([]);
       expect(dnsCalls).toEqual([]);
       expect(allocationCalls).toEqual([]);
@@ -555,7 +533,7 @@ describe("ManagedEndpointProvider", () => {
           makeTunnelClient(tunnelCalls),
           makeDnsClient(dnsCalls),
           makeAllocations(allocationCalls),
-          makeTunnelLimits([], exceeded),
+          makeTunnelLimits(limitCalls, exceeded),
         ),
       ),
     );

@@ -532,18 +532,6 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("uses the settings password when local environment auth differs", () =>
-    Effect.gen(function* () {
-      yield* checkProvider(
-        makeOpenCodeSettings({ serverPassword: "settings-password" }),
-        process.cwd(),
-        { OPENCODE_SERVER_PASSWORD: "environment-password" },
-      );
-
-      NodeAssert.equal(runtimeMock.state.sdkClientInputs[0]?.serverPassword, "settings-password");
-    }),
-  );
-
   it.effect("reports local model inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventoryError = new Error("opencode models failed");

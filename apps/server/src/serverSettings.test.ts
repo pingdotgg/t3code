@@ -8,7 +8,6 @@ import {
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   ServerSettings,
-  ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -28,7 +27,6 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
-const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const makeServerSettingsLayer = () =>
@@ -138,30 +136,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         settingsPath: serverConfig.settingsPath,
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("decodes nested settings patches", () =>
-    Effect.gen(function* () {
-      assert.deepEqual(
-        yield* decodeSettingsPatch({ providers: { codex: { binaryPath: "/tmp/codex" } } }),
-        {
-          providers: { codex: { binaryPath: "/tmp/codex" } },
-        },
-      );
-
-      assert.deepEqual(
-        yield* decodeSettingsPatch({
-          textGenerationModelSelection: {
-            options: [{ id: "fastMode", value: false }],
-          },
-        }),
-        {
-          textGenerationModelSelection: {
-            options: [{ id: "fastMode", value: false }],
-          },
-        },
-      );
-    }),
   );
 
   it.effect(

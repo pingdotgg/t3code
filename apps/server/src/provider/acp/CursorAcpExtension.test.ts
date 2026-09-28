@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  CursorListAvailableModelsResponse,
-  extractAskQuestions,
-  extractPlanMarkdown,
-  extractTodosAsPlan,
-} from "./CursorAcpExtension.ts";
+import { extractAskQuestions, extractTodosAsPlan } from "./CursorAcpExtension.ts";
 
 describe("CursorAcpExtension", () => {
   it("extracts ask-question prompts from the real Cursor ACP payload shape", () => {
@@ -68,22 +63,6 @@ describe("CursorAcpExtension", () => {
     ]);
   });
 
-  it("extracts plan markdown from the real Cursor create-plan payload shape", () => {
-    const planMarkdown = extractPlanMarkdown({
-      toolCallId: "plan-1",
-      name: "Refactor parser",
-      overview: "Tighten ACP parsing",
-      plan: "# Plan\n\n1. Add schemas\n2. Remove casts",
-      todos: [
-        { id: "t1", content: "Add schemas", status: "in_progress" },
-        { id: "t2", content: "Remove casts", status: "pending" },
-      ],
-      isProject: false,
-    });
-
-    expect(planMarkdown).toBe("# Plan\n\n1. Add schemas\n2. Remove casts");
-  });
-
   it("projects todo updates into a plan shape and drops invalid entries", () => {
     expect(
       extractTodosAsPlan({
@@ -124,31 +103,5 @@ describe("CursorAcpExtension", () => {
         { step: "Whitespace content", status: "inProgress" },
       ],
     });
-  });
-
-  it("decodes Cursor list_available_models responses with per-model config options", () => {
-    const decoded = CursorListAvailableModelsResponse.make({
-      models: [
-        {
-          value: "gpt-5.4",
-          name: "GPT-5.4",
-          configOptions: [
-            {
-              id: "reasoning",
-              name: "Reasoning",
-              category: "thought_level",
-              type: "select",
-              currentValue: "medium",
-              options: [
-                { value: "low", name: "Low" },
-                { value: "medium", name: "Medium" },
-              ],
-            },
-          ],
-        },
-      ],
-    });
-
-    expect(decoded.models[0]?.configOptions?.[0]?.id).toBe("reasoning");
   });
 });

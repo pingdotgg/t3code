@@ -151,17 +151,6 @@ describe("mobile SQLite environment cache store", () => {
       }),
   );
 
-  it.effect("round-trips schema-validated VCS refs", () =>
-    Effect.gen(function* () {
-      const memory = makeDatabase();
-      const store = yield* make().pipe(Effect.provideService(MobileDatabase, memory.database));
-
-      yield* store.saveVcsRefs(ENVIRONMENT_ID, "/repo", REFS);
-
-      expect(yield* store.loadVcsRefs(ENVIRONMENT_ID, "/repo")).toEqual(Option.some(REFS));
-    }),
-  );
-
   it.effect("deletes a corrupt cache record and treats it as a miss", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();

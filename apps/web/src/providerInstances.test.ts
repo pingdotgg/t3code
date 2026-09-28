@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
@@ -390,8 +395,7 @@ describe("getDefaultProviderInstanceModel", () => {
       providers,
       ProviderInstanceId.make("claudeAgent"),
     );
-    expect(typeof resolved).toBe("string");
-    expect(resolved?.length).toBeGreaterThan(0);
+    expect(resolved).toBe(DEFAULT_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")]);
   });
 
   it("honors the instance's declared default before model-list order", () => {
@@ -416,22 +420,18 @@ describe("getDefaultProviderInstanceModel", () => {
 });
 
 describe("resolveDefaultProviderModelSelection", () => {
-  it.each([
-    ["codex", "codex", "gpt-5.6"],
-    ["claudeAgent", "claudeAgent", "claude-fable-5"],
-    ["cursor", "cursor", "composer-2"],
-  ])("uses the only available %s instance", (driver, instanceId, modelSlug) => {
+  it("uses the only available codex instance", () => {
     const providers = [
       provider({
-        provider: ProviderDriverKind.make(driver),
-        instanceId,
-        models: [model(modelSlug, false, true)],
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: "codex",
+        models: [model("gpt-5.6", false, true)],
       }),
     ];
 
     expect(resolveDefaultProviderModelSelection(providers, null)).toEqual({
-      instanceId,
-      model: modelSlug,
+      instanceId: "codex",
+      model: "gpt-5.6",
     });
   });
 

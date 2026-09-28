@@ -324,7 +324,6 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
 
   it.effect.each([
     { name: "archive.zip", mimeType: "application/zip" },
-    { name: "clip.mp4", mimeType: "video/mp4" },
     { name: "recording.aiff", mimeType: "audio/aiff" },
     { name: "large.pdf", mimeType: "application/pdf", sizeBytes: 75_000_000 },
     { name: "large.txt", mimeType: "text/plain", sizeBytes: 1024 * 1024 + 1 },

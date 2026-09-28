@@ -79,14 +79,6 @@ describe("filterDiscoveredSshHosts", () => {
     ]);
   });
 
-  it("preserves the original order within a match tier", () => {
-    expect(filterDiscoveredSshHosts(suggestions, "prod").slice(0, 3)).toEqual([
-      suggestions[3],
-      suggestions[4],
-      suggestions[5],
-    ]);
-  });
-
   it("matches case-insensitively", () => {
     expect(filterDiscoveredSshHosts(suggestions, "PINOT")).toEqual([suggestions[1]]);
   });

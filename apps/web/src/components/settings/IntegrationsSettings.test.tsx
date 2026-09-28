@@ -95,15 +95,6 @@ describe("Integrations browser discovery", () => {
     await openSettings();
     expect(listBrowserImportSources).not.toHaveBeenCalled();
   });
-
-  it("places device settings directly after browser settings", async () => {
-    await openSettings();
-    const sections = renderer!.root
-      .findAll((node) => node.type === "section")
-      .map((node) => node.props.id)
-      .filter(Boolean);
-    expect(sections.indexOf("devices")).toBeGreaterThan(sections.indexOf("browser"));
-  });
 });
 
 const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceServiceState => ({

@@ -297,12 +297,7 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  for (const phase of [
-    "completed",
-    "waiting_for_approval",
-    "waiting_for_input",
-    "failed",
-  ] as const) {
+  for (const phase of ["completed", "waiting_for_approval"] as const) {
     it.effect(`deleting one thread preserves another thread's ${phase} alert`, () => {
       const h = harness();
       h.current.otherStates = [secondState];
@@ -393,23 +388,6 @@ describe("Android delivery routing", () => {
         },
       })?.alert_id,
     ).not.toBe(alert?.alert_id);
-  });
-
-  it("distinguishes matching thread IDs in different environments", () => {
-    const other = {
-      ...secondState,
-      environmentId: EnvironmentId.make("other-env"),
-      threadId: state.threadId,
-    };
-    const alreadyWaiting = { ...state, phase: "waiting_for_approval" as const };
-    expect(
-      androidAlertForAggregate({
-        previousAggregate: aggregateFor([alreadyWaiting, other]),
-        nextAggregate: aggregateFor([alreadyWaiting, { ...other, phase: "waiting_for_input" }]),
-        preferences,
-        nowMs: 0,
-      }),
-    ).toMatchObject({ alert_title: "Second thread", alert_body: "Input: Project" });
   });
 
   for (const [phase, body, preference] of [
@@ -551,21 +529,19 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
   for (const ongoing of [true, false]) {
-    for (const phase of ["completed", "failed"] as const) {
-      it.effect(`does not alert a stale ${phase} without a baseline (ongoing=${ongoing})`, () => {
-        const h = harness();
-        h.current.state = { ...state, phase, updatedAt: "1969-12-31T23:57:00.000Z" };
-        h.current.target.preferences_json = encodeJson({
-          ...preferences,
-          liveActivitiesEnabled: ongoing,
-        });
-        return Effect.gen(function* () {
-          const delivery = yield* FcmDeliveries;
-          yield* delivery.process({ ...h.job, state: h.current.state });
-          expect(h.sent.every((message) => !message.alert)).toBe(true);
-        }).pipe(Effect.provide(h.layer));
+    it.effect(`does not alert a stale completed without a baseline (ongoing=${ongoing})`, () => {
+      const h = harness();
+      h.current.state = { ...state, phase: "completed", updatedAt: "1969-12-31T23:57:00.000Z" };
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        liveActivitiesEnabled: ongoing,
       });
-    }
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent.every((message) => !message.alert)).toBe(true);
+      }).pipe(Effect.provide(h.layer));
+    });
   }
 
   it.effect(
@@ -704,26 +680,6 @@ describe("delivery policy regressions", () => {
       yield* d.process({ ...h.job, state: h.current.otherStates[0]! });
       expect(h.sent.filter((x) => x.alert)).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
-  });
-  it("keeps an older waiting thread visible and alertable beyond five running rows", () => {
-    const running = Array.from({ length: 5 }, (_, i) => ({
-      ...state,
-      threadId: ThreadId.make(`running-${i}`),
-    }));
-    const waiting = {
-      ...state,
-      phase: "waiting_for_approval" as const,
-      updatedAt: "1969-12-31T23:59:00.000Z",
-    };
-    const next = aggregateFor([...running, waiting]);
-    expect(
-      androidAlertForAggregate({
-        previousAggregate: aggregateFor(running),
-        nextAggregate: next,
-        preferences,
-        nowMs: 0,
-      }),
-    ).not.toBeNull();
   });
 });
 

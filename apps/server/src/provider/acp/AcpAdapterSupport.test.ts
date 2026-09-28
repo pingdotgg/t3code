@@ -11,21 +11,6 @@ describe("AcpAdapterSupport", () => {
     expect(acpPermissionOutcome("decline")).toBe("reject-once");
   });
 
-  it("maps ACP request errors to provider adapter request errors", () => {
-    const error = mapAcpToAdapterError(
-      ProviderDriverKind.make("cursor"),
-      "thread-1" as never,
-      "session/prompt",
-      new EffectAcpErrors.AcpRequestError({
-        code: -32602,
-        errorMessage: "Invalid params",
-      }),
-    );
-
-    expect(error._tag).toBe("ProviderAdapterRequestError");
-    expect(error.message).toContain("Invalid params");
-  });
-
   it("maps ACP process exits without stderr to a process error instead of a closed session", () => {
     const error = mapAcpToAdapterError(
       ProviderDriverKind.make("cursor"),

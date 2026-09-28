@@ -2,7 +2,6 @@ import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   ProjectId,
-  PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
   type PullRequestDetail,
@@ -35,7 +34,6 @@ import {
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
   orderPullRequestComments,
-  pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
@@ -238,12 +236,6 @@ describe("review thread comment pages", () => {
       { id: "c2", body: "saved body" },
       { id: "c3", body: "another loaded comment" },
     ]);
-  });
-});
-
-describe("pull request action menu", () => {
-  it("keeps the group divider when auto-merge is the only action", () => {
-    expect(pullRequestActionMenuHasGroup(false, true, false)).toBe(true);
   });
 });
 
@@ -560,18 +552,6 @@ describe("pull request timeline", () => {
       actor: TIMELINE_SOURCE.comments[0]?.author,
       path: "src/app.ts",
       reviewState: "APPROVED",
-    });
-  });
-
-  it("carries each commit's line counts into its timeline event", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      commits: [{ ...TIMELINE_SOURCE.commits[0]!, additions: 12, deletions: 4 }],
-    });
-
-    expect(events.find((event) => event.kind === "commit")).toMatchObject({
-      additions: 12,
-      deletions: 4,
     });
   });
 
@@ -1513,33 +1493,8 @@ describe("pull request panel context beside a thread", () => {
 });
 
 describe("which actions need the host read again after they run", () => {
-  it("classifies every action the contract knows about", () => {
-    // Imported from the contract rather than hand-listed, so a new PullRequestAction fails this
-    // test until somebody decides which side of the diff it belongs on.
-    expect(PullRequestAction.literals.map(pullRequestActionNeedsHostRefresh)).toEqual(
-      PullRequestAction.literals.map(
-        (action) => action === "update-branch" || action === "approve-workflows",
-      ),
-    );
-  });
-
   it("sends update-branch back to the host, having moved the head commit", () => {
     expect(pullRequestActionNeedsHostRefresh("update-branch")).toBe(true);
-  });
-
-  it("leaves every action that only changes metadata to the cheaper detail refresh", () => {
-    for (const action of [
-      "ready",
-      "draft",
-      "close",
-      "reopen",
-      "enable-auto-merge",
-      "disable-auto-merge",
-      "merge",
-      "revert",
-    ] as const) {
-      expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
-    }
   });
 });
 

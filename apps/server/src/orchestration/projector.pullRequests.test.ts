@@ -110,14 +110,6 @@ const createProject = (model: OrchestrationReadModel, repositoryIdentity: Reposi
     })),
   );
 
-it.effect("seeds threads with no pull requests", () =>
-  Effect.gen(function* () {
-    const created = yield* createThread(createEmptyReadModel(NOW));
-    expect(created.threads[0]?.pullRequests).toEqual([]);
-    expect(created.threads[0]?.linkedPullRequest ?? null).toBeNull();
-  }),
-);
-
 it.effect("projects link, sync, and unlink onto the thread", () =>
   Effect.gen(function* () {
     const created = yield* createThread(

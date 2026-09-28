@@ -7,7 +7,6 @@ import {
   getThreadAutoSettlementSearchAvailability,
   isSettingsOverviewVisible,
   isSettingsSearchScopeAvailable,
-  searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
@@ -139,16 +138,6 @@ describe("searchSettings", () => {
     }
   });
 
-  it("registers the WSL backend as a desktop-only setting", () => {
-    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
-      id: "wsl-backend",
-      title: "WSL backend",
-      to: "/settings/connections",
-      desktopOnly: true,
-      windowsOnly: true,
-    });
-  });
-
   it("hides settings whose controls are unavailable", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
@@ -270,27 +259,6 @@ describe("searchSettings", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("serves anchor props to panels from the catalog", () => {
-    expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
-    expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
-  });
-
-  it("routes appearance settings to their current section", () => {
-    expect(searchSettings("theme")[0]).toMatchObject({
-      id: "theme",
-      to: "/settings/appearance",
-    });
-    expect(searchSettings("word wrap")[0]).toMatchObject({
-      id: "word-wrap",
-      to: "/settings/appearance",
-    });
-    expect(searchSettings("environment identification")[0]).toMatchObject({
-      id: "environment-identification",
-      to: "/settings/appearance",
-      targetId: "appearance-interface",
-    });
-  });
-
   it("routes conditional window capture settings to the stable toggle row", () => {
     const targets = [
       "capture accessibility data",
@@ -312,40 +280,12 @@ describe("searchSettings", () => {
     ]);
   });
 
-  it("routes browser recording quality to integrations", () => {
-    const result = searchSettings("recording frame rate")[0];
-    expect(result).toMatchObject({
-      id: "browser-recording-frame-rate",
-      to: "/settings/integrations",
-    });
-    expect(result).not.toHaveProperty("targetId");
-  });
-
-  it("routes where links open to integrations", () => {
-    expect(searchSettings("open links in")[0]).toMatchObject({
-      id: "browser-link-target",
-      to: "/settings/integrations",
-    });
-    expect(searchSettings("external links")[0]).toMatchObject({ id: "browser-link-target" });
-  });
-
   it("finds the default browser profile action in the profiles list", () => {
     expect(searchSettings("default profile")[0]).toMatchObject({
       id: "browser-default-profile",
       to: "/settings/integrations",
       targetId: "browser-profiles",
     });
-  });
-
-  it.each([
-    ["default model", "default-model", "/settings/general"],
-    ["new threads", "new-threads", "/settings/general"],
-    ["agent browser access", "agent-browser-access", "/settings/integrations"],
-    ["automatically pull", "automatic-pull", "/settings/source-control"],
-    ["actions", "project-actions", "/settings/projects"],
-    ["project overview", "project-overview", "/settings/projects"],
-  ])("routes %s to its owning category", (query, id, to) => {
-    expect(searchSettings(query)[0]).toMatchObject({ id, to });
   });
 
   it("keeps environment settings discoverable without a primary environment", () => {

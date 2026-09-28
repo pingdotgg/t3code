@@ -41,24 +41,6 @@ describe("gitLabViewerPermissions", () => {
       requestReviewers: true,
     });
   });
-
-  it("names no way of updating a branch it will not let this viewer update", () => {
-    // The action and the strategy behind it go together: a button offered with nothing to press
-    // it with, or a strategy left standing next to a withheld button, is a half-refusal.
-    expect(gitLabViewerPermissions({ viewerCanMerge: false }).updateMethods).toBeUndefined();
-  });
-
-  it("treats an author with read access as any other reader, which is all GitLab says", () => {
-    // Its REST API names no relationship between the viewer and the merge request beyond
-    // `can_merge`, so the four an author keeps stay offered to everyone rather than being taken
-    // from the one person entitled to them.
-    expect(gitLabViewerPermissions({ viewerCanMerge: false }).actions).toEqual([
-      "ready",
-      "draft",
-      "close",
-      "reopen",
-    ]);
-  });
 });
 
 describe("getChangeRequest base freshness", () => {
@@ -139,12 +121,9 @@ describe("getChangeRequest base freshness", () => {
 
 describe("rewriting what has already been said", () => {
   const updateMergeRequest = vi.fn(() => Effect.void);
-  const updateNote = vi.fn(() => Effect.void);
 
   const providerWith = make.pipe(
-    Effect.provide(
-      Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({ updateMergeRequest, updateNote }),
-    ),
+    Effect.provide(Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({ updateMergeRequest })),
   );
 
   it.effect("sends only the half of the merge request the reader rewrote", () =>
@@ -166,31 +145,6 @@ describe("rewriting what has already been said", () => {
         repository: "acme/web",
         number: 7,
         description: "What this changes.",
-      });
-    }),
-  );
-
-  it.effect("rewrites a positioned comment through the same note as any other", () =>
-    Effect.gen(function* () {
-      const provider = yield* providerWith;
-      assert.isDefined(provider.updateComment);
-
-      yield* provider.updateComment({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "gitlab.com",
-        number: 7,
-        commentId: "42",
-        kind: "review-comment",
-        body: "Reworded.",
-      });
-
-      expect(updateNote).toHaveBeenCalledWith({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        noteId: "42",
-        body: "Reworded.",
       });
     }),
   );

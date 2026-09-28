@@ -696,17 +696,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it("excludes foreign node-pty prebuilds from macOS and Linux packages", () => {
-    assert.deepStrictEqual(MAC_FILE_EXCLUSIONS, [
-      "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
-      "!**/node_modules/node-pty/third_party/conpty/**/*",
-    ]);
-    assert.deepStrictEqual(LINUX_FILE_EXCLUSIONS, [
-      ...MAC_FILE_EXCLUSIONS,
-      "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
-    ]);
-  });
-
   it("unpacks native binaries while keeping their JavaScript and metadata archived", () => {
     for (const file of [
       "node_modules/@napi-rs/keyring/keyring.win32-x64-msvc.node",

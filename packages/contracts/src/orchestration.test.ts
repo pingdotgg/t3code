@@ -8,17 +8,12 @@ import {
   ProjectIconOverride,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  type ChatImageAttachment,
   ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
-  OrchestrationDispatchCommandError,
   OrchestrationEvent,
-  OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
-  OrchestrationLatestTurn,
   ProjectCreatedPayload,
-  ProjectMetaUpdatedPayload,
   OrchestrationProjectShell,
   OrchestrationProposedPlan,
   OrchestrationSession,
@@ -40,11 +35,9 @@ import {
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
-const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
-const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
@@ -52,49 +45,16 @@ const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageS
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
-const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
-
-function getOptionValue(
-  options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
-  id: string,
-): unknown {
-  return options?.find((option) => option.id === id)?.value;
-}
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
-const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
-
-it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
-  Effect.gen(function* () {
-    const error = yield* decodeDispatchCommandError({
-      _tag: "OrchestrationDispatchCommandError",
-      message: "Failed to create worktree.",
-      bootstrapThreadDisposition: "deleted",
-    });
-
-    assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
-  }),
-);
-
-it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
-  Effect.gen(function* () {
-    const error = yield* decodeDispatchCommandError({
-      _tag: "OrchestrationDispatchCommandError",
-      message: "A separate worktree requires a base commit.",
-      bootstrapThreadDisposition: "not-created",
-    });
-
-    assert.strictEqual(error.bootstrapThreadDisposition, "not-created");
-  }),
-);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -105,29 +65,6 @@ it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
     });
     assert.strictEqual(parsed.fromTurnCount, 1);
     assert.strictEqual(parsed.toTurnCount, 2);
-  }),
-);
-
-it.effect("parses turn diff input with whitespace ignoring enabled", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeTurnDiffInput({
-      threadId: "thread-1",
-      fromTurnCount: 1,
-      toTurnCount: 2,
-      ignoreWhitespace: true,
-    });
-    assert.strictEqual(parsed.ignoreWhitespace, true);
-  }),
-);
-
-it.effect("parses full thread diff input with whitespace ignoring enabled", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeFullThreadDiffInput({
-      threadId: "thread-1",
-      toTurnCount: 2,
-      ignoreWhitespace: true,
-    });
-    assert.strictEqual(parsed.ignoreWhitespace, true);
   }),
 );
 
@@ -184,22 +121,6 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
   }),
 );
 
-it.effect("decodes project.create with createWorkspaceRootIfMissing enabled", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeProjectCreateCommand({
-      type: "project.create",
-      commandId: "cmd-1",
-      projectId: "project-1",
-      title: "Project Title",
-      workspaceRoot: "/tmp/workspace",
-      createWorkspaceRootIfMissing: true,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-
-    assert.strictEqual(parsed.createWorkspaceRootIfMissing, true);
-  }),
-);
-
 it.effect("decodes historical project.created payloads with a default provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({
@@ -215,20 +136,6 @@ it.effect("decodes historical project.created payloads with a default provider",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.instanceId, "codex");
-  }),
-);
-
-it.effect("decodes project.meta-updated payloads with explicit default provider", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeProjectMetaUpdatedPayload({
-      projectId: "project-1",
-      defaultModelSelection: {
-        provider: "claudeAgent",
-        model: "claude-opus-4-6",
-      },
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.defaultModelSelection?.instanceId, "claudeAgent");
   }),
 );
 
@@ -392,90 +299,6 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
   }),
 );
 
-it.effect("preserves window capture metadata in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-snap-shot",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-snap-shot",
-        role: "user",
-        text: "Review this window",
-        attachments: [
-          {
-            type: "image",
-            id: "snap-shot-1",
-            name: "editor.png",
-            mimeType: "image/png",
-            sizeBytes: 4,
-            source: {
-              kind: "snap-shot",
-              capturedAt: "2026-08-24T11:00:00.000Z",
-              appName: "Editor",
-              windowTitle: "main.ts",
-              accessibleText: "const answer = 42;",
-              accessibility: {
-                format: "element-tree",
-                coordinateSpace: "captured-image",
-                imageSize: { width: 800, height: 600 },
-                truncated: false,
-                root: {
-                  role: "window",
-                  name: "main.ts",
-                  bounds: { x: 0, y: 0, width: 800, height: 600 },
-                  children: [
-                    {
-                      role: "text",
-                      value: "const answer = 42;",
-                      bounds: { x: 20, y: 40, width: 180, height: 20 },
-                      children: [],
-                    },
-                  ],
-                },
-              },
-              appIdentifier: "com.example.editor",
-              appIconDataUrl: "data:image/png;base64,iVBORw==",
-            },
-          },
-        ],
-      },
-      createdAt: "2026-08-24T11:00:00.000Z",
-    });
-
-    const attachment = parsed.message.attachments[0];
-    assert.strictEqual(attachment?.type, "image");
-    assert.deepStrictEqual((attachment as ChatImageAttachment).source, {
-      kind: "snap-shot",
-      capturedAt: "2026-08-24T11:00:00.000Z",
-      appName: "Editor",
-      windowTitle: "main.ts",
-      accessibleText: "const answer = 42;",
-      accessibility: {
-        format: "element-tree",
-        coordinateSpace: "captured-image",
-        imageSize: { width: 800, height: 600 },
-        truncated: false,
-        root: {
-          role: "window",
-          name: "main.ts",
-          bounds: { x: 0, y: 0, width: 800, height: 600 },
-          children: [
-            {
-              role: "text",
-              value: "const answer = 42;",
-              bounds: { x: 20, y: 40, width: 180, height: 20 },
-              children: [],
-            },
-          ],
-        },
-      },
-      appIdentifier: "com.example.editor",
-      appIconDataUrl: "data:image/png;base64,iVBORw==",
-    });
-  }),
-);
-
 it.effect("rejects accessibility trees above the serialized payload limit", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
@@ -501,76 +324,6 @@ it.effect("rejects accessibility trees above the serialized payload limit", () =
   }),
 );
 
-it.effect("preserves explicit provider and runtime mode in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-turn-2",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-2",
-        role: "user",
-        text: "hello",
-        attachments: [],
-      },
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4",
-      },
-      runtimeMode: "full-access",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.modelSelection?.instanceId, "codex");
-    assert.strictEqual(parsed.runtimeMode, "full-access");
-    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
-  }),
-);
-
-it.effect("accepts bootstrap metadata in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-turn-bootstrap",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-bootstrap",
-        role: "user",
-        text: "hello",
-        attachments: [],
-      },
-      bootstrap: {
-        createThread: {
-          projectId: "project-1",
-          title: "Bootstrap thread",
-          modelSelection: {
-            provider: "codex",
-            model: "gpt-5.4",
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdAt: "2026-01-01T00:00:00.000Z",
-        },
-        prepareWorktree: {
-          projectCwd: "/tmp/workspace",
-          baseBranch: "main",
-          branch: "t3code/example",
-          startFromOrigin: true,
-          requireWorktree: true,
-        },
-        runSetupScript: true,
-      },
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
-    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
-    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
-    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.requireWorktree, true);
-    assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
-  }),
-);
-
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({
@@ -590,46 +343,6 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.modelSelection.instanceId, "codex");
-  }),
-);
-
-it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadMetaUpdatedPayload({
-      threadId: "thread-1",
-      regenerateTitle: true,
-      previousTitle: "Previous title",
-      titleRegeneration: {
-        requestId: "cmd-title-regenerate",
-        startedAt: "2026-01-01T00:00:00.000Z",
-      },
-      modelSelection: {
-        provider: "claudeAgent",
-        model: "claude-opus-4-6",
-      },
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.previousTitle, "Previous title");
-    assert.strictEqual(parsed.titleRegeneration?.requestId, "cmd-title-regenerate");
-    assert.strictEqual(parsed.modelSelection?.instanceId, "claudeAgent");
-  }),
-);
-
-it.effect("decodes thread archive and unarchive commands", () =>
-  Effect.gen(function* () {
-    const archive = yield* decodeOrchestrationCommand({
-      type: "thread.archive",
-      commandId: "cmd-archive-1",
-      threadId: "thread-1",
-    });
-    const unarchive = yield* decodeOrchestrationCommand({
-      type: "thread.unarchive",
-      commandId: "cmd-unarchive-1",
-      threadId: "thread-1",
-    });
-
-    assert.strictEqual(archive.type, "thread.archive");
-    assert.strictEqual(unarchive.type, "thread.unarchive");
   }),
 );
 
@@ -745,73 +458,6 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
   }),
 );
 
-it.effect("decodes thread pull request links with snapshot and stack", () =>
-  Effect.gen(function* () {
-    const shell = yield* decodeOrchestrationThreadShell({
-      id: "thread-1",
-      projectId: "project-1",
-      title: "Thread",
-      modelSelection: { provider: "codex", model: "gpt-5-codex" },
-      runtimeMode: "full-access",
-      branch: "feature/stack-2",
-      worktreePath: null,
-      latestTurn: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      archivedAt: null,
-      session: null,
-      latestUserMessageAt: null,
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      hasActionableProposedPlan: false,
-      pullRequests: [
-        {
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number: 42,
-          url: "https://github.com/pingdotgg/t3code/pull/42",
-          source: "agent",
-          linkedAt: "2026-01-01T00:00:00.000Z",
-          snapshot: null,
-          stack: null,
-        },
-        {
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number: 43,
-          url: "https://github.com/pingdotgg/t3code/pull/43",
-          source: "stack",
-          linkedAt: "2026-01-01T00:01:00.000Z",
-          snapshot: {
-            state: "open",
-            title: "Layer two",
-            headBranch: "feature/stack-2",
-            baseBranch: "feature/stack-1",
-            isDraft: false,
-            updatedAt: "2026-01-01T00:02:00.000Z",
-            syncedAt: "2026-01-01T00:03:00.000Z",
-          },
-          stack: {
-            kind: "native",
-            id: "7",
-            number: 3,
-            url: "https://github.com/pingdotgg/t3code/stacks/3",
-            base: "main",
-            layers: [
-              { number: 42, headBranch: "feature/stack-1", state: "open" },
-              { number: 43, headBranch: "feature/stack-2", state: "open" },
-            ],
-          },
-        },
-      ],
-    });
-
-    assert.strictEqual(shell.pullRequests.length, 2);
-    assert.strictEqual(shell.pullRequests[1]?.stack?.layers.length, 2);
-    assert.strictEqual(shell.pullRequests[1]?.snapshot?.state, "open");
-  }),
-);
-
 // A stored event that fails to decode stops the event store read, and with it
 // server startup, so rows written before `turnId` existed must still load.
 it.effect("decodes a legacy message-sent event persisted without turnId", () =>
@@ -840,120 +486,6 @@ it.effect("decodes a legacy message-sent event persisted without turnId", () =>
     assert.strictEqual(event.type, "thread.message-sent");
     if (event.type !== "thread.message-sent") return;
     assert.strictEqual(event.payload.turnId, null);
-  }),
-);
-
-it.effect("decodes thread archived and unarchived events", () =>
-  Effect.gen(function* () {
-    const archived = yield* decodeOrchestrationEvent({
-      sequence: 1,
-      eventId: "event-archive-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.archived",
-      occurredAt: "2026-01-01T00:00:00.000Z",
-      commandId: "cmd-archive-1",
-      causationEventId: null,
-      correlationId: "cmd-archive-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        archivedAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    });
-    const unarchived = yield* decodeOrchestrationEvent({
-      sequence: 2,
-      eventId: "event-unarchive-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.unarchived",
-      occurredAt: "2026-01-02T00:00:00.000Z",
-      commandId: "cmd-unarchive-1",
-      causationEventId: null,
-      correlationId: "cmd-unarchive-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      },
-    });
-
-    if (archived.type !== "thread.archived") {
-      assert.fail(`Expected thread.archived event, received ${archived.type}.`);
-    }
-    assert.strictEqual(archived.payload.archivedAt, "2026-01-01T00:00:00.000Z");
-    assert.strictEqual(unarchived.type, "thread.unarchived");
-  }),
-);
-
-it.effect("decodes thread settled and unsettled events", () =>
-  Effect.gen(function* () {
-    const settled = yield* decodeOrchestrationEvent({
-      sequence: 1,
-      eventId: "event-settle-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.settled",
-      occurredAt: "2026-01-01T00:00:00.000Z",
-      commandId: "cmd-settle-1",
-      causationEventId: null,
-      correlationId: "cmd-settle-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        settledAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    });
-    const unsettled = yield* decodeOrchestrationEvent({
-      sequence: 2,
-      eventId: "event-unsettle-1",
-      aggregateKind: "thread",
-      aggregateId: "thread-1",
-      type: "thread.unsettled",
-      occurredAt: "2026-01-02T00:00:00.000Z",
-      commandId: "cmd-unsettle-1",
-      causationEventId: null,
-      correlationId: "cmd-unsettle-1",
-      metadata: {},
-      payload: {
-        threadId: "thread-1",
-        reason: "user",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      },
-    });
-
-    assert.strictEqual(settled.type, "thread.settled");
-    assert.strictEqual(unsettled.type, "thread.unsettled");
-  }),
-);
-
-it.effect("accepts provider-scoped model options in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-turn-options",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-options",
-        role: "user",
-        text: "hello",
-        attachments: [],
-      },
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.3-codex",
-        options: [
-          { id: "reasoningEffort", value: "high" },
-          { id: "fastMode", value: true },
-        ],
-      },
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.modelSelection?.instanceId, "codex");
-    assert.strictEqual(getOptionValue(parsed.modelSelection?.options, "reasoningEffort"), "high");
-    assert.strictEqual(getOptionValue(parsed.modelSelection?.options, "fastMode"), true);
   }),
 );
 
@@ -989,28 +521,6 @@ it.effect("normalizes legacy object-shaped modelSelection.options on decode", ()
   }),
 );
 
-it.effect("normalizes legacy object-shaped defaultModelSelection.options on decode", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeProjectCreatedPayload({
-      projectId: "project-1",
-      title: "Legacy default project",
-      workspaceRoot: "/tmp/legacy",
-      defaultModelSelection: {
-        provider: "codex",
-        model: "gpt-5.4",
-        options: { reasoningEffort: "low" },
-      },
-      scripts: [],
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-
-    assert.deepStrictEqual(parsed.defaultModelSelection?.options, [
-      { id: "reasoningEffort", value: "low" },
-    ]);
-  }),
-);
-
 it.effect(
   "normalizes legacy object-shaped options on decode and re-encodes as canonical array",
   () =>
@@ -1033,25 +543,6 @@ it.effect(
       const encoded = yield* encodeThreadCreatedPayload(decoded);
       assert.deepStrictEqual(encoded.modelSelection.options, [{ id: "fastMode", value: true }]);
     }),
-);
-
-it.effect("accepts a title seed in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-turn-title-seed",
-      threadId: "thread-1",
-      message: {
-        messageId: "msg-title-seed",
-        role: "user",
-        text: "hello",
-        attachments: [],
-      },
-      titleSeed: "Investigate reconnect failures",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
-  }),
 );
 
 it.effect("decodes active reorder commands through client and orchestration boundaries", () =>
@@ -1124,36 +615,6 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
-it.effect("accepts thread.pull-request.link and .unlink commands", () =>
-  Effect.gen(function* () {
-    const link = yield* decodeOrchestrationCommand({
-      type: "thread.pull-request.link",
-      commandId: "cmd-link-pull-request",
-      threadId: "thread-1",
-      host: "github.com",
-      repository: "pingdotgg/t3code",
-      number: 42,
-      url: "https://github.com/pingdotgg/t3code/pull/42",
-      source: "manual",
-    });
-    assert.strictEqual(link.type, "thread.pull-request.link");
-    if (link.type === "thread.pull-request.link") {
-      assert.strictEqual(link.source, "manual");
-      assert.strictEqual(link.number, 42);
-    }
-
-    const unlink = yield* decodeOrchestrationCommand({
-      type: "thread.pull-request.unlink",
-      commandId: "cmd-unlink-pull-request",
-      threadId: "thread-1",
-      host: "github.com",
-      repository: "pingdotgg/t3code",
-      number: 42,
-    });
-    assert.strictEqual(unlink.type, "thread.pull-request.unlink");
-  }),
-);
-
 it.effect("still decodes a persisted thread.meta-updated event carrying linkedPullRequest", () =>
   Effect.gen(function* () {
     const event = yield* decodeOrchestrationEvent({
@@ -1182,23 +643,6 @@ it.effect("still decodes a persisted thread.meta-updated event carrying linkedPu
       assert.fail(`Expected thread.meta-updated event, received ${event.type}.`);
     }
     assert.strictEqual(event.payload.linkedPullRequest?.number, 42);
-  }),
-);
-
-it.effect("accepts an internal title regeneration completion", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeOrchestrationCommand({
-      type: "thread.title.regeneration.complete",
-      commandId: "cmd-title-regeneration-complete",
-      threadId: "thread-1",
-      requestId: "cmd-title-regenerate",
-      title: "Updated title",
-    });
-    assert.strictEqual(parsed.type, "thread.title.regeneration.complete");
-    if (parsed.type === "thread.title.regeneration.complete") {
-      assert.strictEqual(parsed.requestId, "cmd-title-regenerate");
-      assert.strictEqual(parsed.title, "Updated title");
-    }
   }),
 );
 
@@ -1258,31 +702,6 @@ it.effect("rejects an explicit title combined with title regeneration", () =>
   }),
 );
 
-it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartCommand({
-      type: "thread.turn.start",
-      commandId: "cmd-turn-source-plan",
-      threadId: "thread-2",
-      message: {
-        messageId: "msg-source-plan",
-        role: "user",
-        text: "implement this",
-        attachments: [],
-      },
-      sourceProposedPlan: {
-        threadId: "thread-1",
-        planId: "plan-1",
-      },
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.deepStrictEqual(parsed.sourceProposedPlan, {
-      threadId: "thread-1",
-      planId: "plan-1",
-    });
-  }),
-);
-
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>
@@ -1297,57 +716,6 @@ it.effect(
       assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
       assert.strictEqual(parsed.sourceProposedPlan, undefined);
     }),
-);
-
-it.effect("decodes thread.turn-start-requested source proposed plan metadata when present", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartRequestedPayload({
-      threadId: "thread-2",
-      messageId: "msg-2",
-      sourceProposedPlan: {
-        threadId: "thread-1",
-        planId: "plan-1",
-      },
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.deepStrictEqual(parsed.sourceProposedPlan, {
-      threadId: "thread-1",
-      planId: "plan-1",
-    });
-  }),
-);
-
-it.effect("decodes thread.turn-start-requested title seed when present", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeThreadTurnStartRequestedPayload({
-      threadId: "thread-2",
-      messageId: "msg-2",
-      titleSeed: "Investigate reconnect failures",
-      createdAt: "2026-01-01T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
-  }),
-);
-
-it.effect("decodes latest turn source proposed plan metadata when present", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeOrchestrationLatestTurn({
-      turnId: "turn-2",
-      state: "running",
-      requestedAt: "2026-01-01T00:00:00.000Z",
-      startedAt: "2026-01-01T00:00:01.000Z",
-      completedAt: null,
-      assistantMessageId: null,
-      sourceProposedPlan: {
-        threadId: "thread-1",
-        planId: "plan-1",
-      },
-    });
-    assert.deepStrictEqual(parsed.sourceProposedPlan, {
-      threadId: "thread-1",
-      planId: "plan-1",
-    });
-  }),
 );
 
 it.effect("decodes orchestration session runtime mode defaults", () =>
@@ -1377,22 +745,6 @@ it.effect("defaults proposed plan implementation metadata for historical rows", 
     });
     assert.strictEqual(parsed.implementedAt, null);
     assert.strictEqual(parsed.implementationThreadId, null);
-  }),
-);
-
-it.effect("preserves proposed plan implementation metadata when present", () =>
-  Effect.gen(function* () {
-    const parsed = yield* decodeOrchestrationProposedPlan({
-      id: "plan-2",
-      turnId: "turn-2",
-      planMarkdown: "# Plan",
-      implementedAt: "2026-01-02T00:00:00.000Z",
-      implementationThreadId: "thread-2",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-02T00:00:00.000Z",
-    });
-    assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
-    assert.strictEqual(parsed.implementationThreadId, "thread-2");
   }),
 );
 

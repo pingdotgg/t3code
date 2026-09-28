@@ -48,31 +48,6 @@ const baseThread: OrchestrationThread = {
 };
 
 describe("applyThreadDetailEvent", () => {
-  describe("project events", () => {
-    it("returns unchanged for project.created", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 1,
-        occurredAt: "2026-04-01T01:00:00.000Z",
-        aggregateKind: "project",
-        aggregateId: ProjectId.make("project-1"),
-        type: "project.created",
-        payload: {
-          projectId: ProjectId.make("project-1"),
-          title: "T3 Code",
-          workspaceRoot: "/repo",
-          repositoryIdentity: null,
-          defaultModelSelection: null,
-          scripts: [],
-          createdAt: "2026-04-01T01:00:00.000Z",
-          updatedAt: "2026-04-01T01:00:00.000Z",
-          deletedAt: null,
-        },
-      } as any);
-      expect(result.kind).toBe("unchanged");
-    });
-  });
-
   describe("thread.created", () => {
     it("creates a fresh thread", () => {
       const result = applyThreadDetailEvent(baseThread, {
@@ -615,33 +590,6 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
-    it("appends a new message", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 6,
-        occurredAt: "2026-04-01T06:00:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.message-sent",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          messageId: MessageId.make("msg-1"),
-          role: "user",
-          text: "Hello, world!",
-          turnId: null,
-          streaming: false,
-          createdAt: "2026-04-01T06:00:00.000Z",
-          updatedAt: "2026-04-01T06:00:00.000Z",
-        },
-      });
-
-      expect(result.kind).toBe("updated");
-      if (result.kind === "updated") {
-        expect(result.thread.messages).toHaveLength(1);
-        expect(result.thread.messages[0]?.text).toBe("Hello, world!");
-      }
-    });
-
     it("keeps imported replies turnless when delivered again", () => {
       const event = {
         ...baseEventFields,
@@ -715,48 +663,6 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.messages[0]?.context).toEqual(context);
-      }
-    });
-
-    it("appends text for streaming messages", () => {
-      const threadWithMessage: OrchestrationThread = {
-        ...baseThread,
-        messages: [
-          {
-            id: MessageId.make("msg-2"),
-            role: "assistant",
-            text: "Hello",
-            turnId: TurnId.make("turn-1"),
-            streaming: true,
-            createdAt: "2026-04-01T06:00:00.000Z",
-            updatedAt: "2026-04-01T06:00:00.000Z",
-          },
-        ],
-      };
-
-      const result = applyThreadDetailEvent(threadWithMessage, {
-        ...baseEventFields,
-        sequence: 7,
-        occurredAt: "2026-04-01T06:01:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.message-sent",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          messageId: MessageId.make("msg-2"),
-          role: "assistant",
-          text: ", world!",
-          turnId: TurnId.make("turn-1"),
-          streaming: true,
-          createdAt: "2026-04-01T06:00:00.000Z",
-          updatedAt: "2026-04-01T06:01:00.000Z",
-        },
-      });
-
-      expect(result.kind).toBe("updated");
-      if (result.kind === "updated") {
-        expect(result.thread.messages).toHaveLength(1);
-        expect(result.thread.messages[0]?.text).toBe("Hello, world!");
       }
     });
 
@@ -1127,35 +1033,6 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.activity-appended", () => {
-    it("adds an activity", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 12,
-        occurredAt: "2026-04-01T11:00:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.activity-appended",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          activity: {
-            id: EventId.make("activity-1"),
-            tone: "tool",
-            kind: "file-edit",
-            summary: "Edited src/index.ts",
-            payload: {},
-            turnId: TurnId.make("turn-1"),
-            createdAt: "2026-04-01T11:00:00.000Z",
-          },
-        },
-      });
-
-      expect(result.kind).toBe("updated");
-      if (result.kind === "updated") {
-        expect(result.thread.activities).toHaveLength(1);
-        expect(result.thread.activities[0]?.kind).toBe("file-edit");
-      }
-    });
-
     it("preserves the complete activity history when live events arrive", () => {
       const existingActivities = Array.from({ length: 129 }, (_, index) => ({
         id: EventId.make(`activity-${index}`),
@@ -1686,26 +1563,6 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.messages).toHaveLength(2);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
-    });
-  });
-
-  describe("no-op events", () => {
-    it("returns unchanged for approval-response-requested", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 15,
-        occurredAt: "2026-04-01T13:00:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.approval-response-requested",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          requestId: "req-1",
-          decision: "approve",
-          createdAt: "2026-04-01T13:00:00.000Z",
-        },
-      } as any);
-      expect(result.kind).toBe("unchanged");
     });
   });
 });

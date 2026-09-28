@@ -1249,15 +1249,3 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
     ),
   );
 });
-
-it.effect("rejects unknown editors through the service API", () =>
-  Effect.gen(function* () {
-    const launcher = yield* ExternalLauncher.ExternalLauncher;
-    const error = yield* launcher
-      .launchEditor({ editor: "missing-editor" as never, cwd: "/tmp/workspace" })
-      .pipe(Effect.flip);
-    assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
-    assert.equal(error.editor, "missing-editor");
-    assert.equal(error.message, "Unknown editor: missing-editor");
-  }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
-);

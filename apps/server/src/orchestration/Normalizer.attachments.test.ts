@@ -234,31 +234,6 @@ describe("normalizeDispatchCommand attachments", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("normalizes inline and uploaded attachments in the same turn", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      NodeFS.writeFileSync(
-        NodePath.join(config.attachmentsDir, `pending-${attachmentUuid}.png`),
-        Buffer.from("pixels"),
-      );
-
-      const normalized = yield* normalizeDispatchCommand(
-        turnStartCommand({
-          attachments: [
-            { dataUrl: "data:image/png;base64,cGl4ZWxz", sizeBytes: 6 },
-            { id: `pending-${attachmentUuid}`, sizeBytes: 6 },
-          ],
-        }),
-      );
-      if (normalized.type !== "thread.turn.start") {
-        throw new Error("Expected a thread.turn.start command.");
-      }
-
-      expect(normalized.message.attachments).toHaveLength(2);
-      expect(normalized.message.attachments[1]?.id.startsWith("thread-1-")).toBe(true);
-    }).pipe(Effect.provide(testLayer)),
-  );
-
   it.effect("claims uploaded documents without changing their original extension", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

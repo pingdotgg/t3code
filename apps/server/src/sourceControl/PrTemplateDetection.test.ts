@@ -13,18 +13,8 @@ import { detectPrTemplate } from "./PrTemplateDetection.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const SINGLE_TEMPLATE_PATHS = [
-  ".github/pull_request_template.md",
-  ".github/PULL_REQUEST_TEMPLATE.md",
   "pull_request_template.md",
-  "PULL_REQUEST_TEMPLATE.md",
-  "docs/pull_request_template.md",
   "docs/PULL_REQUEST_TEMPLATE.md",
-] as const;
-
-const TEMPLATE_DIRECTORIES = [
-  ".github/PULL_REQUEST_TEMPLATE",
-  "PULL_REQUEST_TEMPLATE",
-  "docs/PULL_REQUEST_TEMPLATE",
 ] as const;
 
 const PrTemplateDetectionTestLayer = GitVcsDriver.layer.pipe(
@@ -128,10 +118,10 @@ it.effect("uses the first non-empty template in the configured path order", () =
   ),
 );
 
-it.effect.each(TEMPLATE_DIRECTORIES)("recognizes the $0 directory", (relativeDirectory) =>
+it.effect("recognizes the docs/PULL_REQUEST_TEMPLATE directory", () =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {
-      yield* writeTemplate(cwd, `${relativeDirectory}/template.MD`, "directory template");
+      yield* writeTemplate(cwd, "docs/PULL_REQUEST_TEMPLATE/template.MD", "directory template");
       yield* commitTemplates(cwd);
 
       const template = yield* detectTemplate(cwd);

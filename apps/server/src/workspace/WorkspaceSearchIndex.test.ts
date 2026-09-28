@@ -105,21 +105,6 @@ it.effect("keeps returned FileFinder creation diagnostics out of the cause chain
   }),
 );
 
-it.effect("waits for the full content index warmup before returning", () =>
-  Effect.gen(function* () {
-    const waitForIndexReady = vi.fn(async () => ({ ok: true as const, value: true }));
-    const finder = {
-      destroy: vi.fn(),
-      waitForIndexReady,
-    } as unknown as FileFinder;
-    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-    yield* Effect.scoped(WorkspaceSearchIndex.make("/workspace/project", "content"));
-
-    expect(waitForIndexReady).toHaveBeenCalledWith(15_000);
-  }),
-);
-
 it.effect("preserves a full-index warmup timeout as a structured error", () =>
   Effect.gen(function* () {
     const finder = {

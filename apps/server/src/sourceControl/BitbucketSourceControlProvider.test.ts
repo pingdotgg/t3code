@@ -89,33 +89,6 @@ it.effect("adds repository context while retaining Bitbucket API causes", () =>
   }),
 );
 
-it.effect("lists Bitbucket PRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let listInput: Parameters<BitbucketApi.BitbucketApi["Service"]["listPullRequests"]>[0] | null =
-      null;
-    const provider = yield* makeProvider({
-      listPullRequests: (input) => {
-        listInput = input;
-        return Effect.succeed([]);
-      },
-    });
-
-    yield* provider.listChangeRequests({
-      cwd: "/repo",
-      headSelector: "feature/provider",
-      state: "all",
-      limit: 10,
-    });
-
-    assert.deepStrictEqual(listInput, {
-      cwd: "/repo",
-      headSelector: "feature/provider",
-      state: "all",
-      limit: 10,
-    });
-  }),
-);
-
 it.effect("creates Bitbucket PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput:

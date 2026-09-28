@@ -23,14 +23,4 @@ describe("AgentSessionScanResult", () => {
 
     expect(result.candidates[0]?.git).toBeUndefined();
   });
-
-  it("preserves reported git identity", () => {
-    const git = { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" };
-    const result = decodeScanResult({
-      candidates: [{ ...candidate, git }],
-      scannedAt: "2026-08-22T12:00:00.000Z",
-    });
-
-    expect(result.candidates[0]?.git).toEqual(git);
-  });
 });

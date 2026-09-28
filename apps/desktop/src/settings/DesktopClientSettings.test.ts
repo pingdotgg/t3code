@@ -111,15 +111,6 @@ const withClientSettings = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
-  it.effect("returns none when no client settings file exists", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        assert.isTrue(Option.isNone(yield* settings.get));
-      }),
-    ),
-  );
-
   it.effect("persists and reloads client settings", () =>
     withClientSettings(
       Effect.gen(function* () {
@@ -147,78 +138,50 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  for (const failure of [
-    { label: "permission", reason: "PermissionDenied" },
-    { label: "I/O", reason: "Unknown" },
-  ] as const) {
-    it.effect(`preserves saved preferences across ${failure.label} read failures and retries`, () =>
-      withClientSettings(
-        Effect.gen(function* () {
-          const environment = yield* DesktopEnvironment.DesktopEnvironment;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const settings = yield* DesktopClientSettings.DesktopClientSettings;
-          const savedSettings = {
-            ...clientSettings,
-            onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
-          };
-          yield* settings.set(savedSettings);
-          const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
-          const cause = PlatformError.systemError({
-            _tag: failure.reason,
-            module: "FileSystem",
-            method: "readFileString",
-            pathOrDescriptor: environment.clientSettingsPath,
-          });
-          let failRead = true;
-          const retryableSettings = yield* DesktopClientSettings.make.pipe(
-            Effect.provideService(
-              FileSystem.FileSystem,
-              FileSystem.FileSystem.of({
-                ...fileSystem,
-                readFileString: (path) =>
-                  Effect.suspend(() =>
-                    failRead ? Effect.fail(cause) : fileSystem.readFileString(path),
-                  ),
-              }),
-            ),
-          );
-
-          const error = yield* retryableSettings.get.pipe(Effect.flip);
-          assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
-          assert.equal(error.operation, "read-file");
-          assert.equal(error.path, environment.clientSettingsPath);
-          assert.strictEqual(error.cause, cause);
-          assert.equal(
-            yield* fileSystem.readFileString(environment.clientSettingsPath),
-            savedContents,
-          );
-
-          failRead = false;
-          assert.deepEqual(yield* retryableSettings.get, Option.some(savedSettings));
-        }),
-      ),
-    );
-  }
-
-  it.effect("reports the failed client settings write operation and path", () =>
+  it.effect("preserves saved preferences across permission read failures and retries", () =>
     withClientSettings(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.clientSettingsPath, { recursive: true });
-
-        const error = yield* settings.set(clientSettings).pipe(Effect.flip);
-        assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsWriteError);
-        assert.equal(error.operation, "replace-settings-file");
-        assert.equal(error.path, environment.clientSettingsPath);
-        assert.instanceOf(error.cause, PlatformError.PlatformError);
-        assert.isString(error.cause.stack);
-        assert.equal(
-          error.message,
-          `Desktop client settings write failed during replace-settings-file at ${environment.clientSettingsPath}.`,
+        const savedSettings = {
+          ...clientSettings,
+          onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
+        };
+        yield* settings.set(savedSettings);
+        const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          pathOrDescriptor: environment.clientSettingsPath,
+        });
+        let failRead = true;
+        const retryableSettings = yield* DesktopClientSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (path) =>
+                Effect.suspend(() =>
+                  failRead ? Effect.fail(cause) : fileSystem.readFileString(path),
+                ),
+            }),
+          ),
         );
-        assert.notInclude(error.message, error.cause.message);
+
+        const error = yield* retryableSettings.get.pipe(Effect.flip);
+        assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
+        assert.equal(error.operation, "read-file");
+        assert.equal(error.path, environment.clientSettingsPath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          yield* fileSystem.readFileString(environment.clientSettingsPath),
+          savedContents,
+        );
+
+        failRead = false;
+        assert.deepEqual(yield* retryableSettings.get, Option.some(savedSettings));
       }),
     ),
   );

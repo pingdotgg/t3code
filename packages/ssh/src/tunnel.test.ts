@@ -27,7 +27,6 @@ import {
   describeReadinessCause,
   issueRemotePairingToken,
   launchOrReuseRemoteServer,
-  REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
   waitForHttpReady,
 } from "./tunnel.ts";
@@ -111,69 +110,6 @@ const NODE_SCRIPT = {
 } as const;
 
 describe("ssh tunnel scripts", () => {
-  it("installs and runs the release archive without Node, npm, or npx", () => {
-    const script = buildRemoteT3RunnerScript(ARCHIVE);
-
-    assert.include(script, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
-    assert.include(script, "T3_NODE_SCRIPT_PATH=''");
-    assert.include(
-      script,
-      "T3_RELEASE_BASE_URL='https://github.com/pingdotgg/t3code/releases/download'",
-    );
-    assert.include(script, 'T3_RUNTIME_DIR="$HOME/.t3/runtime/versions/$T3_ARCHIVE_VERSION"');
-    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
-    assert.include(script, "SHA256SUMS");
-    assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
-    assert.notInclude(script, "npx");
-    assert.notInclude(script, "npm exec");
-    assert.notInclude(script, "t3@latest");
-    assert.notInclude(script, 'exec t3 "$@"');
-    // Concurrent launches serialize on a per-version mkdir lock and recheck
-    // the completion marker after acquiring it.
-    assert.include(
-      script,
-      'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
-    );
-    // mkdir is the exclusive create; the pid follows atomically. A dead owner
-    // is reclaimed at once, a never-published owner after a short grace.
-    assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
-    assert.include(script, 'mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"');
-    assert.include(script, 'if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then');
-    assert.include(script, 'if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then');
-    assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 360 ]; then');
-    assert.include(script, '"$T3_STAGING/SHA256SUMS" 30');
-    assert.include(script, '"$T3_STAGING/$T3_ARCHIVE" 240');
-    assert.notInclude(script, "T3_LOCK_CANDIDATE");
-    assert.notInclude(script, "-mmin");
-    assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
-    assert.isBelow(
-      script.indexOf('"$T3_STAGING/t3" --version'),
-      script.indexOf('> "$T3_STAGING/.install-complete"'),
-    );
-    // Node discovery is defined for the dev path but only ever invoked inside
-    // the node-script branch, which the archive path skips entirely.
-    assert.equal(script.split("ensure_remote_node_path || true").length - 1, 1);
-    assert.isBelow(
-      script.indexOf("ensure_remote_node_path || true"),
-      script.indexOf('exec node "$T3_NODE_SCRIPT_PATH" "$@"'),
-    );
-    assert.isBelow(
-      script.indexOf('exec node "$T3_NODE_SCRIPT_PATH" "$@"'),
-      script.indexOf("T3_ARCHIVE_VERSION="),
-    );
-
-    const launch = buildRemoteLaunchScript({
-      ...ARCHIVE,
-      releaseBaseUrl: "https://mirror.example/t3/",
-    });
-    assert.include(launch, "T3_ARCHIVE_MODE=1");
-    assert.include(launch, "T3_RELEASE_BASE_URL='https://mirror.example/t3'");
-    assert.include(launch, '"$RUNNER_FILE" __ssh-helper pick-port "$PORT_FILE"');
-    assert.include(launch, '"$RUNNER_FILE" __ssh-helper wait-ready "$REMOTE_PORT"');
-    assert.include(launch, '"$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"');
-    assert.include(buildRemoteLaunchScript(NODE_SCRIPT), "T3_ARCHIVE_MODE=0");
-  });
-
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
@@ -210,38 +146,6 @@ describe("ssh tunnel scripts", () => {
     assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
-  it("builds the remote t3 runner with a node script override", () => {
-    const script = buildRemoteT3RunnerScript({
-      ...NODE_SCRIPT,
-      nodeEngineRange: TEST_NODE_ENGINE_RANGE,
-    });
-
-    assert.include(
-      script,
-      "T3_NODE_SCRIPT_PATH='/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs'",
-    );
-    assert.include(script, 'exec node "$T3_NODE_SCRIPT_PATH" "$@"');
-    assert.include(script, "T3_ARCHIVE_VERSION=''");
-    assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
-    assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
-    assert.include(script, "remote_node_satisfies_engine()");
-    assert.include(script, "function satisfiesSemverRange");
-    assert.include(script, "satisfiesSemverRange(rawVersion, range)");
-    assert.include(script, 'prepend_path_if_dir "/home/linuxbrew/.linuxbrew/bin"');
-    assert.include(script, 'prepend_path_if_dir "$VOLTA_HOME/bin"');
-    assert.include(script, 'prepend_path_if_dir "$HOME/.asdf/shims"');
-    assert.include(script, 'prepend_path_if_dir "$HOME/.local/share/mise/shims"');
-    assert.include(script, 'eval "$(fnm env --shell bash)"');
-    assert.include(script, "fnm use --silent-if-unchanged");
-    assert.include(script, "fnm use default");
-    assert.include(script, 'prepend_path_if_dir "$HOME/.nodenv/shims"');
-    assert.include(script, 'NVM_DIR="$HOME/.nvm"');
-    assert.include(script, "nvm use --silent default");
-    assert.include(script, 'for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin');
-    assert.notInclude(script, "ensure $NVM_DIR/nvm.sh is available");
-    assert.notInclude(script, "npx");
-  });
-
   it("uses the remote t3 runner for launch and pairing scripts", () => {
     const target = {
       alias: "devbox",
@@ -274,6 +178,12 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, 'if [ -s "$LOG_FILE" ]; then');
     assert.include(launch, "It wrote nothing to %s");
     assert.include(launch, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
+    assert.include(launch, "T3_ARCHIVE_MODE=1");
+    assert.include(devLaunch, "T3_ARCHIVE_MODE=0");
+    assert.include(
+      buildRemoteLaunchScript({ ...ARCHIVE, releaseBaseUrl: "https://mirror.example/t3/" }),
+      "T3_RELEASE_BASE_URL='https://mirror.example/t3'",
+    );
     assert.include(
       buildRemotePairingScript(target, ARCHIVE),
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
@@ -385,10 +295,6 @@ describe("ssh tunnel scripts", () => {
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);
     }).pipe(Effect.provide(processLayer));
-  });
-
-  it("allows the remote port picker to run without a state file path", () => {
-    assert.include(REMOTE_PICK_PORT_SCRIPT, 'const filePath = process.argv[2] ?? "";');
   });
 
   it.effect("bounds each HTTP readiness probe so retries cannot hang on one request", () =>

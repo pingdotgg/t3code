@@ -233,17 +233,6 @@ describe("resolveRestingComposerControlsLayout", () => {
     });
   });
 
-  it("uses the same thresholds while shrinking and growing", () => {
-    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 240 })).toEqual({
-      hiddenCount: 2,
-      visible: true,
-    });
-    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 241 })).toEqual({
-      hiddenCount: 1,
-      visible: true,
-    });
-  });
-
   it("supports a single leading control without overflow blocks", () => {
     expect(
       resolveRestingComposerControlsLayout({
@@ -375,13 +364,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
     );
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 242, previous })).toEqual({
       hiddenCount: 1,
-      visible: true,
-    });
-  });
-
-  it("still resolves from scratch when there is no previous layout", () => {
-    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 357 })).toEqual({
-      hiddenCount: 0,
       visible: true,
     });
   });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
-import { getMobileThemeVariables, MOBILE_THEME_IDS, themeColorWithAlpha } from "./mobileTheme";
+import { getMobileThemeVariables, themeColorWithAlpha } from "./mobileTheme";
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 describe("mobile theme runtime variables", () => {
@@ -22,32 +22,6 @@ describe("mobile theme runtime variables", () => {
       getMobileThemeVariables("iris", "dark"),
     );
   });
-
-  it.each(MOBILE_THEME_IDS)(
-    "keeps %s colors on Android with an opaque Material frame",
-    (themeId) => {
-      for (const appearance of ["light", "dark"] as const) {
-        const base = getMobileThemeVariables(
-          themeId === "material-you" ? "t3-code" : themeId,
-          appearance,
-        );
-        const android = getMobileThemeRuntimeVariables(themeId, appearance, "android");
-        expect(android).toEqual({
-          ...base,
-          "--color-header": themeColorWithAlpha(
-            base[
-              themeId === "t3-code" || themeId === "material-you"
-                ? "--color-row-hover"
-                : "--color-drawer"
-            ],
-            1,
-          ),
-          "--color-header-foreground": base["--color-drawer-foreground"],
-        });
-        expect(android["--color-header"]).toMatch(/^rgba\(\d+, \d+, \d+, 1\)$/);
-      }
-    },
-  );
 
   it.each(["t3-code", "material-you"] as const)(
     "keeps the %s default Material frame distinct in both appearances",

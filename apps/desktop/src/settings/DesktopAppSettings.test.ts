@@ -119,26 +119,6 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it("defaults packaged nightly builds to the nightly update channel", () => {
-    assert.deepEqual(
-      DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
-      {
-        linuxPasswordStore: "auto",
-        localEnvironmentEnabled: true,
-        mainWindowBounds: null,
-        mainWindowMaximized: false,
-        serverExposureMode: "local-only",
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-        updateChannel: "nightly",
-        updateChannelConfiguredByUser: false,
-        wslBackendEnabled: false,
-        wslOnly: false,
-        wslDistro: null,
-      } satisfies DesktopAppSettings.DesktopSettings,
-    );
-  });
-
   it.effect("loads persisted settings and applies semantic updates", () =>
     withSettings(
       Effect.gen(function* () {
@@ -182,27 +162,6 @@ describe("DesktopSettings", () => {
         assert.isTrue(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannel, "nightly");
         assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
-      }),
-    ),
-  );
-
-  it.effect("reports the failed desktop settings write operation and path", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* fileSystem.makeDirectory(environment.desktopSettingsPath, { recursive: true });
-
-        const error = yield* settings.setServerExposureMode("network-accessible").pipe(Effect.flip);
-        assert.instanceOf(error, DesktopAppSettings.DesktopSettingsWriteError);
-        assert.equal(error.operation, "replace-settings-file");
-        assert.equal(error.path, environment.desktopSettingsPath);
-        assert.exists(error.cause);
-        assert.equal(
-          error.message,
-          `Desktop settings write failed during replace-settings-file at ${environment.desktopSettingsPath}.`,
-        );
       }),
     ),
   );

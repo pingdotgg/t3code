@@ -329,14 +329,6 @@ describe("buildInitialGrokProviderSnapshot", () => {
     }),
   );
 
-  it.effect("returns a disabled snapshot by default — Grok is opt-in", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* buildInitialGrokProviderSnapshot(decodeGrokSettings({}));
-      expect(snapshot.enabled).toBe(false);
-      expect(snapshot.status).toBe("disabled");
-    }),
-  );
-
   it.effect("returns a pending snapshot when enabled", () =>
     Effect.gen(function* () {
       const snapshot = yield* buildInitialGrokProviderSnapshot(

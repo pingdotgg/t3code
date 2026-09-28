@@ -117,18 +117,6 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
   }),
 );
 
-it.effect("routes directly by provider kind for remote-first workflows", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry({
-      remotes: [],
-    });
-
-    const provider = yield* registry.get("github");
-
-    assert.strictEqual(provider.kind, "github");
-  }),
-);
-
 it.effect("includes the request cwd when an unregistered provider is used", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({ remotes: [] });

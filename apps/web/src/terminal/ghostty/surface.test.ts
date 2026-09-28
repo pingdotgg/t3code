@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { isMonospaceFamily } from "../../appearanceFonts";
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
@@ -38,6 +39,11 @@ vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
 vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
   default: (await import("./vendor/ghostty-write-pty.wasm?inline")).default,
 }));
+// Node has no canvas metrics, so tests choose what the monospace probe reports.
+vi.mock("../../appearanceFonts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../appearanceFonts")>();
+  return { ...actual, isMonospaceFamily: vi.fn(actual.isMonospaceFamily) };
+});
 
 describe("GhosttyTerminalSurface visibility", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
@@ -908,11 +914,9 @@ describe("terminal font resolution", () => {
   });
 
   it("ignores proportional families the cell grid cannot lay out", () => {
-    // jsdom has no canvas metrics, so the probe answers "monospace" and the
-    // family is kept; the guard is exercised in the browser instead. Assert the
-    // shape stays intact so a rejected face still yields a usable stack.
-    const stack = terminalFontFamily("Helvetica Neue");
-    expect(stack.endsWith("monospace")).toBe(true);
+    vi.mocked(isMonospaceFamily).mockReturnValueOnce(false);
+    expect(terminalFontFamily("Helvetica Neue")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+    expect(isMonospaceFamily).toHaveBeenLastCalledWith('"Helvetica Neue"');
   });
 
   it("quotes families the canvas font shorthand would otherwise reject", () => {

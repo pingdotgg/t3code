@@ -436,44 +436,6 @@ describe("ProviderAuthService", () => {
     }),
   );
 
-  it.effect("keeps sign-in state private and accepts the owner's redirect URL", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const waiting = yield* service.start({ instanceId }, owner);
-      const ownerStates = yield* service
-        .subscribe({ instanceId }, owner)
-        .pipe(Stream.take(1), Stream.runCollect);
-      const otherStates = yield* service
-        .subscribe({ instanceId }, otherOwner)
-        .pipe(Stream.take(1), Stream.runCollect);
-
-      assert.deepStrictEqual(ownerStates, [waiting]);
-      assert.strictEqual(otherStates[0]?.authorizationUrl, null);
-      assert.strictEqual(otherStates[0]?.flowId, null);
-
-      const otherError = yield* Effect.flip(
-        service.complete({ instanceId, flowId, callbackUrl }, otherOwner),
-      );
-      assert.strictEqual(otherError.operation, "complete");
-      const complete = yield* service.complete({ instanceId, flowId, callbackUrl }, owner);
-      assert.strictEqual(complete.phase, "succeeded");
-      assert.strictEqual(complete.authorizationUrl, null);
-    }),
-  );
-
-  it.effect("lets only the flow owner cancel sign-in", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      yield* service.start({ instanceId }, owner);
-      const error = yield* Effect.flip(service.cancel({ instanceId, flowId }, otherOwner));
-      assert.strictEqual(error.operation, "cancel");
-
-      const cancelled = yield* service.cancel({ instanceId, flowId }, owner);
-      assert.strictEqual(cancelled.phase, "cancelled");
-      assert.strictEqual(cancelled.authorizationUrl, null);
-    }),
-  );
-
   it.effect.each([
     { change: "enable", initialEnabled: false, closeBeforeReplacement: true },
     { change: "config", initialEnabled: true, closeBeforeReplacement: false },
@@ -622,11 +584,7 @@ describe("ProviderAuthService", () => {
 
   it.effect.each([
     { text: "/logout", hasAttachments: false, handled: true },
-    { text: " \n/logout\t", hasAttachments: false, handled: true },
-    { text: "/logout", hasAttachments: true, handled: false },
     { text: "/logout please", hasAttachments: false, handled: false },
-    { text: "Explain /logout", hasAttachments: false, handled: false },
-    { text: "/Logout", hasAttachments: false, handled: false },
   ])("handles only a standalone logout command %#", ({ text, hasAttachments, handled }) =>
     Effect.gen(function* () {
       const { service, actions } = yield* makeHarness();

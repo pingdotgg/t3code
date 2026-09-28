@@ -302,7 +302,6 @@ it.each([
   [false, false, true],
   [false, true, false],
   [true, false, false],
-  [true, true, false],
 ] as const)(
   "closing setup (previously enabled=%s, completed=%s) disables only an unfinished first opt-in",
   (wasEnabled, completed, disable) => {

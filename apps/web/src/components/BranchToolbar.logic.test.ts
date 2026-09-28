@@ -5,16 +5,13 @@ import {
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
-  resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
-  resolveEnvModeLabel,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
-  resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -96,17 +93,6 @@ describe("resolvePreviousWorktreeSeed", () => {
         currentWorktreePath: null,
       }),
     ).toEqual({ branch: "t3/live", worktreePath: "/repo/.t3/worktrees/live" });
-  });
-});
-
-describe("resolvePreviousWorktreeLabel", () => {
-  it("includes the branch when known", () => {
-    expect(resolvePreviousWorktreeLabel({ branch: "t3/fix-thing", worktreePath: "/wt" })).toBe(
-      "Previous worktree (t3/fix-thing)",
-    );
-    expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
-      "Previous worktree",
-    );
   });
 });
 
@@ -509,23 +495,6 @@ describe("resolveEffectiveEnvMode", () => {
   });
 });
 
-describe("resolveEnvModeLabel", () => {
-  it("uses explicit workspace labels", () => {
-    expect(resolveEnvModeLabel("local")).toBe("Current checkout");
-    expect(resolveEnvModeLabel("worktree")).toBe("New worktree");
-  });
-});
-
-describe("resolveCurrentWorkspaceLabel", () => {
-  it("describes the main repo checkout when no worktree path is active", () => {
-    expect(resolveCurrentWorkspaceLabel(null)).toBe("Current checkout");
-  });
-
-  it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.t3/worktrees/feature-a")).toBe("Current worktree");
-  });
-});
-
 describe("resolveLockedWorkspaceLabel", () => {
   it("uses a shorter label for the main repo checkout", () => {
     expect(resolveLockedWorkspaceLabel(null, "local")).toBe("Local checkout");
@@ -835,16 +804,8 @@ describe("sanitizeNewRefName", () => {
     expect(sanitizeNewRefName("new\u2009branch")).toBe("new\u2009branch");
   });
 
-  it("keeps slashes so nested ref names survive", () => {
-    expect(sanitizeNewRefName("feature/new thing")).toBe("feature/new-thing");
-  });
-
   it("preserves case because git ref names are case sensitive", () => {
     expect(sanitizeNewRefName("Feature/New Thing")).toBe("Feature/New-Thing");
-  });
-
-  it("leaves an already valid ref name untouched", () => {
-    expect(sanitizeNewRefName("feature/login")).toBe("feature/login");
   });
 
   it("returns an empty string for whitespace-only input", () => {

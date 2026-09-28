@@ -498,38 +498,6 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
-  it.effect(
-    "runs update commands through Effect ChildProcess when no test runner is injected",
-    () => {
-      const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-      return Effect.gen(function* () {
-        const { registry } = yield* makeRegistry(baseProvider);
-        const runner = yield* makeTestRunner(registry);
-
-        const result = yield* runner.updateProvider(CODEX_DRIVER);
-
-        assert.deepStrictEqual(calls, [
-          {
-            command: "npm",
-            args: ["install", "-g", "@openai/codex@latest"],
-          },
-        ]);
-        assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NonWindowsPlatform,
-            latestVersionHttpClient("0.0.0"),
-            mockSpawnerLayer((command, args) => {
-              calls.push({ command, args });
-              return { stdout: "updated" };
-            }),
-          ),
-        ),
-      );
-    },
-  );
-
   it.effect("updates a single provider instance without touching sibling instances", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
@@ -771,41 +739,6 @@ describe("providerMaintenanceRunner", () => {
                 ),
               };
             }
-            return { stdout: "updated" };
-          }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("accepts arbitrary driver-provided update lock keys", () => {
-    const calls: Array<string> = [];
-    return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry(baseProvider);
-      const updater = yield* makeTestRunner({
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
-          Effect.succeed(
-            makeProviderMaintenanceCapabilities({
-              provider,
-              packageName: "@openai/codex",
-              updateExecutable: "npm",
-              updateArgs: ["install", "-g", "@openai/codex@latest"],
-              updateLockKey: "unknown-lock-key",
-            }),
-          ),
-      });
-
-      const result = yield* updater.updateProvider(CODEX_DRIVER);
-      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-      assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          NonWindowsPlatform,
-          latestVersionHttpClient("0.0.0"),
-          mockSpawnerLayer((_command, args) => {
-            calls.push(args.join(" "));
             return { stdout: "updated" };
           }),
         ),

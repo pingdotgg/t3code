@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { BrowserImportSource } from "@t3tools/contracts";
 
 import {
-  canCloseWizard,
   initialWizardStep,
   initialTargetSelection,
   isRetryableReason,
@@ -82,33 +81,7 @@ describe("initialWizardStep", () => {
   });
 });
 
-describe("canCloseWizard", () => {
-  it("keeps the wizard open while an import writes its target profile", () => {
-    expect(canCloseWizard({ step: "importing" })).toBe(false);
-    expect(canCloseWizard({ step: "configure" })).toBe(true);
-    expect(canCloseWizard({ step: "blocked", reason: "readFailed" })).toBe(true);
-  });
-});
-
 describe("outcomeToStep", () => {
-  it("lands on done after a successful import", () => {
-    expect(
-      outcomeToStep({
-        kind: "imported",
-        imported: 12,
-        skipped: 3,
-        skippedDomains: ["example.com"],
-        targetName: "Work",
-      }),
-    ).toEqual({
-      step: "done",
-      imported: 12,
-      skipped: 3,
-      skippedDomains: ["example.com"],
-      targetName: "Work",
-    });
-  });
-
   it("routes a reopened browser back to the quit screen", () => {
     expect(outcomeToStep({ kind: "blocked", reason: "browserRunning" })).toEqual({ step: "quit" });
   });

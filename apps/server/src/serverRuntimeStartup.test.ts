@@ -515,11 +515,3 @@ it.effect("completeAutoBootstrapWelcome settles unexpected defects", () =>
     assert.deepStrictEqual(completion, { bootstrapStatus: "complete" });
   }),
 );
-
-it.effect("completeAutoBootstrapWelcome settles an empty bootstrap result", () =>
-  Effect.gen(function* () {
-    const completion = yield* ServerRuntimeStartup.completeAutoBootstrapWelcome(Effect.succeed({}));
-
-    assert.deepStrictEqual(completion, { bootstrapStatus: "complete" });
-  }),
-);

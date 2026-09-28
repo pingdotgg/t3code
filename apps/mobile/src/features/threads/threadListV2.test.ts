@@ -28,7 +28,6 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
-  isThreadListV2ListItem,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -68,12 +67,6 @@ function makeThread(
 }
 
 const NOW = "2026-06-02T00:00:00.000Z";
-const linkedPullRequest = {
-  projectId: ProjectId.make("project-1"),
-  repository: "pingdotgg/t3code",
-  number: 42,
-  url: "https://github.com/pingdotgg/t3code/pull/42",
-};
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
   it("accepts a displayed evening preset while its wake time is still future", () => {
@@ -374,25 +367,6 @@ describe("getThreadListV2OrderedSection", () => {
 });
 
 describe("buildThreadListV2Items", () => {
-  it("places a persisted settled thread in the settled shelf", () => {
-    const thread = makeThread({
-      id: ThreadId.make("linked-merged"),
-      title: "Linked merged pull request",
-      linkedPullRequest,
-      settledOverride: "settled",
-      settledAt: NOW,
-    });
-    const layout = buildThreadListV2Items({
-      threads: [thread],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-
-    expect(layout.settledCount).toBe(1);
-    expect(layout.items[0]?.variant).toBe("slim");
-  });
-
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [
@@ -1708,17 +1682,6 @@ describe("threadListV2ListItemsAreEqual", () => {
   });
 });
 
-describe("isThreadListV2ListItem", () => {
-  it("narrows the v2 kinds and rejects the legacy discriminators", () => {
-    expect(isThreadListV2ListItem({ type: "v2-thread" })).toBe(true);
-    expect(isThreadListV2ListItem({ type: "v2-pending" })).toBe(true);
-    expect(isThreadListV2ListItem({ type: "v2-snoozed-shelf" })).toBe(true);
-    expect(isThreadListV2ListItem({ type: "v2-settled-shelf" })).toBe(true);
-    expect(isThreadListV2ListItem({ type: "thread" })).toBe(false);
-    expect(isThreadListV2ListItem({ type: "v2-show-more" })).toBe(false);
-  });
-});
-
 describe("buildThreadListV2ListItems clock scoping", () => {
   const allEnvironments = new Set<EnvironmentId>([environmentId]);
   const tickQueued = () => [makePendingTask("tick-queued")];
@@ -1965,33 +1928,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     const settledClosed = itemsByThreadKey(closed).get(`v2-thread:${environmentId}:stamp-settled`)!;
     expect(settledOpen.type === "v2-thread" && settledOpen.canMoveUp).toBe(false);
     expect(threadListV2ListItemsAreEqual(settledOpen, settledClosed)).toBe(true);
-  });
-
-  it("keeps the settled slim row's swipe snooze menu fresh across a tick", () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(BASE_MS);
-      const atStart = buildTickList([settledThread], BASE_MS, [], {
-        snoozeEnvironmentIds: allEnvironments,
-      });
-      vi.setSystemTime(BASE_MS + MINUTE_MS);
-      const atNextMinute = buildTickList([settledThread], BASE_MS + MINUTE_MS, [], {
-        snoozeEnvironmentIds: allEnvironments,
-      });
-      const rowAtStart = atStart.find((item) => item.type === "v2-thread")!;
-      const rowAtNext = atNextMinute.find((item) => item.type === "v2-thread")!;
-      // The swipe-revealed secondary action carries the snooze preset menu on
-      // slim rows; its minute clock must move, or the displayed wake times
-      // drift while the row is recycled-stable.
-      expect(rowAtStart.type === "v2-thread" && rowAtStart.item.variant).toBe("slim");
-      expect(rowAtStart.type === "v2-thread" && rowAtStart.snoozePresetMinute).toBe(isoAt(BASE_MS));
-      expect(rowAtNext.type === "v2-thread" && rowAtNext.snoozePresetMinute).toBe(
-        isoAt(BASE_MS + MINUTE_MS),
-      );
-      expect(threadListV2ListItemsAreEqual(rowAtStart, rowAtNext)).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("stamps the shelf loading-disabled state so recycled headers refresh", () => {

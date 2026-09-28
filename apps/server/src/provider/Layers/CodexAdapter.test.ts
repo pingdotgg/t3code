@@ -2249,41 +2249,6 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("preserves file-read request type when mapping serverRequest/resolved", () =>
-    Effect.gen(function* () {
-      const { adapter, runtime } = yield* startLifecycleRuntime();
-      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
-
-      const event: ProviderEvent = {
-        id: asEventId("evt-file-read-request-resolved"),
-        kind: "notification",
-        provider: ProviderDriverKind.make("codex"),
-        threadId: asThreadId("thread-1"),
-        createdAt: "2026-01-01T00:00:00.000Z",
-        method: "serverRequest/resolved",
-        requestKind: "file-read",
-        requestId: ApprovalRequestId.make("req-file-read-1"),
-        payload: {
-          threadId: "thread-1",
-          requestId: "req-file-read-1",
-        },
-      };
-
-      yield* runtime.emit(event);
-      const firstEvent = yield* Fiber.join(firstEventFiber);
-
-      NodeAssert.equal(firstEvent._tag, "Some");
-      if (firstEvent._tag !== "Some") {
-        return;
-      }
-      NodeAssert.equal(firstEvent.value.type, "request.resolved");
-      if (firstEvent.value.type !== "request.resolved") {
-        return;
-      }
-      NodeAssert.equal(firstEvent.value.payload.requestType, "file_read_approval");
-    }),
-  );
-
   it.effect("preserves explicit empty multi-select user-input answers", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

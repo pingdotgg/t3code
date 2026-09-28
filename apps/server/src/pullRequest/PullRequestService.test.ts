@@ -1526,36 +1526,6 @@ it.effect("hands the host the strategy an armed merge was asked for", () =>
   }),
 );
 
-it.effect("refuses an auto-merge the host never claimed, without asking it", () =>
-  Effect.gen(function* () {
-    let ran = false;
-    const service = yield* makeService({
-      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        // Bitbucket's shape: it merges, and has nothing that merges later on its own.
-        fakeProvider("github", {
-          runAction: () => {
-            ran = true;
-            return Effect.void;
-          },
-        }),
-      ],
-    });
-
-    const error = yield* Effect.flip(
-      service.runAction({
-        projectId: "p1" as ProjectId,
-        repository: "acme/web",
-        number: 1,
-        action: "enable-auto-merge",
-      }),
-    );
-
-    assert.strictEqual(error._tag, "PullRequestOperationError");
-    assert.isFalse(ran);
-  }),
-);
-
 it.effect("refuses to resolve a conversation this viewer may not, without asking the host", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

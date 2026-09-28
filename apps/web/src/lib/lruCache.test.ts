@@ -2,11 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { LRUCache } from "./lruCache";
 
 describe("LRUCache", () => {
-  it("returns null for missing keys", () => {
-    const cache = new LRUCache<string>(2, 100);
-    expect(cache.get("missing")).toBeNull();
-  });
-
   it("evicts oldest by max entries", () => {
     const cache = new LRUCache<string>(2, 1_000);
     cache.set("a", "A", 10);

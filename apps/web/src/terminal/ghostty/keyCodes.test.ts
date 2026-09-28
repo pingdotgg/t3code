@@ -1,13 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import keyEventHeader from "../../../../../native/libghostty-vt/include/ghostty/vt/key/event.h?raw";
 import { ghosttyConsumedMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+
+// GhosttyKey enumerators in declaration order, so each index is its value.
+const pinnedGhosttyKeys = Array.from(
+  keyEventHeader
+    .slice(
+      keyEventHeader.indexOf("GHOSTTY_KEY_UNIDENTIFIED"),
+      keyEventHeader.indexOf("GHOSTTY_KEY_MAX_VALUE"),
+    )
+    .matchAll(/GHOSTTY_KEY_\w+/g),
+  (match) => match[0],
+);
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
-    expect(ghosttyKeyForCode("F25")).toBe(ghosttyKeyForCode("F24") + 1);
-    expect(ghosttyKeyForCode("PrintScreen")).toBe(ghosttyKeyForCode("FnLock") + 1);
-    expect(ghosttyKeyForCode("Pause")).toBe(ghosttyKeyForCode("ScrollLock") + 1);
-    expect(ghosttyKeyForCode("Paste")).toBe(ghosttyKeyForCode("Cut") + 1);
+    for (const code of ["F24", "F25", "FnLock", "PrintScreen", "ScrollLock", "Pause", "Paste"]) {
+      const enumerator = `GHOSTTY_KEY_${code.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}`;
+      expect(ghosttyKeyForCode(code)).toBe(pinnedGhosttyKeys.indexOf(enumerator));
+    }
   });
 });
 

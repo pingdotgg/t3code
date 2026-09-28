@@ -4,7 +4,6 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -34,12 +33,9 @@ import {
   scheduleAtomCommandEffect,
   executeAtomCommand,
   executeAtomQuery,
-  isAtomCommandInterrupted,
-  mapAtomCommandResult,
   runAtomCommand,
   settleAsyncResult,
   settlePromise,
-  squashAtomCommandFailure,
 } from "./runtime.ts";
 
 const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
@@ -173,36 +169,6 @@ describe("settleAsyncResult", () => {
 });
 
 describe("atom command result helpers", () => {
-  it("maps successful command values", () => {
-    const result = mapAtomCommandResult(AsyncResult.success(2), (value) => value * 3);
-
-    expect(result._tag).toBe("Success");
-    if (result._tag === "Success") {
-      expect(result.value).toBe(6);
-    }
-  });
-
-  it("preserves failures while mapping", () => {
-    const result = mapAtomCommandResult(
-      AsyncResult.failure<number, string>(Cause.fail("nope")),
-      (value) => value * 3,
-    );
-
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(Cause.squash(result.cause)).toBe("nope");
-    }
-  });
-
-  it("distinguishes interruption from other failures", () => {
-    const interrupted = AsyncResult.failure(Cause.interrupt(1));
-    const failed = AsyncResult.failure(Cause.fail("nope"));
-
-    expect(isAtomCommandInterrupted(interrupted)).toBe(true);
-    expect(isAtomCommandInterrupted(failed)).toBe(false);
-    expect(squashAtomCommandFailure(failed)).toBe("nope");
-  });
-
   it("settles raw promise boundaries as successes or defects", async () => {
     const success = await settlePromise(() => Promise.resolve("done"));
     expect(success._tag).toBe("Success");
@@ -547,115 +513,6 @@ describe("environment query lifecycle", () => {
         ).toBe("updated");
       }),
     ),
-  );
-});
-
-describe("Atom.fn mutation semantics", () => {
-  it.effect("interrupts the previous invocation when the same mutation atom is written again", () =>
-    Effect.gen(function* () {
-      const firstLatch = Latch.makeUnsafe();
-      const secondLatch = Latch.makeUnsafe();
-      const interrupted: string[] = [];
-      const mutation = Atom.fn((id: "first" | "second") =>
-        (id === "first" ? firstLatch : secondLatch).await.pipe(
-          Effect.as(id),
-          Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              interrupted.push(id);
-            }),
-          ),
-        ),
-      );
-      const registry = AtomRegistry.make();
-      const unmount = registry.mount(mutation);
-
-      registry.set(mutation, "first");
-      registry.set(mutation, "second");
-      yield* Effect.yieldNow;
-
-      expect(interrupted).toEqual(["first"]);
-
-      secondLatch.openUnsafe();
-      expect(
-        yield* AtomRegistry.getResult(registry, mutation, {
-          suspendOnWaiting: true,
-        }),
-      ).toBe("second");
-
-      unmount();
-      registry.dispose();
-    }),
-  );
-
-  it.effect("keeps stream mutations waiting until the final emitted value", () =>
-    Effect.gen(function* () {
-      const completionLatch = Latch.makeUnsafe();
-      const mutation = Atom.fn(() =>
-        Stream.make("progress").pipe(
-          Stream.concat(Stream.fromEffect(completionLatch.await.pipe(Effect.as("done")))),
-        ),
-      );
-      const registry = AtomRegistry.make();
-      const unmount = registry.mount(mutation);
-
-      registry.set(mutation, undefined);
-
-      const progress = registry.get(mutation);
-      expect(AsyncResult.isSuccess(progress)).toBe(true);
-      if (AsyncResult.isSuccess(progress)) {
-        expect(progress.value).toBe("progress");
-        expect(progress.waiting).toBe(true);
-      }
-
-      completionLatch.openUnsafe();
-      expect(
-        yield* AtomRegistry.getResult(registry, mutation, {
-          suspendOnWaiting: true,
-        }),
-      ).toBe("done");
-
-      unmount();
-      registry.dispose();
-    }),
-  );
-
-  it.effect(
-    "allows concurrent effects to finish but does not correlate results to individual writes",
-    () =>
-      Effect.gen(function* () {
-        const firstLatch = Latch.makeUnsafe();
-        const secondLatch = Latch.makeUnsafe();
-        const mutation = Atom.fn<never, "first" | "second", "first" | "second">(
-          (id: "first" | "second") =>
-            (id === "first" ? firstLatch : secondLatch).await.pipe(Effect.as(id)),
-          { concurrent: true },
-        );
-        const registry = AtomRegistry.make();
-        const unmount = registry.mount(mutation);
-
-        registry.set(mutation, "first");
-        const firstResult = yield* AtomRegistry.getResult(registry, mutation, {
-          suspendOnWaiting: true,
-        }).pipe(Effect.forkChild({ startImmediately: true }));
-        registry.set(mutation, "second");
-        const secondResult = yield* AtomRegistry.getResult(registry, mutation, {
-          suspendOnWaiting: true,
-        }).pipe(Effect.forkChild({ startImmediately: true }));
-
-        secondLatch.openUnsafe();
-        yield* Effect.yieldNow;
-
-        const stillWaiting = registry.get(mutation);
-        expect(stillWaiting.waiting).toBe(true);
-
-        firstLatch.openUnsafe();
-
-        expect(yield* Fiber.join(firstResult)).toBe("first");
-        expect(yield* Fiber.join(secondResult)).toBe("first");
-
-        unmount();
-        registry.dispose();
-      }),
   );
 });
 

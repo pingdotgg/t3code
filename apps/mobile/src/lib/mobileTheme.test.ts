@@ -12,7 +12,6 @@ import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 import {
-  createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
   createMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
@@ -66,14 +65,6 @@ describe("mobile themes", () => {
     expect(Object.keys(readDefaultMobileThemeVariables("dark")).sort()).toEqual(
       Object.keys(generatedVariables).sort(),
     );
-  });
-
-  it("shares all built-in desktop palettes", () => {
-    expect(BUILT_IN_THEMES.map((theme) => theme.id)).toEqual(BUILT_IN_THEME_IDS);
-    for (const themeId of BUILT_IN_THEME_IDS) {
-      expect(getMobileThemeVariables(themeId, "light")["--color-screen"]).toMatch(/^#/);
-      expect(getMobileThemeVariables(themeId, "dark")["--color-screen"]).toMatch(/^#/);
-    }
   });
 
   it.each(MOBILE_THEME_IDS)("uses the web color roles for %s in both appearances", (themeId) => {
@@ -272,14 +263,6 @@ describe("mobile themes", () => {
     });
   });
 
-  it("changes both appearance themes from the card action", () => {
-    expect(createMobileThemePairPatch("ember")).toEqual({
-      lightThemeId: "ember",
-      darkThemeId: "ember",
-      themeId: "ember",
-    });
-  });
-
   it("converts OKLCH colors to React Native sRGB ColorValues", () => {
     expect(themeColorToNativeColor("oklch(1 0 0)")).toBe("#ffffff");
     expect(themeColorToNativeColor("oklch(0 0 0)")).toBe("#000000");
@@ -307,15 +290,6 @@ describe("mobile themes", () => {
     expect(variables["--color-backdrop"]).toBe("rgba(0, 0, 0, 0.22)");
     expect(variables["--color-drawer-shadow"]).toBe("rgba(0, 0, 0, 0.12)");
     expect(variables["--color-user-bubble-foreground"]).toMatch(/^#/);
-  });
-
-  it("keeps every built-in shadow and backdrop black-based in dark mode", () => {
-    for (const themeId of BUILT_IN_THEME_IDS) {
-      const variables = getMobileThemeVariables(themeId, "dark");
-      expect(variables["--color-primary-shadow"]).toBe("#000000");
-      expect(variables["--color-backdrop"]).toBe("rgba(0, 0, 0, 0.48)");
-      expect(variables["--color-drawer-shadow"]).toBe("rgba(0, 0, 0, 0.32)");
-    }
   });
 
   it("keeps placeholders and selected-row labels readable on their mobile surfaces", () => {

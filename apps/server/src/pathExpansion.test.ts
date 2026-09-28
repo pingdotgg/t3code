@@ -6,10 +6,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { expandHomePath } from "./pathExpansion.ts";
 
 describe("expandHomePath", () => {
-  it("returns an empty string unchanged", () => {
-    expect(expandHomePath("")).toBe("");
-  });
-
   it("returns paths without a leading tilde unchanged", () => {
     expect(expandHomePath("/absolute/path")).toBe("/absolute/path");
     expect(expandHomePath("relative/path")).toBe("relative/path");

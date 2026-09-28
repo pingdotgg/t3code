@@ -209,7 +209,7 @@ type ProjectPathSearchTarget = ComposerPathSearchTarget & {
   readonly imageOnly?: boolean | undefined;
 };
 
-export function areProjectPathSearchTargetsEqual(
+function areProjectPathSearchTargetsEqual(
   left: ProjectPathSearchTarget,
   right: ProjectPathSearchTarget,
 ): boolean {

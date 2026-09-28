@@ -11,7 +11,6 @@ import {
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
-  shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
 
 describe("isWindowsDrivePathHref", () => {
@@ -58,26 +57,6 @@ describe("extractMarkdownLinkHrefs", () => {
         '[source](apps/web/src/markdown-links.ts "implementation") and [docs](https://example.com)',
       ),
     ).toEqual(["apps/web/src/markdown-links.ts", "https://example.com"]);
-  });
-});
-
-describe("shouldOpenMarkdownFileLinkInEditor", () => {
-  it("uses command-click on macOS", () => {
-    expect(shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "MacIntel")).toBe(
-      true,
-    );
-    expect(shouldOpenMarkdownFileLinkInEditor({ metaKey: false, ctrlKey: true }, "MacIntel")).toBe(
-      false,
-    );
-  });
-
-  it("uses control-click on other platforms", () => {
-    expect(
-      shouldOpenMarkdownFileLinkInEditor({ metaKey: false, ctrlKey: true }, "Linux x86_64"),
-    ).toBe(true);
-    expect(
-      shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "Linux x86_64"),
-    ).toBe(false);
   });
 });
 
@@ -175,12 +154,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("resolves file uri authorities as windows UNC paths", () => {
     expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
       "\\\\server\\share\\workspace-image.svg",
-    );
-  });
-
-  it("resolves a localhost file uri as a local path", () => {
-    expect(resolveMarkdownFileLinkTarget("file://localhost/home/me/notes.md")).toBe(
-      "/home/me/notes.md",
     );
   });
 
@@ -509,12 +482,6 @@ describe("directory paths with a trailing separator", () => {
     expect(
       resolveMarkdownFileLinkMeta("C:\\Users\\kelchm\\.claude\\", "/repo/project"),
     ).toMatchObject({ basename: ".claude" });
-  });
-
-  it("matches the label of the same path without a trailing separator", () => {
-    const withSlash = resolveMarkdownFileLinkMeta("/tmp/favicons/", "/repo/project");
-    const withoutSlash = resolveMarkdownFileLinkMeta("/tmp/favicons", "/repo/project");
-    expect(withSlash?.basename).toBe(withoutSlash?.basename);
   });
 
   it("does not produce an empty label for the filesystem root", () => {

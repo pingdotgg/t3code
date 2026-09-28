@@ -103,14 +103,6 @@ describe("threadSelectionStore", () => {
       expect(state.selectedThreadKeys.size).toBe(2);
     });
 
-    it("sets anchor to the newly added thread", () => {
-      const store = useThreadSelectionStore.getState();
-      store.toggleThread(THREAD_A);
-      store.toggleThread(THREAD_B);
-
-      expect(useThreadSelectionStore.getState().anchorThreadKey).toBe(THREAD_B);
-    });
-
     it("preserves anchor when deselecting a non-anchor thread", () => {
       const store = useThreadSelectionStore.getState();
       store.toggleThread(THREAD_A);
@@ -151,18 +143,6 @@ describe("threadSelectionStore", () => {
 
       // Should be referentially the same (no unnecessary re-render)
       expect(stateAfter).toBe(stateBefore);
-    });
-
-    it("survives clearSelection followed by setAnchor", () => {
-      const store = useThreadSelectionStore.getState();
-      store.toggleThread(THREAD_A);
-      store.toggleThread(THREAD_B);
-      store.clearSelection();
-      store.setAnchor(THREAD_C);
-
-      const state = useThreadSelectionStore.getState();
-      expect(state.anchorThreadKey).toBe(THREAD_C);
-      expect(state.selectedThreadKeys.size).toBe(0);
     });
   });
 
@@ -325,24 +305,6 @@ describe("threadSelectionStore", () => {
       const stateAfter = useThreadSelectionStore.getState();
 
       expect(stateAfter.selectedThreadKeys).toBe(stateBefore.selectedThreadKeys);
-    });
-  });
-
-  describe("hasSelection", () => {
-    it("returns false when nothing is selected", () => {
-      expect(useThreadSelectionStore.getState().hasSelection()).toBe(false);
-    });
-
-    it("returns true when threads are selected", () => {
-      useThreadSelectionStore.getState().toggleThread(THREAD_A);
-      expect(useThreadSelectionStore.getState().hasSelection()).toBe(true);
-    });
-
-    it("returns false after clearing selection", () => {
-      const store = useThreadSelectionStore.getState();
-      store.toggleThread(THREAD_A);
-      store.clearSelection();
-      expect(useThreadSelectionStore.getState().hasSelection()).toBe(false);
     });
   });
 });

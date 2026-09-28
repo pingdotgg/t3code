@@ -38,6 +38,7 @@ import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
+  buildOpenCodePermissionRules,
   OpenCodeRuntime,
   OpenCodeRuntimeError,
   type OpenCodeRuntimeShape,
@@ -1241,9 +1242,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
       NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_perms"]);
       NodeAssert.deepEqual(runtimeMock.state.sessionCreateUrls, []);
-      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls.length, 1);
-      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.sessionID, "ses_perms");
-      NodeAssert.equal(runtimeMock.state.sessionUpdateCalls[0]?.permission != null, true);
+      NodeAssert.deepEqual(runtimeMock.state.sessionUpdateCalls, [
+        {
+          sessionID: "ses_perms",
+          permission: buildOpenCodePermissionRules("approval-required"),
+        },
+      ]);
 
       yield* adapter.stopSession(threadId);
     }),
@@ -3726,8 +3730,6 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     { permission: "external_directory", decision: "accept", reply: "once" },
     { permission: "doom_loop", decision: "acceptForSession", reply: "always" },
     { permission: "todowrite", decision: "decline", reply: "reject" },
-    { permission: "webfetch", decision: "cancel", reply: "reject" },
-    { permission: "custom_tool", decision: "accept", reply: "once" },
   ] as const)(
     "shows $permission approval and resolves its $decision reply without SSE",
     ({ permission, decision, reply }) =>

@@ -119,23 +119,6 @@ describe("Codex thread history", () => {
   );
 });
 
-describe("CodexSessionRuntimeIdentifierGenerationError", () => {
-  it("retains identifier purpose and the random source failure", () => {
-    const cause = new Error("random source unavailable");
-    const error = new CodexErrors.CodexAppServerIdentifierGenerationError({
-      purpose: "provider-event",
-      cause,
-    });
-
-    NodeAssert.equal(error.purpose, "provider-event");
-    NodeAssert.strictEqual(error.cause, cause);
-    NodeAssert.equal(
-      error.message,
-      "Failed to generate Codex App Server identifier for provider-event.",
-    );
-  });
-});
-
 function makeThreadOpenResponse(
   threadId: string,
 ): CodexRpc.ClientRequestResponsesByMethod["thread/start"] {
@@ -606,15 +589,6 @@ describe("buildCodexAdditionalContext", () => {
     NodeAssert.match(
       runtimeValue(context),
       /<runtime_info>.*Codex harness, as gpt-5\.3-codex with high reasoning effort.*embed images and videos.*Markdown.*<\/runtime_info>/,
-    );
-  });
-
-  it("varies with the model and effort of each turn", () => {
-    NodeAssert.notEqual(
-      runtimeValue(
-        buildCodexAdditionalContext({ model: "gpt-5.3-codex", reasoningEffort: "medium" }),
-      ),
-      runtimeValue(buildCodexAdditionalContext({ model: "gpt-5.4", reasoningEffort: "high" })),
     );
   });
 

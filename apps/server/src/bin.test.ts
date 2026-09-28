@@ -429,14 +429,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
-  it.effect("accepts canonical --no-<flag> boolean negation", () =>
-    Effect.gen(function* () {
-      const { output } = yield* captureStdout(runCli(["--no-log-websocket-events", "--version"]));
-
-      assert.include(output, "0.0.0");
-    }),
-  );
-
   it.effect("rejects invalid log-level casing before launching the server", () =>
     Effect.gen(function* () {
       const error = yield* runCliWithRuntime(["--log-level", "Debug"]).pipe(Effect.flip);
@@ -748,63 +740,6 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         (project) => project.id === addedProject?.id,
       );
       assert.isTrue((removedProject?.deletedAt ?? null) !== null);
-    }),
-  );
-
-  it.effect("force removes projects that still contain threads", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-force-remove-test-"),
-      );
-      const workspaceRoot = NodeFS.mkdtempSync(
-        NodePath.join(NodeOS.tmpdir(), "t3-cli-projects-force-remove-workspace-"),
-      );
-
-      yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
-      const afterAdd = yield* readPersistedSnapshot(baseDir);
-      const project = afterAdd.projects.find(
-        (candidate) => candidate.workspaceRoot === workspaceRoot && candidate.deletedAt === null,
-      );
-      assert.isTrue(project !== undefined);
-
-      const config = yield* makeCliTestServerConfig(baseDir);
-      yield* Effect.gen(function* () {
-        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-        yield* engine.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("cmd-cli-force-remove-thread"),
-          threadId: ThreadId.make("thread-cli-force-remove"),
-          projectId: project!.id,
-          title: "Thread",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5-codex",
-          },
-          interactionMode: "default",
-          runtimeMode: "approval-required",
-          branch: null,
-          worktreePath: null,
-          createdAt: DateTime.formatIso(yield* DateTime.now),
-        });
-      }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
-
-      yield* runCliWithRuntime([
-        "project",
-        "remove",
-        project!.id,
-        "--force",
-        "--base-dir",
-        baseDir,
-      ]);
-      const afterRemove = yield* readPersistedSnapshot(baseDir);
-      assert.isTrue(
-        (afterRemove.projects.find((candidate) => candidate.id === project!.id)?.deletedAt ??
-          null) !== null,
-      );
-      assert.isTrue(
-        (afterRemove.threads.find((thread) => thread.id === "thread-cli-force-remove")?.deletedAt ??
-          null) !== null,
-      );
     }),
   );
 

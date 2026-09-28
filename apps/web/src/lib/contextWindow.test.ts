@@ -69,18 +69,4 @@ describe("contextWindow", () => {
     expect(formatContextWindowTokens(14_000)).toBe("14k");
     expect(formatContextWindowTokens(258_000)).toBe("258k");
   });
-
-  it("includes total processed tokens when available", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([
-      makeActivity("activity-1", "context-window.updated", {
-        usedTokens: 81_659,
-        totalProcessedTokens: 748_126,
-        maxTokens: 258_400,
-        lastUsedTokens: 81_659,
-      }),
-    ]);
-
-    expect(snapshot?.usedTokens).toBe(81_659);
-    expect(snapshot?.totalProcessedTokens).toBe(748_126);
-  });
 });

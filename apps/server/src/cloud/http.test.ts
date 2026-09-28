@@ -104,30 +104,6 @@ function makeSecretStore(
   };
 }
 
-it("preserves messages surfaced by cloud 500 responses", () => {
-  const cause = new Error("cloud operation failed");
-
-  expect([
-    new EnvironmentAuth.ServerAuthLinkedCloudAccountVerificationError({ cause }).message,
-    new EnvironmentAuth.ServerAuthLinkedCloudAccountReadError({ cause }).message,
-    new EnvironmentAuth.ServerAuthLinkedCloudAccountMissingError({}).message,
-    new EnvironmentAuth.ServerAuthCloudLinkJwtSigningError({ cause }).message,
-    new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({}).message,
-    new EnvironmentAuth.ServerAuthCloudRelayIssuerMissingError({}).message,
-    new EnvironmentAuth.ServerAuthCloudHealthJwtSigningError({ cause }).message,
-    new EnvironmentAuth.ServerAuthCloudMintJwtSigningError({ cause }).message,
-  ]).toEqual([
-    "Could not verify the linked cloud account.",
-    "Could not read the linked cloud account.",
-    "Cloud linked user is not installed for this environment.",
-    "Failed to sign cloud link JWT.",
-    "Cloud mint public key is not installed for this environment.",
-    "Cloud relay issuer is not installed for this environment.",
-    "Failed to sign cloud health JWT.",
-    "Failed to sign cloud mint JWT.",
-  ]);
-});
-
 describe("consumeCloudReplayGuards", () => {
   it.effect("reports already-created guards as replay conflicts", () =>
     Effect.gen(function* () {

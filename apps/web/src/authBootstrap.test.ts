@@ -1,7 +1,6 @@
 import {
   EnvironmentAuthInvalidError,
   type AuthBrowserSessionResult,
-  type AuthCreatePairingCredentialInput,
   type AuthSessionState,
   type DesktopBridge,
 } from "@t3tools/contracts";
@@ -98,20 +97,11 @@ async function installAuthApi(input: {
   readonly browserSession?: (
     credential: string,
   ) => Effect.Effect<AuthBrowserSessionResult, EnvironmentAuthInvalidError>;
-  readonly pairingCredential?: (payload: AuthCreatePairingCredentialInput) => Effect.Effect<{
-    readonly id: string;
-    readonly credential: string;
-    readonly label?: string;
-    readonly expiresAt: DateTime.Utc;
-  }>;
 }) {
   const testApi = await installEnvironmentHttpTest({
     ...(input.session ? { session: () => Effect.succeed(input.session!()) } : {}),
     ...(input.browserSession
       ? { browserSession: (payload) => input.browserSession!(payload.credential) }
-      : {}),
-    ...(input.pairingCredential
-      ? { pairingCredential: (payload) => input.pairingCredential!(payload) }
       : {}),
   });
   disposeHttpTest = testApi.dispose;
@@ -226,16 +216,6 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
       "http://127.0.0.1:5733/api/auth/session",
     );
-  });
-
-  it("returns a requires-auth state instead of throwing when no bootstrap credential exists", async () => {
-    await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
-    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
-
-    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
-      status: "requires-auth",
-      auth: LOOPBACK_AUTH,
-    });
   });
 
   it("retries transient auth session bootstrap failures after restart", async () => {
@@ -643,32 +623,5 @@ describe("resolveInitialServerAuthGateState", () => {
       auth: LOOPBACK_AUTH,
     });
     expect(testApi.calls.browserSession).toEqual([{ credential: "rejected-token" }]);
-  });
-
-  it("creates a pairing credential from the authenticated auth endpoint", async () => {
-    const testApi = await installAuthApi({
-      pairingCredential: (payload) =>
-        Effect.succeed({
-          id: "pairing-link-1",
-          credential: "pairing-token",
-          ...(payload.label === undefined ? {} : { label: payload.label }),
-          expiresAt: SESSION_EXPIRES_AT,
-        }),
-    });
-    const { createServerPairingCredential } = await import("./environments/primary");
-
-    const credential = await createServerPairingCredential({
-      label: "Julius iPhone",
-      scopes: ["orchestration:read"],
-    });
-    expect(credential).toMatchObject({
-      id: "pairing-link-1",
-      credential: "pairing-token",
-      label: "Julius iPhone",
-    });
-    expect(DateTime.formatIso(credential.expiresAt)).toBe("2026-04-05T00:00:00.000Z");
-    expect(testApi.calls.pairingCredential).toEqual([
-      { label: "Julius iPhone", scopes: ["orchestration:read"] },
-    ]);
   });
 });

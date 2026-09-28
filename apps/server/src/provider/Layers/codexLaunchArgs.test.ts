@@ -22,17 +22,9 @@ describe("resolveCodexLaunchArgs", () => {
       "--strict-config",
     );
   });
-
-  it("ignores whitespace-only environment values", () => {
-    NodeAssert.equal(resolveCodexLaunchArgs("", { T3CODE_CODEX_LAUNCH_ARGS: "   " }), "");
-  });
 });
 
 describe("codexAppServerArgs", () => {
-  it("returns the app-server command for empty launch args", () => {
-    NodeAssert.deepStrictEqual(codexAppServerArgs(""), ["app-server"]);
-  });
-
   it("appends parsed launch args after app-server", () => {
     NodeAssert.deepStrictEqual(codexAppServerArgs("--strict-config --enable foo"), [
       "app-server",

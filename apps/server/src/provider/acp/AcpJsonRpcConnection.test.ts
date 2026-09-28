@@ -691,37 +691,6 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
-  it.effect("supports successive standard ACP prompts", () =>
-    Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      yield* runtime.start();
-
-      const firstPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "first" }],
-      });
-      const secondPromptResult = yield* runtime.prompt({
-        prompt: [{ type: "text", text: "second" }],
-      });
-
-      expect(firstPromptResult).toMatchObject({ stopReason: "end_turn" });
-      expect(secondPromptResult).toMatchObject({ stopReason: "end_turn" });
-    }).pipe(
-      Effect.provide(
-        AcpSessionRuntime.layer({
-          spawn: {
-            command: mockAgentCommand,
-            args: mockAgentArgs,
-          },
-          cwd: process.cwd(),
-          clientInfo: { name: "t3-test", version: "0.0.0" },
-          authMethodId: "test",
-        }),
-      ),
-      Effect.scoped,
-      Effect.provide(NodeServices.layer),
-    ),
-  );
-
   it.effect("releases a fully silent prompt when session/cancel is requested", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

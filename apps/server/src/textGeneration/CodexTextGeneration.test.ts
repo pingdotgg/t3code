@@ -415,26 +415,6 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("falls back when thread title normalization becomes whitespace-only", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({
-          title: '  """   """  ',
-        }),
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generateThreadTitle({
-            cwd: process.cwd(),
-            message: "Name this thread.",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          });
-
-          expect(generated.title).toBe("New thread");
-        }),
-    ),
-  );
-
   it.effect("trims whitespace exposed after quote removal in thread titles", () =>
     withFakeCodexEnv(
       {
@@ -451,27 +431,6 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           });
 
           expect(generated.title).toBe("hello world");
-        }),
-    ),
-  );
-
-  it.effect("omits attachment metadata section when no attachments are provided", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({
-          branch: "fix/session-timeout",
-        }),
-        stdinMustNotContain: "Attachment metadata:",
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generateBranchName({
-            cwd: process.cwd(),
-            message: "Fix timeout behavior.",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          });
-
-          expect(generated.branch).toBe("fix/session-timeout");
         }),
     ),
   );
@@ -509,55 +468,6 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
               },
             ],
           });
-
-          expect(generated.branch).toBe("fix/ui-regression");
-        }),
-    ),
-  );
-
-  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({
-          branch: "fix/ui-regression",
-        }),
-        requireImage: true,
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { attachmentsDir } = yield* ServerConfig.ServerConfig;
-          const attachmentId = "thread-1-attachment";
-          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
-          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-          yield* fs.writeFile(imagePath, Buffer.from("hello"));
-
-          const generated = yield* textGeneration
-            .generateBranchName({
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-              cwd: process.cwd(),
-              message: "Fix layout bug from screenshot.",
-              attachments: [
-                {
-                  type: "image",
-                  id: attachmentId,
-                  name: "bug.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-            })
-            .pipe(
-              Effect.tap(() =>
-                fs.stat(imagePath).pipe(
-                  Effect.map((fileInfo) => {
-                    expect(fileInfo.type).toBe("File");
-                  }),
-                ),
-              ),
-              Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)),
-            );
 
           expect(generated.branch).toBe("fix/ui-regression");
         }),

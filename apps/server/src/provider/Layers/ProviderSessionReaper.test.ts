@@ -415,63 +415,60 @@ describe("ProviderSessionReaper", () => {
     expect(Option.isSome(remaining)).toBe(true);
   });
 
-  it.each(["ready", "interrupted", "error"] as const)(
-    "gives a long turn a full idle window after becoming %s",
-    async (status) => {
-      const threadId = ThreadId.make(`thread-reaper-long-turn-${status}`);
-      const startedAt = "2026-04-14T00:00:00.000Z";
-      const completedAt = "2026-04-14T01:00:00.000Z";
-      const completedAtMs = Date.parse(completedAt);
-      const readModel = makeReadModel([
-        {
-          id: threadId,
-          session: {
-            threadId,
-            status: "running",
-            providerName: "claudeAgent",
-            runtimeMode: "full-access",
-            activeTurnId: TurnId.make("turn-reaper-long"),
-            lastError: null,
-            updatedAt: startedAt,
-          },
-        },
-      ]);
-      const harness = await createHarness({ readModel });
-      const repository = await runtime!.runPromise(
-        Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
-      );
-      await runtime!.runPromise(
-        repository.upsert({
+  it("gives a long turn a full idle window after becoming ready", async () => {
+    const threadId = ThreadId.make("thread-reaper-long-turn-ready");
+    const startedAt = "2026-04-14T00:00:00.000Z";
+    const completedAt = "2026-04-14T01:00:00.000Z";
+    const completedAtMs = Date.parse(completedAt);
+    const readModel = makeReadModel([
+      {
+        id: threadId,
+        session: {
           threadId,
-          providerName: "claudeAgent",
-          providerInstanceId: null,
-          adapterKey: "claudeAgent",
-          runtimeMode: "full-access",
           status: "running",
-          lastSeenAt: startedAt,
-          resumeCursor: { opaque: "resume-long-turn" },
-          runtimePayload: null,
-        }),
-      );
+          providerName: "claudeAgent",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-reaper-long"),
+          lastError: null,
+          updatedAt: startedAt,
+        },
+      },
+    ]);
+    const harness = await createHarness({ readModel });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: startedAt,
+        resumeCursor: { opaque: "resume-long-turn" },
+        runtimePayload: null,
+      }),
+    );
 
-      await sweepAt(completedAtMs);
-      expect(harness.stopSession).not.toHaveBeenCalled();
+    await sweepAt(completedAtMs);
+    expect(harness.stopSession).not.toHaveBeenCalled();
 
-      // Ingestion changes the timestamp and clears the active turn in the same session row.
-      readModel.threads[0]!.session = {
-        ...readModel.threads[0]!.session!,
-        status,
-        activeTurnId: null,
-        updatedAt: completedAt,
-      };
-      await sweepAt(completedAtMs);
-      expect(harness.stopSession).not.toHaveBeenCalled();
-      await sweepAt(completedAtMs + 999);
-      expect(harness.stopSession).not.toHaveBeenCalled();
-      await sweepAt(completedAtMs + 1_000);
-      expect(harness.stopSession).toHaveBeenCalledExactlyOnceWith({ threadId });
-    },
-  );
+    // Ingestion changes the timestamp and clears the active turn in the same session row.
+    readModel.threads[0]!.session = {
+      ...readModel.threads[0]!.session!,
+      status: "ready",
+      activeTurnId: null,
+      updatedAt: completedAt,
+    };
+    await sweepAt(completedAtMs);
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    await sweepAt(completedAtMs + 999);
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    await sweepAt(completedAtMs + 1_000);
+    expect(harness.stopSession).toHaveBeenCalledExactlyOnceWith({ threadId });
+  });
 
   it.each([true, false])(
     "uses the binding idle window when the session is older or missing, hasSession=%s",

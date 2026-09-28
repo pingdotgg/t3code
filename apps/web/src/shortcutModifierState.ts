@@ -14,7 +14,7 @@ const EMPTY_SHORTCUT_MODIFIER_STATE: ShortcutModifierState = {
   shiftKey: false,
 };
 
-export function areShortcutModifierStatesEqual(
+function areShortcutModifierStatesEqual(
   left: ShortcutModifierState,
   right: ShortcutModifierState,
 ): boolean {

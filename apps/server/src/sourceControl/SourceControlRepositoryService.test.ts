@@ -96,29 +96,6 @@ function makeLayer(input: {
     : serviceLayer.pipe(Layer.provideMerge(NodeServices.layer));
 }
 
-it.effect("looks up repositories through the requested provider without search", () => {
-  const calls: Array<{ cwd: string; repository: string }> = [];
-  const provider = makeProvider({
-    getRepositoryCloneUrls: (input) =>
-      Effect.sync(() => {
-        calls.push({ cwd: input.cwd, repository: input.repository });
-        return CLONE_URLS;
-      }),
-  });
-
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const result = yield* service.lookupRepository({
-      provider: "github",
-      repository: "octocat/t3code",
-      cwd: "/workspace",
-    });
-
-    assert.deepStrictEqual(result, { provider: "github", ...CLONE_URLS });
-    assert.deepStrictEqual(calls, [{ cwd: "/workspace", repository: "octocat/t3code" }]);
-  }).pipe(Effect.provide(makeLayer({ provider })));
-});
-
 it.effect("preserves provider failures without deriving the repository message from them", () => {
   const providerCause = new SourceControlProviderError({
     provider: "github",

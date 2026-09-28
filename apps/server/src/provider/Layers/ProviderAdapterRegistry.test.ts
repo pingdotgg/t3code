@@ -161,7 +161,7 @@ const layer = Layer.mergeAll(
 );
 
 it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
-  it("resolves adapters and routing metadata from provider instances", () =>
+  it.effect("resolves adapters and routing metadata from provider instances", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
       const claudeInstanceId = defaultInstanceIdForDriver(CLAUDE_AGENT_DRIVER);
@@ -189,7 +189,8 @@ it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
         defaultInstanceIdForDriver(OPENCODE_DRIVER),
         defaultInstanceIdForDriver(CURSOR_DRIVER),
       ]);
-    }));
+    }),
+  );
 });
 
 it.effect("blocks shared credential session startup and preserves guarded adapter identity", () =>

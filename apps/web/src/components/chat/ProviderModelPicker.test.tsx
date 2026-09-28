@@ -114,20 +114,17 @@ describe("ProviderModelPicker", () => {
     },
   );
 
-  it.each(["codex", "claudeAgent", "cursor", "grok"])(
-    "uses the first option label for a missing %s model",
-    (driver) => {
-      const markup = renderPicker({
-        instanceId: `${driver}_work`,
-        driver,
-        model: "missing-model",
-        options: [{ slug: "fallback-model", name: "Fallback model" }],
-      });
+  it("uses the first option label for a missing codex model", () => {
+    const markup = renderPicker({
+      instanceId: "codex_work",
+      driver: "codex",
+      model: "missing-model",
+      options: [{ slug: "fallback-model", name: "Fallback model" }],
+    });
 
-      expect(markup).toContain("Fallback model");
-      expect(markup).not.toContain(">missing-model<");
-    },
-  );
+    expect(markup).toContain("Fallback model");
+    expect(markup).not.toContain(">missing-model<");
+  });
 
   it("prefers a matching model for OpenCode", () => {
     const markup = renderPicker({

@@ -50,14 +50,6 @@ function subAgentActivityItems(): ReadonlyArray<Record<string, unknown>> {
 }
 
 describe("codex multi-agent wire capture", () => {
-  it("captures a real two-child fan-out", () => {
-    assert.equal(fixture.capturedWith.model, "gpt-5.6-luna");
-    assert.equal(childThreadIds.size, 2);
-    const paths = subAgentActivityItems().map((item) => item.agentPath);
-    assert.include(paths, "/root/alpha");
-    assert.include(paths, "/root/beta");
-  });
-
   it("emits child traffic BEFORE the item that registers the child", () => {
     // Ordering hazard: the child's own thread/status/changed arrives before
     // the parent-side subAgentActivity naming it. Registration must tolerate

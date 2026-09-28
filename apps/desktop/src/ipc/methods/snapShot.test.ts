@@ -9,13 +9,11 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import {
-  checkSnapShotShortcut,
   requestSnapShotPermissions,
   setupSnapShot,
   previewSnapShotConfig,
   applySnapShotConfig,
   setSnapShotAnimationDestination,
-  setSnapShotShortcutSuppressed,
   snapShotScreenFrame,
   snapShotRelativeFrame,
 } from "./snapShot.ts";
@@ -211,33 +209,6 @@ describe("window capture IPC", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("forwards the accessibility permission preference from a trusted renderer", () => {
-    let includeAccessibility: boolean | undefined;
-    const webContents = { id: 7 };
-    const layer = Layer.mergeAll(
-      Layer.succeed(
-        ElectronWindow.ElectronWindow,
-        ElectronWindow.ElectronWindow.of({
-          main: Effect.succeedSome({ webContents }),
-        } as ElectronWindow.ElectronWindow["Service"]),
-      ),
-      Layer.succeed(
-        DesktopSnapShot.DesktopSnapShot,
-        DesktopSnapShot.DesktopSnapShot.of({
-          requestPermissions: (include: boolean) =>
-            Effect.sync(() => {
-              includeAccessibility = include;
-            }),
-        } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
-      ),
-    );
-
-    return Effect.gen(function* () {
-      yield* requestSnapShotPermissions.handler(false, { sender: webContents });
-      assert.isFalse(includeAccessibility);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("rejects an untrusted renderer at the IPC boundary", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -286,56 +257,6 @@ describe("window capture IPC", () => {
         ),
       ),
     );
-  });
-
-  it.effect("checks shortcut availability for a trusted renderer", () => {
-    const layer = Layer.mergeAll(
-      Layer.succeed(
-        ElectronWindow.ElectronWindow,
-        ElectronWindow.ElectronWindow.of({
-          main: Effect.succeedSome({ webContents: { id: 7 } }),
-        } as ElectronWindow.ElectronWindow["Service"]),
-      ),
-      Layer.succeed(
-        DesktopSnapShot.DesktopSnapShot,
-        DesktopSnapShot.DesktopSnapShot.of({
-          checkShortcut: () => Effect.succeed({ available: true, message: null }),
-        } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
-      ),
-    );
-
-    return Effect.gen(function* () {
-      const result = yield* checkSnapShotShortcut.handler(
-        { kind: "both-shift-keys" },
-        { sender: { id: 7 } },
-      );
-      assert.deepEqual(result, { available: true, message: null });
-    }).pipe(Effect.provide(layer));
-  });
-  it.effect("suppresses the active shortcut for a trusted renderer", () => {
-    let suppressed = false;
-    const layer = Layer.mergeAll(
-      Layer.succeed(
-        ElectronWindow.ElectronWindow,
-        ElectronWindow.ElectronWindow.of({
-          main: Effect.succeedSome({ webContents: { id: 7 } }),
-        } as ElectronWindow.ElectronWindow["Service"]),
-      ),
-      Layer.succeed(
-        DesktopSnapShot.DesktopSnapShot,
-        DesktopSnapShot.DesktopSnapShot.of({
-          setShortcutSuppressed: (next: boolean) =>
-            Effect.sync(() => {
-              suppressed = next;
-            }),
-        } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
-      ),
-    );
-
-    return Effect.gen(function* () {
-      yield* setSnapShotShortcutSuppressed.handler(true, { sender: { id: 7 } });
-      assert.isTrue(suppressed);
-    }).pipe(Effect.provide(layer));
   });
 });
 

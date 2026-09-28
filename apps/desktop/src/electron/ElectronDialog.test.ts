@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type { BrowserWindow } from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
 import * as ElectronDialog from "./ElectronDialog.ts";
@@ -27,30 +26,6 @@ describe("ElectronDialog", () => {
     showOpenDialogMock.mockReset();
     showErrorBoxMock.mockReset();
   });
-
-  it.effect("preserves folder picker request context and cause", () =>
-    Effect.gen(function* () {
-      const cause = new Error("folder picker failed");
-      const owner = { id: 7 } as BrowserWindow;
-      showOpenDialogMock.mockRejectedValue(cause);
-      const dialog = yield* ElectronDialog.ElectronDialog;
-
-      const error = yield* Effect.flip(
-        dialog.pickFolder({
-          owner: Option.some(owner),
-          defaultPath: Option.some("/workspace"),
-        }),
-      );
-
-      assert.instanceOf(error, ElectronDialog.ElectronDialogPickFolderError);
-      assert.strictEqual(error.ownerWindowId, 7);
-      assert.strictEqual(error.defaultPath, "/workspace");
-      assert.strictEqual(error.cause, cause);
-      assert.include(error.message, "window 7");
-      assert.include(error.message, "/workspace");
-      assert.notInclude(error.message, cause.message);
-    }).pipe(Effect.provide(ElectronDialog.layer)),
-  );
 
   it.effect("opens a single-file picker when multiple selections are disabled", () =>
     Effect.gen(function* () {

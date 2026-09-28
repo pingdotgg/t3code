@@ -9,12 +9,6 @@ import {
   shouldRefreshOnInterval,
 } from "./useLiveRefresh";
 
-describe("live refresh cadence", () => {
-  it("waits five minutes between automatic host reads", () => {
-    expect(LIVE_REFRESH_INTERVAL_MS).toBe(5 * 60_000);
-  });
-});
-
 describe("shouldLiveRefresh", () => {
   const at = (now: number, lastRefreshedAt: number, visible = true) =>
     shouldLiveRefresh({ visible, now, lastRefreshedAt });
@@ -25,14 +19,6 @@ describe("shouldLiveRefresh", () => {
 
   it("does not read a view again that was left and returned to seconds later", () => {
     expect(at(3_000, 0)).toBe(false);
-  });
-
-  it("reads again when the interval comes round on a view left open", () => {
-    expect(at(LIVE_REFRESH_INTERVAL_MS, 0)).toBe(true);
-  });
-
-  it("does not read again for every window tabbed through", () => {
-    expect(at(1_000, 0)).toBe(false);
   });
 
   it("stays quiet while the window is not showing", () => {

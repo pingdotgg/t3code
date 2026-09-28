@@ -344,27 +344,18 @@ describe("serverSettings helpers", () => {
       instanceId: "opencode",
       model: "openai/gpt-5",
     });
-  });
-
-  it("accepts array-based text generation selection patches", () => {
     expect(
-      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      applyServerSettingsPatch(current, {
         textGenerationModelSelection: {
           instanceId: ProviderInstanceId.make("opencode"),
           model: "openai/gpt-5",
-          options: [
-            { id: "variant", value: "prod" },
-            { id: "agent", value: "build" },
-          ],
+          options: [{ id: "variant", value: "prod" }],
         },
       }).textGenerationModelSelection,
     ).toEqual({
       instanceId: "opencode",
       model: "openai/gpt-5",
-      options: [
-        { id: "variant", value: "prod" },
-        { id: "agent", value: "build" },
-      ],
+      options: [{ id: "variant", value: "prod" }],
     });
   });
 

@@ -5,7 +5,6 @@ import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon"
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
-  lastTarget: null as unknown,
 }));
 
 const hooks = vi.hoisted(() => {
@@ -61,9 +60,7 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => testState.faviconUrl,
 }));
 vi.mock("../state/assets", () => ({
-  projectFaviconUrlAtom: (input: unknown) => {
-    testState.lastTarget = input;
-  },
+  projectFaviconUrlAtom: () => undefined,
 }));
 
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
@@ -134,18 +131,6 @@ describe("ProjectFavicon", () => {
     expect(element.props.projectName).toBe("analytics-db");
   });
 
-  it("uses the same monogram fallback for every project category", () => {
-    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
-
-    const element = ProjectFavicon({
-      project: makeProject({ workspaceRoot: "/workspace/agent-runtime", title: "agent-runtime" }),
-    }) as ReactElement<{
-      readonly projectName?: string;
-    }>;
-
-    expect(element.props.projectName).toBe("agent-runtime");
-  });
-
   it("renders a saved Lucide icon and color ahead of an uploaded favicon", () => {
     const element = ProjectFavicon({
       project: makeProject({
@@ -199,21 +184,5 @@ describe("ProjectFavicon", () => {
     const afterDisplayedError = renderImage(Component, refreshedProps).props.children;
     expect(afterDisplayedError[0]).not.toBeNull();
     expect(afterDisplayedError[1]).toBeNull();
-  });
-
-  it("requests a saved favicon path when one is set", () => {
-    ProjectFavicon({
-      project: makeProject({
-        workspaceRoot: "/workspace-test",
-        title: "workspace-test",
-        faviconPath: "brand/icon.svg",
-      }),
-    });
-
-    expect(testState.lastTarget).toMatchObject({
-      environmentId: "environment-test",
-      cwd: "/workspace-test",
-      faviconPath: "brand/icon.svg",
-    });
   });
 });

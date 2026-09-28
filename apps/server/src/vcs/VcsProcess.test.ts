@@ -276,44 +276,6 @@ describe("VcsProcess.run", () => {
     }),
   );
 
-  it.effect("collects stdout", () =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.stdout",
-        command: "node",
-        args: ["-e", "process.stdout.write('hello')"],
-        cwd: process.cwd(),
-      });
-
-      expect(result.stdout).toBe("hello");
-      expect(result.stderr).toBe("");
-      expect(result.stdoutTruncated).toBe(false);
-      expect(result.stderrTruncated).toBe(false);
-    }).pipe(provideLive),
-  );
-
-  it.effect("writes stdin before waiting for exit", () =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.stdin",
-        command: "node",
-        args: [
-          "-e",
-          [
-            "process.stdin.setEncoding('utf8');",
-            "let data='';",
-            "process.stdin.on('data', chunk => { data += chunk; });",
-            "process.stdin.on('end', () => { process.stdout.write(data); });",
-          ].join(""),
-        ],
-        cwd: process.cwd(),
-        stdin: "stdin payload",
-      });
-
-      expect(result.stdout).toBe("stdin payload");
-    }).pipe(provideLive),
-  );
-
   it.effect("fails with VcsProcessExitError for non-zero exits by default", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";

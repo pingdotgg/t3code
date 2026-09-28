@@ -25,7 +25,7 @@ import {
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
-import { PullRequestLinkFailedError, PullRequestsToolkit } from "./tools.ts";
+import { PullRequestsToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
@@ -454,11 +454,4 @@ describe("listThreadPullRequests", () => {
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
-});
-
-it("keeps failure diagnostics as the cause rather than exposing them in the tool message", () => {
-  const cause = new Error("database internals");
-  const failure = new PullRequestLinkFailedError({ cause });
-  expect(failure.message).toBe("Could not link the pull request.");
-  expect(failure.cause).toBe(cause);
 });

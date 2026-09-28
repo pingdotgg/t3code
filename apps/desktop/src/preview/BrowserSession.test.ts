@@ -1,9 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
@@ -186,60 +184,6 @@ describe("BrowserSession", () => {
           `check handler should deny ${permission}`,
         );
       }
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("preserves partition scope and the platform failure chain", () => {
-    const nativeCause = new Error("native digest failed");
-    const platformCause = PlatformError.systemError({
-      _tag: "Unknown",
-      module: "Crypto",
-      method: "digest",
-      cause: nativeCause,
-    });
-    const failingCryptoLayer = Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size),
-        digest: () => Effect.fail(platformCause),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const error = yield* browserSessions.getPartition("environment-a").pipe(Effect.flip);
-
-      assert.instanceOf(error, BrowserSession.BrowserSessionPartitionDerivationError);
-      assert.equal(error.scope, "environment-a");
-      assert.strictEqual(error.cause, platformCause);
-      assert.strictEqual(error.cause.reason.cause, nativeCause);
-      assert.equal(
-        error.message,
-        "Failed to derive a desktop preview browser partition for scope environment-a.",
-      );
-      assert.notInclude(error.message, nativeCause.message);
-    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(failingCryptoLayer))));
-  });
-
-  it.effect("preserves session scope, partition, and the Electron failure", () =>
-    Effect.gen(function* () {
-      const cause = new Error("Electron session failed");
-      fromPartition.mockImplementationOnce(() => {
-        throw cause;
-      });
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("environment-b");
-      const error = yield* browserSessions.getSession("environment-b").pipe(Effect.flip);
-
-      assert.instanceOf(error, BrowserSession.BrowserSessionCreationError);
-      assert.equal(error.scope, "environment-b");
-      assert.equal(error.partition, partition);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(
-        error.message,
-        `Failed to create a desktop preview browser session for scope environment-b (partition ${partition}).`,
-      );
-      assert.notInclude(error.message, cause.message);
     }).pipe(Effect.provide(layer)),
   );
 

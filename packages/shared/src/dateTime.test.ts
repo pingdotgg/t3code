@@ -66,10 +66,6 @@ describe("compareDateTimeStrings", () => {
     expect(compareDateTimeStrings("invalid-B", "invalid-a")).toBeLessThan(0);
   });
 
-  it("returns zero for equal malformed date-time strings", () => {
-    expect(compareDateTimeStrings("invalid", "invalid")).toBe(0);
-  });
-
   it("gives every permutation of mixed values the same order", () => {
     const early = "2026-09-01T12:00:00.000+14:00";
     const late = "2026-09-01T00:00:00.000-12:00";

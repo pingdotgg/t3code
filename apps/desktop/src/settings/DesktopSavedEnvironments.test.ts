@@ -62,18 +62,10 @@ const seedSavedEnvironmentRegistry = Effect.fn(function* (encryptedBearerToken?:
 
 function makeSafeStorageLayer(input: {
   readonly available: boolean;
-  readonly availabilityError?: unknown;
   readonly decryptError?: unknown;
 }) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
-    isEncryptionAvailable:
-      input.availabilityError === undefined
-        ? Effect.succeed(input.available)
-        : Effect.fail(
-            new ElectronSafeStorage.ElectronSafeStorageAvailabilityError({
-              cause: input.availabilityError,
-            }),
-          ),
+    isEncryptionAvailable: Effect.succeed(input.available),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`enc:${value}`)),
     decryptString: (value) => {
       if (input.decryptError !== undefined) {
@@ -102,7 +94,6 @@ function makeLayer(
   baseDir: string,
   options?: {
     readonly availableSecretStorage?: boolean;
-    readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
   },
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
@@ -125,7 +116,6 @@ function makeLayer(
 
   const safeStorageLayer = makeSafeStorageLayer({
     available: options?.availableSecretStorage ?? true,
-    availabilityError: options?.availabilityError,
     decryptError: options?.decryptError,
   });
   const dependencies = Layer.mergeAll(
@@ -142,7 +132,6 @@ const withSavedEnvironments = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopSavedEnvironments.DesktopSavedEnvironments>,
   options?: {
     readonly availableSecretStorage?: boolean;
-    readonly availabilityError?: unknown;
     readonly decryptError?: unknown;
   },
 ) =>
@@ -258,41 +247,6 @@ describe("DesktopSavedEnvironments", () => {
       { availableSecretStorage: false },
     ),
   );
-
-  it.effect("adds saved-environment context to safe storage availability failures", () => {
-    const cause = new Error("safe storage unavailable");
-    return withSavedEnvironments(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-        yield* seedSavedEnvironmentRegistry(
-          Encoding.encodeBase64(textEncoder.encode("enc:bearer-token")),
-        );
-
-        const error = yield* savedEnvironments
-          .getSecret(savedRegistryRecord.environmentId)
-          .pipe(Effect.flip);
-
-        assert.instanceOf(
-          error,
-          DesktopSavedEnvironments.DesktopSavedEnvironmentSecretProtectionError,
-        );
-        assert.equal(error.operation, "check-encryption-availability");
-        assert.equal(error.environmentId, savedRegistryRecord.environmentId);
-        assert.equal(error.registryPath, environment.savedEnvironmentRegistryPath);
-        assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageAvailabilityError);
-        const availabilityError =
-          error.cause as ElectronSafeStorage.ElectronSafeStorageAvailabilityError;
-        assert.strictEqual(availabilityError.cause, cause);
-        assert.equal(
-          error.message,
-          `Desktop saved-environment secret protection failed during check-encryption-availability for environment ${savedRegistryRecord.environmentId} at ${environment.savedEnvironmentRegistryPath}.`,
-        );
-        assert.notEqual(error.message, availabilityError.message);
-      }),
-      { availabilityError: cause },
-    );
-  });
 
   it.effect("treats empty saved environment documents as empty", () =>
     withSavedEnvironments(

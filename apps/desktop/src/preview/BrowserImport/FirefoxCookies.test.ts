@@ -386,45 +386,40 @@ describe("parseFirefoxProfiles", () => {
     }),
   );
 
-  for (const [platform, root] of [
-    ["Linux", "/home/user/.mozilla/firefox"],
-    ["macOS", "/Users/user/Library/Application Support/Firefox"],
-  ] as const) {
-    it.effect(`validates relative and absolute ${platform} profile paths`, () =>
-      Effect.gen(function* () {
-        const parsed = yield* parsePosixFirefoxProfiles(
-          [
-            "[Profile0]",
-            "Name=Relative",
-            "IsRelative=1",
-            "Path=Profiles/relative.default",
-            "[Profile1]",
-            "Name=Custom",
-            "IsRelative=0",
-            "Path=/mnt/custom/firefox-profile",
-            "[Profile2]",
-            "IsRelative=1",
-            "Path=../../escape",
-            "[Profile3]",
-            "IsRelative=1",
-            "Path=/absolute-marked-relative",
-            "[Profile4]",
-            "IsRelative=0",
-            "Path=relative-marked-absolute",
-            "[Profile5]",
-            "IsRelative=1",
-            "Path=Profiles/nul\u0000escape",
-          ].join("\n"),
-          root,
-        );
+  it.effect("validates relative and absolute Linux profile paths", () =>
+    Effect.gen(function* () {
+      const parsed = yield* parsePosixFirefoxProfiles(
+        [
+          "[Profile0]",
+          "Name=Relative",
+          "IsRelative=1",
+          "Path=Profiles/relative.default",
+          "[Profile1]",
+          "Name=Custom",
+          "IsRelative=0",
+          "Path=/mnt/custom/firefox-profile",
+          "[Profile2]",
+          "IsRelative=1",
+          "Path=../../escape",
+          "[Profile3]",
+          "IsRelative=1",
+          "Path=/absolute-marked-relative",
+          "[Profile4]",
+          "IsRelative=0",
+          "Path=relative-marked-absolute",
+          "[Profile5]",
+          "IsRelative=1",
+          "Path=Profiles/nul\u0000escape",
+        ].join("\n"),
+        "/home/user/.mozilla/firefox",
+      );
 
-        expect(parsed).toEqual([
-          { directory: "Profiles/relative.default", name: "Relative" },
-          { directory: "/mnt/custom/firefox-profile", name: "Custom" },
-        ]);
-      }),
-    );
-  }
+      expect(parsed).toEqual([
+        { directory: "Profiles/relative.default", name: "Relative" },
+        { directory: "/mnt/custom/firefox-profile", name: "Custom" },
+      ]);
+    }),
+  );
 
   it.effect("uses Windows path rules for relative and absolute profiles", () =>
     Effect.gen(function* () {

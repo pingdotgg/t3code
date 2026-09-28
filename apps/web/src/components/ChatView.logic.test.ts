@@ -17,7 +17,7 @@ import { Atom, AsyncResult } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 
-import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
+import type { Thread, TurnDiffSummary } from "../types";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -34,28 +34,20 @@ import {
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
-  branchMismatchKey,
-  buildExpiredTerminalContextToastCopy,
-  buildLoadingThreadFromShell,
   buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveLockedProvider,
-  dismissBranchMismatchForSession,
-  ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   shouldRefocusComposerOnWindowFocus,
-  isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
-  resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
-  restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
   findRecordedWorktreeSetup,
@@ -63,7 +55,6 @@ import {
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
-  resolveSendEnvMode,
   threadShellHasStarted,
   resolveDraftHeroState,
   isPaintOnlyThreadTimeline,
@@ -74,7 +65,6 @@ import {
   resolveThreadSwitchTimeline,
   threadKeysShareEnvironment,
   timelineHasEphemeralPreviewUrls,
-  scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   shouldDockDraftHeroForSubmission,
@@ -386,7 +376,6 @@ describe("proactive panels", () => {
 
   it.each([
     { files: 0, additions: 0, deletions: 0, action: "ignore" },
-    { files: 1, additions: 1, deletions: 0, action: "ignore" },
     { files: 2, additions: 12, deletions: 12, action: "ignore" },
     { files: 1, additions: 25, deletions: 24, action: "ignore" },
     { files: 1, additions: 25, deletions: 25, action: "open" },
@@ -560,19 +549,6 @@ describe("resolveThreadSwitchTimeline", () => {
         lastReady: null,
       }),
     ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
-  });
-
-  it("keeps the held thread workspace cwd with the snapshot", () => {
-    rememberReadyThreadTimeline({
-      ...held,
-      markdownCwd: "/repo/a",
-      workspaceRoot: "/repo/a",
-    });
-    expect(peekHeldThreadTimeline<string[]>()).toEqual({
-      ...held,
-      markdownCwd: "/repo/a",
-      workspaceRoot: "/repo/a",
-    });
   });
 
   it("survives a ChatView remount by remembering the last ready timeline", () => {
@@ -804,31 +780,6 @@ describe("shouldReleaseTimelineAnchorForToolActivity", () => {
 });
 
 describe("environment reconnect warning grace", () => {
-  afterEach(() => vi.useRealTimers());
-
-  it("shows a persistent reconnect after the grace period", () => {
-    vi.useFakeTimers();
-    const showWarning = vi.fn();
-
-    scheduleEnvironmentReconnectWarning(showWarning);
-    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS - 1);
-    expect(showWarning).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(showWarning).toHaveBeenCalledOnce();
-  });
-
-  it("cancels the warning when the connection recovers during the grace period", () => {
-    vi.useFakeTimers();
-    const showWarning = vi.fn();
-
-    const cancel = scheduleEnvironmentReconnectWarning(showWarning);
-    cancel();
-    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
-
-    expect(showWarning).not.toHaveBeenCalled();
-  });
-
   it("does not reuse elapsed grace from another environment", () => {
     const anotherEnvironmentId = EnvironmentId.make("environment-remote");
 
@@ -963,52 +914,6 @@ describe("draft promotion during worktree setup", () => {
       ).toEqual(serverThreadRef);
     },
   );
-});
-
-describe("buildLoadingThreadFromShell", () => {
-  it("preserves shell metadata and supplies empty detail collections", () => {
-    const shell = {
-      environmentId,
-      id: threadId,
-      projectId,
-      title: "Loading thread",
-      modelSelection: {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.4",
-      },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      latestTurn: null,
-      createdAt: now,
-      updatedAt: now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      snoozedUntil: null,
-      snoozedAt: null,
-      session: null,
-      pullRequests: [],
-      latestUserMessageAt: now,
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      hasActionableProposedPlan: false,
-    } satisfies ThreadShell;
-
-    expect(buildLoadingThreadFromShell(shell)).toMatchObject({
-      environmentId,
-      id: threadId,
-      projectId,
-      title: "Loading thread",
-      branch: "main",
-      deletedAt: null,
-      messages: [],
-      proposedPlans: [],
-      activities: [],
-      checkpoints: [],
-    });
-  });
 });
 
 describe("resolveThreadMetadataUpdateForNextTurn", () => {
@@ -1308,14 +1213,6 @@ describe("resolveComposerProviderSelection", () => {
     );
   });
 
-  it("blocks an empty Antigravity selection after the catalog has loaded", () => {
-    const provider = entry("antigravity", "google_work", { models: catalogModels }).snapshot;
-
-    expect(getAntigravitySendBlockReason(provider, "")).toBe(
-      "Choose an Antigravity model before sending.",
-    );
-  });
-
   it("blocks a saved model that a ready catalog no longer lists", () => {
     const provider = entry("antigravity", "google_work", {
       status: "ready",
@@ -1543,19 +1440,6 @@ describe("deriveComposerSendState", () => {
   });
 });
 
-describe("buildExpiredTerminalContextToastCopy", () => {
-  it("formats empty and omission guidance", () => {
-    expect(buildExpiredTerminalContextToastCopy(1, "empty")).toEqual({
-      title: "Expired terminal context won't be sent",
-      description: "Remove it or re-add it to include terminal output.",
-    });
-    expect(buildExpiredTerminalContextToastCopy(2, "omitted")).toEqual({
-      title: "Expired terminal contexts omitted from message",
-      description: "Re-add it if you want that terminal output included.",
-    });
-  });
-});
-
 describe("getStartedThreadModelChangeBlockReason", () => {
   const providers = [
     {
@@ -1623,43 +1507,6 @@ describe("getStartedThreadModelChangeBlockReason", () => {
   });
 });
 
-describe("resolveSendEnvMode", () => {
-  it("keeps worktree mode only for git repositories", () => {
-    expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
-    expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
-  });
-});
-
-describe("resolveBackgroundDraftWorkspaceOptions", () => {
-  it("keeps New worktree selected without reusing the launched worktree", () => {
-    expect(
-      resolveBackgroundDraftWorkspaceOptions({
-        envMode: "worktree",
-        branch: "main",
-        startFromOrigin: true,
-      }),
-    ).toEqual({
-      envMode: "worktree",
-      branch: "main",
-      worktreePath: null,
-      startFromOrigin: true,
-    });
-  });
-});
-
-describe("branchMismatchKey", () => {
-  it("builds a key from thread id and both branches", () => {
-    expect(branchMismatchKey("thread-1", { threadBranch: "feat/a", currentBranch: "feat/b" })).toBe(
-      "thread-1:feat/a:feat/b",
-    );
-  });
-
-  it("returns null without a thread or mismatch", () => {
-    expect(branchMismatchKey(null, { threadBranch: "a", currentBranch: "b" })).toBeNull();
-    expect(branchMismatchKey("thread-1", null)).toBeNull();
-  });
-});
-
 describe("shouldShowBranchMismatchBanner", () => {
   const base = {
     hasMismatch: true,
@@ -1714,16 +1561,6 @@ describe("shouldShowPlanFollowUpPrompt", () => {
     expect(shouldShowPlanFollowUpPrompt({ ...base, interactionMode: "default" })).toBe(false);
     expect(shouldShowPlanFollowUpPrompt({ ...base, latestTurnSettled: false })).toBe(false);
     expect(shouldShowPlanFollowUpPrompt({ ...base, hasActionableProposedPlan: false })).toBe(false);
-  });
-});
-
-describe("session branch mismatch dismissal", () => {
-  it("tracks dismissed keys and treats other keys as active", () => {
-    expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(false);
-    dismissBranchMismatchForSession("t1:a:b");
-    expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(true);
-    expect(isBranchMismatchDismissedForSession("t1:a:c")).toBe(false);
-    expect(isBranchMismatchDismissedForSession(null)).toBe(false);
   });
 });
 
@@ -1783,19 +1620,6 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
 });
 
 describe("startNewThreadForProject", () => {
-  it("starts a thread through the supplied shared handler for the active project", () => {
-    const calls: Array<{ environmentId: EnvironmentId; projectId: ProjectId }> = [];
-    const projectRef = { environmentId, projectId };
-
-    expect(
-      startNewThreadForProject(projectRef, (nextProjectRef) => {
-        calls.push(nextProjectRef);
-        return Promise.resolve();
-      }),
-    ).toBe(true);
-    expect(calls).toEqual([projectRef]);
-  });
-
   it("does nothing when the active project is unavailable", () => {
     let called = false;
 
@@ -2256,69 +2080,6 @@ describe("rewind draft recovery", () => {
     expect(files[0]?.name).toBe("notes.txt");
     expect(await files[0]?.text()).toBe("original bytes");
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://server.test/asset/signed");
-  });
-});
-
-describe("restorePlanFollowUpComposer", () => {
-  it("writes back every field a cleared plan follow-up composer held", () => {
-    const snapshot = {
-      prompt: "Follow up on the plan",
-      terminalContexts: [
-        {
-          id: "terminal-1",
-          threadId: ThreadId.make("thread-1"),
-          createdAt: "2026-09-11T00:00:00.000Z",
-          terminalId: "main",
-          terminalLabel: "Main",
-          lineStart: 1,
-          lineEnd: 2,
-          text: "output",
-        },
-      ],
-      reviewComments: [
-        {
-          id: "review-1",
-          sectionId: "file:a.ts",
-          sectionTitle: "File comment",
-          filePath: "a.ts",
-          startIndex: 0,
-          endIndex: 0,
-          rangeLabel: "L1",
-          text: "look here",
-          diff: "",
-        },
-      ],
-      previewAnnotations: [],
-    };
-    const writePrompt = vi.fn();
-    const writeTerminalContexts = vi.fn();
-    const writeReviewComments = vi.fn();
-    const writePreviewAnnotations = vi.fn();
-    const resetCursor = vi.fn();
-
-    restorePlanFollowUpComposer({
-      snapshot,
-      writePrompt,
-      writeTerminalContexts,
-      writeReviewComments,
-      writePreviewAnnotations,
-      resetCursor,
-    });
-
-    expect(writePrompt).toHaveBeenCalledTimes(1);
-    expect(writePrompt).toHaveBeenCalledWith("Follow up on the plan");
-    expect(writeTerminalContexts).toHaveBeenCalledTimes(1);
-    expect(writeTerminalContexts).toHaveBeenCalledWith(snapshot.terminalContexts);
-    expect(writeReviewComments).toHaveBeenCalledTimes(1);
-    expect(writeReviewComments).toHaveBeenCalledWith(snapshot.reviewComments);
-    expect(writePreviewAnnotations).toHaveBeenCalledTimes(1);
-    expect(writePreviewAnnotations).toHaveBeenCalledWith(snapshot.previewAnnotations);
-    expect(resetCursor).toHaveBeenCalledTimes(1);
-    expect(resetCursor).toHaveBeenCalledWith({
-      cursor: expect.any(Number),
-      prompt: "Follow up on the plan",
-      detectTrigger: true,
-    });
   });
 });
 

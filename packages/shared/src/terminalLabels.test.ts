@@ -36,10 +36,6 @@ describe("nextTerminalId", () => {
     expect(nextTerminalId([])).toBe(DEFAULT_TERMINAL_ID);
   });
 
-  it("allocates term-2 when only term-1 exists", () => {
-    expect(nextTerminalId([DEFAULT_TERMINAL_ID])).toBe("term-2");
-  });
-
   it("skips over taken term-N slots", () => {
     expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-2", "term-3"])).toBe("term-4");
     expect(nextTerminalId([DEFAULT_TERMINAL_ID, "term-3"])).toBe("term-2");

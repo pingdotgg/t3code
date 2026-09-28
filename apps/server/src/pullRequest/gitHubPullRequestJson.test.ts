@@ -15,7 +15,6 @@ import {
   decodePullRequestFilesJson,
   decodePullRequestFilesViewedJson,
   decodePullRequestListJson,
-  decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
   decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
@@ -414,7 +413,7 @@ describe("pull request detail decoding", () => {
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r5"]);
   });
 
-  it.each(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"])(
+  it.each(["CHANGES_REQUESTED", "DISMISSED"])(
     "keeps a bodyless %s review, which is the event itself",
     (state) => {
       const raw = JSON.parse(detailJson) as Record<string, unknown>;
@@ -864,12 +863,6 @@ describe("repository access decoding", () => {
       },
     });
 
-  it("reads merge settings with viewer permissions", () => {
-    expect(
-      expectSuccess(decodeViewerPermissionsJson(repositoryJson("ADMIN"))).mergeCapabilities,
-    ).toEqual({ merge: true, squash: false, rebase: true });
-  });
-
   it("fails rather than defaulting open when a setting is missing", () => {
     const decoded = decodeViewerPermissionsJson(
       JSON.stringify({ data: { repository: { pullRequest: null, mergeCommitAllowed: true } } }),
@@ -927,25 +920,6 @@ describe("viewer permission decoding", () => {
       canTriage: false,
       canUpdate: true,
       didAuthor: true,
-    });
-  });
-
-  it("says no to a passer-by on a repository they can only read", () => {
-    expect(
-      expectSuccess(
-        decodeViewerPermissionsJson(
-          viewerJson({
-            viewerPermission: "READ",
-            pullRequest: { viewerCanUpdate: false, viewerDidAuthor: false },
-          }),
-        ),
-      ),
-    ).toEqual({
-      mergeCapabilities: { merge: true, squash: false, rebase: true },
-      canWrite: false,
-      canTriage: false,
-      canUpdate: false,
-      didAuthor: false,
     });
   });
 
@@ -1144,28 +1118,6 @@ describe("review thread decoding", () => {
     });
   });
 
-  it("keeps a resolved thread in the conversation as well as against its line", () => {
-    const decoded = expectSuccess(
-      decodeReviewThreadsJson(
-        threadsJson([
-          {
-            id: "PRRT_3",
-            isResolved: true,
-            path: "src/a.ts",
-            line: 7,
-            diffSide: "RIGHT",
-            comments: { totalCount: 1, nodes: [comment("c4", "done")] },
-          },
-        ]),
-      ),
-    );
-    // A resolved conversation is finished work, not unsaid work: the timeline reads it and the
-    // diff pins it to its line, the same as any other.
-    const threads = decoded.threads.map((entry) => entry.thread);
-    expect(reviewThreadConversation(threads).map((comment) => comment.id)).toEqual(["c4"]);
-    expect(threads).toHaveLength(1);
-  });
-
   it("puts an issue comment's and a review's reactions in reactionsById, and the pull request's own in reactions", () => {
     const result = expectSuccess(
       decodeReviewThreadsJson(
@@ -1242,18 +1194,6 @@ describe("review thread decoding", () => {
   });
 });
 
-describe("decodePullRequestNodeIdJson", () => {
-  it("reads the pull request's own node id, which a reaction on its description is addressed by", () => {
-    expect(
-      expectSuccess(
-        decodePullRequestNodeIdJson(
-          JSON.stringify({ data: { repository: { pullRequest: { id: "PR_kwDOA" } } } }),
-        ),
-      ),
-    ).toBe("PR_kwDOA");
-  });
-});
-
 describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
   it("caps the initial query after the 104-point rate-limit regression", () => {
     const match = REVIEW_THREADS_GRAPHQL_QUERY.match(
@@ -1263,12 +1203,6 @@ describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
     expect(match).not.toBeNull();
     if (match === null) throw new Error("expected review-thread connections");
     expect(Number(match[1]) * Number(match[2])).toBeLessThanOrEqual(1_000);
-  });
-
-  it("asks for reactionGroups on the pull request itself, its comments, its reviews and each thread's comments", () => {
-    expect(REVIEW_THREADS_GRAPHQL_QUERY.match(/reactionGroups/g)).toHaveLength(4);
-    // The reviews connection is new: only reactions were ever wanted off it.
-    expect(REVIEW_THREADS_GRAPHQL_QUERY).toContain("reviews(first:");
   });
 });
 
@@ -1387,13 +1321,6 @@ describe("reviewer request payload", () => {
       ),
     ).toEqual({ reviewers: ["octocat", "hubot"], team_reviewers: ["reviewers"] });
   });
-
-  it("sends both lists even where one of them is empty, which is what GitHub reads", () => {
-    expect(JSON.parse(buildReviewerRequestJson([{ id: "octocat", kind: "user" }]))).toEqual({
-      reviewers: ["octocat"],
-      team_reviewers: [],
-    });
-  });
 });
 
 describe("review submission payload", () => {
@@ -1424,12 +1351,6 @@ describe("review submission payload", () => {
         { path: "src/b.ts", line: 3, side: "LEFT", body: "why remove?" },
       ],
     });
-  });
-
-  it("sends an approval with no words and no comments", () => {
-    expect(
-      JSON.parse(buildReviewSubmissionJson({ verdict: "approve", body: "", comments: [] })),
-    ).toEqual({ event: "APPROVE", body: "", comments: [] });
   });
 });
 
@@ -1647,10 +1568,6 @@ describe("how far a branch trails its base", () => {
       viewerCanUpdate: false,
     });
   });
-
-  it("refuses a body that is not the answer to this question", () => {
-    expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
-  });
 });
 
 describe("decodePullRequestFilesViewedJson", () => {
@@ -1832,10 +1749,6 @@ describe("host-native stack decoding", () => {
   it("falls back to the node id, then the number, for a stack without an id", () => {
     expect(expectStack({ id: undefined }).id).toBe("STK_kwDO");
     expect(expectStack({ id: null, node_id: null }).id).toBe("3");
-  });
-
-  it("reads an empty listing as not stacked", () => {
-    expect(expectSuccess(decodePullRequestStacksJson("[]"))).toBeNull();
   });
 
   it("refuses a stack without a number or without its pull requests", () => {

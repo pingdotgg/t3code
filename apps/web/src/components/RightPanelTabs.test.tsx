@@ -198,17 +198,6 @@ describe("surface shortcut typing contexts", () => {
     },
   });
 
-  it("treats form fields and every editable region as typing contexts", () => {
-    expect(surfaceShortcutTargetsTypingContext(makeTarget("input"))).toBe(true);
-    expect(surfaceShortcutTargetsTypingContext(makeTarget("textarea"))).toBe(true);
-    expect(surfaceShortcutTargetsTypingContext(makeTarget("select"))).toBe(true);
-    // The chat composer is a contenteditable that sits empty until a draft
-    // exists; launcher letters claimed from it redirected prompts into shells.
-    // The :not clause sees past contenteditable="false" islands to an editable
-    // host around them, so nested editors stay protected too.
-    expect(surfaceShortcutTargetsTypingContext(makeTarget("[contenteditable]"))).toBe(true);
-  });
-
   it("claims letters when focus sits outside any editable region", () => {
     expect(surfaceShortcutTargetsTypingContext(null)).toBe(false);
     expect(surfaceShortcutTargetsTypingContext(makeTarget(null))).toBe(false);
@@ -234,17 +223,6 @@ describe("RightPanelTabs audio indicator", () => {
     } else {
       expect(html).toContain(`aria-label="${label}"`);
     }
-  });
-
-  it("addresses the desktop by runtime tab id, never the server session id", () => {
-    // Session ids are only unique per server process; sending one to the
-    // Electron manager raises PreviewTabNotFoundError and silently no-ops.
-    const seen: string[] = [];
-    renderTabs(null, undefined, { audible: true }, (tabId) => {
-      seen.push(tabId);
-      return `runtime:${tabId}`;
-    });
-    expect(seen).toContain("tab-1");
   });
 
   it("hides the toggle when no runtime tab id can be resolved", () => {

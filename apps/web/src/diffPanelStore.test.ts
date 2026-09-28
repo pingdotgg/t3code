@@ -84,16 +84,6 @@ describe("diffPanelStore", () => {
     ).toEqual({ kind: "turn", turnId, filePath: "src/app.ts", revealRequestId: 2 });
   });
 
-  it("restores the selected branch base after visiting another scope", () => {
-    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
-    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "unstaged");
-    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
-
-    expect(
-      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
-    ).toEqual({ kind: "branch", baseRef: "origin/main" });
-  });
-
   it("reconciles a missing turn selection to the latest available turn", () => {
     const missingTurnId = TurnId.make("turn-missing");
     const latestTurnId = TurnId.make("turn-latest");

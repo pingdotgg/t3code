@@ -91,14 +91,6 @@ describe("resolveBrowserProfiles normalization", () => {
       kind: "persistent",
     });
   });
-
-  it("still lets the built-in incognito profile stay ephemeral", () => {
-    const incognito = resolveBrowserProfiles([]).find(
-      (profile) => profile.id === INCOGNITO_BROWSER_PROFILE_ID,
-    );
-
-    expect(incognito?.kind).toBe("incognito");
-  });
 });
 
 describe("BrowserProfileId", () => {

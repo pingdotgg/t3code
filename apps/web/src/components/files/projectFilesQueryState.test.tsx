@@ -280,33 +280,4 @@ describe("project query refresh", () => {
       atomHooks.registry = null;
     }
   });
-
-  it("reports a directory read as not a file", async () => {
-    const readAtom = Atom.make(
-      Effect.fail(
-        new ProjectReadFileError({
-          cwd: "/repo",
-          relativePath: ".agents/skills",
-          failure: "path_not_file",
-        }),
-      ),
-    );
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(readAtom);
-    projectMocks.readFile.mockReturnValue(readAtom);
-    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
-    atomHooks.registry = registry;
-
-    try {
-      await flushEffects();
-      reactHooks.beginRender();
-      const query = useProjectFileQuery(environmentId, "/repo", ".agents/skills");
-      expect(query.isNotFile).toBe(true);
-      expect(query.data).toBeNull();
-    } finally {
-      unmount();
-      registry.dispose();
-      atomHooks.registry = null;
-    }
-  });
 });

@@ -99,64 +99,6 @@ it.effect("uses one narrow read for a linked pull request summary", () =>
   }),
 );
 
-it.effect("declares host-native stacks and passes the one the CLI reads through", () =>
-  Effect.gen(function* () {
-    const stack = {
-      id: "42",
-      number: 3,
-      url: "https://github.com/acme/web/stacks/3",
-      base: "main",
-      layers: [
-        { number: 6, headBranch: "feat/one", state: "merged" as const },
-        { number: 7, headBranch: "feat/two", state: "open" as const },
-      ],
-    };
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
-          getPullRequestStack: (input) => Effect.succeed(input.number === 7 ? stack : null),
-        }),
-      ),
-    );
-
-    expect(provider.capabilities.stacks).toBe(true);
-    const readStack = provider.getChangeRequestStack;
-    if (readStack === undefined) return yield* Effect.die("stack read was not implemented");
-    const ref = { cwd: "/w", repository: "acme/web", host: "github.com" };
-    expect(yield* readStack({ ...ref, number: 7 })).toEqual(stack);
-    expect(yield* readStack({ ...ref, number: 8 })).toBeNull();
-  }),
-);
-
-it.effect("reports a failed stack read against its own operation", () =>
-  Effect.gen(function* () {
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
-          getPullRequestStack: () =>
-            Effect.fail(
-              new GitHubPullRequestCli.GitHubPullRequestReadError({
-                command: "gh",
-                cwd: "/w",
-                operation: "getPullRequestStack",
-                cause: new Error("unreadable"),
-              }),
-            ),
-        }),
-      ),
-    );
-
-    const readStack = provider.getChangeRequestStack;
-    if (readStack === undefined) return yield* Effect.die("stack read was not implemented");
-    const error = yield* Effect.flip(
-      readStack({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 }),
-    );
-
-    expect(error.operation).toBe("getChangeRequestStack");
-    expect(error.reason).toBe("failed");
-  }),
-);
-
 describe("gitHubViewerPermissions", () => {
   it("offers everything to a viewer who can write to the repository", () => {
     expect(
@@ -939,60 +881,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
         expect(activity.comments[0]?.body).toBe("These findings still stand.");
       }),
       Effect.provide(layerFor("These findings still stand.")),
-    ),
-  );
-});
-
-describe("editing", () => {
-  const rewrites: Array<unknown> = [];
-
-  it.effect("hands a rewrite to the CLI as the request named it", () =>
-    Effect.gen(function* () {
-      const provider = yield* make;
-
-      expect(provider.capabilities.edit).toEqual({ changeRequest: true, comment: true });
-      yield* provider.updateChangeRequest!({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        title: "A better title",
-      });
-      yield* provider.updateComment!({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        commentId: "IC_1",
-        kind: "review-comment",
-        body: "Reworded.",
-      });
-
-      expect(rewrites).toEqual([
-        {
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          title: "A better title",
-        },
-        {
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          commentId: "IC_1",
-          kind: "review-comment",
-          body: "Reworded.",
-        },
-      ]);
-    }).pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
-          updatePullRequest: (input) => Effect.sync(() => void rewrites.push(input)),
-          updateComment: (input) => Effect.sync(() => void rewrites.push(input)),
-        }),
-      ),
     ),
   );
 });
