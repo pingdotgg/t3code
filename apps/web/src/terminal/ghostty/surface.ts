@@ -1410,10 +1410,12 @@ export class GhosttyTerminalSurface {
     }
     this.clearHoveredLink();
     this.selectionPointer = { x: event.clientX, y: event.clientY };
-    const bounds = this.canvas.getBoundingClientRect();
-    this.setSelectionAutoscroll(
-      event.clientY < bounds.top ? -1 : event.clientY > bounds.bottom ? 1 : 0,
-    );
+    // Scroll from the grid edges, not the canvas edges: a drawer docked to the
+    // window bottom never lets the pointer leave the canvas, but the pointer
+    // can still rest in the padding below the last row.
+    const gridTop = this.canvas.getBoundingClientRect().top + this.originY;
+    const gridBottom = gridTop + this.rows * this.metrics.height;
+    this.setSelectionAutoscroll(event.clientY < gridTop ? -1 : event.clientY >= gridBottom ? 1 : 0);
     const cell = this.cellAt(event.clientX, event.clientY);
     if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
     this.extendSelectionTo(event.clientX, event.clientY);

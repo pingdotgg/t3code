@@ -167,11 +167,18 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
-      pointer(type: string, clientX: number, buttons: number, shiftKey = false, button = 0) {
+      pointer(
+        type: string,
+        clientX: number,
+        buttons: number,
+        shiftKey = false,
+        button = 0,
+        clientY = 5,
+      ) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
-            clientY: 5,
+            clientY,
             pointerId: 1,
             button,
             buttons,
@@ -366,6 +373,32 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointerup", 37, 0, true);
     expect(onLinkActivate).not.toHaveBeenCalled();
     expect(surface.getSelection()).toBe("https");
+  });
+
+  it("autoscrolls a selection dragged into the padding past either edge of the grid", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write(Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\r\n"));
+    harness.flushFrame();
+
+    // The 104px canvas holds six 16px rows from y=4 to y=100.
+    harness.pointer("pointerdown", 5, 1, false, 0, 40);
+    harness.pointer("pointermove", 5, 1, false, 0, 2);
+    vi.advanceTimersByTime(240);
+    expect(surface.isAtBottom()).toBe(false);
+    expect(surface.getSelection()).toContain("line 11");
+
+    // Selecting within the last row must not scroll the viewport.
+    harness.pointer("pointermove", 5, 1, false, 0, 90);
+    vi.advanceTimersByTime(240);
+    expect(surface.isAtBottom()).toBe(false);
+
+    // A drawer docked to the window bottom never lets the pointer leave the canvas.
+    harness.pointer("pointermove", 5, 1, false, 0, 104);
+    vi.advanceTimersByTime(240);
+    expect(surface.isAtBottom()).toBe(true);
+    harness.pointer("pointerup", 5, 0, false, 0, 104);
+    expect(surface.getSelection()).toContain("line 18");
   });
 
   it("does not activate a link replaced before pointer release", async () => {
