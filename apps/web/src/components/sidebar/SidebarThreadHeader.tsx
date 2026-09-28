@@ -20,7 +20,10 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
-import { sidebarThreadFilterButtonLabel } from "../Sidebar.logic";
+import {
+  SIDEBAR_UNAVAILABLE_ACCOUNT_LABEL,
+  sidebarThreadFilterButtonLabel,
+} from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -102,11 +105,8 @@ export function SidebarThreadHeader({
   const filtersActive = hideBotThreads || selectedAccountKey !== null;
   const filterButtonLabel = sidebarThreadFilterButtonLabel({
     hideBotThreads,
-    accountLabel:
-      selectedAccountKey === null
-        ? null
-        : (accountOptions.find((option) => option.key === selectedAccountKey)?.label ??
-          "unavailable account"),
+    selectedAccountKey,
+    accountOptions,
   });
 
   return (
@@ -205,7 +205,7 @@ export function SidebarThreadHeader({
               !accountOptions.some((option) => option.key === selectedAccountKey) ? (
                 <MenuRadioItem value={selectedAccountKey} disabled>
                   <span className="flex items-center gap-2">
-                    Unavailable account
+                    {SIDEBAR_UNAVAILABLE_ACCOUNT_LABEL}
                     <MenuRadioItemIndicator className="ms-auto" />
                   </span>
                 </MenuRadioItem>

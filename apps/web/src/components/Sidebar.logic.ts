@@ -833,6 +833,13 @@ export function matchesSidebarThreadFilters(
 }
 
 /**
+ * Shown for a persisted account the current environments no longer offer, both
+ * as the menu's own row and inside the trigger's name, so what a screen reader
+ * hears matches what the menu shows.
+ */
+export const SIDEBAR_UNAVAILABLE_ACCOUNT_LABEL = "Unavailable account";
+
+/**
  * Accessible name for the filter trigger. It sits beside the project scope
  * trigger, whose name is "Filter threads by project", so this one has to name
  * what it filters too. The active-state dot is decorative, so the name is the
@@ -840,11 +847,17 @@ export function matchesSidebarThreadFilters(
  */
 export function sidebarThreadFilterButtonLabel(input: {
   readonly hideBotThreads: boolean;
-  readonly accountLabel: string | null;
+  readonly selectedAccountKey: string | null;
+  readonly accountOptions: ReadonlyArray<{ readonly key: string; readonly label: string }>;
 }): string {
   const active = [
     ...(input.hideBotThreads ? ["bot threads hidden"] : []),
-    ...(input.accountLabel === null ? [] : [input.accountLabel]),
+    ...(input.selectedAccountKey === null
+      ? []
+      : [
+          input.accountOptions.find((option) => option.key === input.selectedAccountKey)?.label ??
+            SIDEBAR_UNAVAILABLE_ACCOUNT_LABEL,
+        ]),
   ];
   return active.length === 0
     ? "Filter threads by bot and account"

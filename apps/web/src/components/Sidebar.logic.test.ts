@@ -24,6 +24,7 @@ import {
   matchesSidebarThreadFilters,
   sidebarThreadAccountKey,
   sidebarThreadFilterButtonLabel,
+  SIDEBAR_UNAVAILABLE_ACCOUNT_LABEL,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -114,18 +115,26 @@ describe("sidebar conversation filters", () => {
   });
 
   it("names what the trigger filters and which filters are on", () => {
-    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: false, accountLabel: null })).toBe(
-      "Filter threads by bot and account",
-    );
-    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: true, accountLabel: null })).toBe(
-      "Filter threads by bot and account: bot threads hidden",
-    );
-    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: false, accountLabel: "AU" })).toBe(
-      "Filter threads by bot and account: AU",
-    );
-    expect(sidebarThreadFilterButtonLabel({ hideBotThreads: true, accountLabel: "AU" })).toBe(
+    const accountOptions = [{ key: '["env-one","codex-work"]', label: "AU" }];
+    const label = (hideBotThreads: boolean, selectedAccountKey: string | null) =>
+      sidebarThreadFilterButtonLabel({ hideBotThreads, selectedAccountKey, accountOptions });
+
+    expect(label(false, null)).toBe("Filter threads by bot and account");
+    expect(label(true, null)).toBe("Filter threads by bot and account: bot threads hidden");
+    expect(label(false, '["env-one","codex-work"]')).toBe("Filter threads by bot and account: AU");
+    expect(label(true, '["env-one","codex-work"]')).toBe(
       "Filter threads by bot and account: bot threads hidden, AU",
     );
+  });
+
+  it("names a dropped account the same way the menu row does", () => {
+    expect(
+      sidebarThreadFilterButtonLabel({
+        hideBotThreads: false,
+        selectedAccountKey: '["env-gone","codex-work"]',
+        accountOptions: [{ key: '["env-one","codex-work"]', label: "AU" }],
+      }),
+    ).toBe(`Filter threads by bot and account: ${SIDEBAR_UNAVAILABLE_ACCOUNT_LABEL}`);
   });
 });
 
