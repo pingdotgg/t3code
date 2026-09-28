@@ -566,6 +566,24 @@ export function retainThreadDetailSubscription(
 }
 
 /**
+ * Whether any retained thread-detail subscription currently has active work.
+ *
+ * Used by the connection-surface stall watchdog: an active turn typically has
+ * no slow unary RPC (`subscribeThread` is excluded from slow-request tracking
+ * and the turn-start request may already have completed), so silence on a
+ * half-open socket would otherwise go undetected and the timeline would stay
+ * frozen until a manual reload.
+ */
+export function hasActiveThreadDetailWork(): boolean {
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.refCount > 0 && isNonIdleThreadDetailSubscription(entry)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Reconnect repair keyed on locally-held state, not server status.
  *
  * The transport already restarts every live stream on reconnect, but a

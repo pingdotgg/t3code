@@ -322,6 +322,37 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
+  it("reports active thread work only while a retained thread is non-idle", async () => {
+    const {
+      hasActiveThreadDetailWork,
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-work");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({ threadId, sessionStatus: "running" }),
+      environmentId,
+    );
+    expect(hasActiveThreadDetailWork()).toBe(false);
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    expect(hasActiveThreadDetailWork()).toBe(true);
+
+    release();
+    expect(hasActiveThreadDetailWork()).toBe(false);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
   it("repairs retained-but-unattached subscriptions on reconnect without dropping them", async () => {
     const {
       retainThreadDetailSubscription,
