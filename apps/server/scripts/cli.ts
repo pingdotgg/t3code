@@ -212,7 +212,7 @@ const publishCmd = Command.make(
       if (config.provenance) args.push("--provenance");
       if (config.dryRun) args.push("--dry-run");
 
-      for (const tarball of [...platformTarballs, launcherTarball]) {
+      const publish = Effect.fn("publish")(function* (tarball: string) {
         const spawnCommand = yield* resolveSpawnCommand("npm", [...args, tarball]);
         yield* Effect.log(`[cli] npm ${args.join(" ")} ${path.basename(tarball)}`);
         yield* runCommand(
@@ -223,7 +223,12 @@ const publishCmd = Command.make(
             shell: spawnCommand.shell,
           }),
         );
-      }
+      });
+
+      // The platform packages do not depend on each other, so they publish at
+      // once; each takes about 17s. The launcher still goes last.
+      yield* Effect.forEach(platformTarballs, publish, { concurrency: "unbounded", discard: true });
+      yield* publish(launcherTarball);
     }),
 ).pipe(
   Command.withDescription(
