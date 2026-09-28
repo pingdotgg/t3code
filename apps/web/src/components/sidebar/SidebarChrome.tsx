@@ -126,9 +126,34 @@ function SidebarUtilityItem({
   );
 }
 
-export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
-  const navigate = useNavigate();
+// Leaves a utility page. Settings renders it above its section list instead of
+// in the footer, where it sits in the reading path of the page.
+export const SidebarBackButton = memo(function SidebarBackButton() {
   const navigateToMainApp = useNavigateToMainApp();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const handleBackClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigateToMainApp();
+  }, [isMobile, navigateToMainApp, setOpenMobile]);
+
+  return (
+    <SidebarMenuItem className="min-w-0 flex-1">
+      <SidebarMenuButton onClick={handleBackClick}>
+        <ArrowLeftIcon />
+        <span>Back</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+});
+
+export const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
+  hideBack = false,
+}: {
+  hideBack?: boolean;
+}) {
+  const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
@@ -163,20 +188,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
 
-  const handleBackClick = useCallback(() => {
-    closeMobileSidebar();
-    void navigateToMainApp();
-  }, [closeMobileSidebar, navigateToMainApp]);
-
   return (
     <SidebarMenu className="flex-row items-center">
       {isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick}>
-            <ArrowLeftIcon />
-            <span>Back</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        hideBack ? null : (
+          <SidebarBackButton />
+        )
       ) : (
         <>
           <SidebarUtilityItem
