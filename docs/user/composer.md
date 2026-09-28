@@ -218,7 +218,9 @@ return to the thumbnail to open this menu after watching a full-screen video.
 
 File links refer to the environment's machine, including when you connect remotely.
 Previews use the original file, even outside the workspace. Moving or deleting it
-can break the preview, so save a copy if you need to keep it.
+can break the preview, so save a copy if you need to keep it. When you connect
+remotely on web or desktop, right-click a file link in a message and choose
+**Download** to save any file, such as an archive, to your own device.
 
 ## Files outside the workspace
 

@@ -470,6 +470,83 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues download URLs for any file type, inside or outside the workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-download-" });
+      const root = path.join(directory, "workspace");
+      yield* fs.makeDirectory(root);
+      for (const [requestedPath, fileName] of [
+        [path.join(directory, "share.zip"), "share.zip"],
+        ["results.jsonl", "results.jsonl"],
+        ["../report.html", "report.html"],
+      ] as const) {
+        const filePath = path.resolve(root, requestedPath);
+        yield* fs.writeFileString(filePath, `bytes of ${fileName}`);
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "file-download",
+            threadId: ThreadId.make("thread-1"),
+            path: requestedPath,
+          },
+          workspaceRoot: root,
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+        expect(asset).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(filePath),
+          download: true,
+        });
+        if (asset?.kind !== "file") throw new Error("Expected the download file");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        // A downloaded HTML file must not render as a document on the server's origin.
+        expect(response.headers.get("content-disposition")).toBe(
+          `attachment; filename="${fileName}"`,
+        );
+        expect(response.headers.get("content-type")).toBe("application/octet-stream");
+        expect(yield* Effect.promise(() => response.text())).toBe(`bytes of ${fileName}`);
+        expect(yield* resolveAsset(token, "sibling.zip")).toBeNull();
+        expect(yield* resolveAsset(`${token}tampered`, fileName)).toBeNull();
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("requires a new download URL after atomic replacement and rejects directories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-download-replacement-" });
+      const filePath = path.join(root, "share.zip");
+      yield* fs.writeFileString(filePath, "original");
+      const original = yield* issueAssetUrl({
+        resource: { _tag: "file-download", threadId: ThreadId.make("thread-1"), path: filePath },
+      });
+      const suffix = original.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const replacement = path.join(root, "replacement.zip");
+      yield* fs.writeFileString(replacement, "replacement");
+      yield* fs.rename(replacement, filePath);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+      ).toBeNull();
+
+      const directoryPath = path.join(root, "folder.zip");
+      yield* fs.makeDirectory(directoryPath);
+      const directoryError = yield* issueAssetUrl({
+        resource: {
+          _tag: "file-download",
+          threadId: ThreadId.make("thread-1"),
+          path: directoryPath,
+        },
+      }).pipe(Effect.flip);
+      expect(directoryError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

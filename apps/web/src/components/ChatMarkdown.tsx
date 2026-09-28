@@ -52,6 +52,7 @@ import {
 } from "@t3tools/client-runtime/markdown-images";
 import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -105,7 +106,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { markdownImageGallery, markdownImageItems } from "./chat/markdownImageGallery";
 import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
-import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
+import { downloadMedia, resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -245,6 +246,16 @@ export function canUseMarkdownFileShellActions(
   isRemoteOpenResolved: boolean,
 ): boolean {
   return environmentId !== null && isRemoteOpenResolved && remoteOpenMode === "local-exec";
+}
+
+/** Saving a copy only helps when the file lives on another machine; local
+    files already have "Reveal" and "Open". */
+export function canDownloadMarkdownFile(
+  hasThread: boolean,
+  remoteOpenMode: RemoteOpenMode,
+  isRemoteOpenResolved: boolean,
+): boolean {
+  return hasThread && isRemoteOpenResolved && remoteOpenMode !== "local-exec";
 }
 
 export function hasMarkdownFilePrimaryAction(input: {
@@ -1206,6 +1217,7 @@ interface MarkdownFileLinkProps {
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
   revealLabel?: string | undefined;
+  onDownload?: (() => Promise<void>) | undefined;
 }
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
@@ -1943,6 +1955,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenMedia,
   onReveal,
   revealLabel,
+  onDownload,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
     if (!onOpen) {
@@ -2109,6 +2122,22 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     [targetPath],
   );
 
+  const handleDownload = useCallback(() => {
+    if (!onDownload) {
+      return;
+    }
+    void onDownload().catch((cause: unknown) => {
+      reportMarkdownActionFailure({ operation: "download-file", target: targetPath }, cause);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to download file",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+    });
+  }, [onDownload, targetPath]);
+
   const showFileContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -2123,6 +2152,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
             ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
+            ...(onDownload ? ([{ id: "download", label: "Download" }] as const) : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
           ] as const,
@@ -2145,6 +2175,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           handleRevealInFileManager();
           return;
         }
+        if (clicked === "download") {
+          handleDownload();
+          return;
+        }
         if (clicked === "copy-relative") {
           handleCopy(displayPath, "Relative path");
           return;
@@ -2162,9 +2196,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     [
       displayPath,
       handleCopy,
+      handleDownload,
       handleOpenInBrowser,
       handleOpenInEditor,
       handleRevealInFileManager,
+      onDownload,
       onOpenInBrowser,
       onOpenMedia,
       onOpen,
@@ -2282,7 +2318,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
-    previous.revealLabel === next.revealLabel
+    previous.revealLabel === next.revealLabel &&
+    previous.onDownload === next.onDownload
   );
 }
 
@@ -2333,6 +2370,11 @@ function useChatMarkdownState({
     remoteOpen.isResolved,
   );
   const preparedConnection = usePreparedConnection(environmentId);
+  const canDownloadFiles = canDownloadMarkdownFile(
+    threadRef !== undefined,
+    remoteOpen.state.mode,
+    remoteOpen.isResolved,
+  );
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
       const requestId = ++mediaRequestId.current;
@@ -2610,6 +2652,32 @@ function useChatMarkdownState({
     },
     [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
   );
+  const downloadMarkdownFile = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta) => {
+      if (!threadRef || preparedConnection._tag !== "Some") {
+        throw new Error("Reconnect to the environment and try again.");
+      }
+      const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
+      const match = workspaceRelativePath
+        ? await findWorkspaceBasenameMatch(workspaceRelativePath)
+        : null;
+      const result = await createAssetUrl({
+        environmentId: threadRef.environmentId,
+        input: {
+          resource: {
+            _tag: "file-download",
+            threadId: threadRef.threadId,
+            path: match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
+          },
+        },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      const url = resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl);
+      if (url === null) throw new Error("The environment returned an invalid download URL.");
+      await downloadMedia(url, fileLinkMeta.basename);
+    },
+    [createAssetUrl, cwd, findWorkspaceBasenameMatch, preparedConnection, threadRef],
+  );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
       const parentSuffix = fileLinkParentSuffixByPath.get(
@@ -2661,6 +2729,7 @@ function useChatMarkdownState({
               : undefined
           }
           revealLabel={revealInFileManagerLabel}
+          onDownload={canDownloadFiles ? () => downloadMarkdownFile(fileLinkMeta) : undefined}
           onOpenInBrowser={
             threadRef &&
             isPreviewSupportedInRuntime() &&
@@ -2672,7 +2741,9 @@ function useChatMarkdownState({
       );
     },
     [
+      canDownloadFiles,
       canUseShellActions,
+      downloadMarkdownFile,
       fileLinkParentSuffixByPath,
       openFileInPanel,
       openInPreferredEditor,

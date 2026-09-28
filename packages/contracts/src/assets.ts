@@ -23,6 +23,12 @@ export const AssetResource = Schema.Union([
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
+  // One file of any type, served as a download so a client on another machine
+  // can save it. Paths resolve like `media-file`.
+  Schema.TaggedStruct("file-download", {
+    threadId: ThreadId,
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
   // A workspace file named by a draft that has no thread yet. The draft names
   // its workspace root explicitly instead of resolving one from a thread.
   Schema.TaggedStruct("draft-workspace-file", {
@@ -205,7 +211,9 @@ export class AssetWorkspaceAssetInspectionError extends Schema.TaggedError<Asset
   override get message(): string {
     return this.resource._tag === "media-file"
       ? "Failed to inspect the media file."
-      : "Failed to inspect the workspace asset.";
+      : this.resource._tag === "file-download"
+        ? "Failed to inspect the file."
+        : "Failed to inspect the workspace asset.";
   }
 }
 
@@ -218,7 +226,9 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   override get message(): string {
     return this.resource._tag === "media-file"
       ? "Media file was not found."
-      : "Workspace asset was not found.";
+      : this.resource._tag === "file-download"
+        ? "File was not found."
+        : "Workspace asset was not found.";
   }
 }
 

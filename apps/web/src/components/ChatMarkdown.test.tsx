@@ -60,6 +60,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 }));
 
 import ChatMarkdown, {
+  canDownloadMarkdownFile,
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
   shouldUseMarkdownFileBrowserPrimaryAction,
@@ -465,6 +466,19 @@ describe("canUseMarkdownFileShellActions", () => {
 
   it("hides shell actions when no environment owns the markdown", () => {
     expect(canUseMarkdownFileShellActions(null, "local-exec", true)).toBe(false);
+  });
+});
+
+describe("canDownloadMarkdownFile", () => {
+  it("offers downloads only when the file lives on another machine", () => {
+    expect(canDownloadMarkdownFile(true, "remote-links", true)).toBe(true);
+    expect(canDownloadMarkdownFile(true, "remote-unavailable", true)).toBe(true);
+    expect(canDownloadMarkdownFile(true, "local-exec", true)).toBe(false);
+  });
+
+  it("hides downloads until the environment mode is resolved or without a thread", () => {
+    expect(canDownloadMarkdownFile(true, "remote-links", false)).toBe(false);
+    expect(canDownloadMarkdownFile(false, "remote-links", true)).toBe(false);
   });
 });
 
