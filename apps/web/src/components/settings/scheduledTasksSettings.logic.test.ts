@@ -17,9 +17,13 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  maxRunsFromDraft,
+  runCapReached,
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
+  scheduleFromDraft,
   taskToDraft,
+  timeWindowValid,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -165,6 +169,61 @@ describe("editing scheduled task branch settings", () => {
       workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
     });
     expect(draft.startFromOrigin).toBe(startFromOrigin);
+  });
+});
+
+describe("interval restrictions round-trip through the draft", () => {
+  const restrictedTask: ScheduledTask = {
+    ...legacyTask,
+    schedule: {
+      type: "interval",
+      everyMs: 1_800_000,
+      weekdays: [1, 2, 3, 4, 5],
+      window: { start: "09:00", end: "17:00" },
+      maxRuns: 16,
+    },
+    runCount: 16,
+    enabled: false,
+  };
+
+  it("round-trips weekdays, window, and run cap", () => {
+    const draft = taskToDraft(restrictedTask);
+    expect(draft.intervalWeekdays).toEqual(new Set([1, 2, 3, 4, 5]));
+    expect(draft.windowEnabled).toBe(true);
+    expect(draft.windowStart).toBe("09:00");
+    expect(draft.windowEnd).toBe("17:00");
+    expect(draft.maxRuns).toBe("16");
+    expect(scheduleFromDraft(draft)).toEqual(restrictedTask.schedule);
+  });
+
+  it("reads an unrestricted interval as windowless with no cap", () => {
+    const draft = taskToDraft(legacyTask);
+    expect(draft.intervalWeekdays.size).toBe(0);
+    expect(draft.windowEnabled).toBe(false);
+    expect(draft.maxRuns).toBe("");
+    expect(scheduleFromDraft(draft)).toEqual(legacyTask.schedule);
+  });
+
+  it("reports when a task has finished its run cap", () => {
+    expect(runCapReached(restrictedTask)).toBe(true);
+    expect(runCapReached({ ...restrictedTask, runCount: 15 })).toBe(false);
+    expect(runCapReached(legacyTask)).toBe(false);
+  });
+
+  it("parses the run cap input", () => {
+    expect(maxRunsFromDraft("")).toBeUndefined();
+    expect(maxRunsFromDraft("8")).toBe(8);
+    expect(maxRunsFromDraft("0")).toBeNull();
+    expect(maxRunsFromDraft("2.5")).toBeNull();
+    expect(maxRunsFromDraft("soon")).toBeNull();
+  });
+
+  it("validates the time window", () => {
+    expect(timeWindowValid("09:00", "17:00")).toBe(true);
+    expect(timeWindowValid("9:00", "17:00")).toBe(true);
+    expect(timeWindowValid("17:00", "09:00")).toBe(false);
+    expect(timeWindowValid("09:00", "09:00")).toBe(false);
+    expect(timeWindowValid("25:00", "17:00")).toBe(false);
   });
 });
 

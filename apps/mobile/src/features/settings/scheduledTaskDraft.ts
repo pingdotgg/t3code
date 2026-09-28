@@ -41,6 +41,13 @@ export type ScheduleDraft = {
   readonly timeOfDay: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
+  /** Weekdays an interval schedule may run on; empty means every day. */
+  readonly intervalWeekdays: ReadonlyArray<number>;
+  readonly windowEnabled: boolean;
+  readonly windowStart: string;
+  readonly windowEnd: string;
+  /** Run cap as freeform input; empty string means no limit. */
+  readonly maxRuns: string;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -48,30 +55,83 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   timeOfDay: "09:00",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
+  intervalWeekdays: [],
+  windowEnabled: false,
+  windowStart: "09:00",
+  windowEnd: "17:00",
+  maxRuns: "",
 };
 
+/** Minutes since midnight; accepts the padded and unpadded forms the contract allows. */
+function timeOfDayMinutes(value: string): number | null {
+  if (!/^([01]?\d|2[0-3]):([0-5]\d)$/.test(value.trim())) return null;
+  const [hours, minutes] = value.split(":").map(Number);
+  return (hours ?? 0) * 60 + (minutes ?? 0);
+}
+
+/** Parse the maxRuns input; null when set but invalid. */
+function maxRunsFromDraft(value: string): number | null | undefined {
+  if (value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
+}
+
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
-  return task.schedule.type === "fixed_time"
-    ? {
-        ...DEFAULT_SCHEDULE,
-        timeOfDay: task.schedule.timeOfDay,
-        weekdays: task.schedule.weekdays?.length
-          ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
-          : [0, 1, 2, 3, 4, 5, 6],
-      }
-    : {
-        ...DEFAULT_SCHEDULE,
-        mode: "interval",
-        intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
-      };
+  const maxRuns = task.schedule.maxRuns === undefined ? "" : String(task.schedule.maxRuns);
+  if (task.schedule.type === "fixed_time") {
+    return {
+      ...DEFAULT_SCHEDULE,
+      timeOfDay: task.schedule.timeOfDay,
+      weekdays: task.schedule.weekdays?.length
+        ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
+        : [0, 1, 2, 3, 4, 5, 6],
+      maxRuns,
+    };
+  }
+  return {
+    ...DEFAULT_SCHEDULE,
+    mode: "interval",
+    intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
+    intervalWeekdays: [...new Set(task.schedule.weekdays ?? [])].sort((a, b) => a - b),
+    windowEnabled: task.schedule.window !== undefined,
+    windowStart: task.schedule.window?.start ?? DEFAULT_SCHEDULE.windowStart,
+    windowEnd: task.schedule.window?.end ?? DEFAULT_SCHEDULE.windowEnd,
+    maxRuns,
+  };
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  const maxRuns = maxRunsFromDraft(draft.maxRuns);
+  if (maxRuns === null) return null;
+  const maxRunsField = maxRuns === undefined ? {} : { maxRuns };
   if (draft.mode === "interval") {
     const minutes = Number(draft.intervalMinutes);
     // Undo floating-point noise from displaying existing millisecond intervals as minutes.
     const everyMs = Math.round(minutes * 60_000);
-    return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
+    if (!(minutes >= 1 && Number.isSafeInteger(everyMs))) return null;
+    const weekdays = [...new Set(draft.intervalWeekdays)].sort((a, b) => a - b);
+    const everyDay = weekdays.length === 0 || weekdays.length === 7;
+    const startMinutes = timeOfDayMinutes(draft.windowStart);
+    const endMinutes = timeOfDayMinutes(draft.windowEnd);
+    // An enabled window must be valid: silently dropping it would save a task
+    // without the restriction the user asked for.
+    if (
+      draft.windowEnabled &&
+      (startMinutes === null || endMinutes === null || startMinutes >= endMinutes)
+    ) {
+      return null;
+    }
+    const window =
+      draft.windowEnabled && startMinutes !== null && endMinutes !== null
+        ? { window: { start: draft.windowStart, end: draft.windowEnd } }
+        : {};
+    return {
+      type: "interval",
+      everyMs,
+      ...(everyDay ? {} : { weekdays }),
+      ...window,
+      ...maxRunsField,
+    };
   }
   const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
   if (
@@ -85,6 +145,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
     ...(weekdays.length === 7 ? {} : { weekdays }),
+    ...maxRunsField,
   };
 }
 
@@ -119,6 +180,11 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.timeOfDay,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
+    [...draft.schedule.intervalWeekdays].sort((a, b) => a - b),
+    draft.schedule.windowEnabled,
+    draft.schedule.windowStart,
+    draft.schedule.windowEnd,
+    draft.schedule.maxRuns,
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,

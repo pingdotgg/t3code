@@ -31,7 +31,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import {
+  isMissedFixedTimeRun,
+  isOutsideIntervalRestrictions,
+  isSameSchedule,
+  nextScheduledRunAt,
+} from "./Schedule.ts";
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
@@ -104,11 +109,17 @@ function iso(value: DateTime.DateTime): string {
 
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
+/** True once `runCount` runs have used up the schedule's optional maxRuns cap. */
+const capReached = (schedule: ScheduledTask["schedule"], runCount: number): boolean =>
+  schedule.maxRuns !== undefined && runCount >= schedule.maxRuns;
+
 function nextRunAt(
-  task: Pick<ScheduledTask, "enabled" | "schedule">,
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "runCount">,
   from: DateTime.DateTime,
 ): string | null {
   if (!task.enabled) return null;
+  // A reached run cap is a permanent stop until an edit raises the cap.
+  if (capReached(task.schedule, task.runCount)) return null;
   // A stored interval can decode yet overflow the representable DateTime
   // range; an unrepresentable occurrence means the task has no next run.
   try {
@@ -405,14 +416,18 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly capped: boolean;
     }) =>
+      // Reaching maxRuns pauses the task in the same statement; the CASE keeps
+      // a single preparable statement for both the capped and normal paths.
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
-            run_count = run_count + 1
+            run_count = run_count + 1,
+            enabled = CASE WHEN ${input.capped ? 1 : 0} THEN 0 ELSE enabled END
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
           AND last_run_at = ${input.startedAtIso}
@@ -436,13 +451,17 @@ export const layer = Layer.effect(
         const reread = yield* Effect.result(findTask(task.id));
         if (Result.isSuccess(reread) && reread.success === null) return; // deleted — nothing to release
         const source = Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
+        // The stuck attempt counts toward maxRuns like any other run.
+        const runCountAfter = source.runCount + 1;
+        const capped = capReached(source.schedule, runCountAfter);
         yield* sql`
           UPDATE scheduled_tasks
           SET last_run_status = 'failed',
               last_run_error = ${message},
-              next_run_at = ${nextRunAt(source, now)},
+              next_run_at = ${nextRunAt({ ...source, runCount: runCountAfter }, now)},
               updated_at = ${iso(now)},
-              run_count = run_count + 1
+              run_count = run_count + 1,
+              enabled = CASE WHEN ${capped ? 1 : 0} THEN 0 ELSE enabled END
           WHERE task_id = ${task.id} AND last_run_status = 'running'
         `;
         yield* notifyChanged;
@@ -559,14 +578,20 @@ export const layer = Layer.effect(
         // is *now* (the user may have edited or deleted it while we ran).
         const current = yield* findTask(task.id);
         const scheduleSource = current ?? task;
+        // Judged on the count this run produces; reaching maxRuns pauses the
+        // task in the same write, since an enabled row with no next run would
+        // look armed but never fire.
+        const runCountAfter = scheduleSource.runCount + 1;
+        const capped = capReached(scheduleSource.schedule, runCountAfter);
         const completed: ScheduledTask = {
           ...scheduleSource,
+          ...(capped ? { enabled: false } : {}),
           updatedAt: iso(completedAt),
           lastRunAt: startedAtIso,
-          nextRunAt: nextRunAt(scheduleSource, completedAt),
+          nextRunAt: nextRunAt({ ...scheduleSource, runCount: runCountAfter }, completedAt),
           lastRunStatus,
           lastRunError,
-          runCount: scheduleSource.runCount + 1,
+          runCount: runCountAfter,
         };
         if (current !== null) {
           // startedAtIso in the guard ensures this writes only to the row this
@@ -579,6 +604,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            capped,
           });
           yield* notifyChanged;
         }
@@ -631,7 +657,8 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         due,
         ({ task, dueAt }) =>
-          (isMissedFixedTimeRun(task.schedule, dueAt, now)
+          (isMissedFixedTimeRun(task.schedule, dueAt, now) ||
+          isOutsideIntervalRestrictions(task.schedule, now)
             ? rescheduleMissedRun(task, now)
             : runTask(task, "scheduled")
           ).pipe(
@@ -661,13 +688,19 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const decoded = yield* Effect.result(decodeRow(row));
             if (Result.isSuccess(decoded)) {
+              // The interrupted attempt counts toward maxRuns; reaching the
+              // cap releases the row paused instead of re-arming it.
+              const source = decoded.success;
+              const runCountAfter = source.runCount + 1;
+              const capped = capReached(source.schedule, runCountAfter);
               yield* sql`
                 UPDATE scheduled_tasks
                 SET last_run_status = 'failed',
                     last_run_error = 'Run was interrupted by a server restart.',
-                    next_run_at = ${nextRunAt(decoded.success, now)},
+                    next_run_at = ${nextRunAt({ ...source, runCount: runCountAfter }, now)},
                     updated_at = ${iso(now)},
-                    run_count = run_count + 1
+                    run_count = run_count + 1,
+                    enabled = CASE WHEN ${capped ? 1 : 0} THEN 0 ELSE enabled END
                 WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
               `;
               return;
@@ -741,15 +774,28 @@ export const layer = Layer.effect(
         // Keep the existing next_run_at when the schedule itself is untouched:
         // editing a title or prompt must not postpone (or resurrect) a due
         // run — only schedule/enabled changes restart the clock.
+        // A task paused by reaching maxRuns resumes when the edit raises or
+        // clears the cap, unless the caller enables/disables it explicitly.
+        const resumesFromCap =
+          existingTask !== null &&
+          !existingTask.enabled &&
+          !input.enabled &&
+          capReached(existingTask.schedule, existingTask.runCount) &&
+          !capReached(input.schedule, existingTask.runCount);
+        // A task already at its cap stays off: enabled with no next run would
+        // look armed but never fire.
+        const enabled =
+          (resumesFromCap || input.enabled) &&
+          !capReached(input.schedule, existingTask?.runCount ?? 0);
         const scheduleUnchanged =
           existingTask !== null &&
-          existingTask.enabled === input.enabled &&
+          existingTask.enabled === enabled &&
           isSameSchedule(existingTask.schedule, input.schedule);
         const task: ScheduledTask = {
           id,
           title: input.title,
           prompt: input.prompt,
-          enabled: input.enabled,
+          enabled,
           schedule: input.schedule,
           projectId: input.projectId,
           threadId: input.threadId ?? null,
@@ -763,7 +809,10 @@ export const layer = Layer.effect(
           updatedAt: iso(now),
           nextRunAt: scheduleUnchanged
             ? existingTask.nextRunAt
-            : nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
+            : nextRunAt(
+                { enabled, schedule: input.schedule, runCount: existingTask?.runCount ?? 0 },
+                now,
+              ),
           lastRunAt: existingTask?.lastRunAt ?? null,
           lastRunStatus: existingTask?.lastRunStatus ?? "never",
           lastRunError: existingTask?.lastRunError ?? null,
@@ -777,14 +826,18 @@ export const layer = Layer.effect(
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = (input) =>
       Effect.gen(function* () {
         const existing = yield* loadTask(input.id);
-        if (existing.enabled === input.enabled) return { task: existing };
+        const enabled = input.enabled && !capReached(existing.schedule, existing.runCount);
+        if (existing.enabled === enabled) return { task: existing };
         const now = yield* localNow;
-        const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+        const next = nextRunAt(
+          { enabled, schedule: existing.schedule, runCount: existing.runCount },
+          now,
+        );
         // RETURNING so a task deleted between the load and this UPDATE is a
         // visible not-found error, not a false success.
         const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
-          SET enabled = ${input.enabled ? 1 : 0},
+          SET enabled = ${enabled ? 1 : 0},
               next_run_at = ${next},
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
@@ -799,7 +852,7 @@ export const layer = Layer.effect(
         }
         yield* notifyChanged;
         return {
-          task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
+          task: { ...existing, enabled, nextRunAt: next, updatedAt: iso(now) },
         };
       });
 

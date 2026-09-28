@@ -63,6 +63,21 @@ environment's time zone, which may differ from your phone's.
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Leaving an edited form asks before discarding unsaved changes.
 
+## Limiting when scheduled tasks run
+
+An **interval** schedule can be narrowed so it only runs when you want it to.
+For example, "every 30 minutes, Monday to Friday, 09:00 to 17:00".
+
+- **On** picks the days of the week the task may run. Pick none for every day.
+- **Only between** limits runs to a window of local time on the environment's
+  clock. The window cannot cross midnight, so use two tasks for overnight work.
+- **Stop after** pauses the task once it has run that many times. It also works
+  on fixed-time schedules. Raise or clear the limit to start it again.
+
+A run that comes due outside its days or window is skipped and rescheduled for
+the next allowed time, not run late. Agents can set the same restrictions when
+they schedule a task.
+
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser

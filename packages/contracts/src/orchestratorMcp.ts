@@ -64,7 +64,7 @@ const OrchestratorMcpSchedule = Schema.Union([
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
-    "Recurring schedule object: {type:'interval', everyMs} or {type:'fixed_time', timeOfDay, weekdays?}. Never stringify it unless the provider requires the compatibility form.",
+    "Recurring schedule object: {type:'interval', everyMs, weekdays?, window?, maxRuns?} or {type:'fixed_time', timeOfDay, weekdays?, maxRuns?}. Interval schedules accept optional weekdays ([1,2,3,4,5] means Monday to Friday), an optional window such as {start:'09:00', end:'17:00'} restricting runs to those local hours, and an optional maxRuns cap that pauses the task after that many runs. Never stringify it unless the provider requires the compatibility form.",
 });
 
 /**

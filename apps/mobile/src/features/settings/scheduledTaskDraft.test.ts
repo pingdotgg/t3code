@@ -28,6 +28,60 @@ describe("scheduleDraftForTask", () => {
     const schedule = { type: "interval" as const, everyMs: 65_000 };
     expect(scheduleFromDraft(scheduleDraftForTask({ schedule }))).toEqual(schedule);
   });
+
+  it("round-trips interval weekdays, window, and run cap", () => {
+    const schedule = {
+      type: "interval" as const,
+      everyMs: 1_800_000,
+      weekdays: [1, 2, 3, 4, 5],
+      window: { start: "09:00", end: "17:00" },
+      maxRuns: 16,
+    };
+    const draft = scheduleDraftForTask({ schedule });
+    expect(draft.intervalWeekdays).toEqual([1, 2, 3, 4, 5]);
+    expect(draft.windowEnabled).toBe(true);
+    expect(draft.windowStart).toBe("09:00");
+    expect(draft.windowEnd).toBe("17:00");
+    expect(draft.maxRuns).toBe("16");
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+  });
+
+  it("rejects an invalid run cap or window", () => {
+    const base = scheduleDraftForTask({ schedule: { type: "interval", everyMs: 60_000 } });
+    expect(scheduleFromDraft({ ...base, maxRuns: "0" })).toBeNull();
+    expect(scheduleFromDraft({ ...base, maxRuns: "soon" })).toBeNull();
+    expect(
+      scheduleFromDraft({
+        ...base,
+        windowEnabled: true,
+        windowStart: "17:00",
+        windowEnd: "09:00",
+      }),
+    ).toBeNull();
+    expect(
+      scheduleFromDraft({
+        ...base,
+        windowEnabled: true,
+        windowStart: "09:00",
+        windowEnd: "17:00",
+      }),
+    ).toEqual({
+      type: "interval",
+      everyMs: 60_000,
+      window: { start: "09:00", end: "17:00" },
+    });
+  });
+
+  it("keeps a run cap on fixed-time schedules", () => {
+    const draft = scheduleDraftForTask({
+      schedule: { type: "fixed_time", timeOfDay: "09:00", maxRuns: 5 },
+    });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      maxRuns: 5,
+    });
+  });
 });
 
 describe("hasScheduledTaskDraftChanges", () => {

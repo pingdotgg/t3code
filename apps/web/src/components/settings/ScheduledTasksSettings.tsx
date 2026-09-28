@@ -47,8 +47,12 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   matchesScheduledTaskScope,
+  maxRunsFromDraft,
+  runCapReached,
   scheduledTaskDefaultModel,
+  scheduleFromDraft,
   taskToDraft,
+  timeWindowValid,
   type DraftState,
   type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
@@ -100,6 +104,11 @@ const EMPTY_DRAFT: DraftState = {
   enabled: true,
   scheduleMode: "fixed",
   intervalMinutes: "15",
+  intervalWeekdays: new Set(),
+  windowEnabled: false,
+  windowStart: "09:00",
+  windowEnd: "17:00",
+  maxRuns: "",
   timeOfDay: "09:00",
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
@@ -148,25 +157,22 @@ function splitModelKey(value: string): ModelSelection | null {
   };
 }
 
-function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
-  if (draft.scheduleMode === "interval") {
-    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
-  }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
-  return {
-    type: "fixed_time",
-    timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-  };
-}
-
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  const cap = schedule.maxRuns === undefined ? "" : ` · ${schedule.maxRuns} runs max`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
-    return Number.isInteger(minutes)
+    const cadence = Number.isInteger(minutes)
       ? `Every ${minutes} min`
       : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+    const days =
+      schedule.weekdays === undefined || schedule.weekdays.length === 0
+        ? ""
+        : schedule.weekdays.length === 5 && schedule.weekdays.every((day) => day >= 1 && day <= 5)
+          ? " · weekdays"
+          : ` · ${schedule.weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ")}`;
+    const window =
+      schedule.window === undefined ? "" : ` · ${schedule.window.start}–${schedule.window.end}`;
+    return `${cadence}${days}${window}${cap}`;
   }
   const weekdays = schedule.weekdays ?? [];
   const days =
@@ -175,7 +181,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  return `${days} at ${schedule.timeOfDay}`;
+  return `${days} at ${schedule.timeOfDay}${cap}`;
 }
 
 /**
@@ -415,11 +421,13 @@ function ScheduledTaskRow({
         <div className="flex flex-wrap items-center gap-2">
           <span>
             {scheduleLabel(task.schedule)} ·{" "}
-            {task.enabled
-              ? task.nextRunAt
-                ? `Next run ${relativeLabel(task.nextRunAt)}`
-                : "Not scheduled"
-              : "Paused"}
+            {runCapReached(task) && !task.nextRunAt
+              ? `Run limit reached (${task.runCount}/${task.schedule.maxRuns})`
+              : task.enabled
+                ? task.nextRunAt
+                  ? `Next run ${relativeLabel(task.nextRunAt)}`
+                  : "Not scheduled"
+                : "Paused"}
           </span>
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
@@ -571,6 +579,18 @@ function ScheduledTaskEditorDialog({
       (!Number.isSafeInteger(schedule.everyMs) || schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
     ) {
       reportFailure("Invalid interval", "Enter an interval of at least one minute.");
+      return;
+    }
+    if (maxRunsFromDraft(draft.maxRuns) === null) {
+      reportFailure("Invalid run limit", "Enter a whole number of runs, or leave it empty.");
+      return;
+    }
+    if (
+      draft.scheduleMode === "interval" &&
+      draft.windowEnabled &&
+      !timeWindowValid(draft.windowStart, draft.windowEnd)
+    ) {
+      reportFailure("Invalid time window", "The window start must be a valid time before its end.");
       return;
     }
     if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
@@ -873,23 +893,112 @@ function ScheduledTaskEditorDialog({
                   </ToggleGroup>
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-interval">Run every</Label>
-                  <Input
-                    type="number"
-                    id="scheduled-task-interval"
-                    nativeInput
-                    min={1}
-                    step="any"
-                    className="w-24"
-                    value={draft.intervalMinutes}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
-                    }
-                  />
-                  <span className="text-xs text-muted-foreground">minutes</span>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="scheduled-task-interval">Run every</Label>
+                    <Input
+                      type="number"
+                      id="scheduled-task-interval"
+                      nativeInput
+                      min={1}
+                      step="any"
+                      className="w-24"
+                      value={draft.intervalMinutes}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          intervalMinutes: event.target.value,
+                        }))
+                      }
+                    />
+                    <span className="text-xs text-muted-foreground">minutes</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Label htmlFor="scheduled-task-interval-days">On</Label>
+                    <ToggleGroup
+                      multiple
+                      variant="outline"
+                      size="sm"
+                      aria-label="Days an interval schedule may run"
+                      value={[...draft.intervalWeekdays].map(String)}
+                      onValueChange={(values) =>
+                        setDraft((current) => ({
+                          ...current,
+                          intervalWeekdays: new Set(values.map(Number)),
+                        }))
+                      }
+                    >
+                      {WEEKDAY_ORDER.map((day) => (
+                        <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
+                          {WEEKDAY_SHORT[day]}
+                        </Toggle>
+                      ))}
+                    </ToggleGroup>
+                    {draft.intervalWeekdays.size === 0 ? (
+                      <span className="text-xs text-muted-foreground">no days picked — daily</span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="scheduled-task-window-enabled"
+                      checked={draft.windowEnabled}
+                      onCheckedChange={(windowEnabled) =>
+                        setDraft((current) => ({ ...current, windowEnabled }))
+                      }
+                    />
+                    <Label htmlFor="scheduled-task-window-enabled">Only between</Label>
+                    <Input
+                      type="time"
+                      id="scheduled-task-window-start"
+                      nativeInput
+                      aria-label="Window start"
+                      className="w-32"
+                      disabled={!draft.windowEnabled}
+                      value={draft.windowStart}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, windowStart: event.target.value }))
+                      }
+                    />
+                    <span className="text-xs text-muted-foreground">and</span>
+                    <Input
+                      type="time"
+                      id="scheduled-task-window-end"
+                      nativeInput
+                      aria-label="Window end"
+                      className="w-32"
+                      disabled={!draft.windowEnabled}
+                      value={draft.windowEnd}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, windowEnd: event.target.value }))
+                      }
+                    />
+                  </div>
                 </div>
               )}
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="scheduled-task-max-runs" className="shrink-0 whitespace-nowrap">
+                    Stop after
+                  </Label>
+                  <Input
+                    type="number"
+                    id="scheduled-task-max-runs"
+                    nativeInput
+                    min={1}
+                    step={1}
+                    placeholder="No limit"
+                    className="w-28"
+                    value={draft.maxRuns}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, maxRuns: event.target.value }))
+                    }
+                  />
+                  <span className="text-sm text-muted-foreground">runs</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The task pauses itself at the limit. Leave empty to run indefinitely.
+                </p>
+              </div>
             </div>
 
             <div className="flex items-center justify-between gap-4">

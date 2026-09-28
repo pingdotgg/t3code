@@ -86,9 +86,19 @@ const DAYS = [
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
-  if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
+  const cap = task.schedule.maxRuns === undefined ? "" : ` · ${task.schedule.maxRuns} runs max`;
+  if (task.schedule.type === "interval") {
+    const bits = [formatScheduledTaskInterval(task.schedule.everyMs)];
+    if (task.schedule.weekdays?.length) bits.push(repeatLabel(task.schedule.weekdays));
+    if (task.schedule.window) {
+      bits.push(
+        `${formatTime(task.schedule.window.start)}–${formatTime(task.schedule.window.end)}`,
+      );
+    }
+    return `${bits.join(" · ")}${cap}`;
+  }
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
+  return `${days} at ${formatTime(task.schedule.timeOfDay)}${cap}`;
 }
 
 function formatTime(value: string): string {
@@ -558,7 +568,7 @@ function TaskForm({
     reportFailure: false,
   });
   const submissionPending = useRef(false);
-  const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [picker, setPicker] = useState<null | "time" | "windowStart" | "windowEnd">(null);
   const taskMissing =
     draft.task !== null &&
     tasks.data !== null &&
@@ -798,7 +808,7 @@ function TaskForm({
             ]}
             selected={draft.schedule.mode}
             onSelect={(mode) => {
-              setTimePickerOpen(false);
+              setPicker(null);
               setDraft({ ...draft, schedule: { ...draft.schedule, mode } });
             }}
           />
@@ -808,7 +818,7 @@ function TaskForm({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
-              onPress={() => setTimePickerOpen((open) => !open)}
+              onPress={() => setPicker(picker === "time" ? null : "time")}
               className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
             >
               <Text className="text-lg text-foreground">Time</Text>
@@ -822,12 +832,12 @@ function TaskForm({
                 type="monochrome"
               />
             </Pressable>
-            {timePickerOpen ? (
+            {picker === "time" ? (
               <DateTimePicker
                 value={timePickerValue(draft.schedule.timeOfDay)}
                 mode="time"
                 display={Platform.OS === "ios" ? "spinner" : "default"}
-                onDismiss={() => setTimePickerOpen(false)}
+                onDismiss={() => setPicker(null)}
                 onValueChange={(_, selected) => {
                   const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
                   setDraft({ ...draft, schedule: { ...draft.schedule, timeOfDay } });
@@ -895,8 +905,146 @@ function TaskForm({
                 at least 1 minute.
               </Text>
             ) : null}
+            <SelectRow
+              label="Repeat"
+              value={
+                draft.schedule.intervalWeekdays.length === 0
+                  ? "Every day"
+                  : repeatLabel(draft.schedule.intervalWeekdays)
+              }
+              borderTop
+              actions={[
+                {
+                  id: "every_day",
+                  title: "Every day",
+                  state: draft.schedule.intervalWeekdays.length === 0 ? "on" : undefined,
+                },
+                {
+                  id: "weekdays",
+                  title: "Weekdays",
+                  state:
+                    repeatLabel(draft.schedule.intervalWeekdays) === "Weekdays" &&
+                    draft.schedule.intervalWeekdays.length > 0
+                      ? "on"
+                      : undefined,
+                },
+                ...DAYS.map((day) => ({
+                  id: String(day.index),
+                  title: day.label,
+                  attributes: { keepsMenuPresented: true },
+                  state: draft.schedule.intervalWeekdays.includes(day.index)
+                    ? ("on" as const)
+                    : undefined,
+                })),
+              ]}
+              onSelect={(id) => {
+                if (id === "every_day") {
+                  setDraft({ ...draft, schedule: { ...draft.schedule, intervalWeekdays: [] } });
+                  return;
+                }
+                if (id === "weekdays") {
+                  setDraft({
+                    ...draft,
+                    schedule: { ...draft.schedule, intervalWeekdays: [1, 2, 3, 4, 5] },
+                  });
+                  return;
+                }
+                const day = DAYS.find((item) => String(item.index) === id);
+                if (!day) return;
+                setDraft({
+                  ...draft,
+                  schedule: {
+                    ...draft.schedule,
+                    intervalWeekdays: draft.schedule.intervalWeekdays.includes(day.index)
+                      ? draft.schedule.intervalWeekdays.filter((index) => index !== day.index)
+                      : [...draft.schedule.intervalWeekdays, day.index],
+                  },
+                });
+              }}
+            />
+            <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+              <Text className="min-w-0 flex-1 text-lg text-foreground">Only between</Text>
+              <ThemedSwitch
+                accessibilityLabel="Restrict runs to a time window"
+                value={draft.schedule.windowEnabled}
+                onValueChange={(windowEnabled) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, windowEnabled } })
+                }
+              />
+            </View>
+            {draft.schedule.windowEnabled ? (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Window opens at ${formatTime(draft.schedule.windowStart)}`}
+                  onPress={() => setPicker(picker === "windowStart" ? null : "windowStart")}
+                  className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                >
+                  <Text className="text-lg text-foreground">From</Text>
+                  <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
+                    {formatTime(draft.schedule.windowStart)}
+                  </Text>
+                  <SymbolView
+                    name="chevron.right"
+                    size={14}
+                    tintColorClassName="accent-chevron"
+                    type="monochrome"
+                  />
+                </Pressable>
+                {picker === "windowStart" ? (
+                  <DateTimePicker
+                    value={timePickerValue(draft.schedule.windowStart)}
+                    mode="time"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    onDismiss={() => setPicker(null)}
+                    onValueChange={(_, selected) => {
+                      const windowStart = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+                      setDraft({ ...draft, schedule: { ...draft.schedule, windowStart } });
+                    }}
+                  />
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Window closes at ${formatTime(draft.schedule.windowEnd)}`}
+                  onPress={() => setPicker(picker === "windowEnd" ? null : "windowEnd")}
+                  className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                >
+                  <Text className="text-lg text-foreground">Until</Text>
+                  <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
+                    {formatTime(draft.schedule.windowEnd)}
+                  </Text>
+                  <SymbolView
+                    name="chevron.right"
+                    size={14}
+                    tintColorClassName="accent-chevron"
+                    type="monochrome"
+                  />
+                </Pressable>
+                {picker === "windowEnd" ? (
+                  <DateTimePicker
+                    value={timePickerValue(draft.schedule.windowEnd)}
+                    mode="time"
+                    display={Platform.OS === "ios" ? "spinner" : "default"}
+                    onDismiss={() => setPicker(null)}
+                    onValueChange={(_, selected) => {
+                      const windowEnd = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+                      setDraft({ ...draft, schedule: { ...draft.schedule, windowEnd } });
+                    }}
+                  />
+                ) : null}
+              </>
+            ) : null}
           </>
         )}
+        <FormField
+          label="Stop after (runs)"
+          value={draft.schedule.maxRuns}
+          keyboardType="decimal-pad"
+          disabled={saving}
+          placeholder="No limit"
+          borderTop
+          onChange={(maxRuns) => setDraft({ ...draft, schedule: { ...draft.schedule, maxRuns } })}
+        />
         <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
           <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
           <ThemedSwitch
@@ -1018,11 +1166,15 @@ function EnvironmentTasks({
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
                 {describeSchedule(task)}
-                {!task.enabled
-                  ? " · Paused"
-                  : task.nextRunAt
-                    ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
-                    : ""}
+                {task.schedule.maxRuns !== undefined &&
+                task.runCount >= task.schedule.maxRuns &&
+                !task.nextRunAt
+                  ? ` · Run limit reached (${task.runCount}/${task.schedule.maxRuns})`
+                  : !task.enabled
+                    ? " · Paused"
+                    : task.nextRunAt
+                      ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
+                      : ""}
               </Text>
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>

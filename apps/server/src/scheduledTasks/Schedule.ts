@@ -9,6 +9,95 @@ export function parseTimeOfDay(value: string): { hour: number; minute: number } 
   return { hour: Number(match[1]), minute: Number(match[2]) };
 }
 
+function minutesOfDay(value: string): number | null {
+  const time = parseTimeOfDay(value);
+  return time === null ? null : time.hour * 60 + time.minute;
+}
+
+function atMidnight(date: DateTime.DateTime): DateTime.DateTime {
+  return DateTime.setParts(date, { hour: 0, minute: 0, second: 0, millisecond: 0 });
+}
+
+function startOfNextDay(date: DateTime.DateTime): DateTime.DateTime {
+  return atMidnight(DateTime.add(date, { days: 1 }));
+}
+
+/**
+ * Next occurrence of an interval schedule that honours its optional weekday
+ * mask and time window. Out-of-window candidates snap forward: before the
+ * window opens today, the run moves to the window's opening time; past the
+ * window (or on a disallowed day), it moves to the next allowed day — at
+ * 00:00 when only weekdays restrict, at the window's opening time otherwise.
+ * The loop is bounded because every hop either returns or advances a day;
+ * 16 hops cover one allowed weekday plus a window lost to a DST gap.
+ */
+function nextRestrictedIntervalRun(
+  schedule: Extract<ScheduledTaskSchedule, { type: "interval" }>,
+  from: DateTime.DateTime,
+  everyMs: number,
+): DateTime.DateTime | null {
+  const weekdays =
+    schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
+  const windowStart = schedule.window ? minutesOfDay(schedule.window.start) : null;
+  const windowEnd = schedule.window ? minutesOfDay(schedule.window.end) : null;
+  let candidate = DateTime.add(from, { milliseconds: everyMs });
+  for (let hop = 0; hop < 16; hop += 1) {
+    if (weekdays !== null && !weekdays.has(DateTime.toParts(candidate).weekDay)) {
+      candidate = startOfNextDay(candidate);
+      continue;
+    }
+    if (windowStart === null || windowEnd === null) return candidate;
+    // Compare local minutes rather than instants so a DST gap or overlap
+    // cannot stretch the window: the check stays in the zone's wall clock.
+    const local = localMinutes(candidate);
+    if (local >= windowEnd) {
+      candidate = startOfNextDay(candidate);
+      continue;
+    }
+    if (local >= windowStart) return candidate;
+    const opensAt = DateTime.setParts(atMidnight(candidate), {
+      hour: Math.floor(windowStart / 60),
+      minute: windowStart % 60,
+      second: 0,
+      millisecond: 0,
+    });
+    // A window opening inside a spring-forward gap does not exist that day.
+    if (localMinutes(opensAt) === windowStart) return opensAt;
+    candidate = startOfNextDay(candidate);
+  }
+  return null;
+}
+
+function localMinutes(date: DateTime.DateTime): number {
+  const parts = DateTime.toParts(date);
+  return parts.hour * 60 + parts.minute;
+}
+
+/**
+ * True when an interval run that came due is being dispatched outside its
+ * weekday mask or time window, as after downtime or sleep. Such a run is
+ * rescheduled to the next opening instead of firing late.
+ */
+export function isOutsideIntervalRestrictions(
+  schedule: ScheduledTaskSchedule,
+  now: DateTime.DateTime,
+): boolean {
+  if (schedule.type !== "interval") return false;
+  if (
+    schedule.weekdays !== undefined &&
+    schedule.weekdays.length > 0 &&
+    !schedule.weekdays.includes(DateTime.toParts(now).weekDay)
+  ) {
+    return true;
+  }
+  if (schedule.window === undefined) return false;
+  const start = minutesOfDay(schedule.window.start);
+  const end = minutesOfDay(schedule.window.end);
+  if (start === null || end === null) return false;
+  const local = localMinutes(now);
+  return local < start || local >= end;
+}
+
 export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
@@ -16,9 +105,11 @@ export function nextScheduledRunAt(
   if (schedule.type === "interval") {
     // Persisted rows created before the one-minute floor remain readable, but
     // they must not retain their old high-frequency execution rate.
-    return DateTime.add(from, {
-      milliseconds: Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS),
-    });
+    const everyMs = Math.max(schedule.everyMs, MIN_SCHEDULED_TASK_INTERVAL_MS);
+    if (schedule.weekdays === undefined && schedule.window === undefined) {
+      return DateTime.add(from, { milliseconds: everyMs });
+    }
+    return nextRestrictedIntervalRun(schedule, from, everyMs);
   }
 
   const time = parseTimeOfDay(schedule.timeOfDay);
@@ -53,7 +144,13 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
 /** Semantic equality for schedules: true iff both fire at the same times. */
 export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
   if (a.type === "interval") {
-    return b.type === "interval" && a.everyMs === b.everyMs;
+    if (b.type !== "interval" || a.everyMs !== b.everyMs) return false;
+    if (weekdayKey(a.weekdays) !== weekdayKey(b.weekdays)) return false;
+    const aStart = a.window === undefined ? null : minutesOfDay(a.window.start);
+    const aEnd = a.window === undefined ? null : minutesOfDay(a.window.end);
+    const bStart = b.window === undefined ? null : minutesOfDay(b.window.start);
+    const bEnd = b.window === undefined ? null : minutesOfDay(b.window.end);
+    return aStart === bStart && aEnd === bEnd;
   }
   if (b.type !== "fixed_time") return false;
   // The contract accepts padded and unpadded hours ("9:00" and "09:00"), so
@@ -90,23 +187,4 @@ export function isMissedFixedTimeRun(
 ): boolean {
   if (schedule.type !== "fixed_time") return false;
   return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
-}
-
-function describeSchedule(schedule: ScheduledTaskSchedule): string {
-  if (schedule.type === "interval") {
-    const minutes = schedule.everyMs / MINUTE_MS;
-    if (Number.isInteger(minutes)) {
-      return `Every ${minutes === 1 ? "minute" : `${minutes} minutes`}`;
-    }
-    return `Every ${Math.round(schedule.everyMs / 1000)} seconds`;
-  }
-
-  const weekdayCount = schedule.weekdays?.length ?? 0;
-  const days =
-    weekdayCount === 0
-      ? "day"
-      : weekdayCount === 5 && schedule.weekdays?.every((day) => day >= 1 && day <= 5)
-        ? "weekday"
-        : "selected day";
-  return `At ${schedule.timeOfDay} every ${days}`;
 }

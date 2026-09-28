@@ -27,11 +27,62 @@ const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0)).annota
   description: "Positive interval in milliseconds.",
 });
 
+const ScheduledTaskMaxRuns = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+  description:
+    "Stop after this many runs; the task pauses itself once the cap is reached. Omit for no limit.",
+});
+
+const ScheduledTaskWeekday = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 6 }),
+).annotate({ description: "Weekday number where 0 is Sunday and 6 is Saturday." });
+
+/** Minutes since midnight; "9:05" and "09:05" both parse so windows compare correctly. */
+const timeOfDayMinutes = (value: string): number => {
+  const [hours, minutes] = value.split(":").map(Number);
+  return (hours ?? 0) * 60 + (minutes ?? 0);
+};
+
+const ScheduledTaskWindow = Schema.Struct({
+  start: TimeOfDay.annotate({
+    description: "Local time the window opens (inclusive), such as 09:00.",
+  }),
+  end: TimeOfDay.annotate({
+    description: "Local time the window closes (exclusive), such as 17:00.",
+  }),
+})
+  .check(
+    Schema.makeFilter((window) =>
+      timeOfDayMinutes(window.start) < timeOfDayMinutes(window.end)
+        ? undefined
+        : { path: ["start"], issue: "window start must be before window end" },
+    ),
+  )
+  .annotate({
+    description:
+      "Local time window runs may fire in. Windows never cross midnight, so start must be before end.",
+  });
+
+/** Optional restrictions shared by both interval schedule variants. */
+const ScheduledTaskIntervalRestrictions = {
+  weekdays: Schema.optional(
+    Schema.Array(ScheduledTaskWeekday).annotate({
+      description: "Optional weekdays the task may run on; omit or leave empty to run every day.",
+    }),
+  ),
+  window: Schema.optional(
+    ScheduledTaskWindow.annotate({
+      description: "Optional local time window runs must fall in, such as business hours.",
+    }),
+  ),
+  maxRuns: Schema.optional(ScheduledTaskMaxRuns),
+};
+
 const ScheduledTaskIntervalSchedule = Schema.Struct({
   type: Schema.Literal("interval").annotate({
     description: "Select interval scheduling.",
   }),
   everyMs: ScheduledTaskIntervalMs,
+  ...ScheduledTaskIntervalRestrictions,
 }).annotate({
   description: "Run repeatedly after a fixed number of milliseconds.",
 });
@@ -42,14 +93,11 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   }),
   timeOfDay: TimeOfDay,
   weekdays: Schema.optional(
-    Schema.Array(
-      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
-        description: "Weekday number where 0 is Sunday and 6 is Saturday.",
-      }),
-    ).annotate({
+    Schema.Array(ScheduledTaskWeekday).annotate({
       description: "Optional weekdays; omit to run every day.",
     }),
   ),
+  maxRuns: Schema.optional(ScheduledTaskMaxRuns),
 }).annotate({
   description: "Run at a fixed local wall-clock time on selected weekdays.",
 });
@@ -78,6 +126,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
     ).annotate({
       description: "Interval in milliseconds, with a minimum of 60000 (one minute).",
     }),
+    ...ScheduledTaskIntervalRestrictions,
   }).annotate({
     description: "Run repeatedly after a fixed number of milliseconds.",
   }),
