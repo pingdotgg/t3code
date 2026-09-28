@@ -3,6 +3,7 @@ import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_FONT_SIZE,
@@ -90,6 +91,7 @@ export function applyFontSizes(sizes: {
   sidebarMetaFontSize: FontSize;
   toolFontSize: FontSize;
   inputFontSize: FontSize;
+  pullRequestsBodyFontSize: FontSize;
 }): void {
   if (typeof document === "undefined") {
     return;
@@ -103,6 +105,7 @@ export function applyFontSizes(sizes: {
   style.setProperty("--app-sidebar-meta-font-size", `${sizes.sidebarMetaFontSize}px`);
   style.setProperty("--app-tool-font-size", `${sizes.toolFontSize}px`);
   style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
+  style.setProperty("--pr-body-font-size", `${sizes.pullRequestsBodyFontSize}px`);
 }
 
 export function applySidebarRowSpacing(spacing: SidebarRowSpacing): void {
@@ -226,6 +229,10 @@ if (typeof document !== "undefined") {
     ),
     toolFontSize: normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
     inputFontSize: normalizeFontSize(storedSettings?.inputFontSize, DEFAULT_INPUT_FONT_SIZE),
+    pullRequestsBodyFontSize: normalizeFontSize(
+      storedSettings?.pullRequestsBodyFontSize,
+      DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
+    ),
   });
 }
 
@@ -240,6 +247,7 @@ export function useAppFont() {
   const sidebarRowSpacing = useSettings((settings) => settings.sidebarRowSpacing);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
   const inputFontSize = useSettings((settings) => settings.inputFontSize);
+  const pullRequestsBodyFontSize = useSettings((settings) => settings.pullRequestsBodyFontSize);
   const uiDensity = useSettings((settings) => settings.uiDensity);
   const sidebarTranslucency = useSettings((settings) => settings.sidebarTranslucency);
 
@@ -260,6 +268,7 @@ export function useAppFont() {
       sidebarMetaFontSize,
       toolFontSize,
       inputFontSize,
+      pullRequestsBodyFontSize,
     });
   }, [
     chatFontSize,
@@ -269,6 +278,7 @@ export function useAppFont() {
     sidebarMetaFontSize,
     toolFontSize,
     inputFontSize,
+    pullRequestsBodyFontSize,
   ]);
 
   useEffect(() => {
@@ -313,6 +323,7 @@ export function useAppFont() {
     sidebarRowSpacing,
     toolFontSize,
     inputFontSize,
+    pullRequestsBodyFontSize,
     uiDensity,
     sidebarTranslucency,
   };

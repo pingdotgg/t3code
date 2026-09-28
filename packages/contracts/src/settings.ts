@@ -180,6 +180,8 @@ export const DEFAULT_SIDEBAR_V2_ENABLED = false;
 export const DEFAULT_PULL_REQUESTS_DEFAULT_STATE: PullRequestListState = "open";
 /** Code font size for pull request diffs, independent of the global code size. */
 export const DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE: FontSize = 12 as FontSize;
+/** Body font size for pull request descriptions and comments, independent of chat. */
+export const DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE: FontSize = 14 as FontSize;
 
 export const ThreadCompletionNotificationMode = Schema.Literals(["off", "background-only", "all"]);
 export type ThreadCompletionNotificationMode = typeof ThreadCompletionNotificationMode.Type;
@@ -303,6 +305,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   pullRequestsCodeFontSize: FontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE)),
+  ),
+  pullRequestsBodyFontSize: FontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE)),
   ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
@@ -831,6 +836,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
   pullRequestsDefaultState: Schema.optionalKey(PullRequestListState),
   pullRequestsCodeFontSize: Schema.optionalKey(FontSize),
+  pullRequestsBodyFontSize: Schema.optionalKey(FontSize),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

@@ -1159,6 +1159,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.pullRequestsCodeFontSize !== DEFAULT_UNIFIED_SETTINGS.pullRequestsCodeFontSize
         ? ["Pull requests code font size"]
         : []),
+      ...(settings.pullRequestsBodyFontSize !== DEFAULT_UNIFIED_SETTINGS.pullRequestsBodyFontSize
+        ? ["Pull requests body font size"]
+        : []),
       ...(settings.browserAutoShowFloatingPreview !==
       DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
         ? ["Agent browser preview"]
@@ -1242,6 +1245,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.projectScriptsConfirmRun,
       settings.pullRequestsDefaultState,
       settings.pullRequestsCodeFontSize,
+      settings.pullRequestsBodyFontSize,
       settings.enableAssistantStreaming,
       settings.agentWorkflows,
       settings.sidebarFontSize,
@@ -2732,6 +2736,49 @@ export function GeneralSettingsPanel() {
                   {FONT_SIZE_OPTIONS.find(
                     (option) => option.value === settings.pullRequestsCodeFontSize,
                   )?.label ?? "12px"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Body font size"
+          description="Font size for pull request descriptions and comments."
+          resetAction={
+            settings.pullRequestsBodyFontSize !==
+            DEFAULT_UNIFIED_SETTINGS.pullRequestsBodyFontSize ? (
+              <SettingResetButton
+                label="pull requests body font size"
+                onClick={() =>
+                  updateSettings({
+                    pullRequestsBodyFontSize: DEFAULT_UNIFIED_SETTINGS.pullRequestsBodyFontSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.pullRequestsBodyFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ pullRequestsBodyFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Pull requests body font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find(
+                    (option) => option.value === settings.pullRequestsBodyFontSize,
+                  )?.label ?? "14px"}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
