@@ -360,6 +360,10 @@ describe("MessagesTimeline", () => {
         expect(detail.textContent).toContain(`Modified 1 file(s): ${fullPath}`);
         expect(detail.textContent).not.toContain("/workspace/src/durable-worktree-c...");
         expect(getComputedStyle(detail).fontSize).toBe(`${fontSize}px`);
+        const details = detail.closest(".chat-work-details");
+        expect(details).not.toBeNull();
+        expect(getComputedStyle(details!).fontSize).toBe(`${fontSize}px`);
+        expect(getComputedStyle(details!).getPropertyValue("text-size-adjust")).toBe("100%");
         expect(getComputedStyle(detail).backgroundColor).toBe("rgba(0, 0, 0, 0)");
         expect(detail.scrollWidth).toBeLessThanOrEqual(detail.clientWidth + 1);
       } finally {

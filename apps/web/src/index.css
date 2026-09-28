@@ -879,6 +879,12 @@ label:has(> select#reasoning-effort) select {
   contain: layout style;
 }
 
+.chat-work-details {
+  font-size: var(--app-tool-font-size);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 .chat-work-chevron {
   transition: transform 120ms ease-out;
 }
