@@ -72,6 +72,8 @@ import {
 } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
+import { recordWsDiagnostic } from "../../rpc/wsDiagnostics";
+import { recordWsStreamActivity } from "../../rpc/wsActivity";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -563,6 +565,46 @@ export function retainThreadDetailSubscription(
   };
 }
 
+/**
+ * Reconnect repair keyed on locally-held state, not server status.
+ *
+ * The transport already restarts every live stream on reconnect, but a
+ * retained subscription that failed for a non-transport reason parks until
+ * the next reconnect, and a turn that finished during the outage leaves the
+ * timeline frozen while status already reads `idle`. Re-attach every retained
+ * (refCount > 0) detail subscription whose transport stream is dead; the
+ * snapshot handler (`syncServerThreadDetail`) then reloads the locally-held
+ * timeline even when the server no longer reports the turn active.
+ */
+export function repairRetainedThreadDetailSubscriptionsAfterReconnect(
+  environmentId?: EnvironmentId,
+): { readonly retained: number; readonly reattached: number } {
+  let retained = 0;
+  let reattached = 0;
+  for (const entry of threadDetailSubscriptions.values()) {
+    if (entry.refCount <= 0) {
+      continue;
+    }
+    if (environmentId !== undefined && entry.environmentId !== environmentId) {
+      continue;
+    }
+    retained += 1;
+    entry.lastAccessedAt = Date.now();
+    if (entry.unsubscribe === NOOP) {
+      if (attachThreadDetailSubscription(entry)) {
+        reattached += 1;
+      } else {
+        watchThreadDetailSubscriptionReadiness(entry);
+      }
+    }
+  }
+  if (retained > 0) {
+    recordWsStreamActivity();
+    recordWsDiagnostic("reconnect-repair", { retained, reattached });
+  }
+  return { retained, reattached };
+}
+
 function emitEnvironmentConnectionRegistryChange() {
   for (const listener of environmentConnectionListeners) {
     listener();
@@ -955,7 +997,13 @@ function createPrimaryEnvironmentClient(
     );
   }
 
-  return createWsRpcClient(new WsTransport(wsBaseUrl));
+  return createWsRpcClient(
+    new WsTransport(wsBaseUrl, {
+      onProtocolConnected: () => {
+        repairRetainedThreadDetailSubscriptionsAfterReconnect();
+      },
+    }),
+  );
 }
 
 function createSavedEnvironmentClient(
@@ -988,6 +1036,9 @@ function createSavedEnvironmentClient(
         },
         onClose: (details: { readonly code: number; readonly reason: string }) => {
           setRuntimeDisconnected(record.environmentId, details.reason);
+        },
+        onProtocolConnected: () => {
+          repairRetainedThreadDetailSubscriptionsAfterReconnect(record.environmentId);
         },
       },
     ),

@@ -1,6 +1,8 @@
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import { getLastWsStreamActivityMs } from "../rpc/wsActivity";
+import { recordWsDiagnostic } from "../rpc/wsDiagnostics";
 import {
   getWsConnectionStatus,
   getWsConnectionUiState,
@@ -15,6 +17,14 @@ import { reportClientWarning } from "../lib/clientLogger";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
+/**
+ * A socket that stays "open" while delivering zero bytes (no FIN/RST) parks
+ * reads forever, so the reconnect loop never re-enters. Force a reconnect
+ * after this long without any socket/stream activity while work is pending.
+ */
+export const WS_STALL_SILENCE_MS = 45_000;
+/** Suppress toast flicker for blips that recover within this window. */
+const RECONNECT_TOAST_DEBOUNCE_MS = 1_000;
 type WsAutoReconnectTrigger = "focus" | "online";
 
 const connectionTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -50,8 +60,25 @@ function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
   return `Attempt ${reconnectAttempt}/${status.reconnectMaxAttempts}`;
 }
 
-function describeExhaustedToast(): string {
-  return "Retries exhausted trying to reconnect";
+function describeExhaustedToast(status: WsConnectionStatus): string {
+  const detail = describeReconnectDetail(status);
+  return detail
+    ? `Retries exhausted trying to reconnect. Last error: ${detail}`
+    : "Retries exhausted trying to reconnect";
+}
+
+function truncateReconnectDetail(detail: string, maxLength = 160): string {
+  const trimmed = detail.trim().replace(/\s+/g, " ");
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}…` : trimmed;
+}
+
+function describeReconnectDetail(status: WsConnectionStatus): string | null {
+  const raw = status.lastError?.trim() || status.closeReason?.trim() || null;
+  if (!raw) {
+    return status.closeCode === null ? null : `close code ${status.closeCode}`;
+  }
+  const withCode = status.closeCode === null ? raw : `${raw} (close code ${status.closeCode})`;
+  return truncateReconnectDetail(withCode);
 }
 
 function buildReconnectTitle(_status: WsConnectionStatus): string {
@@ -148,10 +175,28 @@ export function shouldRestartStalledReconnect(
   );
 }
 
+export function shouldForceStallReconnect(input: {
+  readonly uiState: WsConnectionUiState;
+  readonly lastActivityMs: number;
+  readonly nowMs: number;
+  readonly hasActiveWork: boolean;
+  readonly silenceMs?: number;
+}): boolean {
+  const silenceMs = input.silenceMs ?? WS_STALL_SILENCE_MS;
+  return (
+    input.uiState === "connected" &&
+    input.hasActiveWork &&
+    Number.isFinite(input.lastActivityMs) &&
+    input.nowMs - input.lastActivityMs >= silenceMs
+  );
+}
+
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
+  const slowRequests = useSlowRpcAckRequests();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const lastForcedReconnectAtRef = useRef(0);
+  const lastStallReconnectAtRef = useRef(0);
   const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const toastResetTimerRef = useRef<number | null>(null);
   const previousUiStateRef = useRef<WsConnectionUiState>(getWsConnectionUiState(status));
@@ -271,12 +316,54 @@ export function WebSocketConnectionCoordinator() {
   ]);
 
   useEffect(() => {
+    if (getWsConnectionUiState(status) !== "connected" || slowRequests.length === 0) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const currentStatus = getWsConnectionStatus();
+      if (
+        !shouldForceStallReconnect({
+          uiState: getWsConnectionUiState(currentStatus),
+          lastActivityMs: getLastWsStreamActivityMs(),
+          nowMs: Date.now(),
+          hasActiveWork: true,
+        })
+      ) {
+        return;
+      }
+      if (Date.now() - lastStallReconnectAtRef.current < FORCED_WS_RECONNECT_DEBOUNCE_MS) {
+        return;
+      }
+      lastStallReconnectAtRef.current = Date.now();
+      recordWsDiagnostic("stream-stalled", {
+        idleMs: Date.now() - getLastWsStreamActivityMs(),
+        slowRequests: slowRequests.length,
+      });
+      runReconnect(false);
+    }, 5_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [slowRequests.length, status]);
+
+  useEffect(() => {
     const uiState = getWsConnectionUiState(status);
     const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
-    const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
-    const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
-    const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
+    const disconnectedAtMs = status.disconnectedAt
+      ? new Date(status.disconnectedAt).getTime()
+      : null;
+    // Debounce blips: quick reconnects recover without any toast at all.
+    const isDebounced =
+      disconnectedAtMs === null || Date.now() - disconnectedAtMs >= RECONNECT_TOAST_DEBOUNCE_MS;
+    const shouldShowReconnectToast =
+      isDebounced && status.hasConnected && uiState === "reconnecting";
+    const shouldShowOfflineToast =
+      isDebounced && uiState === "offline" && status.disconnectedAt !== null;
+    const shouldShowExhaustedToast =
+      isDebounced && status.hasConnected && status.reconnectPhase === "exhausted";
 
     if (
       toastResetTimerRef.current !== null &&
@@ -306,7 +393,7 @@ export function WebSocketConnectionCoordinator() {
               data: {
                 hideCopyButton: true,
               },
-              description: describeExhaustedToast(),
+              description: describeExhaustedToast(status),
               timeout: 0,
               title: "Disconnected from T3 Server",
               type: "error",
@@ -319,10 +406,14 @@ export function WebSocketConnectionCoordinator() {
               data: {
                 hideCopyButton: true,
               },
-              description:
-                status.nextRetryAt === null
-                  ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
-                  : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
+              description: (() => {
+                const base =
+                  status.nextRetryAt === null
+                    ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
+                    : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`;
+                const detail = describeReconnectDetail(status);
+                return detail ? `${base} — ${detail}` : base;
+              })(),
               timeout: 0,
               title: buildReconnectTitle(status),
               type: "loading",

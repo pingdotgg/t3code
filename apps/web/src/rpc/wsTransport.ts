@@ -13,6 +13,7 @@ import { RpcClient } from "effect/unstable/rpc";
 
 import { ClientTracingLive } from "../observability/clientTracing";
 import { clearAllTrackedRpcRequests } from "./requestLatencyState";
+import { recordWsStreamActivity } from "./wsActivity";
 import {
   createWsRpcProtocolLayer,
   makeWsRpcProtocolClient,
@@ -360,6 +361,7 @@ export class WsTransport {
               }
 
               markValueReceived();
+              recordWsStreamActivity();
               try {
                 listener(value);
               } catch {
