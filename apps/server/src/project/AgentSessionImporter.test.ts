@@ -670,6 +670,62 @@ const integrationLayer = Layer.mergeAll(
 
 it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
   for (const source of ["codex", "claudeAgent"] as const) {
+    it.effect(`attaches a ${source} project-root alias without assigning a worktree`, () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const projectId = ProjectId.make(`resume-alias-${source}`);
+        const workspaceRoot = `${WORKSPACE_ROOT}-root-alias-${source}`;
+        const cwd = `${workspaceRoot}-alias`;
+        const thread = {
+          ...makeThread(source),
+          providerSessionId:
+            source === "codex" ? "root-alias-codex" : "6c119ee3-f063-4999-87ce-a062d004c37c",
+        };
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make(`create-${projectId}`),
+          projectId,
+          title: "Resume alias",
+          workspaceRoot,
+          defaultModelSelection: null,
+          createdAt: "2026-08-24T09:00:00.000Z",
+        });
+        const attached = yield* attachAgentSession({
+          projectId,
+          providerInstanceId: thread.providerInstanceId,
+          sessionId: thread.providerSessionId,
+        }).pipe(
+          Effect.provideService(AgentSessionScanner.AgentSessionScanner, {
+            ...integrationScanner,
+            readSession: () =>
+              Effect.succeed({
+                isProjectRoot: true,
+                thread,
+                source: makeThreadOutcome(thread).source,
+                session: {
+                  provider: source,
+                  providerInstanceId: thread.providerInstanceId,
+                  sessionId: thread.providerSessionId,
+                  title: thread.title,
+                  cwd,
+                  branch: "main",
+                  updatedAt: thread.updatedAt,
+                },
+              }),
+          }),
+        );
+        const imported = Option.getOrThrow(yield* snapshots.getThreadDetailById(attached.threadId));
+        expect(imported.worktreePath).toBeNull();
+        expect(Option.getOrThrow(yield* directory.getBinding(attached.threadId))).toMatchObject({
+          runtimePayload: { cwd },
+        });
+      }),
+    );
+  }
+
+  for (const source of ["codex", "claudeAgent"] as const) {
     it.effect(
       `attaches a ${source} worktree session once, preserves its directory, and opens an existing native binding`,
       () =>
@@ -712,6 +768,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
                 thread,
                 source: outcome.source,
                 session,
+                isProjectRoot: false,
               }),
           });
           yield* engine.dispatch({
@@ -848,7 +905,12 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             truncated: false,
           }),
         readSession: () =>
-          Effect.succeed({ thread, source: makeThreadOutcome(thread).source, session }),
+          Effect.succeed({
+            thread,
+            source: makeThreadOutcome(thread).source,
+            session,
+            isProjectRoot: true,
+          }),
       });
       const withScanner = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(Effect.provideService(AgentSessionScanner.AgentSessionScanner, scanner));

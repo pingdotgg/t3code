@@ -275,6 +275,15 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             claudeId,
           );
           expect(selected.session.cwd).toBe(worktree);
+          expect(selected.isProjectRoot).toBe(false);
+          expect(
+            (yield* scanner.readSession(worktree, ProviderInstanceId.make("claudeAgent"), claudeId))
+              .isProjectRoot,
+          ).toBe(true);
+          expect(
+            (yield* scanner.readSession(repo, ProviderInstanceId.make("codex"), "root-session"))
+              .isProjectRoot,
+          ).toBe(true);
           expect(selected.thread.providerSessionId).toBe(claudeId);
           expect(selected.thread.messages[0]?.text).toBe("Continue the worktree task");
           const unrelated = yield* scanner
@@ -288,6 +297,72 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
       }),
   );
+
+  for (const provider of ["codex", "claudeAgent"] as const) {
+    it.effect.skipIf(!symlinksSupported)(
+      `recognizes ${provider} project-root symlink aliases`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const base = yield* makeTempDir("t3code-resume-alias-");
+          const root = path.join(base, "repo");
+          const alias = path.join(base, "alias");
+          const claudeHomePath = path.join(base, "claude");
+          const codexHomePath = path.join(base, "codex");
+          yield* fs.makeDirectory(root);
+          yield* fs.symlink(root, alias);
+          const sessionId = "5c119ee3-f063-4999-87ce-a062d004c37c";
+          for (const [workspaceRoot, cwd] of [
+            [root, alias],
+            [alias, root],
+          ] as const) {
+            yield* writeTranscript({
+              filePath:
+                provider === "codex"
+                  ? path.join(
+                      codexHomePath,
+                      "sessions",
+                      "2026",
+                      "08",
+                      "24",
+                      `rollout-${sessionId}.jsonl`,
+                    )
+                  : path.join(claudeHomePath, "projects", "alias", `${sessionId}.jsonl`),
+              contents:
+                provider === "codex"
+                  ? [
+                      encodeTranscriptRecord({
+                        type: "session_meta",
+                        payload: { id: sessionId, cwd },
+                      }),
+                      encodeTranscriptRecord({
+                        type: "event_msg",
+                        payload: { type: "user_message", message: "Resume through an alias" },
+                      }),
+                    ].join("\n")
+                  : encodeTranscriptRecord({
+                      type: "user",
+                      sessionId,
+                      cwd,
+                      message: { content: "Resume through an alias" },
+                    }),
+              mtimeMs: Date.parse("2026-08-24T12:00:00Z"),
+            });
+            yield* Effect.gen(function* () {
+              const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+              const selected = yield* scanner.readSession(
+                workspaceRoot,
+                ProviderInstanceId.make(provider),
+                sessionId,
+              );
+              expect(selected.isProjectRoot).toBe(true);
+              expect(selected.session.cwd).toBe(cwd);
+            }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+          }
+        }),
+    );
+  }
 
   it.effect(
     "refreshes sessions created after the first scan and reads full history only on selection",

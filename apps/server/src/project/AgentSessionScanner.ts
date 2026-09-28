@@ -224,6 +224,7 @@ export class AgentSessionScanner extends Context.Service<
     ) => Effect.Effect<
       {
         session: ResumableAgentSession;
+        isProjectRoot: boolean;
         thread: AgentSessionThread;
         source: AgentSessionImportSource;
       },
@@ -1796,6 +1797,9 @@ export const make = Effect.gen(function* () {
       });
     return {
       session: selected.session,
+      isProjectRoot:
+        (yield* directoryIdentity(selected.session.cwd)) ===
+        (yield* directoryIdentity(workspaceRoot)),
       thread,
       source: {
         ...identity,

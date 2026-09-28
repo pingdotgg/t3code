@@ -452,11 +452,7 @@ export const attachAgentSession = Effect.fn("attachAgentSession")(function* (
   const threadId = yield* importAgentThread({
     projectId: input.projectId,
     workspaceRoot: selected.session.cwd,
-    worktreePath:
-      normalizeProjectPathForComparison(selected.session.cwd) ===
-      normalizeProjectPathForComparison(project.workspaceRoot)
-        ? null
-        : selected.session.cwd,
+    worktreePath: selected.isProjectRoot ? null : selected.session.cwd,
     branch: selected.session.branch,
     thread: { ...selected.thread, title: selected.session.title },
     source: selected.source,
