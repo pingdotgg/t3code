@@ -2,6 +2,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2ThreadProjection,
   ThreadId,
@@ -130,13 +131,17 @@ function resolveStaleBackgroundItemProviderInstanceId(
 }
 
 /**
- * The thread's latest started run: the last turn the provider saw. Restart
- * recovery records cancelled background work on it, and the next run that
- * reaches the provider delivers it with its input.
+ * A provider thread's latest started run: the last turn that provider saw.
+ * Restart recovery records the thread's cancelled background work on it, and
+ * the next run on the same provider thread delivers it with its input.
  */
-function latestStartedRun(projection: ProjectionRuntimeRecoveryState) {
+function latestStartedRun(
+  projection: ProjectionRuntimeRecoveryState,
+  providerThreadId: ProviderThreadId,
+) {
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | undefined>(
     (latest, run) =>
+      run.providerThreadId === providerThreadId &&
       run.status !== "queued" &&
       run.status !== "rolled_back" &&
       (latest === undefined || run.ordinal > latest.ordinal)
@@ -228,15 +233,32 @@ export const make = Effect.gen(function* () {
       // Background work that outlived its settled turn. The provider transcript
       // cannot record its death, so the next provider turn is told instead.
       // Shutdown records it too: a graceful restart cancels it there first.
-      const cancelledBackgroundWork: Array<OrchestrationV2RestartCancelledBackgroundWork> = [];
+      // Keyed by the provider thread that lost the work: only its turns are told.
+      const cancelledBackgroundWork = new Map<
+        ProviderThreadId,
+        Array<OrchestrationV2RestartCancelledBackgroundWork>
+      >();
       const cancelledBackgroundNativeIds = new Set<string>();
+      const recordCancelledBackgroundWork = (
+        providerThreadId: ProviderThreadId | null | undefined,
+        work: OrchestrationV2RestartCancelledBackgroundWork,
+      ) => {
+        if (providerThreadId == null) return;
+        const existing = cancelledBackgroundWork.get(providerThreadId);
+        if (existing === undefined) cancelledBackgroundWork.set(providerThreadId, [work]);
+        else existing.push(work);
+      };
       const recordCancelledBackgroundItem = (
         item: OrchestrationV2ThreadProjection["turnItems"][number],
       ) => {
         if (!isBackgroundCapableTurnItemType(item.type)) return;
         const work = cancelledTurnItemWork(item);
         if (work === undefined) return;
-        cancelledBackgroundWork.push(work);
+        recordCancelledBackgroundWork(
+          item.providerThreadId ??
+            projection.runs.find((run) => run.id === item.runId)?.providerThreadId,
+          work,
+        );
         if (item.nativeItemRef?.nativeId != null) {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
@@ -550,7 +572,7 @@ export const make = Effect.gen(function* () {
           for (const task of providerThread.pendingBackgroundTasks ?? []) {
             if (cancelledBackgroundNativeIds.has(task.taskId)) continue;
             cancelledBackgroundNativeIds.add(task.taskId);
-            cancelledBackgroundWork.push(cancelledRosterTaskWork(task));
+            recordCancelledBackgroundWork(providerThread.id, cancelledRosterTaskWork(task));
           }
         }
         events.push({
@@ -581,8 +603,9 @@ export const make = Effect.gen(function* () {
           payload: { ...session, status: "stopped", updatedAt: now, lastError: null },
         });
       }
-      const noteRun = cancelledBackgroundWork.length > 0 ? latestStartedRun(projection) : undefined;
-      if (noteRun !== undefined) {
+      for (const [providerThreadId, work] of cancelledBackgroundWork) {
+        const noteRun = latestStartedRun(projection, providerThreadId);
+        if (noteRun === undefined) continue;
         // Its own event: a run snapshot read before this commit could regress
         // a lifecycle change (e.g. a checkpoint completing the run) made since.
         events.push({
@@ -596,7 +619,7 @@ export const make = Effect.gen(function* () {
             runId: noteRun.id,
             restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
               noteRun.restartCancelledBackgroundWork ?? [],
-              cancelledBackgroundWork,
+              work,
             ),
           },
         });
