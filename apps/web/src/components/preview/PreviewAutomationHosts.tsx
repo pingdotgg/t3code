@@ -84,6 +84,7 @@ import {
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { closePreviewSession } from "./closePreviewSession";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -342,6 +343,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const resize = useAtomCommand(previewEnvironment.resize, {
     reportFailure: false,
   });
+  const close = useAtomCommand(previewEnvironment.close, {
+    reportFailure: false,
+  });
   const respondToAutomation = useAtomCommand(
     previewEnvironment.respondToAutomation,
     "preview automation response",
@@ -353,11 +357,51 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const [automationConnectionAtom] = useState(() => Atom.make<string | null>(null));
   const automationConnectionId = useAtomValue(automationConnectionAtom);
   const presentationSuppressedRuntimeTabsRef = useRef(new Map<string, Set<string>>());
+  const hiddenAutomationTabsRef = useRef(new Map<string, ScopedThreadRef>());
+
+  useEffect(() => {
+    for (const runtimeTabId of visibleRuntimeTabIds) {
+      hiddenAutomationTabsRef.current.delete(runtimeTabId);
+    }
+  }, [visibleRuntimeTabIds]);
+
+  const reclaimTimedOutHiddenTabs = useCallback(() => {
+    if (!hiddenAutomationTabsRef.current.size) return;
+    for (const [runtimeTabId, threadRef] of hiddenAutomationTabsRef.current) {
+      const state = readThreadPreviewState(threadRef);
+      const snapshot = Object.values(state.sessions).find(
+        (session) =>
+          previewRuntimeTabId(threadRef, state.serverEpoch, session.tabId) === runtimeTabId,
+      );
+      if (!snapshot) continue;
+      if (
+        useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible ||
+        state.desktopByTabId[snapshot.tabId]?.pictureInPicture ||
+        readActiveBrowserRecordingTargets(threadRef).some(
+          (recording) => recording.runtimeTabId === runtimeTabId,
+        )
+      ) {
+        continue;
+      }
+      // The broker is about to evict this host. Unmount the hidden guest now
+      // so an animated page cannot keep allocating GPU surfaces offscreen.
+      void closePreviewSession({
+        closePreview: close,
+        snapshot,
+        tabId: snapshot.tabId,
+        threadRef,
+      }).then((result) => {
+        if (result._tag === "Success") hiddenAutomationTabsRef.current.delete(runtimeTabId);
+      });
+    }
+  }, [close]);
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
       // Session sync and tab creation consume the same budget as overlay registration.
-      const hostDeadlineMs = Date.now() + resolveHostWaitBudgetMs(request.timeoutMs);
+      const startedAt = Date.now();
+      const hostDeadlineMs = startedAt + resolveHostWaitBudgetMs(request.timeoutMs);
+      const requestDeadlineMs = startedAt + request.timeoutMs;
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
@@ -477,6 +521,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               readThreadPreviewState(threadRef).serverEpoch,
               activeTabId,
             );
+            if (!reusedExistingTab && explicitlySuppressesPreviewMiniPlayer(input)) {
+              hiddenAutomationTabsRef.current.set(activeRuntimeTabId, threadRef);
+              if (Date.now() >= requestDeadlineMs) reclaimTimedOutHiddenTabs();
+            }
             if (activeSnapshot) {
               const defaultViewport = previewAutomationDefaultViewport(
                 reusedExistingTab,
@@ -540,6 +588,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               }
             }
             if (shouldPresentPreview) {
+              hiddenAutomationTabsRef.current.delete(activeRuntimeTabId);
               usePreviewMiniPlayerStore
                 .getState()
                 .open(threadRef, browserMiniPlayerSource(activeTabId));
@@ -794,7 +843,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         browserActivity.release?.();
       }
     },
-    [environmentId, listPreviews, open, registry, resize],
+    [environmentId, listPreviews, open, reclaimTimedOutHiddenTabs, registry, resize],
   );
   const [requestHandlerAtom] = useState(() => Atom.make({ handle: handleRequest }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);
@@ -815,6 +864,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             environmentId,
             input: response,
           }),
+        onTimeout: reclaimTimedOutHiddenTabs,
         label: `preview:automation-host:${environmentId}:${automationClientId}`,
       }),
     [
@@ -823,6 +873,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       automationRequestsAtom,
       requestHandlerAtom,
       respondToAutomation,
+      reclaimTimedOutHiddenTabs,
       environmentId,
     ],
   );
