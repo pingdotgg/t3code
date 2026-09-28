@@ -162,7 +162,7 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
   // Countdown entries are bounded by snapshot expiry (at most fifteen minutes).
   const dates = new Set([now, ...deadlines]);
   const lastDeadline = Math.min(deadlines.at(-1) ?? now, now + SNAPSHOT_MAX_AGE);
-  for (let date = now + 60_000; date < lastDeadline; date += 60_000) dates.add(date);
+  for (let date = now + 60_000; date <= lastDeadline; date += 60_000) dates.add(date);
   return [...dates]
     .sort((a, b) => a - b)
     .map((date) => ({

@@ -19,9 +19,11 @@ import {
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { formatUpcomingTimestamp } from "../../timestampFormat";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -85,11 +87,15 @@ function WindowBar({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
   // The fill is quota left, so the even-spending mark is the time left.
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const resetsIn = formatResetsIn(window, now);
+  const resetsAt = window.resetsAt
+    ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
+    : null;
   const summary = `${window.label}: ${remaining}% left${
     timeLeft === null ? "" : `, ${timeLeft}% of the window left`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
@@ -129,7 +135,12 @@ function WindowBar({
           {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
-          {resetsIn ? <span className="text-muted-foreground">{resetsIn}</span> : null}
+          {resetsAt ? (
+            <span className="text-muted-foreground">
+              Resets {resetsAt}
+              {resetsIn ? ` · ${resetsIn}` : ""}
+            </span>
+          ) : null}
         </div>
       </TooltipPopup>
     </Tooltip>

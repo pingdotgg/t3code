@@ -246,6 +246,26 @@ describe("subscription widget snapshots", () => {
     expect(timeline.at(-1)?.props.providers[0]?.windows).toEqual([]);
     expect(subscriptionUsageTimeline(snapshot, now + 60 * 60_000)).toHaveLength(1);
   });
+  it("includes the countdown cap when the server clock is ahead", () => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([
+        provider({
+          usageLimits: {
+            checkedAt: new Date(now + 5 * 60_000).toISOString(),
+            windows: [{ ...window, resetsAt: new Date(now + 120 * 60_000).toISOString() }],
+          },
+        }),
+      ]),
+      deepLink,
+    );
+    const timeline = subscriptionUsageTimeline(snapshot, now);
+    expect(timeline.map((entry) => entry.date.getTime())).toEqual([
+      ...Array.from({ length: 16 }, (_, minute) => now + minute * 60_000),
+      now + 20 * 60_000,
+    ]);
+    expect(timeline[15]?.props.providers[0]?.windows[0]?.reset).toBe("resets in 1h 45m");
+    expect(timeline.at(-1)?.props.providers[0]?.windows).toEqual([]);
+  });
   it("expires providers independently without inventing a refill", () => {
     const snapshot = buildSubscriptionUsageSnapshot(
       presentations([
