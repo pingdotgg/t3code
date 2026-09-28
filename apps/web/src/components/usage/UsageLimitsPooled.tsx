@@ -14,7 +14,7 @@ import {
 import { AlertTriangleIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -37,6 +37,14 @@ function accountInitials(email: string): string {
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
 }
 
+/**
+ * Initials by default. With "Show account names" on, `someone@example.com` →
+ * `someone`, for users who need to know which account a reset lands on.
+ */
+function accountLabel(email: string, showName: boolean): string {
+  return (showName && email.split("@")[0]) || accountInitials(email);
+}
+
 /** A stable hue per email, so the same account gets the same chip on every visit. */
 function accountHue(email: string): number {
   let hash = 0;
@@ -46,17 +54,26 @@ function accountHue(email: string): number {
   return Math.abs(hash) % 360;
 }
 
-/** The two-letter chip for an email, coloured by a stable hue per address. */
+/**
+ * The two-letter chip for an email, coloured by a stable hue per address. With
+ * account names on, it widens into a pill that truncates long names.
+ */
 function AccountChip({ email }: { readonly email: string }) {
+  const showName = useClientSettings((settings) => settings.usageShowAccountNames);
   const hue = accountHue(email);
+  const label = accountLabel(email, showName);
   return (
     <span
       role="img"
-      aria-label={`Account ${accountInitials(email)}`}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
+      aria-label={`Account ${label}`}
+      className={
+        showName
+          ? "inline-flex h-4 min-w-0 items-center rounded-full px-1.5 text-3xs leading-none font-semibold"
+          : "inline-flex size-4 shrink-0 items-center justify-center rounded-full text-3xs leading-none font-semibold"
+      }
       style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
     >
-      {accountInitials(email)}
+      {showName ? <span className="truncate">{label}</span> : label}
     </span>
   );
 }
@@ -92,8 +109,8 @@ function AccountAvatar({
 
 /**
  * Who an account is, without printing the email: the instance name when there
- * is one, else a two-letter chip. The address itself is revealed on demand in
- * the segment's popover.
+ * is one, else a two-letter chip (or the email's local part, when the user
+ * opts in). The full address is revealed on demand in the segment's popover.
  */
 function AccountName({
   account,
@@ -237,6 +254,7 @@ function PoolSegment({
   readonly showAccountName: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const showEmailName = useClientSettings((settings) => settings.usageShowAccountNames);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
@@ -248,7 +266,7 @@ function PoolSegment({
           <button
             type="button"
             style={{ gridColumn: index, gridRow: 1 }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountLabel(account.email, showEmailName) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer overflow-hidden rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }

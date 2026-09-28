@@ -111,7 +111,9 @@ To see pooled accounts, open **Settings → Providers → Usage providers → Ad
 environment that will connect to the hub and enter its URL and management key.
 
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
-account and choose **Use reset** to redeem one. No hub plugin is required.
+account and choose **Use reset** to redeem one. No hub plugin is required. Hub accounts are
+labeled by their initials; to tell several apart, turn on **Show account names** in the same
+settings section to label them by the part of their email before the @.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

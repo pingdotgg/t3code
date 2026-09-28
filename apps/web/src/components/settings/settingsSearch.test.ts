@@ -120,6 +120,16 @@ describe("searchSettings", () => {
     },
   );
 
+  it.each(["account names", "email initials"])(
+    "finds the usage account names toggle by %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "usage-account-names",
+        to: "/settings/providers",
+      });
+    },
+  );
+
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
@@ -167,6 +177,7 @@ describe("searchSettings", () => {
       "publish-agent-activity",
       "provider-health-check-interval",
       "cursor-keychain-usage",
+      "usage-account-names",
       "source-control-writer-model",
       "source-control-writing-style",
       "t3-connect",
