@@ -3,6 +3,8 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   LockIcon,
+  LinkIcon,
+  UnlinkIcon,
   MinusIcon,
   PlusIcon,
   Undo2Icon,
@@ -21,9 +23,11 @@ import {
   resetSurfaceLayout,
   resolveSurfaceLayout,
   setSurfaceElementHidden,
+  setSurfaceElementCombined,
 } from "../../interfaceLayout";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
@@ -300,6 +304,17 @@ export function CustomizeEditLayer({
     isDefaultSurfaceLayout(layoutSurface, layout),
   );
 
+  const toolbarElements = measurement.elements
+    .filter((element) => element.surface === "composerToolbar")
+    .toSorted((a, b) => a.rect.left - b.rect.left);
+  const modelIndex = toolbarElements.findIndex((element) => element.id === "model");
+  const modelElement = toolbarElements[modelIndex];
+  const traitsElement = toolbarElements.find(
+    (element, index) => element.id === "traits" && Math.abs(index - modelIndex) === 1,
+  );
+  const traitsCombined = resolveSurfaceLayout("composerToolbar", layout).combined.has("traits");
+  const combineRect = modelElement && (traitsCombined || traitsElement) ? modelElement.rect : null;
+
   const root = measurement.root ? pad(measurement.root, 6) : null;
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
@@ -406,6 +421,50 @@ export function CustomizeEditLayer({
             );
           })}
       </div>
+
+      {surface === "composer" && combineRect ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={
+                  traitsCombined
+                    ? "Separate Model options from the model button"
+                    : "Put Model options inside the model button"
+                }
+                onClick={() =>
+                  commitLayout((current) =>
+                    setSurfaceElementCombined(
+                      current,
+                      "composerToolbar",
+                      "traits",
+                      !traitsCombined,
+                    ),
+                  )
+                }
+                className="pointer-events-auto fixed z-[130] flex size-5 -translate-x-1/2 items-center justify-center rounded-full bg-foreground text-background ring-2 ring-background outline-none focus-visible:ring-primary [&_svg]:size-3"
+                style={{
+                  left:
+                    traitsCombined || !traitsElement
+                      ? combineRect.right
+                      : traitsElement.rect.left > combineRect.left
+                        ? (combineRect.right + traitsElement.rect.left) / 2
+                        : (traitsElement.rect.right + combineRect.left) / 2,
+                  top: Math.max(4, combineRect.top - 10),
+                }}
+              >
+                {traitsCombined ? <UnlinkIcon /> : <LinkIcon />}
+              </button>
+            }
+          />
+          <TooltipPopup>
+            {traitsCombined
+              ? "Separate Model options"
+              : "Put Model options inside the model button"}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
 
       {drag?.moved ? (
         <div

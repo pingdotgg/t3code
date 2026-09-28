@@ -531,6 +531,20 @@ export function buildTraitsTriggerDisplay(input: {
   return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled };
 }
 
+export function getTraitsTriggerSummary(
+  input: Parameters<typeof getTraitsSectionVisibility>[0],
+): string {
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
+    getTraitsSectionVisibility(input);
+  const { label, showFastModeIcon } = buildTraitsTriggerDisplay({
+    provider: input.provider,
+    descriptors,
+    primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
+    ultrathinkPromptControlled,
+  });
+  return [label, showFastModeIcon ? "Fast" : ""].filter(Boolean).join(" · ");
+}
+
 export const TraitsPicker = memo(function TraitsPicker({
   provider,
   instanceId,

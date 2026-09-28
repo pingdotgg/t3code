@@ -10,6 +10,7 @@ import { getProviderModelCapabilities } from "../../providerModels";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
+  getProviderTraitsSummary,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
   withImplicitFastModeDefault,
@@ -488,5 +489,50 @@ describe("provider traits render guards", () => {
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
     expect(renderProviderTraitsMenuContent(args)).toBeNull();
+  });
+});
+
+describe("combined model options summary", () => {
+  it.each(["codex", "claudeAgent", "cursor", "opencode", "grok", "antigravity"])(
+    "uses %s descriptors and selected values",
+    (provider) => {
+      expect(
+        getProviderTraitsSummary({
+          provider: ProviderDriverKind.make(provider),
+          model: MODEL,
+          models: modelWith([
+            selectDescriptor("effort", [
+              { id: "low", label: "Low", isDefault: true },
+              { id: "high", label: "High" },
+            ]),
+            booleanDescriptor("fastMode", true),
+          ]),
+          modelOptions: selections(["effort", "high"], ["fastMode", true]),
+          prompt: "",
+          onPromptChange: () => {},
+          planModeEnabled: true,
+        }),
+      ).toBe("High · Fast");
+    },
+  );
+
+  it("reflects prompt-injected ultrathink", () => {
+    expect(
+      getProviderTraitsSummary({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        model: MODEL,
+        models: modelWith([
+          selectDescriptor(
+            "effort",
+            [{ id: "high", label: "High", isDefault: true }],
+            ["ultrathink"],
+          ),
+        ]),
+        modelOptions: undefined,
+        prompt: "Ultrathink: investigate",
+        onPromptChange: () => {},
+        planModeEnabled: true,
+      }),
+    ).toBe("Ultrathink");
   });
 });

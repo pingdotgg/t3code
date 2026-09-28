@@ -351,6 +351,8 @@ export type ChatWidth = typeof ChatWidth.Type;
 export const InterfaceSurfaceLayout = Schema.Struct({
   order: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   hidden: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Absent means empty; eligible ids appear inside the surface's host control. */
+  combined: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type InterfaceSurfaceLayout = typeof InterfaceSurfaceLayout.Type;
 

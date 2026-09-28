@@ -33,7 +33,8 @@ To fine-tune, choose **Thread rows**, **Header**, or **Composer**. That part of 
 while you edit it in place: drag an item to move it, or use its minus button to hide it. Hidden
 items wait beside it, ready to bring back. With the keyboard, Tab to an item, use the arrow keys to
 move it, and press Delete to hide it. For the composer, hold it **Expanded** or **Collapsed** to
-arrange both layouts.
+arrange both layouts. Use the link button between Model and Model options to put reasoning, speed,
+and thinking options inside the model button; use Separate on the combined button to undo this.
 
 Changes apply immediately. **Undo** (⌘Z or Ctrl+Z) steps back one change, **Revert** returns to how
 things looked when you started, and **Done** or Escape keeps your changes. The arrangement is saved

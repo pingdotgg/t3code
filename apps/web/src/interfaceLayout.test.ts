@@ -8,6 +8,7 @@ import {
   resetSurfaceLayout,
   resolveSurfaceLayout,
   setSurfaceElementHidden,
+  setSurfaceElementCombined,
 } from "./interfaceLayout";
 
 describe("resolveSurfaceLayout", () => {
@@ -138,5 +139,62 @@ describe("moveSurfaceElementBefore", () => {
     const layout = {};
     expect(moveSurfaceElementBefore(layout, "chatHeader", "scripts", "openIn")).toBe(layout);
     expect(moveSurfaceElementBefore(layout, "chatHeader", "attach", null)).toBe(layout);
+  });
+});
+
+describe("combined composer elements", () => {
+  it("inserts the required model first in old layouts", () => {
+    const resolved = resolveSurfaceLayout("composerToolbar", {
+      composerToolbar: { order: ["mode", "traits"], hidden: ["model"] },
+    });
+    expect(resolved.order).toEqual(["model", "mode", "traits", "attach"]);
+    expect(resolved.hidden.size).toBe(0);
+    expect(resolved.combined.size).toBe(0);
+  });
+
+  it("only combines eligible ids and lets hidden win", () => {
+    const resolved = resolveSurfaceLayout("composerToolbar", {
+      composerToolbar: {
+        order: [],
+        hidden: ["traits"],
+        combined: ["traits", "mode", "model", "unknown"],
+      },
+    });
+    expect(resolved.combined.size).toBe(0);
+    expect([
+      ...resolveSurfaceLayout("composerToolbar", {
+        composerToolbar: {
+          order: [],
+          hidden: [],
+          combined: ["traits", "traits", "mode", "unknown"],
+        },
+      }).combined,
+    ]).toEqual(["traits"]);
+    expect(setSurfaceElementCombined({}, "composerToolbar", "mode", true)).toEqual({});
+    expect(setSurfaceElementCombined({}, "chatHeader", "traits", true)).toEqual({});
+  });
+
+  it("preserves combinations through reordering and unrelated visibility edits", () => {
+    const combined = setSurfaceElementCombined({}, "composerToolbar", "traits", true);
+    expect(isDefaultSurfaceLayout("composerToolbar", combined)).toBe(false);
+    const moved = moveSurfaceElementBefore(combined, "composerToolbar", "model", null);
+    const hidden = setSurfaceElementHidden(moved, "composerToolbar", "mode", true);
+    expect([...resolveSurfaceLayout("composerToolbar", hidden).combined]).toEqual(["traits"]);
+    expect(resolveSurfaceLayout("composerToolbar", hidden).order).toEqual([
+      "traits",
+      "mode",
+      "model",
+      "attach",
+    ]);
+    expect(setSurfaceElementCombined(combined, "composerToolbar", "traits", false)).toEqual({});
+    expect(resetSurfaceLayout(combined, "composerToolbar")).toEqual({});
+  });
+
+  it("hiding clears a combination and restoring leaves the options separate", () => {
+    const combined = setSurfaceElementCombined({}, "composerToolbar", "traits", true);
+    const hidden = setSurfaceElementHidden(combined, "composerToolbar", "traits", true);
+    expect(resolveSurfaceLayout("composerToolbar", hidden).combined.size).toBe(0);
+    expect(setSurfaceElementCombined(hidden, "composerToolbar", "traits", true)).toBe(hidden);
+    expect(setSurfaceElementHidden(hidden, "composerToolbar", "traits", false)).toEqual({});
   });
 });

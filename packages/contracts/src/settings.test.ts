@@ -320,6 +320,17 @@ describe("ClientSettings chat width", () => {
 });
 
 describe("ClientSettings interface layout", () => {
+  it("round-trips optional combined ids in settings and patches", () => {
+    const interfaceLayout = {
+      composerToolbar: { order: [], hidden: [], combined: ["traits", "future"] },
+    };
+    expect(decodeClientSettings({ interfaceLayout }).interfaceLayout).toEqual(interfaceLayout);
+    expect(encodeClientSettings(decodeClientSettings({ interfaceLayout })).interfaceLayout).toEqual(
+      interfaceLayout,
+    );
+    expect(decodeClientSettingsPatch({ interfaceLayout }).interfaceLayout).toEqual(interfaceLayout);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("interfaceLayout");
+  });
   it("defaults to no customized surfaces", () => {
     expect(decodeClientSettings({}).interfaceLayout).toEqual({});
   });

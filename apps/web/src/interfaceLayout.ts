@@ -14,6 +14,7 @@ export interface InterfaceElementDefinition {
   readonly description?: string;
   readonly sortable?: boolean;
   readonly required?: boolean;
+  readonly combineInto?: string;
 }
 
 export const INTERFACE_SURFACES = {
@@ -27,10 +28,12 @@ export const INTERFACE_SURFACES = {
     { id: "provider", label: "Provider", sortable: true },
   ],
   composerToolbar: [
+    { id: "model", label: "Model", sortable: true, required: true },
     {
       id: "traits",
       label: "Model options",
       description: "Effort, speed, and thinking",
+      combineInto: "model",
       sortable: true,
     },
     { id: "mode", label: "Access and plan mode", sortable: true },
@@ -62,6 +65,7 @@ export interface ResolvedSurfaceLayout<S extends InterfaceSurfaceId> {
   /** Every element of the surface, sortable ones in the user's order. */
   readonly order: ReadonlyArray<InterfaceElementId<S>>;
   readonly hidden: ReadonlySet<InterfaceElementId<S>>;
+  readonly combined: ReadonlySet<InterfaceElementId<S>>;
 }
 
 function surfaceDefinitions(
@@ -116,7 +120,14 @@ export function resolveSurfaceLayout<S extends InterfaceSurfaceId>(
   const hidden = new Set(
     (saved?.hidden ?? []).filter((id) => knownIds.has(id) && !requiredIds.has(id)),
   );
+  const eligible = new Set(
+    definitions.filter((element) => element.combineInto).map((element) => element.id),
+  );
+  const combined = new Set(
+    (saved?.combined ?? []).filter((id) => eligible.has(id) && !hidden.has(id)),
+  );
   return {
+    combined: combined as ReadonlySet<InterfaceElementId<S>>,
     order: order as ReadonlyArray<InterfaceElementId<S>>,
     hidden: hidden as ReadonlySet<InterfaceElementId<S>>,
   };
@@ -130,6 +141,7 @@ export function isDefaultSurfaceLayout(
   const resolved = resolveSurfaceLayout(surface, layout);
   return (
     resolved.hidden.size === 0 &&
+    resolved.combined.size === 0 &&
     resolved.order.every((id, index) => id === surfaceDefinitions(surface)[index]!.id)
   );
 }
@@ -155,6 +167,7 @@ function currentSurface(layout: InterfaceLayout, surface: InterfaceSurfaceId) {
   return {
     order: resolved.order.filter((id) => sortable.has(id)) as string[],
     hidden: [...resolved.hidden] as string[],
+    ...(resolved.combined.size > 0 ? { combined: [...resolved.combined] as string[] } : {}),
   };
 }
 
@@ -168,7 +181,35 @@ export function setSurfaceElementHidden(
   const nextHidden = hidden
     ? [...new Set([...current.hidden, elementId])]
     : current.hidden.filter((id) => id !== elementId);
-  return writeSurface(layout, surface, { order: current.order, hidden: nextHidden });
+  return writeSurface(layout, surface, {
+    ...current,
+    hidden: nextHidden,
+    ...(hidden && current.combined
+      ? { combined: current.combined.filter((id) => id !== elementId) }
+      : {}),
+  });
+}
+
+export function setSurfaceElementCombined(
+  layout: InterfaceLayout,
+  surface: InterfaceSurfaceId,
+  elementId: string,
+  combined: boolean,
+): InterfaceLayout {
+  if (
+    !surfaceDefinitions(surface).some((element) => element.id === elementId && element.combineInto)
+  )
+    return layout;
+  const current = currentSurface(layout, surface);
+  if (combined && current.hidden.includes(elementId)) return layout;
+  const nextCombined = combined
+    ? [...new Set([...(current.combined ?? []), elementId])]
+    : (current.combined ?? []).filter((id) => id !== elementId);
+  const { combined: _previous, ...rest } = current;
+  return writeSurface(layout, surface, {
+    ...rest,
+    ...(nextCombined.length > 0 ? { combined: nextCombined } : {}),
+  });
 }
 
 /** Moves a sortable element to the position currently held by `overId`. */
@@ -185,7 +226,7 @@ export function moveSurfaceElement(
   const order = [...current.order];
   order.splice(from, 1);
   order.splice(to, 0, activeId);
-  return writeSurface(layout, surface, { order, hidden: current.hidden });
+  return writeSurface(layout, surface, { ...current, order });
 }
 
 /**
@@ -206,7 +247,7 @@ export function moveSurfaceElementBefore(
   if (index === -1) return layout;
   order.splice(index, 0, activeId);
   if (order.every((id, position) => id === current.order[position])) return layout;
-  return writeSurface(layout, surface, { order, hidden: current.hidden });
+  return writeSurface(layout, surface, { ...current, order });
 }
 
 export function resetSurfaceLayout(

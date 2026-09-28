@@ -14,6 +14,14 @@ import {
 afterEach(() => useCustomizeInterfaceStore.getState().close());
 
 describe("customize snapshots", () => {
+  it("captures combinations as layout changes for Undo and Revert", () => {
+    const before = pickCustomizeSettings(DEFAULT_CLIENT_SETTINGS);
+    const interfaceLayout = { composerToolbar: { order: [], hidden: [], combined: ["traits"] } };
+    const after = pickCustomizeSettings({ ...DEFAULT_CLIENT_SETTINGS, interfaceLayout });
+    expect(after.interfaceLayout).toEqual(interfaceLayout);
+    expect(changedCustomizeSettingKeys(before, after)).toEqual(["interfaceLayout"]);
+    expect(changedCustomizeSettingKeys(after, before)).toEqual(["interfaceLayout"]);
+  });
   it("includes scenes and transparency in Undo and Revert without unrelated settings", () => {
     const before = pickCustomizeSettings(DEFAULT_CLIENT_SETTINGS);
     const after = pickCustomizeSettings({

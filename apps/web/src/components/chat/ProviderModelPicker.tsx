@@ -4,7 +4,8 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Menu, MenuTrigger, MenuPopup, MenuGroup } from "../ui/menu";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -51,6 +52,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /** Aggregate settings can show a neutral value without claiming one provider is selected. */
   triggerLabel?: string;
   triggerAriaLabel?: string;
+  traitsMenuContent?: ReactNode;
+  traitsSummary?: string;
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -118,7 +121,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     }
 
     const shouldAllowOverlayScroll = (target: EventTarget | null) => {
-      return target instanceof Element && target.closest("[data-model-picker-content]");
+      return target instanceof Element && target.closest("[data-model-picker-popup]");
     };
     const preventBackgroundWheel = (event: WheelEvent) => {
       if (shouldAllowOverlayScroll(event.target)) {
@@ -151,6 +154,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
     props.onInstanceModelChange(instanceId, model);
+    // Every pick closes the menu, matching the option rows beside the model list.
     setIsMenuOpen(false);
   };
 
@@ -189,8 +193,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
     : (props.triggerLabel ?? allModelNames ?? triggerLabel);
 
+  const Root = props.traitsMenuContent ? Menu : Popover;
+  const Trigger = props.traitsMenuContent ? MenuTrigger : PopoverTrigger;
+  const Popup = props.traitsMenuContent ? MenuPopup : PopoverPopup;
+
   return (
-    <Popover
+    <Root
       open={isMenuOpen}
       onOpenChange={(open) => {
         if (props.disabled) {
@@ -200,12 +208,19 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         setIsMenuOpen(open);
       }}
     >
-      <PopoverTrigger
+      <Trigger
         render={
           <ComposerControl
-            aria-label={props.triggerAriaLabel ?? allModelNames}
+            aria-label={
+              props.triggerAriaLabel ??
+              (props.traitsMenuContent
+                ? `${allModelNames ?? triggerLabel}${props.traitsSummary ? ` · ${props.traitsSummary}` : ""}, Model options`
+                : allModelNames)
+            }
+            data-composer-shortcut={props.traitsMenuContent ? "composer.effort" : undefined}
             size={size}
             data-chat-provider-model-picker="true"
+            data-customize-element={props.isComposerOwned ? "composerToolbar:model" : undefined}
             className={cn(
               "min-w-0 shrink justify-between whitespace-nowrap",
               !props.isComposerOwned && "max-w-48 sm:max-w-56",
@@ -265,6 +280,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               }
             >
               {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+              {props.traitsSummary ? ` · ${props.traitsSummary}` : null}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
           </Tooltip>
@@ -277,38 +293,75 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         <span aria-hidden="true" className="flex items-center">
           <ComposerControlChevron size={size} />
         </span>
-      </PopoverTrigger>
-      <PopoverPopup
+      </Trigger>
+      <Popup
         {...(props.isComposerOwned ? composerFloatingLayerProps : {})}
         align="start"
-        className="before:hidden"
-        padding="none"
+        data-model-picker-popup
+        onKeyDownCapture={(event) => {
+          if (
+            !props.traitsMenuContent ||
+            event.key !== "Tab" ||
+            !(event.target instanceof HTMLElement)
+          )
+            return;
+          const popup = event.currentTarget;
+          const search = popup.querySelector<HTMLInputElement>("[data-model-picker-content] input");
+          const firstOption = popup.querySelector<HTMLElement>(
+            '[role="menuitemradio"]:not([aria-disabled="true"]), [role="menuitemcheckbox"]:not([aria-disabled="true"])',
+          );
+          const target =
+            !event.shiftKey && event.target === search
+              ? firstOption
+              : event.shiftKey && event.target.closest('[data-slot="menu-group"]')
+                ? search
+                : null;
+          if (!target) return;
+          event.preventDefault();
+          event.stopPropagation();
+          target.focus();
+        }}
+        {...(props.traitsMenuContent
+          ? { className: "[&>div]:p-0" }
+          : { className: "before:hidden", padding: "none" as const })}
       >
-        <ModelPickerContent
-          activeInstanceId={activeInstanceId}
-          model={props.model}
-          {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
-          {...(props.onToggleModel
-            ? {
-                onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
-                  if (!props.disabled) props.onToggleModel?.(instanceId, model);
-                },
-              }
-            : {})}
-          lockedProvider={props.lockedProvider}
-          lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
-          instanceEntries={props.instanceEntries}
-          {...(props.keybindings ? { keybindings: props.keybindings } : {})}
-          modelOptionsByInstance={props.modelOptionsByInstance}
-          terminalOpen={props.terminalOpen ?? false}
-          onRequestClose={() => setIsMenuOpen(false)}
-          {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
-          {...(props.getModelDisabledReason
-            ? { getModelDisabledReason: props.getModelDisabledReason }
-            : {})}
-          onInstanceModelChange={handleInstanceModelChange}
-        />
-      </PopoverPopup>
-    </Popover>
+        <div className="flex">
+          <ModelPickerContent
+            activeInstanceId={activeInstanceId}
+            model={props.model}
+            {...(props.selectedModels !== undefined
+              ? { selectedModels: props.selectedModels }
+              : {})}
+            {...(props.onToggleModel
+              ? {
+                  onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+                    if (!props.disabled) props.onToggleModel?.(instanceId, model);
+                  },
+                }
+              : {})}
+            lockedProvider={props.lockedProvider}
+            lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
+            instanceEntries={props.instanceEntries}
+            {...(props.keybindings ? { keybindings: props.keybindings } : {})}
+            modelOptionsByInstance={props.modelOptionsByInstance}
+            terminalOpen={props.terminalOpen ?? false}
+            onRequestClose={() => setIsMenuOpen(false)}
+            {...(props.onOpenProviderSetup
+              ? { onOpenProviderSetup: props.onOpenProviderSetup }
+              : {})}
+            {...(props.getModelDisabledReason
+              ? { getModelDisabledReason: props.getModelDisabledReason }
+              : {})}
+            onInstanceModelChange={handleInstanceModelChange}
+          />
+          {props.traitsMenuContent ? (
+            // A column beside the model list, sized and typeset to match it.
+            <div className="max-h-86.5 w-52 shrink-0 overflow-y-auto border-l border-border/70 bg-muted/40 px-3 pt-2.5 pb-3 [&_[data-slot=menu-radio-item]]:min-h-7 [&_[data-slot=menu-radio-item]]:text-xs [&_[data-slot=menu-separator]]:mx-1">
+              <MenuGroup aria-label="Model options">{props.traitsMenuContent}</MenuGroup>
+            </div>
+          ) : null}
+        </div>
+      </Popup>
+    </Root>
   );
 });

@@ -40,6 +40,13 @@ describe("resolvePresetPreview", () => {
 });
 
 describe("surfaceVisibility", () => {
+  it("counts options inside the model button as shown", () => {
+    expect(
+      surfaceVisibility("composerToolbar", {
+        composerToolbar: { order: [], hidden: [], combined: ["traits"] },
+      }),
+    ).toEqual({ shown: 4, total: 4 });
+  });
   it("counts hidden elements against the surface total", () => {
     const layout = setSurfaceElementHidden({}, "chatHeader", "git", true);
     expect(surfaceVisibility("chatHeader", layout)).toEqual({ shown: 2, total: 3 });
