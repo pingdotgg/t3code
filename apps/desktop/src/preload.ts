@@ -81,6 +81,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
     getPreviewConfig: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    bootstrapManagedPreviewSession: (input) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_MANAGED_SESSION_CHANNEL, input),
     listBrowserImportSources: () =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_LIST_BROWSER_IMPORT_SOURCES_CHANNEL),
     importBrowserCookies: (input) =>

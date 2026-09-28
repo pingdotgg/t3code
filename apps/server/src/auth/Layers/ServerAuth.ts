@@ -9,7 +9,7 @@ import {
   type AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
-import { DateTime, Effect, Layer, Option } from "effect";
+import { DateTime, Duration, Effect, Layer, Option } from "effect";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
 import { AuthControlPlane } from "../Services/AuthControlPlane.ts";
@@ -229,12 +229,21 @@ export const makeServerAuth = Effect.gen(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchTag("AuthError", () =>
-        Effect.succeed({
+      Effect.catchTag("AuthError", (error) => {
+        const credentialError =
+          error.cause instanceof SessionCredentialError ? error.cause : undefined;
+        const hasPresentedCredential =
+          Boolean(request.cookies[sessions.cookieName]) ||
+          (typeof request.headers["authorization"] === "string" &&
+            request.headers["authorization"].trim().length > 0);
+        const unauthenticatedReason =
+          credentialError?.reason ?? (hasPresentedCredential ? "invalid" : "missing");
+        return Effect.succeed({
           authenticated: false,
           auth: descriptor,
-        } satisfies AuthSessionState),
-      ),
+          unauthenticatedReason,
+        } satisfies AuthSessionState);
+      }),
     );
 
   const exchangeBootstrapCredentialForAccessToken: ServerAuthShape["exchangeBootstrapCredentialForAccessToken"] =
@@ -242,6 +251,14 @@ export const makeServerAuth = Effect.gen(function* () {
       bootstrapCredentials.consume(credential, proofKeyThumbprint).pipe(
         Effect.mapError(toBootstrapExchangeAuthError),
         Effect.flatMap((grant) => {
+          if (grant.browserSessionOnly) {
+            return Effect.fail(
+              new AuthError({
+                message: "This bootstrap credential can only establish a browser session.",
+                status: 401,
+              }),
+            );
+          }
           const allowedScopes = grant.scopes;
           const scopes = requestedScopes ?? allowedScopes;
           if (scopes.length === 0 || scopes.some((scope) => !allowedScopes.includes(scope))) {
@@ -335,9 +352,10 @@ export const makeServerAuth = Effect.gen(function* () {
     }
     return bootstrapCredentials.consume(credential).pipe(
       Effect.mapError(toBootstrapExchangeAuthError),
-      Effect.flatMap((grant) =>
-        sessions
+      Effect.flatMap((grant) => {
+        const issueSession = sessions
           .issue({
+            ...(grant.browserSessionOnly ? { ttl: Duration.hours(8) } : {}),
             method: "browser-session-cookie",
             subject: grant.subject,
             role: grant.role,
@@ -355,8 +373,39 @@ export const makeServerAuth = Effect.gen(function* () {
                   cause,
                 }),
             ),
+          );
+        if (!grant.browserSessionOnly) return issueSession;
+
+        const authorizationRevoked = () =>
+          new AuthError({
+            message: "Preview authorization is no longer active.",
+            status: 401,
+          });
+        return bootstrapCredentials.isTransientSubjectRevoked(grant.subject).pipe(
+          Effect.flatMap((revoked) =>
+            revoked ? Effect.fail(authorizationRevoked()) : issueSession,
           ),
-      ),
+          Effect.flatMap((session) =>
+            bootstrapCredentials.isTransientSubjectRevoked(grant.subject).pipe(
+              Effect.flatMap((revoked) =>
+                revoked
+                  ? sessions.revoke(session.sessionId).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new AuthError({
+                            message:
+                              "Failed to revoke a session after preview authorization ended.",
+                            cause,
+                          }),
+                      ),
+                      Effect.andThen(Effect.fail(authorizationRevoked())),
+                    )
+                  : Effect.succeed(session),
+              ),
+            ),
+          ),
+        );
+      }),
       Effect.map(
         (session) =>
           ({
@@ -376,8 +425,16 @@ export const makeServerAuth = Effect.gen(function* () {
     (credential, requestMetadata) =>
       bootstrapCredentials.consume(credential).pipe(
         Effect.mapError(toBootstrapExchangeAuthError),
-        Effect.flatMap((grant) =>
-          sessions
+        Effect.flatMap((grant) => {
+          if (grant.browserSessionOnly) {
+            return Effect.fail(
+              new AuthError({
+                message: "This bootstrap credential can only establish a browser session.",
+                status: 401,
+              }),
+            );
+          }
+          return sessions
             .issue({
               method: "bearer-session-token",
               subject: grant.subject,
@@ -396,8 +453,8 @@ export const makeServerAuth = Effect.gen(function* () {
                     cause,
                   }),
               ),
-            ),
-        ),
+            );
+        }),
         Effect.map(
           (session) =>
             ({

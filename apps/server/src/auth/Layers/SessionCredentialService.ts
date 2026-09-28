@@ -411,6 +411,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
       if (!encodedPayload || !signature) {
         return yield* new SessionCredentialError({
           message: "Malformed session token.",
+          reason: "invalid",
         });
       }
 
@@ -418,6 +419,7 @@ export const makeSessionCredentialService = Effect.gen(function* () {
       if (!timingSafeEqualBase64Url(signature, expectedSignature)) {
         return yield* new SessionCredentialError({
           message: "Invalid session token signature.",
+          reason: "invalid",
         });
       }
 
@@ -426,32 +428,37 @@ export const makeSessionCredentialService = Effect.gen(function* () {
           (cause) =>
             new SessionCredentialError({
               message: "Invalid session token payload.",
+              reason: "invalid",
               cause,
             }),
         ),
       );
 
-      const now = yield* Clock.currentTimeMillis;
-      if (claims.exp <= now) {
-        return yield* new SessionCredentialError({
-          message: "Session token expired.",
-        });
-      }
-
       const row = yield* authSessions.getById({ sessionId: claims.sid });
       if (Option.isNone(row)) {
         return yield* new SessionCredentialError({
           message: "Unknown session token.",
+          reason: "invalid",
         });
       }
       if (row.value.revokedAt !== null) {
         return yield* new SessionCredentialError({
           message: "Session token revoked.",
+          reason: "revoked",
+        });
+      }
+
+      const now = yield* Clock.currentTimeMillis;
+      if (claims.exp <= now || row.value.expiresAt.epochMilliseconds <= now) {
+        return yield* new SessionCredentialError({
+          message: "Session token expired.",
+          reason: "expired",
         });
       }
       if ((row.value.proofKeyThumbprint ?? undefined) !== claims.proofKeyThumbprint) {
         return yield* new SessionCredentialError({
           message: "Session proof key binding mismatch.",
+          reason: "invalid",
         });
       }
 
