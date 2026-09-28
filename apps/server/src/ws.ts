@@ -848,7 +848,11 @@ const makeWsRpcLayer = (
 
       const toShellStreamEvent = (
         event: ShellEvent,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
+      ): Effect.Effect<
+        Option.Option<OrchestrationShellStreamEvent>,
+        OrchestrationGetSnapshotError,
+        never
+      > => {
         switch (event.type) {
           case "project.created":
           case "project.meta-updated":
@@ -877,15 +881,14 @@ const makeWsRpcLayer = (
       };
 
       // Coalescing makes each projection read represent every event for that
-      // aggregate in the current window. Retry a typed persistence failure once
-      // so a brief read failure cannot strand the shell at its previous state.
-      // If both attempts fail, log and drop the stream item; treating an error as
-      // a missing row would incorrectly remove a still-active aggregate.
+      // aggregate in the current window. Retry a brief read failure once. If
+      // the read still fails, fail the subscription so the client resumes from
+      // its previous cursor; dropping the item could strand a new thread.
       const retryShellProjectionRead = <A, E>(
         aggregateKind: "project" | "thread",
         aggregateId: string,
         read: Effect.Effect<A, E>,
-      ): Effect.Effect<Option.Option<A>, never, never> =>
+      ): Effect.Effect<Option.Option<A>, OrchestrationGetSnapshotError, never> =>
         read.pipe(
           Effect.retry({ times: 1 }),
           Effect.asSome,
@@ -896,13 +899,23 @@ const makeWsRpcLayer = (
               error,
             }),
           ),
-          Effect.orElseSucceed(() => Option.none()),
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationGetSnapshotError({
+                message: "Failed to load orchestration shell update",
+                cause,
+              }),
+          ),
         );
 
       const projectUpsertOrRemove = (
         projectId: ProjectId,
         sequence: number,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+      ): Effect.Effect<
+        Option.Option<OrchestrationShellStreamEvent>,
+        OrchestrationGetSnapshotError,
+        never
+      > =>
         retryShellProjectionRead(
           "project",
           projectId,
@@ -941,7 +954,11 @@ const makeWsRpcLayer = (
       const threadUpsertOrRemove = (
         threadId: ThreadId,
         sequence: number,
-      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+      ): Effect.Effect<
+        Option.Option<OrchestrationShellStreamEvent>,
+        OrchestrationGetSnapshotError,
+        never
+      > =>
         retryShellProjectionRead(
           "thread",
           threadId,
@@ -982,7 +999,11 @@ const makeWsRpcLayer = (
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<ShellEvent>,
-      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>, never, never> =>
+      ): Effect.Effect<
+        ReadonlyArray<OrchestrationShellStreamEvent>,
+        OrchestrationGetSnapshotError,
+        never
+      > =>
         Effect.gen(function* () {
           if (events.length === 0) {
             return [];
@@ -1008,7 +1029,7 @@ const makeWsRpcLayer = (
       const SHELL_COALESCE_MAX_CHUNK = 512;
       const coalesceShellStream = <E, R>(
         stream: Stream.Stream<OrchestrationEvent, E, R>,
-      ): Stream.Stream<OrchestrationShellStreamEvent, E, R> =>
+      ): Stream.Stream<OrchestrationShellStreamEvent, E | OrchestrationGetSnapshotError, R> =>
         stream.pipe(
           Stream.map(toShellEvent),
           Stream.groupedWithin(SHELL_COALESCE_MAX_CHUNK, SHELL_COALESCE_WINDOW),
@@ -1025,7 +1046,11 @@ const makeWsRpcLayer = (
       // batch at markers and coalesce only the event segments on either side.
       const coalesceShellLiveInputs = (
         inputs: ReadonlyArray<ShellLiveInput>,
-      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamItem>, never, never> =>
+      ): Effect.Effect<
+        ReadonlyArray<OrchestrationShellStreamItem>,
+        OrchestrationGetSnapshotError,
+        never
+      > =>
         Effect.gen(function* () {
           const output: Array<OrchestrationShellStreamItem> = [];
           let pendingEvents: Array<ShellEvent> = [];
