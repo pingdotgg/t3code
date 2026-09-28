@@ -10,6 +10,8 @@ import {
   PreviewAutomationNoSupportedHostError,
   PreviewAutomationPinnedHostUnsupportedOperationError,
   PreviewAutomationRemoteUnavailableError,
+  PreviewAutomationManagedTargetAuthError,
+  PreviewAutomationManagedTargetAuthFailure,
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationResultTooLargeError,
   PreviewAutomationTabNotFoundError,
@@ -38,6 +40,12 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import {
+  ManagedPreviewAuth,
+  type ManagedPreviewAuthGrant,
+} from "../auth/Services/ManagedPreviewAuth.ts";
+
+const isManagedPreviewAuthFailure = Schema.is(PreviewAutomationManagedTargetAuthFailure);
 
 export interface PreviewAutomationInvokeInput {
   readonly scope: McpInvocationContext.McpInvocationScope;
@@ -78,6 +86,7 @@ interface PendingRequest {
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
+  readonly managedAuthGrant?: ManagedPreviewAuthGrant;
 }
 
 interface HostAssignment {
@@ -136,11 +145,16 @@ interface NoSupportedHost {
   readonly connectedClientCount: number;
 }
 
+interface RevokedProviderSessionRoute {
+  readonly kind: "authorization-revoked";
+}
+
 type HostRoute =
   | RoutedHostRequest
   | PinnedHostUnsupportedOperation
   | NoSupportedHost
-  | NoRoutableHost;
+  | NoRoutableHost
+  | RevokedProviderSessionRoute;
 
 const removeConnectionFromState = (
   current: BrokerState,
@@ -371,6 +385,15 @@ const classifyResponseError = (
         ...context,
         ...remoteDiagnostics,
       });
+    case "PreviewAutomationManagedTargetAuthError": {
+      const detail =
+        typeof error.detail === "object" && error.detail !== null ? error.detail : undefined;
+      const reason =
+        detail && "reason" in detail && isManagedPreviewAuthFailure(detail.reason)
+          ? detail.reason
+          : "bootstrap-failed";
+      return new PreviewAutomationManagedTargetAuthError({ ...context, reason });
+    }
     default:
       return new PreviewAutomationExecutionError({
         ...context,
@@ -381,6 +404,7 @@ const classifyResponseError = (
 
 export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const crypto = yield* Crypto.Crypto;
+  const managedPreviewAuth = yield* ManagedPreviewAuth;
   const hostRouteChanges = yield* PubSub.unbounded<void>();
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
@@ -522,12 +546,19 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
 
   const revokeProviderSession: PreviewAutomationBroker["Service"]["revokeProviderSession"] =
     Effect.fn("PreviewAutomationBroker.revokeProviderSession")(function* (providerSessionId) {
-      yield* SynchronizedRef.update(state, (current) => {
+      const disconnected = yield* SynchronizedRef.modify(state, (current) => {
         const assignments = new Map(current.assignments);
         for (const key of assignments.keys()) {
           if (key.endsWith(`\u0000${providerSessionId}`)) {
             assignments.delete(key);
           }
+        }
+        const pending = new Map(current.pending);
+        const disconnectedRequests: ReadonlyArray<PendingRequest> = Array.from(
+          pending.values(),
+        ).filter((entry) => entry.context.providerSessionId === providerSessionId);
+        for (const [requestId, entry] of pending) {
+          if (entry.context.providerSessionId === providerSessionId) pending.delete(requestId);
         }
         const revokedProviderSessionIds = new Set(current.revokedProviderSessionIds);
         revokedProviderSessionIds.delete(providerSessionId);
@@ -537,8 +568,31 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           if (oldest === undefined) break;
           revokedProviderSessionIds.delete(oldest);
         }
-        return { ...current, assignments, revokedProviderSessionIds };
+        return [
+          disconnectedRequests,
+          { ...current, assignments, pending, revokedProviderSessionIds },
+        ] as const;
       });
+      yield* Effect.forEach(
+        disconnected,
+        (entry) =>
+          Deferred.fail(
+            entry.deferred,
+            new PreviewAutomationManagedTargetAuthError({
+              ...entry.context,
+              reason: "authorization-revoked",
+            }),
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* managedPreviewAuth
+        .revokeProviderSession(providerSessionId)
+        .pipe(
+          Effect.catchTag("ManagedPreviewAuthError", () =>
+            Effect.logError("Failed to revoke managed preview authorization."),
+          ),
+        );
+      yield* PubSub.publish(hostRouteChanges, undefined);
     });
 
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
@@ -564,6 +618,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         const providerSessionRevoked = current.revokedProviderSessionIds.has(
           input.scope.providerSessionId,
         );
+        if (providerSessionRevoked) {
+          return [
+            { kind: "authorization-revoked" } satisfies RevokedProviderSessionRoute,
+            { ...current, assignments },
+          ] as const;
+        }
         const assigned = providerSessionRevoked ? undefined : assignments.get(assignmentKey);
         const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
         const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
@@ -690,6 +750,16 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         const registration = yield* PubSub.subscribe(hostRouteChanges);
         while (true) {
           const selected = yield* selectHostRoute();
+          if (selected.kind === "authorization-revoked") {
+            return yield* new PreviewAutomationManagedTargetAuthError({
+              operation: input.operation,
+              environmentId: input.scope.environmentId,
+              threadId: input.scope.threadId,
+              providerSessionId: input.scope.providerSessionId,
+              providerInstanceId: input.scope.providerInstanceId,
+              reason: "authorization-revoked",
+            });
+          }
           if (selected.kind === "pinned-host-unsupported-operation") {
             return yield* new PreviewAutomationPinnedHostUnsupportedOperationError({
               operation: input.operation,
@@ -746,6 +816,50 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       pending.delete(requestId);
       return { ...next, pending };
     });
+    const preparedManagedAuth = yield* managedPreviewAuth
+      .prepare({
+        environmentId: input.scope.environmentId,
+        providerSessionId: input.scope.providerSessionId,
+        capabilities: input.scope.capabilities,
+        operation: input.operation,
+        input: input.input,
+      })
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new PreviewAutomationManagedTargetAuthError({
+              ...requestContext,
+              reason: error.reason ?? "bootstrap-failed",
+            }),
+        ),
+        Effect.tapError(() => removePending),
+      );
+    const authorizationAccepted = yield* SynchronizedRef.modify(state, (current) => {
+      const pendingRequest = current.pending.get(requestId);
+      if (!pendingRequest || current.revokedProviderSessionIds.has(input.scope.providerSessionId)) {
+        return [false, current] as const;
+      }
+      if (!preparedManagedAuth) return [true, current] as const;
+      const pending = new Map(current.pending);
+      pending.set(requestId, { ...pendingRequest, managedAuthGrant: preparedManagedAuth });
+      return [true, { ...current, pending }] as const;
+    });
+    if (!authorizationAccepted) {
+      if (preparedManagedAuth) {
+        yield* managedPreviewAuth
+          .release(preparedManagedAuth)
+          .pipe(
+            Effect.catchTag("ManagedPreviewAuthError", () =>
+              Effect.logError("Failed to release a revoked managed preview grant."),
+            ),
+          );
+      }
+      yield* removePending;
+      return yield* new PreviewAutomationManagedTargetAuthError({
+        ...requestContext,
+        reason: "authorization-revoked",
+      });
+    }
     const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
       const offered = yield* Queue.offer(connection.queue, {
         type: "request",
@@ -757,6 +871,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           tabIdExplicit: input.tabId !== undefined,
           operation: input.operation,
           input: input.input,
+          ...(preparedManagedAuth ? { managedTargetAuth: preparedManagedAuth.payload } : {}),
           timeoutMs: requestTimeoutMs,
         },
       });
@@ -773,7 +888,19 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         onSome: (value) => Effect.succeed(value as A),
       });
     });
-    const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
+    const response = yield* awaitResponse().pipe(Effect.exit, Effect.ensuring(removePending));
+    if (preparedManagedAuth) {
+      yield* managedPreviewAuth.release(preparedManagedAuth).pipe(
+        Effect.mapError(
+          () =>
+            new PreviewAutomationManagedTargetAuthError({
+              ...requestContext,
+              reason: "bootstrap-failed",
+            }),
+        ),
+      );
+    }
+    const result = yield* response;
     // A stop artifact identifies the globally recorded tab, not the caller's browsing target.
     const responseTabId = input.operation === "recordingStop" ? undefined : readResultTabId(result);
     const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;

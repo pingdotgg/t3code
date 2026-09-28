@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  PreviewAutomationManagedTargetAuthError,
   type PreviewAutomationHost,
   PreviewAutomationOperation,
   type PreviewAutomationRequest,
@@ -319,6 +320,7 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
 }
 
 export const PreviewAutomationHostError = Schema.Union([
+  PreviewAutomationManagedTargetAuthError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationNavigationTimeoutError,
   PreviewAutomationViewportTimeoutError,

@@ -50,6 +50,8 @@ import type {
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationManagedTargetAuth,
+  PreviewAutomationManagedTargetAuthFailure,
   type PreviewAutomationHost,
   type PreviewAutomationHostFocus,
   PreviewAutomationPressInput,
@@ -784,6 +786,26 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   profileId: Schema.optional(BrowserProfileId),
 });
 
+export const DesktopPreviewManagedSessionInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  profileId: Schema.optional(BrowserProfileId),
+  targetUrl: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  managedTargetAuth: PreviewAutomationManagedTargetAuth,
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type DesktopPreviewManagedSessionInput = typeof DesktopPreviewManagedSessionInputSchema.Type;
+
+export const DesktopPreviewManagedSessionResultSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("authenticated") }),
+  Schema.Struct({ _tag: Schema.Literal("not-managed") }),
+  Schema.Struct({
+    _tag: Schema.Literal("failed"),
+    reason: PreviewAutomationManagedTargetAuthFailure,
+  }),
+]);
+export type DesktopPreviewManagedSessionResult =
+  typeof DesktopPreviewManagedSessionResultSchema.Type;
+
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Omit to clear every profile; otherwise only this profile's partition. */
@@ -881,6 +903,10 @@ export interface DesktopPreviewBridge {
     environmentId: EnvironmentId,
     profileId?: string,
   ) => Promise<DesktopPreviewWebviewConfig>;
+  /** Establish a restricted session in the selected preview profile for an attested local T3 target. */
+  bootstrapManagedPreviewSession: (
+    input: DesktopPreviewManagedSessionInput,
+  ) => Promise<DesktopPreviewManagedSessionResult>;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;

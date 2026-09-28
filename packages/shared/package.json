@@ -240,6 +240,10 @@
       "types": "./src/previewNetworkIdle.ts",
       "import": "./src/previewNetworkIdle.ts"
     },
+    "./previewBootstrapCrypto": {
+      "types": "./src/previewBootstrapCrypto.ts",
+      "import": "./src/previewBootstrapCrypto.ts"
+    },
     "./filePreview": {
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"
