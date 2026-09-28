@@ -50,6 +50,7 @@ it("keeps the note for the provider thread that lost the work across a provider 
       providerTurns: runs.filter((source) => source.id !== target.id).map(turnFor),
       compactionMessageIds: new Set(),
       run: target,
+      runAttemptIds: target.activeAttemptId === null ? [] : [target.activeAttemptId],
     });
 
   // Codex never lost the work, so it neither receives nor consumes the note.
@@ -96,4 +97,28 @@ it("keeps separate cancelled tasks that share a kind and label", () => {
   // Rows recorded before ids existed still collapse by kind + label.
   const legacy = { kind: "shell" as const, label: "sleep 20" };
   assert.lengthOf(mergeRestartCancelledBackgroundWork([legacy], [legacy]), 1);
+});
+
+it("does not repeat the note when a steer restarts the run on a new attempt", () => {
+  const root = run(1, claudeThread, { restartCancelledBackgroundWork: lost });
+  const steered = run(2, claudeThread, {
+    activeAttemptId: RunAttemptId.make("attempt:2b"),
+  });
+  const firstAttempt = RunAttemptId.make("attempt:2a");
+  const pending = (runAttemptIds: ReadonlyArray<RunAttemptId>, delivered: boolean) =>
+    pendingRestartCancelledBackgroundWork({
+      runs: [root, steered],
+      providerTurns: [
+        turnFor(root),
+        ...(delivered ? [{ runAttemptId: firstAttempt, providerThreadId: claudeThread }] : []),
+      ],
+      compactionMessageIds: new Set(),
+      run: steered,
+      runAttemptIds,
+    });
+
+  // The first attempt reached the provider with the note; its replacement must not repeat it.
+  assert.deepEqual(pending([firstAttempt, RunAttemptId.make("attempt:2b")], true), []);
+  // A first attempt that never reached the provider did not deliver it.
+  assert.deepEqual(pending([firstAttempt, RunAttemptId.make("attempt:2b")], false), lost);
 });

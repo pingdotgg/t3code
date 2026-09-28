@@ -102,8 +102,15 @@ export function pendingRestartCancelledBackgroundWork(input: {
   readonly compactionMessageIds: ReadonlySet<string>;
   readonly run: Pick<
     OrchestrationV2Run,
-    "id" | "ordinal" | "userMessageId" | "providerThreadId" | "restartContinuationOfRunId"
+    | "id"
+    | "ordinal"
+    | "userMessageId"
+    | "providerThreadId"
+    | "restartContinuationOfRunId"
+    | "activeAttemptId"
   >;
+  /** Every attempt id of `run`; a steer replaces the attempt but not the run. */
+  readonly runAttemptIds: ReadonlyArray<OrchestrationV2Run["activeAttemptId"] & string>;
 }): ReadonlyArray<Work> {
   const carriesNote = (run: typeof input.run) =>
     run.restartContinuationOfRunId === undefined &&
@@ -124,6 +131,12 @@ export function pendingRestartCancelledBackgroundWork(input: {
       deliveredAttemptIds.has(candidate.activeAttemptId) &&
       carriesNote(candidate),
   );
+  // A steer restarts this run on a new attempt: an earlier attempt that already
+  // reached the provider delivered the note, so the replacement must not repeat it.
+  const alreadyDelivered = input.runAttemptIds.some(
+    (attemptId) => attemptId !== input.run.activeAttemptId && deliveredAttemptIds.has(attemptId),
+  );
+  if (alreadyDelivered) return [];
   return sameThread
     .filter(
       (source) =>
