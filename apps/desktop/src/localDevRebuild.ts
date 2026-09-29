@@ -303,6 +303,7 @@ export async function checkLocalDevRebuildStaleness(input: {
     cwd,
     baseSha,
     parsed.sha,
+    parsed.branch,
     localSha,
     localBranch,
     workingTree.exitCode === 0 ? workingTree.stdout : null,

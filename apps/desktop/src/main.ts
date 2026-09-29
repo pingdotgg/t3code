@@ -301,7 +301,8 @@ if (restoredLocalRebuildLifecycle.error) {
 let localRebuildLifecycle = restoredLocalRebuildLifecycle.lifecycle;
 let localRebuildProcessId = restoredLocalRebuildLifecycle.processId;
 let localRebuildLifecycleMonitor: ReturnType<typeof setInterval> | null = null;
-if (localRebuildLifecycle.phase === "running" && localRebuildLifecycle.logPath) {
+localRebuildStarted = localRebuildLifecycle.phase === "running";
+if (localRebuildLifecycle.phase === "running") {
   monitorLocalRebuildLifecycle();
 }
 let localRebuildStalenessCheckInFlight: ReturnType<typeof checkLocalDevRebuildStaleness> | null =
@@ -1249,7 +1250,7 @@ function persistLocalRebuildLifecycle(): void {
 }
 
 function reconcileLocalRebuildLifecycle(): void {
-  if (localRebuildLifecycle.phase !== "running" || !localRebuildLifecycle.logPath) return;
+  if (localRebuildLifecycle.phase !== "running") return;
   const recovered = restoreLocalDevRebuildLifecycle(
     LOCAL_REBUILD_LIFECYCLE_PATH,
     Path.join(LOG_DIR, "dev-rebuild.log"),
@@ -1273,6 +1274,7 @@ function monitorLocalRebuildLifecycle(): void {
 }
 
 function emitLocalRebuildLifecycle(state: Omit<DesktopLocalRebuildLifecycle, "revision">): void {
+  localRebuildStarted = state.phase === "running";
   localRebuildLifecycle = { ...state, revision: localRebuildLifecycle.revision + 1 };
   if (state.phase === "running" && state.logPath) {
     persistLocalRebuildLifecycle();

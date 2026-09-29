@@ -455,6 +455,37 @@ describe("local Dev rebuild staleness", () => {
     expect(result).toMatchObject({ available: true, behind: false, error: null });
   });
 
+  it("rechecks pull readiness when the remote default branch changes at the same tip", async () => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      const currentDefault = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+      expect(currentDefault).toMatchObject({ behind: false, readyToPull: true });
+
+      const remoteRoot = Path.join(root, "origin.git");
+      git(sourceRoot, ["--git-dir", remoteRoot, "branch", "next", initialSha]);
+      git(sourceRoot, ["--git-dir", remoteRoot, "symbolic-ref", "HEAD", "refs/heads/next"]);
+
+      const changedDefault = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+      expect(changedDefault).toMatchObject({
+        behind: false,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("switch to 'next'"),
+        remoteBranch: "next",
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("never claims behind for ahead or diverged checkouts", async () => {
     const { runner } = stubRunner({
       "rev-parse HEAD": { stdout: `${LOCAL_SHA}\n`, exitCode: 0 },
