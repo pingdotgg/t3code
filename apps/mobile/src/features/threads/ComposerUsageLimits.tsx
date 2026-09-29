@@ -1,4 +1,5 @@
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -21,6 +22,7 @@ export function ComposerUsageLimits({
   readonly environmentId: EnvironmentId;
   readonly onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const now = Date.parse(report.createdAt);
   const { height } = useWindowDimensions();
   const close = (
@@ -84,7 +86,7 @@ export function ComposerUsageLimits({
         {report.accounts.length === 0 ? (
           // Nothing but notices, so the close control needs a row of its own.
           <View className="flex-row items-center gap-3 px-4 pt-3">
-            <Text className="min-w-0 flex-1 text-base text-foreground">Usage limits</Text>
+            <Text className="min-w-0 flex-1 text-base text-foreground">{t("usageLimits")}</Text>
             {close}
           </View>
         ) : null}

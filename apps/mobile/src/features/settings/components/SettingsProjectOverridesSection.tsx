@@ -1,4 +1,5 @@
 import { Pressable, View } from "react-native";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { AppText as Text } from "../../../components/AppText";
 import { SettingsSection } from "./SettingsSection";
@@ -10,6 +11,7 @@ export function SettingsProjectOverridesSection(props: {
   readonly pending: boolean;
   readonly onClear: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <SettingsSection title="Project">
       <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
@@ -23,7 +25,7 @@ export function SettingsProjectOverridesSection(props: {
             onPress={props.onClear}
             className="px-2 py-2 active:opacity-70"
           >
-            <Text className="text-sm font-t3-medium text-primary-text">Use defaults</Text>
+            <Text className="text-sm font-t3-medium text-primary-text">{t("useDefaults")}</Text>
           </Pressable>
         ) : null}
       </View>

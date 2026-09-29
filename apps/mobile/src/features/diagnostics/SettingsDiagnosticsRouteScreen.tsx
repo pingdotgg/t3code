@@ -4,6 +4,8 @@ import * as Updates from "expo-updates";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getLocalizedDateTimeFormatter } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
@@ -42,6 +44,7 @@ function appIdentity() {
  * own log before aborting the process, so the next launch can show it here.
  */
 export function SettingsDiagnosticsRouteScreen() {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<CrashLogState>(() =>
     Updates.isEnabled ? { status: "loading" } : { status: "unavailable" },
@@ -86,7 +89,9 @@ export function SettingsDiagnosticsRouteScreen() {
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
               <ActivityIndicator />
-              <Text className="text-center text-sm text-foreground-muted">Reading crash log…</Text>
+              <Text className="text-center text-sm text-foreground-muted">
+                {t("readingCrashLog")}
+              </Text>
             </View>
           ) : state.status === "unavailable" ? (
             <EmptyState
@@ -152,7 +157,9 @@ function CrashRow(props: { readonly record: StartupCrashRecord; readonly first: 
   return (
     <View className={props.first ? "gap-1.5 p-4" : "gap-1.5 border-t border-border-subtle p-4"}>
       <Text className="text-xs text-foreground-muted">
-        {new Date(record.timestamp).toLocaleString()}
+        {getLocalizedDateTimeFormatter({ dateStyle: "medium", timeStyle: "short" }).format(
+          new Date(record.timestamp),
+        )}
       </Text>
       <Text selectable className="text-base leading-snug text-danger-foreground">
         {record.description}

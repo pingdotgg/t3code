@@ -1,6 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { videoMimeType } from "@t3tools/shared/video";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { ActivityIndicator, Keyboard, Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -129,6 +130,7 @@ function OpenVideoPreviewModal(props: {
   readonly playback: PlaybackState;
   readonly onRequestClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { playback } = props;
   const insets = useSafeAreaInsets();
   const mediaActions = useMediaActions(playback.actionsSource, props.onRequestClose);
@@ -165,7 +167,7 @@ function OpenVideoPreviewModal(props: {
         {playback.uri === null && !playback.unavailable ? (
           <View className="flex-1 items-center justify-center gap-3 px-6">
             <ActivityIndicator color="#ffffff" />
-            <AppText className="text-sm text-white/80">Loading video...</AppText>
+            <AppText className="text-sm text-white/80">{t("loadingVideo")}</AppText>
           </View>
         ) : (
           <MediaVideoPlayer

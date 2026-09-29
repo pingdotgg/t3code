@@ -1,4 +1,5 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "../../components/AppSymbol";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -240,6 +241,7 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 }>;
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
@@ -1291,7 +1293,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   }}
                   className="px-4 py-2"
                 >
-                  <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+                  <Text style={{ color: terminalTheme.foreground }}>
+                    {t("attachVisibleOutput")}
+                  </Text>
                 </Pressable>
               ) : null}
               {isAccessoryVisible ? (

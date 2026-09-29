@@ -1,6 +1,7 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -23,6 +24,7 @@ type GitBranchesSheetProps = StaticScreenProps<{
 }>;
 
 export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -126,7 +128,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               New worktree
             </Text>
             {Platform.OS === "android" ? (
-              <Text className="text-foreground-secondary text-sm">Base branch</Text>
+              <Text className="text-foreground-secondary text-sm">{t("baseBranch")}</Text>
             ) : null}
             <TextInput
               value={worktreeBaseBranch}
@@ -136,7 +138,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             {Platform.OS === "android" ? (
-              <Text className="text-foreground-secondary text-sm">New branch</Text>
+              <Text className="text-foreground-secondary text-sm">{t("newBranch")}</Text>
             ) : null}
             <TextInput
               value={worktreeBranchName}

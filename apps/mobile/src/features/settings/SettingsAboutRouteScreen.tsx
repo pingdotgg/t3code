@@ -1,5 +1,6 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import Constants from "expo-constants";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,6 +36,7 @@ export function SettingsAboutRouteScreen() {
 }
 
 function AppSettingsSection() {
+  const { t } = useTranslation();
   const [updateState, setUpdateState] = useState<AppUpdateCheckState>("idle");
   const updateInFlight = useRef(false);
   const hiddenUpdateTapCount = useRef(0);
@@ -108,7 +110,7 @@ function AppSettingsSection() {
         type="monochrome"
         weight="regular"
       />
-      <Text className="flex-1 text-lg text-foreground">Version</Text>
+      <Text className="flex-1 text-lg text-foreground">{t("versionLabel")}</Text>
       <View className="items-end">
         <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
         {statusLabel ? (

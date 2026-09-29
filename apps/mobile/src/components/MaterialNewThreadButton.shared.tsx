@@ -1,4 +1,5 @@
 import { Pressable, type StyleProp, type ViewStyle } from "react-native";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
@@ -12,6 +13,7 @@ export function MaterialNewThreadButton(props: {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {
+  const { t } = useTranslation();
   return (
     <Pressable
       accessibilityLabel="New thread"
@@ -33,7 +35,9 @@ export function MaterialNewThreadButton(props: {
         type="monochrome"
       />
       {props.extended && props.expanded !== false ? (
-        <AppText className="text-[16px] font-t3-medium text-primary-foreground">New thread</AppText>
+        <AppText className="text-[16px] font-t3-medium text-primary-foreground">
+          {t("newThreadButton")}
+        </AppText>
       ) : null}
     </Pressable>
   );

@@ -15,6 +15,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Alert } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import {
@@ -249,16 +250,17 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 }
 
 function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGitHeaderActionItems {
+  const { t } = useTranslation();
   const model = useThreadGitControlModel(props);
 
   return useMemo(
     () => ({
       terminal: {
-        accessibilityLabel: "Open terminal",
+        accessibilityLabel: t("threadOpenTerminal"),
         disabled: !props.canOpenTerminal,
         icon: { name: "terminal", type: "sfSymbol" },
         identifier: "thread-right-terminal",
-        label: "Terminal",
+        label: t("threadTerminal"),
         menu: {
           items: [
             ...props.projectScripts.map((script) => ({
@@ -271,10 +273,10 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
             ...(props.projectScripts.length === 0
               ? [
                   {
-                    description: "This project has no saved scripts yet",
+                    description: t("noSavedProjectScriptsYet"),
                     disabled: true,
                     icon: { name: "play", type: "sfSymbol" as const },
-                    label: "No project scripts",
+                    label: t("noProjectScripts"),
                     onPress: () => {},
                     type: "action" as const,
                   },
@@ -296,21 +298,21 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               type: "action" as const,
             })),
             {
-              description: "Start another shell for this thread",
+              description: t("startAnotherShellForThread"),
               icon: { name: "plus", type: "sfSymbol" },
-              label: "Open new terminal",
+              label: t("openNewTerminal"),
               onPress: props.onOpenNewTerminal,
               type: "action",
             },
           ],
-          title: "Terminal",
+          title: t("threadTerminal"),
         },
         sharesBackground: true,
         type: "menu",
         variant: "plain",
       },
       files: {
-        accessibilityLabel: "Open files",
+        accessibilityLabel: t("threadOpenFiles"),
         disabled: !props.canOpenFiles,
         icon: { name: "folder", type: "sfSymbol" },
         identifier: "thread-right-files",
@@ -388,6 +390,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       props.onRunProjectScript,
       props.projectScripts,
       props.terminalSessions,
+      t,
     ],
   );
 }
@@ -409,6 +412,7 @@ export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): He
 }
 
 export function ThreadGitControls(props: ThreadGitControlsProps) {
+  const { t } = useTranslation();
   const model = useThreadGitControlModel(props);
   const showActionControls = props.showActionControls ?? true;
 
@@ -428,7 +432,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
       ) : null}
       {showActionControls ? (
         <NativeHeaderToolbar.Menu
-          accessibilityLabel="Open terminal"
+          accessibilityLabel={t("threadOpenTerminal")}
           icon="terminal"
           disabled={!props.canOpenTerminal}
           separateBackground
@@ -451,9 +455,9 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
               icon="play"
               disabled
               onPress={() => {}}
-              subtitle="This project has no saved scripts yet"
+              subtitle={t("noSavedProjectScriptsYet")}
             >
-              <NativeHeaderToolbar.Label>No project scripts</NativeHeaderToolbar.Label>
+              <NativeHeaderToolbar.Label>{t("noProjectScripts")}</NativeHeaderToolbar.Label>
             </NativeHeaderToolbar.MenuAction>
           )}
           {props.terminalSessions.map((session) => (
@@ -477,15 +481,15 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           <NativeHeaderToolbar.MenuAction
             icon="plus"
             onPress={props.onOpenNewTerminal}
-            subtitle="Start another shell for this thread"
+            subtitle={t("startAnotherShellForThread")}
           >
-            <NativeHeaderToolbar.Label>Open new terminal</NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Label>{t("openNewTerminal")}</NativeHeaderToolbar.Label>
           </NativeHeaderToolbar.MenuAction>
         </NativeHeaderToolbar.Menu>
       ) : null}
       {showActionControls && props.showDirectFileControl ? (
         <NativeHeaderToolbar.Button
-          accessibilityLabel="Open files"
+          accessibilityLabel={t("threadOpenFiles")}
           disabled={!props.canOpenFiles}
           icon="folder"
           onPress={model.openFiles}

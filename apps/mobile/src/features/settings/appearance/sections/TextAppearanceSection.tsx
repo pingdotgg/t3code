@@ -10,18 +10,20 @@ import {
   TextAppearancePreview,
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
+import { useTranslation } from "@t3tools/i18n/react";
 
 export function TextAppearanceSection() {
   const { isReady, appearance, setBaseFontSize } = useAppearancePreferences();
+  const { t } = useTranslation();
 
   return (
-    <SettingsSection title="Text">
+    <SettingsSection title={t("text")}>
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"
-        label="Text size"
+        label={t("textSize")}
         max={MAX_BASE_FONT_SIZE}
         min={MIN_BASE_FONT_SIZE}
         onChange={setBaseFontSize}

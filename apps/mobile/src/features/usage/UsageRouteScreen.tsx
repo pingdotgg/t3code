@@ -1,4 +1,5 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { useTranslation } from "@t3tools/i18n/react";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
 import { cursorKeychainAccessEnvironments } from "@t3tools/client-runtime/state/usage";
@@ -484,6 +485,7 @@ function ChartCard(props: {
   readonly isPast24Hours: boolean;
   readonly timeZone: string;
 }) {
+  const { t } = useTranslation();
   const { merged, metric } = props;
   const colors = useProviderColors();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
@@ -513,7 +515,7 @@ function ChartCard(props: {
         />
       ) : (
         <View style={{ height: CHART_HEIGHT }} className="items-center justify-center">
-          <Text className="text-base text-foreground-muted">No activity in this window.</Text>
+          <Text className="text-base text-foreground-muted">{t("noActivityInWindow")}</Text>
         </View>
       )}
 

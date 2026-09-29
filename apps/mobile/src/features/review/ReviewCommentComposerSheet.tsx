@@ -1,6 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
@@ -40,6 +41,7 @@ type ReviewCommentComposerSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProps) {
+  const { t } = useTranslation();
   const isAndroid = Platform.OS === "android";
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -174,14 +176,14 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
               />
             </Pressable>
 
-            <Text className="text-lg font-t3-bold text-foreground">Add Comment</Text>
+            <Text className="text-lg font-t3-bold text-foreground">{t("addComment")}</Text>
 
             <View className="h-12 w-12" />
           </View>
 
           {!target ? (
             <View className="rounded-[22px] border border-border bg-card px-4 py-5">
-              <Text className="text-base font-t3-bold text-foreground">No selection</Text>
+              <Text className="text-base font-t3-bold text-foreground">{t("noSelection")}</Text>
               <Text className="mt-1 text-sm leading-normal text-foreground-muted">
                 Select a diff line or range first.
               </Text>
@@ -250,7 +252,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
               </View>
 
               <View className="min-h-0 flex-1 gap-2">
-                <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
+                <Text className="text-sm font-t3-bold text-foreground">{t("comment")}</Text>
                 <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
                   <View className="min-h-0 flex-1 px-4 pt-3.5">
                     <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>

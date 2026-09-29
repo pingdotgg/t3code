@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useState } from "react";
 import { Alert, Modal, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,6 +24,7 @@ export function TerminalContextSheet(props: {
   onClose: () => void;
   onAttach: () => void;
 }) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const lines = props.text.replace(/\n+$/, "").split("\n");
   const [range, setRange] = useState({ start: 0, end: lines.length - 1 });
@@ -48,7 +50,7 @@ export function TerminalContextSheet(props: {
         context: { version: 1, records: [record] },
       })
     ) {
-      Alert.alert("Too many context items", "Remove some context from the draft and try again.");
+      Alert.alert(t("tooManyContextItems"), t("removeContextAndTryAgain"));
       return;
     }
     props.onAttach();
@@ -64,9 +66,9 @@ export function TerminalContextSheet(props: {
         }
       >
         <View className="flex-row items-center justify-between p-4">
-          <Text className="text-lg text-foreground">Visible terminal output</Text>
+          <Text className="text-lg text-foreground">{t("visibleTerminalOutput")}</Text>
           <Pressable accessibilityRole="button" onPress={props.onClose} className="p-3">
-            <Text className="text-foreground">Cancel</Text>
+            <Text className="text-foreground">{t("cancel")}</Text>
           </Pressable>
         </View>
         <Text className="px-4 pb-3 text-foreground-muted">
@@ -110,7 +112,7 @@ export function TerminalContextSheet(props: {
           onPress={attach}
           className="m-4 mb-10 rounded-xl bg-subtle p-4"
         >
-          <Text className="text-center text-foreground">Attach selected output</Text>
+          <Text className="text-center text-foreground">{t("attachSelectedOutput")}</Text>
         </Pressable>
       </View>
     </Modal>

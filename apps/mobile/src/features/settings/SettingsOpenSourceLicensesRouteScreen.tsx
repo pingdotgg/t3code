@@ -9,6 +9,7 @@ import {
   type ThirdPartyLicenseEntry,
 } from "@t3tools/shared/thirdPartyLicenses";
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Linking, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -193,6 +194,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 type LicenseDetailProps = StaticScreenProps<{ readonly entryKey: string }>;
 
 export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const manifest = useMobileThirdPartyLicenses();
   const entry = manifest
@@ -235,7 +237,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
               onPress={() => void Linking.openURL(sourceUrl)}
               className="min-h-12 flex-row items-center gap-2 self-start py-2 active:opacity-60"
             >
-              <Text className="font-t3-medium text-primary-text">Project source</Text>
+              <Text className="font-t3-medium text-primary-text">{t("projectSource")}</Text>
               <SymbolView
                 name="arrow.up.right"
                 size={16}

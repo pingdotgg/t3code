@@ -1,6 +1,7 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 import { ActivityIndicator, Alert, Pressable, View } from "react-native";
@@ -21,6 +22,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
 export function SettingsClientStorageRouteScreen() {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
   const clearResult = useAtomValue(clearClientCacheAtom);
@@ -92,7 +94,9 @@ export function SettingsClientStorageRouteScreen() {
                 type="monochrome"
                 weight="regular"
               />
-              <Text className="text-center text-base text-foreground">Storage unavailable</Text>
+              <Text className="text-center text-base text-foreground">
+                {t("storageUnavailable")}
+              </Text>
               <Text className="text-center text-sm text-foreground-muted">
                 Restart the app and try again.
               </Text>
@@ -130,7 +134,7 @@ export function SettingsClientStorageRouteScreen() {
                 type="monochrome"
                 weight="regular"
               />
-              <Text className="text-center text-base text-foreground">No cached data</Text>
+              <Text className="text-center text-base text-foreground">{t("noCachedData")}</Text>
               <Text className="text-center text-sm text-foreground-muted">
                 Offline cache records will appear here after environments are used.
               </Text>

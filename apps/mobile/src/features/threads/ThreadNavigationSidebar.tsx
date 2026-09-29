@@ -20,6 +20,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { AppText as Text } from "../../components/AppText";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
@@ -130,6 +131,7 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
+  const { t } = useTranslation();
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const drawerColor = materialTheme["--color-drawer"];
 
@@ -886,8 +888,17 @@ function ThreadNavigationSidebarPane(
         selectedProjectKey,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
+        labels: {
+          environment: t("environment"),
+          allEnvironments: t("allEnvironments"),
+          showThreadsFromEveryEnvironment: t("showThreadsFromEveryEnvironment"),
+          project: t("project"),
+          allProjects: t("allProjects"),
+          showThreadsFromEveryProject: t("showThreadsFromEveryProject"),
+          threadListOptions: t("threadListOptions"),
+        },
       }),
-    [environments, options, projectFilterOptions, selectedProjectKey, setSelectedEnvironmentId],
+    [environments, options, projectFilterOptions, selectedProjectKey, setSelectedEnvironmentId, t],
   );
   const nativeHeaderItems = useMemo(
     () =>
@@ -909,16 +920,16 @@ function ThreadNavigationSidebarPane(
       }
     >
       {catalogState.isLoadingConnections
-        ? "Loading threads…"
+        ? t("loadingThreads")
         : Platform.OS === "android" && !catalogState.hasConnections
-          ? "No environments connected"
+          ? t("noEnvironmentsConnected")
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending
-              ? "Searching thread messages…"
-              : "No matching threads"
+              ? t("searchingThreadMessages")
+              : t("noMatchingThreads")
             : selectedProjectScope !== null
-              ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
+              ? t("noThreadsInProject", { project: selectedProjectScope.title })
+              : t("noThreadsYet")}
     </Text>
   );
 
@@ -945,7 +956,7 @@ function ThreadNavigationSidebarPane(
               // hidesSearchBarWhenScrolling collapses it on scroll.
               hideWhenScrolling: false,
               obscureBackground: false,
-              placeholder: "Search",
+              placeholder: t("search"),
               placement: "stacked",
               onCancelButtonPress: () => {
                 props.onSearchQueryChange("");
@@ -1097,7 +1108,7 @@ function ThreadNavigationSidebarPane(
             />
             <View className="flex-row items-center gap-2.5">
               <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
-                <SidebarFilterButton accessibilityLabel="Filter threads" icon={filterIcon} />
+                <SidebarFilterButton accessibilityLabel={t("filterThreads")} icon={filterIcon} />
               </ControlPillMenu>
               <SidebarHeaderActions onOpenSettings={props.onOpenSettings} />
             </View>
@@ -1117,7 +1128,7 @@ function ThreadNavigationSidebarPane(
               autoCorrect={false}
               clearButtonMode="while-editing"
               onChangeText={props.onSearchQueryChange}
-              placeholder="Search"
+              placeholder={t("search")}
               placeholderTextColorClassName="accent-placeholder"
               selectionColorClassName={undefined}
               cursorColorClassName={undefined}

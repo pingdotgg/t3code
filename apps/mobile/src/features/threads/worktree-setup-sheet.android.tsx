@@ -1,5 +1,6 @@
 import { Host, ModalBottomSheet, RNHostView } from "@expo/ui/jetpack-compose";
 import { Pressable, View, useWindowDimensions } from "react-native";
+import { useTranslation } from "@t3tools/i18n/react";
 import { withUniwind } from "uniwind";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
@@ -10,6 +11,7 @@ const NativeBottomSheet = withUniwind(ModalBottomSheet, {
 });
 
 export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupSheetProps) {
+  const { t } = useTranslation();
   const window = useWindowDimensions();
   return (
     <Host style={{ position: "absolute", width: 0, height: 0 }}>
@@ -34,7 +36,7 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
                   onPress={onClose}
                   className="min-h-11 justify-center px-2"
                 >
-                  <Text className="font-t3-medium text-sm text-foreground">Done</Text>
+                  <Text className="font-t3-medium text-sm text-foreground">{t("done")}</Text>
                 </Pressable>
               }
             />

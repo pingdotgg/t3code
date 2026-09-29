@@ -2,6 +2,7 @@ import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
 import { useCallback, useRef } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -90,6 +91,7 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const { t } = useTranslation();
   const questionCount = props.pendingUserInput.questions.length;
 
   const cardCoverage = props.cardCoverage;
@@ -237,7 +239,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             User input needed
           </Text>
-          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
+          <Text className="font-t3-bold text-lg text-foreground">{t("fillPendingAnswers")}</Text>
         </View>
         <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
           <SymbolView

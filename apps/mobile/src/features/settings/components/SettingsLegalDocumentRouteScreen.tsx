@@ -2,6 +2,7 @@ import { type NavigationProp, type ParamListBase, useNavigation } from "@react-n
 import { useCallback, useLayoutEffect, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { AppText as Text } from "../../../components/AppText";
 import { LoadingStrip } from "../../../components/LoadingStrip";
@@ -65,6 +66,7 @@ export function SettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
+  const { t } = useTranslation();
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
@@ -111,14 +113,16 @@ export function SettingsLegalDocumentRouteScreen({
             }}
             className="items-center rounded-xl bg-foreground px-4 py-3 active:opacity-80"
           >
-            <Text className="font-t3-bold text-base text-sheet">Try Again</Text>
+            <Text className="font-t3-bold text-base text-sheet">{t("tryAgainAction")}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="link"
             onPress={() => openExternalUrl(documentUrl)}
             className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
           >
-            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
+            <Text className="font-t3-medium text-base text-foreground-muted">
+              {t("openInBrowser")}
+            </Text>
           </Pressable>
         </View>
       </View>

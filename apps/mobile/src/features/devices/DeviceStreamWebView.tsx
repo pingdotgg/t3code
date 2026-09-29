@@ -10,6 +10,7 @@ import {
   type Ref,
 } from "react";
 import { ActivityIndicator, Platform, Pressable, View } from "react-native";
+import { useTranslation } from "@t3tools/i18n/react";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
 
@@ -89,6 +90,7 @@ function DeviceStreamDocumentView({
   readonly onStreaming: () => void;
   readonly onRecoverProcess: () => boolean;
 }) {
+  const { t } = useTranslation();
   const webView = useRef<WebView>(null);
   const active = useRef(true);
   const failed = useRef(false);
@@ -200,7 +202,7 @@ function DeviceStreamDocumentView({
               className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
               onPress={onRetry}
             >
-              <AppText className="text-secondary-foreground">Reconnect</AppText>
+              <AppText className="text-secondary-foreground">{t("reconnect")}</AppText>
             </Pressable>
           ) : null}
         </View>

@@ -20,6 +20,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -275,6 +276,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
 }) {
+  const { t } = useTranslation();
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const sidebarPane = props.pane === "sidebar";
   const isDraft = pendingTask.kind === "draft";
@@ -318,7 +320,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               tintColorClassName="accent-adaptive-amber-700-300"
               type="monochrome"
             />
-            <Text className="text-xs text-adaptive-amber-700-300">Draft</Text>
+            <Text className="text-xs text-adaptive-amber-700-300">{t("draftLabel")}</Text>
           </View>
         ) : (
           <Text
@@ -327,7 +329,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               sidebarPane && "text-drawer-foreground-muted",
             )}
           >
-            Sends on reconnect
+            {t("sendsOnReconnect")}
           </Text>
         )}
       </View>

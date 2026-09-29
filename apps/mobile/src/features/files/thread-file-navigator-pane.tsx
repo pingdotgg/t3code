@@ -20,6 +20,7 @@ import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useTranslation } from "@t3tools/i18n/react";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
@@ -29,6 +30,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
   const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
@@ -160,7 +162,7 @@ export function ThreadFileNavigatorPane(props: {
         ) : (
           <View className="h-12 flex-row items-center gap-2 px-3">
             <View className="min-w-0 flex-1">
-              <Text className="text-sm font-t3-bold text-foreground">Files</Text>
+              <Text className="text-sm font-t3-bold text-foreground">{t("filesLabel")}</Text>
               <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                 {props.projectName}
               </Text>

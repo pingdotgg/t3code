@@ -1,5 +1,6 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { createContext, useContext, useEffect, useId, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   ActivityIndicator,
   Image,
@@ -41,6 +42,7 @@ export function ThreadMarkdownImageView(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const { t } = useTranslation();
   const sourceIdentifier = useId();
   const mediaActions = useMediaActions(props.actionsSource);
   const contextWidth = useContext(MarkdownImageAvailableWidthContext);
@@ -93,7 +95,7 @@ export function ThreadMarkdownImageView(props: {
             style={frameStyle}
           >
             {failed ? (
-              <Text className="text-xs text-foreground-muted">Image unavailable</Text>
+              <Text className="text-xs text-foreground-muted">{t("imageUnavailable")}</Text>
             ) : (
               <ActivityIndicator />
             )}
@@ -148,6 +150,7 @@ function ThreadMarkdownImageRequest(props: {
   readonly onLoad: (sourceSize: { width: number; height: number }) => void;
   readonly onError: () => void;
 }) {
+  const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
 
   return (
@@ -168,7 +171,7 @@ function ThreadMarkdownImageRequest(props: {
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
         >
-          <Text className="text-xs text-foreground-muted">Loading image…</Text>
+          <Text className="text-xs text-foreground-muted">{t("loadingImage")}</Text>
         </View>
       )}
     </>

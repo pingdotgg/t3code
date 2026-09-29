@@ -4,6 +4,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { SymbolView } from "../../components/AppSymbol";
+import { useTranslation } from "@t3tools/i18n/react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -58,6 +59,7 @@ export function EnvironmentConnectionNotice(props: {
   readonly resourceName: string;
   readonly onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   const isRetrying =
     props.connection.phase === "connecting" || props.connection.phase === "reconnecting";
 
@@ -91,7 +93,7 @@ export function EnvironmentConnectionNotice(props: {
             className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
             onPress={props.onRetry}
           >
-            <Text className="text-sm font-t3-bold text-foreground">Retry now</Text>
+            <Text className="text-sm font-t3-bold text-foreground">{t("retryNow")}</Text>
           </Pressable>
         ) : null}
       </View>

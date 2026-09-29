@@ -5,11 +5,13 @@ import { AppText as Text } from "../../components/AppText";
 import { MaterialNewThreadButton } from "../../components/MaterialNewThreadButton";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import { EmptyState } from "../../components/EmptyState";
+import { useTranslation } from "@t3tools/i18n/react";
 
 export function WorkspaceEmptyDetail(props: {
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <View
       className={
@@ -21,8 +23,8 @@ export function WorkspaceEmptyDetail(props: {
       {props.onAddConnection ? (
         <View className="w-full max-w-[430px]">
           <EmptyState
-            title="No environments connected"
-            detail="Add an environment to load projects and start coding sessions."
+            title={t("noEnvironmentsConnected")}
+            detail={t("addEnvironmentDetail")}
             variant="plain"
             action={
               <MaterialFloatingActionButton
@@ -43,7 +45,7 @@ export function WorkspaceEmptyDetail(props: {
             tintColorClassName="accent-icon-subtle"
             type="hierarchical"
           />
-          <Text className="text-center text-xl font-t3-bold">Select a thread</Text>
+          <Text className="text-center text-xl font-t3-bold">{t("selectThread")}</Text>
           <Text className="text-center text-base text-foreground-muted">
             {Platform.OS === "android"
               ? "Choose a thread from the sidebar or start a new thread."
@@ -58,7 +60,9 @@ export function WorkspaceEmptyDetail(props: {
                 className="mt-2 flex-row items-center gap-2 rounded-full bg-primary px-5 py-3 active:opacity-70"
                 onPress={props.onStartNewTask}
               >
-                <Text className="text-base font-t3-bold text-primary-foreground">New Task</Text>
+                <Text className="text-base font-t3-bold text-primary-foreground">
+                  {t("newTask")}
+                </Text>
               </Pressable>
             )
           ) : null}

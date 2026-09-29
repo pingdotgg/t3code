@@ -3,6 +3,8 @@ import {
   projectCloneProgressSummary,
   type ProjectCloneSnapshot,
 } from "@t3tools/contracts";
+import { projectCloneStageTranslationKey } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 
 import { cn } from "../lib/cn";
@@ -20,6 +22,7 @@ export function ProjectCloneBanner(props: {
   readonly onRemove: () => void;
 }) {
   const { clone } = props;
+  const { t } = useTranslation("projectClone");
   const name = projectCloneDisplayName(clone);
   if (clone.phase === "running") {
     return (
@@ -27,13 +30,15 @@ export function ProjectCloneBanner(props: {
         <ActivityIndicator size="small" />
         <View className="min-w-0 flex-1">
           <Text className="font-t3-medium text-sm" numberOfLines={1}>
-            Cloning {name}
+            {t("cloningProject", { name })}
           </Text>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {projectCloneProgressSummary(clone)}
+            {projectCloneProgressSummary(clone, (stage) =>
+              t(projectCloneStageTranslationKey(stage)),
+            )}
           </Text>
         </View>
-        <BannerAction label="Cancel" onPress={props.onCancel} />
+        <BannerAction label={t("cancel")} onPress={props.onCancel} />
       </View>
     );
   }
@@ -52,7 +57,7 @@ export function ProjectCloneBanner(props: {
         )}
         numberOfLines={1}
       >
-        {cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`}
+        {cancelled ? t("cancelledCloningProject", { name }) : t("failedToCloneProject", { name })}
       </Text>
       {clone.error ? (
         <Text className="mt-0.5 text-xs text-danger-foreground" numberOfLines={3}>
@@ -60,8 +65,8 @@ export function ProjectCloneBanner(props: {
         </Text>
       ) : null}
       <View className="mt-2 flex-row justify-end gap-2">
-        <BannerAction label="Remove project" onPress={props.onRemove} />
-        <BannerAction label="Retry" onPress={props.onRetry} />
+        <BannerAction label={t("removeProject")} onPress={props.onRemove} />
+        <BannerAction label={t("retry")} onPress={props.onRetry} />
       </View>
     </View>
   );

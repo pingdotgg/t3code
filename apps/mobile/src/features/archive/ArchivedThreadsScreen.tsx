@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -273,14 +274,15 @@ function ArchivedThreadRow(props: {
 }
 
 function ArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
+  const { t } = useTranslation();
   return (
     <View className="rounded-[20px] border border-danger-border bg-danger p-4">
       <Text className="text-base font-t3-bold text-danger-foreground">
-        Could not load every archive
+        {t("couldNotLoadEveryArchive")}
       </Text>
       <Text className="mt-1 text-sm text-foreground-muted">{props.message}</Text>
       <Pressable className="mt-3 self-start active:opacity-60" onPress={props.onRetry}>
-        <Text className="text-sm font-t3-bold text-danger-foreground">Try again</Text>
+        <Text className="text-sm font-t3-bold text-danger-foreground">{t("tryAgainAction")}</Text>
       </Pressable>
     </View>
   );
@@ -301,6 +303,7 @@ export function ArchivedThreadsScreen(props: {
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
+  const { t } = useTranslation();
   const { onDeleteThread, onUnarchiveThread } = props;
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
@@ -393,7 +396,7 @@ export function ArchivedThreadsScreen(props: {
       return (
         <View className="items-center py-16">
           <ActivityIndicator colorClassName="accent-icon" />
-          <Text className="mt-3 text-sm text-foreground-muted">Loading archive...</Text>
+          <Text className="mt-3 text-sm text-foreground-muted">{t("loadingArchive")}</Text>
         </View>
       );
     }

@@ -1,5 +1,6 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -23,6 +24,7 @@ type GitCommitSheetProps = StaticScreenProps<{
 }>;
 
 export function GitCommitSheet(_props: GitCommitSheetProps) {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -105,7 +107,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         >
           <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px] ios:border ios:border-border">
             <View className="android:gap-1 ios:flex-row ios:items-center ios:justify-between ios:gap-3">
-              <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
+              <Text className="text-foreground-muted text-sm font-medium">{t("branchLabel")}</Text>
               <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
                 {gitStatus.data?.refName ?? "(detached HEAD)"}
               </Text>

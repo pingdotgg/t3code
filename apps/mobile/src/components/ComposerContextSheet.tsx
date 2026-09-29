@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTranslation } from "@t3tools/i18n/react";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
 import {
@@ -92,6 +93,7 @@ export function ComposerContextSheet(props: {
   readonly records?: ReadonlyArray<ComposerContextRecord>;
   readonly attachments?: ReadonlyArray<DraftComposerAttachment>;
 }) {
+  const { t } = useTranslation();
   const reviewColors = useReviewCommentColors();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -236,7 +238,7 @@ export function ComposerContextSheet(props: {
               onPress={props.onClose}
               className="p-3"
             >
-              <Text className="text-foreground">Done</Text>
+              <Text className="text-foreground">{t("done")}</Text>
             </Pressable>
           </View>
           <ScrollView
@@ -363,7 +365,7 @@ export function ComposerContextSheet(props: {
                         onPress={props.onOpenSkill}
                         className="rounded-xl bg-subtle p-4"
                       >
-                        <Text className="text-foreground">View instructions</Text>
+                        <Text className="text-foreground">{t("viewInstructions")}</Text>
                       </Pressable>
                     ) : null}
                   </View>
@@ -395,7 +397,7 @@ export function ComposerContextSheet(props: {
                 }}
                 className="rounded-xl bg-subtle p-4"
               >
-                <Text className="text-foreground">Open pull request</Text>
+                <Text className="text-foreground">{t("openPullRequest")}</Text>
               </Pressable>
             ) : null}
             {props.onOpenAttachment ? (
@@ -404,7 +406,7 @@ export function ComposerContextSheet(props: {
                 onPress={props.onOpenAttachment}
                 className="rounded-xl bg-subtle p-4"
               >
-                <Text className="text-foreground">Open attachment</Text>
+                <Text className="text-foreground">{t("openAttachment")}</Text>
               </Pressable>
             ) : null}
             {props.onOpenPullRequest ? (
@@ -413,7 +415,7 @@ export function ComposerContextSheet(props: {
                 onPress={props.onOpenPullRequest}
                 className="rounded-xl bg-subtle p-4"
               >
-                <Text className="text-foreground">Open pull request</Text>
+                <Text className="text-foreground">{t("openPullRequest")}</Text>
               </Pressable>
             ) : null}
             {props.onRemove ? (
@@ -422,7 +424,7 @@ export function ComposerContextSheet(props: {
                 onPress={props.onRemove}
                 className="rounded-xl bg-subtle p-4"
               >
-                <Text className="text-foreground">Remove from draft</Text>
+                <Text className="text-foreground">{t("removeFromDraft")}</Text>
               </Pressable>
             ) : null}
           </ScrollView>

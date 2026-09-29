@@ -6,6 +6,7 @@ import {
 import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import { useTranslation } from "@t3tools/i18n/react";
 import { type ReactNode, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -62,6 +63,7 @@ function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm:
  * are managed in Settings instead.
  */
 export function T3ConnectProfilePage() {
+  const { t } = useTranslation();
   const environmentsState = useManagedRelayEnvironments();
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     reportFailure: false,
@@ -148,7 +150,7 @@ export function T3ConnectProfilePage() {
         />
       }
     >
-      <ClerkSectionHeader>Registered servers</ClerkSectionHeader>
+      <ClerkSectionHeader>{t("registeredServers")}</ClerkSectionHeader>
 
       {environmentsState.error ? (
         <>
@@ -168,7 +170,7 @@ export function T3ConnectProfilePage() {
       ) : isInitialLoad ? (
         <View className="flex-row items-center gap-3 px-6 py-4">
           <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
-          <Text className="text-base text-clerk-foreground-muted">Loading environments</Text>
+          <Text className="text-base text-clerk-foreground-muted">{t("loadingEnvironments")}</Text>
         </View>
       ) : environments.length > 0 ? (
         environments.map((environment) => (

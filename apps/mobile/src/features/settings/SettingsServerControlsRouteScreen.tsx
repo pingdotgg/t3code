@@ -13,6 +13,7 @@ import {
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
 import { useRef, useState, type ComponentProps } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -508,16 +509,15 @@ function ChoiceRow(props: {
 }
 
 function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
+  const { t } = useTranslation();
   return (
     <Text
       accessibilityLabel={
-        props.projectSelected
-          ? "Selected project checkouts use different values"
-          : "Selected environments use different values"
+        props.projectSelected ? t("mixedProjectCheckoutValues") : t("mixedEnvironmentValues")
       }
       className="px-2 text-sm text-foreground-muted android:px-4"
     >
-      Mixed
+      {t("mixed")}
     </Text>
   );
 }
@@ -530,6 +530,7 @@ function FanoutSwitchRow(props: {
   readonly disabled: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
+  const { t } = useTranslation();
   if (props.value !== null) {
     return (
       <SettingsSwitchRow
@@ -551,13 +552,15 @@ function FanoutSwitchRow(props: {
       subtitle={props.subtitle}
     >
       <Pressable
-        accessibilityLabel={`Set ${props.label} on for selected environments`}
+        accessibilityLabel={t("setFeatureOnForSelectedEnvironments", {
+          feature: props.label,
+        })}
         accessibilityRole="button"
         disabled={props.disabled}
         className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
         onPress={() => props.onValueChange(true)}
       >
-        <Text className="text-sm font-t3-medium text-foreground">Mixed · Set on</Text>
+        <Text className="text-sm font-t3-medium text-foreground">{t("mixedSetOn")}</Text>
       </Pressable>
     </SettingsControlRow>
   );

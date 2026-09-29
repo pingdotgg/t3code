@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -37,6 +38,7 @@ export function ModelRowContent(
       readonly selectedClassName?: string;
     },
 ) {
+  const { t } = useTranslation();
   return (
     <View
       style={props.minimumHeight === undefined ? undefined : { minHeight: props.minimumHeight }}
@@ -69,16 +71,20 @@ export function ModelRowContent(
             </Text>
             {props.option.isDefault ? (
               <View className="rounded-md bg-subtle-strong px-1.5 py-0.5">
-                <Text className="text-3xs font-t3-bold text-foreground-muted">Default</Text>
+                <Text className="text-3xs font-t3-bold text-foreground-muted">
+                  {t("defaultValue")}
+                </Text>
               </View>
             ) : null}
             {props.option.isLegacy ? (
               <View className="rounded-md bg-subtle px-1.5 py-0.5">
-                <Text className="text-3xs font-t3-bold text-foreground-muted">Legacy</Text>
+                <Text className="text-3xs font-t3-bold text-foreground-muted">
+                  {t("legacyValue")}
+                </Text>
               </View>
             ) : null}
             {props.option.isUnavailable ? (
-              <Text className="text-xs text-foreground">Unavailable</Text>
+              <Text className="text-xs text-foreground">{t("unavailable")}</Text>
             ) : null}
           </View>
           {props.option.subtitle ? (

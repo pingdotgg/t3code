@@ -6,6 +6,7 @@ import {
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ActivityIndicator, Alert, AppState, Platform, Pressable, View } from "react-native";
@@ -70,6 +71,7 @@ function DevicePreviewScreen({
   readonly threadId: ThreadId;
   readonly onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
@@ -288,7 +290,7 @@ function DevicePreviewScreen({
                 className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
                 onPress={state.refresh}
               >
-                <AppText className="text-secondary-foreground">Retry</AppText>
+                <AppText className="text-secondary-foreground">{t("retry")}</AppText>
               </Pressable>
             </>
           ) : focused && foreground ? (
@@ -311,6 +313,7 @@ function OpenDevicePreview({
   readonly streamRef: RefObject<DeviceStreamRef | null>;
   readonly onInputConnected: (connected: boolean) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const { session } = preview;
   const { themeVariables } = useAppearancePreferences();
   const { access, error, refresh } = useDeviceHubAccess(environmentId, session.hostId);
@@ -351,13 +354,13 @@ function OpenDevicePreview({
             className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
             onPress={refresh}
           >
-            <AppText className="text-secondary-foreground">Retry</AppText>
+            <AppText className="text-secondary-foreground">{t("retry")}</AppText>
           </Pressable>
         </>
       ) : (
         <>
           <ActivityIndicator color={themeVariables["--color-icon"]} />
-          <AppText className="text-sm text-foreground-muted">Connecting to device...</AppText>
+          <AppText className="text-sm text-foreground-muted">{t("connectingToDevice")}</AppText>
         </>
       )}
     </View>

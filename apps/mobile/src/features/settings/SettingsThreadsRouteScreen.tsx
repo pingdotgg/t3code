@@ -2,6 +2,7 @@ import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -57,6 +58,7 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
  * Mobile edits auto-settle defaults across selected capable targets.
  */
 function AutoSettleSettingsRows() {
+  const { t } = useTranslation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const projectSelected = selectedProjectKey !== null;
@@ -182,7 +184,9 @@ function AutoSettleSettingsRows() {
         {afterDays !== null ? (
           <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
             <View className="w-[22px] android:w-6" />
-            <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
+            <Text className="flex-1 text-foreground text-lg android:text-base">
+              {t("inactiveDays")}
+            </Text>
             <AutoSettleDaysField
               value={afterDays}
               disabled={disabled}
@@ -194,7 +198,7 @@ function AutoSettleSettingsRows() {
       {pendingWrites === 0 && mismatches.length > 0 ? (
         <SettingsSection title="Across environments">
           <View className="gap-3 p-4">
-            <Text className="text-base text-foreground">Auto-settle defaults differ</Text>
+            <Text className="text-base text-foreground">{t("autoSettleDefaultsDiffer")}</Text>
             <Text className="text-sm text-foreground-muted">
               {mismatches.map((mismatch) => mismatch.label).join(", ")}
             </Text>

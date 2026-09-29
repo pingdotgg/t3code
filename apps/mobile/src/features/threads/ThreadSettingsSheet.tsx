@@ -21,6 +21,7 @@ import {
 } from "@react-navigation/native-stack";
 import * as Haptics from "expo-haptics";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   createContext,
   use,
@@ -681,6 +682,7 @@ function ThreadSettingsOptionsItem(props: {
   readonly animationsReady: boolean;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const session = useThreadSettingsSession();
   const bottomToolbarInset =
@@ -690,7 +692,9 @@ function ThreadSettingsOptionsItem(props: {
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
-      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">Options</Text>
+      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
+        {t("threadOptions")}
+      </Text>
       <Animated.View
         className="mx-4 overflow-hidden rounded-2xl bg-card"
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
@@ -1031,6 +1035,7 @@ function useThreadSettingsPickerPresentation() {
 }
 
 function ThreadSettingsModelsScreen() {
+  const { t } = useTranslation();
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
@@ -1042,23 +1047,23 @@ function ThreadSettingsModelsScreen() {
   }, [presentation, session]);
   const providerFilters = useMemo(
     () => [
-      { id: "all-providers", title: "All providers", value: null },
-      { id: "favorites", title: "Favorites", value: FAVORITES_PROVIDER_FILTER },
+      { id: "all-providers", title: t("allProviders"), value: null },
+      { id: "favorites", title: t("favorites"), value: FAVORITES_PROVIDER_FILTER },
       ...session.providerGroups.map((group) => ({
         id: `provider:${group.providerKey}`,
         title: group.providerLabel,
         value: group.providerKey,
       })),
     ],
-    [session.providerGroups],
+    [session.providerGroups, t],
   );
   const filterMenu = useMemo(
     () => ({
-      title: "Model filters",
+      title: t("modelFilters"),
       items: [
         {
           type: "submenu" as const,
-          title: "Provider",
+          title: t("providerLabel"),
           items: providerFilters.map((filter) => ({
             type: "action" as const,
             title: filter.title,
@@ -1070,7 +1075,7 @@ function ThreadSettingsModelsScreen() {
           ? [
               {
                 type: "action" as const,
-                title: "Show legacy models",
+                title: t("showLegacyModels"),
                 state: session.showLegacy ? ("on" as const) : ("off" as const),
                 onPress: () => session.setShowLegacy(!session.showLegacy),
               },
@@ -1078,7 +1083,7 @@ function ThreadSettingsModelsScreen() {
           : []),
       ],
     }),
-    [providerFilters, session],
+    [providerFilters, session, t],
   );
 
   return (
@@ -1088,10 +1093,10 @@ function ThreadSettingsModelsScreen() {
           trailing={
             <View className="flex-row items-center">
               <AndroidAnchoredMenu
-                title="Model filters"
+                title={t("modelFilters")}
                 actions={[
                   {
-                    title: "Provider",
+                    title: t("providerLabel"),
                     subactions: providerFilters.map((filter) => ({
                       id: filter.id,
                       title: filter.title,
@@ -1102,7 +1107,7 @@ function ThreadSettingsModelsScreen() {
                     ? [
                         {
                           id: "show-legacy",
-                          title: "Show legacy models",
+                          title: t("showLegacyModels"),
                           state: session.showLegacy ? ("on" as const) : ("off" as const),
                         },
                       ]
@@ -1119,7 +1124,7 @@ function ThreadSettingsModelsScreen() {
               >
                 {(open) => (
                   <MaterialIconButton
-                    accessibilityLabel="Filter models"
+                    accessibilityLabel={t("filterModels")}
                     icon="line.3.horizontal.decrease"
                     selected={hasCustomCatalogFilter}
                     variant={hasCustomCatalogFilter ? "tonal" : "standard"}
@@ -1212,8 +1217,8 @@ function ThreadSettingsModelsScreen() {
             separateBackground
             title="Model filters"
           >
-            <NativeHeaderToolbar.Menu title="Provider">
-              <NativeHeaderToolbar.Label>Provider</NativeHeaderToolbar.Label>
+            <NativeHeaderToolbar.Menu title={t("providerLabel")}>
+              <NativeHeaderToolbar.Label>{t("providerLabel")}</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
                 isOn={session.providerFilter === null}
                 onPress={() => session.setProviderFilter(null)}

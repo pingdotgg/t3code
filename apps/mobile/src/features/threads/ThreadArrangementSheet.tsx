@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Animated, FlatList, Modal, Pressable, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
@@ -147,6 +148,7 @@ function DragHandle(props: {
 }
 
 export function ThreadArrangementSheet(props: { onClose: () => void }) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const threads = useAtomValue(environmentThreadShells.threadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -373,13 +375,13 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
           style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
         >
           <View className="flex-row items-center justify-between gap-3 px-5 py-3">
-            <Text className="flex-1 text-xl font-t3-semibold">Arrange threads</Text>
+            <Text className="flex-1 text-xl font-t3-semibold">{t("arrangeThreads")}</Text>
             <Pressable
               accessibilityRole="button"
               onPress={props.onClose}
               className="min-h-11 justify-center px-3"
             >
-              <Text className="text-base text-primary-text">Done</Text>
+              <Text className="text-base text-primary-text">{t("done")}</Text>
             </Pressable>
           </View>
           <Text className="px-5 pb-3 text-sm text-foreground-muted">

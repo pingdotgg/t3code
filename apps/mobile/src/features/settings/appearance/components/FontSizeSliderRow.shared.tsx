@@ -12,6 +12,7 @@ import Animated, {
 import type { ComponentProps } from "react";
 
 import { AppText as Text } from "../../../../components/AppText";
+import { useTranslation } from "@t3tools/i18n/react";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -35,6 +36,7 @@ export function FontSizeSliderRow(props: {
   readonly value: number;
   readonly onChange: (value: number) => void;
 }) {
+  const { t } = useTranslation();
   const latest = useRef(props);
   latest.current = props;
 
@@ -157,8 +159,8 @@ export function FontSizeSliderRow(props: {
           <View
             accessible
             accessibilityActions={[
-              { name: "increment", label: `Increase ${props.label}` },
-              { name: "decrement", label: `Decrease ${props.label}` },
+              { name: "increment", label: t("increaseValue", { label: props.label }) },
+              { name: "decrement", label: t("decreaseValue", { label: props.label }) },
             ]}
             accessibilityLabel={props.label}
             accessibilityRole="adjustable"

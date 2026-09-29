@@ -11,6 +11,7 @@ import {
   type ExecutionEnvironmentDescriptor,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
 import {
@@ -86,6 +87,7 @@ function ConnectedOnlyCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
 function CloudEnvironmentRowsContent(
   props: CloudEnvironmentRowsProps & { readonly discoveryAvailable?: boolean },
 ) {
+  const { t } = useTranslation();
   const controller = useConnectionController();
   const discoveryAvailable = props.discoveryAvailable ?? true;
   const availableCloudEnvironments = discoveryAvailable
@@ -190,7 +192,7 @@ function CloudEnvironmentRowsContent(
             }}
             className="self-start rounded-full bg-subtle px-3.5 py-2 active:opacity-70"
           >
-            <Text className="text-xs font-t3-bold text-foreground">Try again</Text>
+            <Text className="text-xs font-t3-bold text-foreground">{t("tryAgainAction")}</Text>
           </Pressable>
         </View>
       ) : null}
@@ -427,6 +429,7 @@ function CloudEnvironmentRowShell(props: {
 }
 
 function CopyTraceIdButton(props: { readonly traceId: string }) {
+  const { t } = useTranslation();
   return (
     <Pressable
       accessibilityRole="button"
@@ -441,7 +444,7 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
         tintColorClassName={"accent-icon"}
         type="monochrome"
       />
-      <Text className="text-xs font-t3-bold text-foreground">Copy trace ID</Text>
+      <Text className="text-xs font-t3-bold text-foreground">{t("copyTraceIdLabel")}</Text>
     </Pressable>
   );
 }

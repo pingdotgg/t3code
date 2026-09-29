@@ -26,7 +26,8 @@ import {
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { requireNativeModule } from "expo";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { AppState, useWindowDimensions } from "react-native";
 
 import { OverlayPortal } from "../../components/OverlayPortal";
@@ -43,21 +44,29 @@ type Props = Parameters<typeof SharedCustomSnoozeSheet>[0];
 
 const roundedCorner = Shape.RoundedCorner;
 
-const modes = [
-  { value: "date", label: "Date and time" },
-  { value: "duration", label: "Duration" },
-] as const;
-const units = [
-  { value: "minutes", label: "Minutes" },
-  { value: "hours", label: "Hours" },
-  { value: "days", label: "Days" },
-] as const;
-
 function systemUses24HourClock() {
   return requireNativeModule<{ is24HourFormat(): boolean }>("T3NativeControls").is24HourFormat();
 }
 
 export function CustomSnoozeSheet(props: Props) {
+  const { t, i18n } = useTranslation();
+  const modes = useMemo(
+    () =>
+      [
+        { value: "date", label: t("dateAndTime") },
+        { value: "duration", label: t("duration") },
+      ] as const,
+    [t],
+  );
+  const units = useMemo(
+    () =>
+      [
+        { value: "minutes", label: t("minutes") },
+        { value: "hours", label: t("hours") },
+        { value: "days", label: t("days") },
+      ] as const,
+    [t],
+  );
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
   useEffect(() => {
@@ -82,9 +91,7 @@ export function CustomSnoozeSheet(props: Props) {
         : { mode, amount: String(amount), unit };
     const snoozedUntil = resolveCustomSnooze(input, new Date());
     if (!snoozedUntil) {
-      setError(
-        mode === "date" ? "Choose a date and time in the future." : "Enter a positive duration.",
-      );
+      setError(mode === "date" ? t("chooseDateTimeInFuture") : t("enterPositiveDuration"));
       return;
     }
     props.onSnooze(snoozedUntil);
@@ -140,7 +147,7 @@ export function CustomSnoozeSheet(props: Props) {
                 verticalArrangement={{ spacedBy: 16 }}
                 modifiers={[fillMaxWidth(), padding(24, 24, 24, 16)]}
               >
-                <Text style={titleTypography}>Custom snooze</Text>
+                <Text style={titleTypography}>{t("customSnooze")}</Text>
                 <MaterialSegmentedButtons
                   options={modes}
                   selected={mode}
@@ -154,11 +161,14 @@ export function CustomSnoozeSheet(props: Props) {
                     options={[
                       {
                         value: "date",
-                        label: date.toLocaleDateString([], { month: "short", day: "numeric" }),
+                        label: date.toLocaleDateString(i18n.language, {
+                          month: "short",
+                          day: "numeric",
+                        }),
                       },
                       {
                         value: "time",
-                        label: date.toLocaleTimeString([], {
+                        label: date.toLocaleTimeString(i18n.language, {
                           hour: "numeric",
                           minute: "2-digit",
                           hourCycle: is24Hour ? "h23" : "h12",
@@ -241,13 +251,13 @@ export function CustomSnoozeSheet(props: Props) {
                     onClick={props.onClose}
                     colors={{ contentColor: colors["--color-foreground"] }}
                   >
-                    <Text style={bodyTypography}>Cancel</Text>
+                    <Text style={bodyTypography}>{t("cancel")}</Text>
                   </TextButton>
                   <TextButton
                     onClick={submit}
                     colors={{ contentColor: colors["--color-foreground"] }}
                   >
-                    <Text style={bodyTypography}>Snooze</Text>
+                    <Text style={bodyTypography}>{t("snooze")}</Text>
                   </TextButton>
                 </Row>
               </Column>

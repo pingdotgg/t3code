@@ -36,17 +36,35 @@ export function buildHomeListFilterMenu(props: {
   readonly selectedProjectKey: string | null;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  readonly labels?: {
+    readonly environment: string;
+    readonly allEnvironments: string;
+    readonly showThreadsFromEveryEnvironment: string;
+    readonly project: string;
+    readonly allProjects: string;
+    readonly showThreadsFromEveryProject: string;
+    readonly threadListOptions: string;
+  };
 }): HomeListFilterMenu {
+  const labels = props.labels ?? {
+    environment: "Environment",
+    allEnvironments: "All environments",
+    showThreadsFromEveryEnvironment: "Show threads from every environment",
+    project: "Project",
+    allProjects: "All projects",
+    showThreadsFromEveryProject: "Show threads from every project",
+    threadListOptions: "Thread list options",
+  };
   const items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu> = [];
 
   items.push({
     type: "submenu",
-    title: "Environment",
+    title: labels.environment,
     items: [
       {
         type: "action",
-        title: "All environments",
-        subtitle: "Show threads from every environment",
+        title: labels.allEnvironments,
+        subtitle: labels.showThreadsFromEveryEnvironment,
         state: props.selectedEnvironmentId === null ? "on" : "off",
         onPress: () => props.onEnvironmentChange(null),
       },
@@ -65,12 +83,12 @@ export function buildHomeListFilterMenu(props: {
   if (props.projects.length > 0) {
     items.push({
       type: "submenu",
-      title: "Project",
+      title: labels.project,
       items: [
         {
           type: "action",
-          title: "All projects",
-          subtitle: "Show threads from every project",
+          title: labels.allProjects,
+          subtitle: labels.showThreadsFromEveryProject,
           state: props.selectedProjectKey === null ? "on" : "off",
           onPress: () => props.onProjectChange(null),
         },
@@ -85,7 +103,7 @@ export function buildHomeListFilterMenu(props: {
   }
 
   return {
-    title: "Thread list options",
+    title: labels.threadListOptions,
     items,
   };
 }

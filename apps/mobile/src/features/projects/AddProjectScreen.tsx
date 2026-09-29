@@ -1,5 +1,6 @@
 import { MaterialListRow } from "../../components/MaterialListRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { useTranslation } from "@t3tools/i18n/react";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { MaterialButton } from "../../components/MaterialButton";
 import {
@@ -435,19 +436,20 @@ function useSelectedEnvironment(): {
 }
 
 function EmptyEnvironmentState() {
+  const { t } = useTranslation();
   const navigation = useNavigation();
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-card px-5 py-8">
-      <Text className="text-center text-lg font-t3-bold">Environment unavailable</Text>
+      <Text className="text-center text-lg font-t3-bold">{t("environmentUnavailable")}</Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
-        Start or reconnect an environment before adding a project.
+        {t("startOrReconnectEnvironmentBeforeAddingProject")}
       </Text>
       <Pressable
         onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
       >
-        <Text className="text-sm font-t3-bold text-primary-foreground">Add environment</Text>
+        <Text className="text-sm font-t3-bold text-primary-foreground">{t("addEnvironment")}</Text>
       </Pressable>
     </View>
   );
@@ -508,6 +510,7 @@ function SourceControlRow(props: {
 }
 
 export function AddProjectSourceScreen() {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
     useSelectedEnvironment();
@@ -530,7 +533,7 @@ export function AddProjectSourceScreen() {
 
       {environmentOptions.length > 1 ? (
         <>
-          <SectionTitle>Environments</SectionTitle>
+          <SectionTitle>{t("environments")}</SectionTitle>
           <ListSection>
             {environmentOptions.map((environment, index) => (
               <ListRow
@@ -808,6 +811,7 @@ function FolderBrowser(props: {
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
 }) {
+  const { t } = useTranslation();
   const browsePath = useMemo(
     () => getFilesystemBrowsePath(props.pathInput, props.environment.platform),
     [props.environment.platform, props.pathInput],
@@ -838,7 +842,7 @@ function FolderBrowser(props: {
 
   return (
     <>
-      <SectionTitle>Browse folders</SectionTitle>
+      <SectionTitle>{t("browseFolders")}</SectionTitle>
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
       <ListSection>
         {browseState.isPending && browseState.data === null ? (

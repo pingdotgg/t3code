@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   collectLimitAccounts,
   collectLimitNotices,
@@ -25,6 +26,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
+import { getLocalizedDateTimeFormatter } from "@t3tools/i18n";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
@@ -306,6 +308,7 @@ type AccountScreenProps = StaticScreenProps<{
 
 /** Resolve the account again so live quota and credit updates reach the open detail screen. */
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
@@ -369,10 +372,10 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               {window.resetsAt ? (
                 <Text selectable className="text-sm text-foreground-muted">
                   Resets{" "}
-                  {new Date(window.resetsAt).toLocaleString(undefined, {
+                  {getLocalizedDateTimeFormatter({
                     dateStyle: "medium",
                     timeStyle: "short",
-                  })}
+                  }).format(new Date(window.resetsAt))}
                 </Text>
               ) : null}
               {reset && reset.restoresPercent > 0 ? (
@@ -397,7 +400,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             </View>
             {account.redeem && account.limits.resetCredits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-card p-4">
-                <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
+                <Text className="text-sm font-t3-medium text-foreground">{t("resetCredits")}</Text>
                 <ResetCredits
                   key={account.key}
                   environmentId={account.redeem.environmentId}

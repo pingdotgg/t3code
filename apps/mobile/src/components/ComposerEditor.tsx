@@ -2,6 +2,7 @@ import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Alert } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -55,6 +56,7 @@ export function ComposerEditor({
   onInertChipPress,
   ...props
 }: ComposerEditorProps) {
+  const { t } = useTranslation();
   const draft = useComposerDraft(draftKey ?? null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const preferredEnterBehavior = AsyncResult.isSuccess(preferencesResult)
@@ -201,7 +203,7 @@ export function ComposerEditor({
         }}
       />
       {importing ? (
-        <Text className="py-2 text-xs text-foreground-muted">Copying context…</Text>
+        <Text className="py-2 text-xs text-foreground-muted">{t("copyingContext")}</Text>
       ) : null}
       {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet

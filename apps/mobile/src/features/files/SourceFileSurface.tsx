@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
+import { useTranslation } from "@t3tools/i18n/react";
 import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -149,13 +150,16 @@ function useSourceFileModel(props: SourceFileSurfaceProps) {
 }
 
 function SourceHighlightStatusView(props: { readonly status: SourceHighlightStatus }) {
+  const { t } = useTranslation();
   if (props.status === "highlighting") {
     return <LoadingStrip />;
   }
   if (props.status === "error") {
     return (
       <View className="border-b border-border bg-card px-4 py-2">
-        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">Plain text</Text>
+        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">
+          {t("plainText")}
+        </Text>
       </View>
     );
   }

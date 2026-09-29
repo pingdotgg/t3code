@@ -3,6 +3,7 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { Pressable, View } from "react-native";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -15,6 +16,7 @@ export function ComposerFeedback({
   readonly submission: CodexFeedbackSubmission;
   readonly onDismiss: () => void;
 }) {
+  const { t } = useTranslation();
   const notice = codexFeedbackNotice(submission);
   if (!notice) return null;
   return (
@@ -54,7 +56,7 @@ export function ComposerFeedback({
             }
             className="self-start py-1 active:opacity-60"
           >
-            <Text className="text-sm text-foreground">Copy ID</Text>
+            <Text className="text-sm text-foreground">{t("copyId")}</Text>
           </Pressable>
         ) : null}
       </View>

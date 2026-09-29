@@ -9,6 +9,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   ActivityIndicator,
   Alert,
@@ -260,6 +261,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
 }
 
 export function NewTaskBranchPickerRouteScreen() {
+  const { t } = useTranslation();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -433,7 +435,7 @@ export function NewTaskBranchPickerRouteScreen() {
               className="rounded-full bg-card px-4 py-2 active:opacity-70"
               onPress={flow.loadBranches}
             >
-              <Text className="text-sm font-t3-medium text-foreground">Try again</Text>
+              <Text className="text-sm font-t3-medium text-foreground">{t("tryAgainAction")}</Text>
             </Pressable>
           ) : null}
         </View>

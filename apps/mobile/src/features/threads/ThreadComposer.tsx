@@ -1,5 +1,6 @@
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
@@ -268,6 +269,7 @@ export function ComposerSurface(props: {
 }
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
+  const { t } = useTranslation();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
@@ -670,7 +672,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
         {modelUnavailable ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
-            <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
+            <Text className="text-xs text-foreground">{t("modelUnavailableOpenSettings")}</Text>
           </Pressable>
         ) : null}
 

@@ -1,13 +1,16 @@
 import * as Linking from "expo-linking";
+import * as Localization from "expo-localization";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { StatusBar, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AppState, StatusBar, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { createStaticNavigation } from "@react-navigation/native";
 
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { T3I18nProvider } from "@t3tools/i18n/react";
 import { ThreadArrangementHost } from "./features/threads/ThreadArrangementSheet";
 import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
@@ -19,6 +22,7 @@ import {
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
+import { mobilePreferencesAtom } from "./state/preferences";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { shouldHandleAppLink } from "./lib/appLinking";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
@@ -68,36 +72,54 @@ export default function App() {
 function AppContent() {
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const localePreference = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.localePreference
+    : undefined;
+  const [systemLocales, setSystemLocales] = useState(readSystemLocales);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setSystemLocales(readSystemLocales());
+    });
+    return () => subscription.remove();
+  }, []);
 
   return (
-    <>
-      <SplashScreenCoordinator />
-      <SubscriptionUsageCoordinator />
-      <GestureHandlerRootView className="flex-1">
-        <KeyboardProvider statusBarTranslucent>
-          <SafeAreaProvider>
-            <StatusBar
-              barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"}
-              translucent
-            />
-            {/* The navigation theme drives the NATIVE header appearance: native-stack
-                forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
-                this, React Navigation defaults to its light theme and every native
-                header (glass buttons, title, materials) is forced light even when
-                the system is in dark mode. */}
-            <View style={{ flex: 1 }}>
-              <IncomingShareProvider>
-                <Navigation linking={appLinking} theme={navigationTheme} />
-              </IncomingShareProvider>
-              <ConfirmDialogHost />
-              <ThreadArrangementHost />
-            </View>
-            {/* Anchored-menu overlays render here — in-window, so the
+    <T3I18nProvider preference={localePreference} systemLocales={systemLocales}>
+      <>
+        <SplashScreenCoordinator />
+        <SubscriptionUsageCoordinator />
+        <GestureHandlerRootView className="flex-1">
+          <KeyboardProvider statusBarTranslucent>
+            <SafeAreaProvider>
+              <StatusBar
+                barStyle={themeAppearance === "dark" ? "light-content" : "dark-content"}
+                translucent
+              />
+              {/* The navigation theme drives the NATIVE header appearance: native-stack
+                  forwards `dark` as the nav bar's overrideUserInterfaceStyle. Without
+                  this, React Navigation defaults to its light theme and every native
+                  header (glass buttons, title, materials) is forced light even when
+                  the system is in dark mode. */}
+              <View style={{ flex: 1 }}>
+                <IncomingShareProvider>
+                  <Navigation linking={appLinking} theme={navigationTheme} />
+                </IncomingShareProvider>
+                <ConfirmDialogHost />
+                <ThreadArrangementHost />
+              </View>
+              {/* Anchored-menu overlays render here — in-window, so the
                 keyboard stays up while a dropdown is open. */}
-            <OverlayPortalHost />
-          </SafeAreaProvider>
-        </KeyboardProvider>
-      </GestureHandlerRootView>
-    </>
+              <OverlayPortalHost />
+            </SafeAreaProvider>
+          </KeyboardProvider>
+        </GestureHandlerRootView>
+      </>
+    </T3I18nProvider>
   );
+}
+
+function readSystemLocales(): ReadonlyArray<string> {
+  return Localization.getLocales().map((locale) => locale.languageTag);
 }

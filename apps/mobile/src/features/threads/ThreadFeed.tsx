@@ -61,6 +61,8 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
+import { getLocalizedDateTimeFormatter } from "@t3tools/i18n";
 import {
   Markdown,
   type CustomRenderers,
@@ -83,6 +85,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { isPdfFile } from "../../lib/filePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
@@ -200,6 +203,8 @@ import {
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
 
+type Translate = ReturnType<typeof useTranslation>["t"];
+
 /** `ml-7` gutter plus the `px-3` padding of the expanded reasoning container. */
 const REASONING_CONTENT_INSET = 52;
 
@@ -211,16 +216,12 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
 function formatMessageTime(input: string): string {
   const timestamp = Date.parse(input);
   if (Number.isNaN(timestamp)) {
     return "";
   }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
+  return getLocalizedDateTimeFormatter({ hour: "numeric", minute: "2-digit" }).format(timestamp);
 }
 
 // Fixed heights mirror renderFeedEntry's classNames and are only used while
@@ -368,6 +369,7 @@ function MessageAttachmentFile(props: {
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
 }) {
+  const { t } = useTranslation();
   const sourceIdentifier = useId();
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
@@ -379,9 +381,8 @@ function MessageAttachmentFile(props: {
   const { attachment } = props;
   const videoType = videoMimeType(attachment);
   const isPdf = isPdfFile(attachment);
-  const fileTypeLabel = isPdf
-    ? "PDF"
-    : (attachment.name.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toUpperCase() ?? "File");
+  const extension = attachment.name.match(/\.([a-z0-9]{1,8})$/i)?.[1]?.toUpperCase();
+  const fileTypeLabel = isPdf ? "PDF" : (extension ?? t("attachmentFile"));
   const sizeLabel = formatAttachmentSize(attachment.sizeBytes);
   const thumbnailUrl = useAssetUrl(
     props.environmentId,
@@ -434,7 +435,7 @@ function MessageAttachmentFile(props: {
         }
         const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
         if (url === null) {
-          throw new Error("The attachment could not be opened.");
+          throw new Error(t("attachmentCouldNotBeOpened"));
         }
         await downloadAndShareAttachment({
           url,
@@ -445,8 +446,8 @@ function MessageAttachmentFile(props: {
       } catch (error) {
         if (!controller.signal.aborted) {
           Alert.alert(
-            "Could not open attachment",
-            error instanceof Error ? error.message : "The attachment is unavailable.",
+            t("couldNotOpenAttachment"),
+            error instanceof Error ? error.message : t("attachmentUnavailable"),
           );
         }
       } finally {
@@ -732,6 +733,7 @@ function ArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const { t } = useTranslation();
   return (
     <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
       <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
@@ -761,11 +763,11 @@ function ArtifactTemplateCard(props: {
       {props.onUse ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Use ${props.template.displayName} template`}
+          accessibilityLabel={t("useTemplateNamed", { template: props.template.displayName })}
           className="min-h-9 justify-center rounded-lg border border-border bg-subtle px-3 active:opacity-65"
           onPress={() => props.onUse?.(props.template)}
         >
-          <Text className="font-t3-bold text-xs text-foreground">Use template</Text>
+          <Text className="font-t3-bold text-xs text-foreground">{t("useTemplate")}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -841,6 +843,7 @@ function MarkdownCodeBlock(props: {
   readonly textColor: string;
   readonly theme: ReviewDiffTheme;
 }) {
+  const { t } = useTranslation();
   const content = props.content.replace(/\n$/, "");
   const languageLabel = props.language?.trim() || "text";
   const highlighted = useMarkdownCodeHighlight({
@@ -872,7 +875,7 @@ function MarkdownCodeBlock(props: {
           {languageLabel}
         </NativeText>
         <CopyTextButton
-          accessibilityLabel="Copy code"
+          accessibilityLabel={t("copyCode")}
           text={content}
           tintColor={props.copyTintColor}
           buttonSize={32}
@@ -1386,6 +1389,7 @@ function renderFeedEntry(
     readonly reviewCommentBubbleWidth: number;
     readonly themeAppearance: "light" | "dark";
     readonly userBubbleMaxWidth: number;
+    readonly translate: Translate;
     /** Width assistant markdown lays out in, so images can size their frame before layout. */
     readonly markdownContentWidth: number;
   },
@@ -1637,7 +1641,9 @@ function renderFeedEntry(
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-              {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+              {entry.pendingMessage && !entry.acknowledged
+                ? props.translate("pending")
+                : timestampLabel}
             </Text>
             {entry.pendingMessage &&
             !entry.acknowledged &&
@@ -1645,7 +1651,7 @@ function renderFeedEntry(
             entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Edit pending message"
+                accessibilityLabel={props.translate("editPendingMessage")}
                 hitSlop={8}
                 className="size-7 items-center justify-center"
                 onPress={() => {
@@ -1657,7 +1663,7 @@ function renderFeedEntry(
             ) : null}
             {message.text.trim().length > 0 ? (
               <CopyTextButton
-                accessibilityLabel="Copy message"
+                accessibilityLabel={props.translate("copyMessage")}
                 text={message.text}
                 onCopy={
                   message.context
@@ -1733,7 +1739,7 @@ function renderFeedEntry(
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
-              accessibilityLabel="Copy message"
+              accessibilityLabel={props.translate("copyMessage")}
               text={renderedText}
               tintColor={iconSubtleColor}
               buttonSize={28}
@@ -1782,12 +1788,13 @@ type UserMessageContentProps = {
 };
 
 function UserMessageContent(props: UserMessageContentProps) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
   const text = replaceComposerContextReferences(props.text, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
-    return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
+    return `[${ref.label}${available ? "" : ` (${t("contextUnavailable")})`}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
   const onLinkPress = (href: string) => {
     const reference = parseComposerContextHref(href);
@@ -1812,7 +1819,10 @@ function UserMessageContent(props: UserMessageContentProps) {
       });
       return;
     }
-    setSelected({ contextId: reference.contextId, label: record?.label ?? "Context unavailable" });
+    setSelected({
+      contextId: reference.contextId,
+      label: record?.label ?? t("contextUnavailable"),
+    });
   };
   return (
     <>
@@ -1948,6 +1958,7 @@ function ThreadFeedPlaceholder(props: {
 }
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2755,6 +2766,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <ThreadMediaVisibility>
           {renderFeedEntry(info, {
             environmentId: props.environmentId,
+            translate: t,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             copiedRowId,
@@ -2833,6 +2845,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.skills,
       renderMarkdownImage,
       renderViewedImage,
+      t,
     ],
   );
 
@@ -2985,7 +2998,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                     className="items-center py-2"
                   >
                     <Text className="text-xs text-foreground-secondary">
-                      {props.loadEarlier.loading ? "Loading earlier turns…" : "Load earlier turns"}
+                      {props.loadEarlier.loading ? t("loadingEarlierTurns") : t("loadEarlierTurns")}
                     </Text>
                   </Pressable>
                 ) : null}
@@ -3003,8 +3016,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.contentPresentation.kind === "ready" ? (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <ThreadFeedPlaceholder
-              title="No conversation yet"
-              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+              title={t("noConversationYet")}
+              detail={t("inspectRunOrContinueConversation")}
               topInset={topContentInset}
               bottomInset={bottomContentInset}
               horizontalPadding={horizontalPadding}

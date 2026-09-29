@@ -1,4 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -160,6 +161,7 @@ const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
+  const { t } = useTranslation();
   return (
     <View
       className={cn(
@@ -167,7 +169,9 @@ const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string
         Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-warning-border",
       )}
     >
-      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">Partial diff</Text>
+      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">
+        {t("partialDiff")}
+      </Text>
       <Text className="text-xs leading-normal text-warning-foreground">{props.notice}</Text>
     </View>
   );
@@ -309,6 +313,7 @@ function ReviewFileNavigator({
   onSelectFile,
   ref,
 }: ReviewFileNavigatorProps) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const theme = useUniwindTheme();
   const sheetColor = theme["--color-sheet"];
@@ -429,7 +434,7 @@ function ReviewFileNavigator({
       ) : (
         <View className="border-b border-border" style={{ paddingTop: headerInset }}>
           <View className="px-4 py-3">
-            <Text className="text-sm font-t3-bold text-foreground">Changed files</Text>
+            <Text className="text-sm font-t3-bold text-foreground">{t("changedFiles")}</Text>
             <Text className="text-xs text-foreground-muted">
               {files.length} {files.length === 1 ? "file" : "files"}
             </Text>
@@ -447,6 +452,7 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
+  const { t } = useTranslation();
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
   const { panes, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
@@ -688,7 +694,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
             Platform.OS === "android" ? "m-2 rounded-[20px]" : "border-b border-border",
           )}
         >
-          <Text className="text-sm font-t3-bold text-foreground">Review unavailable</Text>
+          <Text className="text-sm font-t3-bold text-foreground">{t("reviewUnavailable")}</Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
         </View>,
       );
@@ -832,7 +838,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                       : "border-b border-border bg-card px-4 py-5"
                   }
                 >
-                  <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                  <Text className="text-sm font-t3-bold text-foreground">{t("noReviewDiffs")}</Text>
                   <Text
                     className={cn(
                       "text-xs leading-normal text-foreground-muted",
@@ -850,7 +856,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   )}
                 >
                   <ActivityIndicator size="small" />
-                  <Text className="text-xs text-foreground-muted">Loading diff…</Text>
+                  <Text className="text-xs text-foreground-muted">{t("loadingDiff")}</Text>
                 </View>
               ) : parsedDiff.kind === "empty" ? (
                 <View
@@ -860,7 +866,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                       : "border-b border-border bg-card px-4 py-5"
                   }
                 >
-                  <Text className="text-sm font-t3-bold text-foreground">No changes</Text>
+                  <Text className="text-sm font-t3-bold text-foreground">{t("noChanges")}</Text>
                   <Text
                     className={cn(
                       "text-xs leading-normal text-foreground-muted",

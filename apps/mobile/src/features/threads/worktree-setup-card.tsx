@@ -6,6 +6,7 @@ import {
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { ActivityIndicator, AppState, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
@@ -206,6 +207,7 @@ function SetupDetailsSheet({
   onClose,
   now,
 }: WorktreeSetupCardProps & { onClose: () => void; now: number }) {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const [bodyHeight, setBodyHeight] = useState(0);
   const canCancel = snapshot.phase === "running" && !turnStarted;
@@ -248,7 +250,7 @@ function SetupDetailsSheet({
               }}
               className="min-h-11 justify-center px-2"
             >
-              <Text className="text-sm text-danger-foreground">Cancel setup</Text>
+              <Text className="text-sm text-danger-foreground">{t("cancelSetup")}</Text>
             </Pressable>
             {onWorkLocally ? (
               <Pressable
@@ -259,7 +261,7 @@ function SetupDetailsSheet({
                 }}
                 className="min-h-11 justify-center px-2"
               >
-                <Text className="text-sm text-foreground">Work locally</Text>
+                <Text className="text-sm text-foreground">{t("workLocally")}</Text>
               </Pressable>
             ) : null}
           </View>

@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent } from "react";
 import { Alert, Modal, Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
@@ -12,15 +13,12 @@ function DocumentPreview(props: {
   readonly onRequestClose: () => void;
   readonly onOpenError?: (error: unknown) => void;
 }) {
+  const { t } = useTranslation();
   const { uri, name } = props.source;
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
-    else
-      Alert.alert(
-        "Could not open document",
-        "A compatible viewer must be installed. Check your connection and try again.",
-      );
+    else Alert.alert(t("couldNotOpenDocument"), t("compatibleViewerRequired"));
   });
   useEffect(() => {
     const controller = new AbortController();
@@ -48,16 +46,16 @@ function DocumentPreview(props: {
     <Modal transparent animationType="fade" onRequestClose={props.onRequestClose}>
       <View className="flex-1 items-center justify-center bg-backdrop p-6">
         <View className="w-full max-w-sm gap-4 rounded-2xl bg-sheet-solid p-6">
-          <Text className="font-t3-semibold text-foreground">Opening document…</Text>
+          <Text className="font-t3-semibold text-foreground">{t("openingDocument")}</Text>
           <Text className="text-foreground-muted" numberOfLines={2}>
-            {name ?? "Document"}
+            {name ?? t("document")}
           </Text>
           <Pressable
             accessibilityRole="button"
             onPress={props.onRequestClose}
             className="self-end p-3"
           >
-            <Text className="text-foreground">Cancel</Text>
+            <Text className="text-foreground">{t("cancel")}</Text>
           </Pressable>
         </View>
       </View>

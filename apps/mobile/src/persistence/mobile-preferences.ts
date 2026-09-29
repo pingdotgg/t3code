@@ -5,7 +5,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { ProviderInstanceId, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  LocalePreference,
+  ProviderInstanceId,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
@@ -16,6 +20,7 @@ const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
+  readonly localePreference?: LocalePreference;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
@@ -84,6 +89,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    localePreference?: LocalePreference;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
@@ -104,6 +110,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
   } = {};
+
+  if (
+    parsed.localePreference === "system" ||
+    parsed.localePreference === "en" ||
+    parsed.localePreference === "zh-CN"
+  ) {
+    preferences.localePreference = parsed.localePreference;
+  }
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;

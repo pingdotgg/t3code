@@ -11,6 +11,7 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef, type ReactNode } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   Platform,
   Pressable,
@@ -172,6 +173,49 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
+type MobileScreenTitleKey =
+  | "settings"
+  | "environments"
+  | "environment"
+  | "newThreads"
+  | "sourceControl"
+  | "agentBehavior"
+  | "maintenance"
+  | "notifications"
+  | "threadBehavior"
+  | "about"
+  | "addEnvironment"
+  | "archivedThreads"
+  | "appearance"
+  | "organization"
+  | "projectOverview"
+  | "keyboard"
+  | "clientStorage"
+  | "diagnostics"
+  | "account"
+  | "openSourceLicenses"
+  | "licenseNotice"
+  | "usage"
+  | "chooseProject"
+  | "branch"
+  | "addProject"
+  | "files"
+  | "legal"
+  | "setupConnect";
+
+function LocalizedSettingsHeaderTitle({ title }: { readonly title: MobileScreenTitleKey }) {
+  const { t } = useTranslation("settings");
+  return (
+    <Text className="text-base font-t3-bold text-foreground">
+      {t(`mobileScreenTitles.${title}`)}
+    </Text>
+  );
+}
+
+function localizedSettingsTitle(title: MobileScreenTitleKey): AppScreenOptions {
+  return { headerTitle: () => <LocalizedSettingsHeaderTitle title={title} /> };
+}
+
 const SettingsContentStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
@@ -183,117 +227,97 @@ const SettingsContentStack = createNativeStackNavigator({
     Settings: createNativeStackScreen({
       screen: SettingsRouteScreen,
       linking: "",
-      options: {
-        title: "Settings",
-      },
+      options: localizedSettingsTitle("settings"),
     }),
     SettingsEnvironments: createNativeStackScreen({
       screen: SettingsEnvironmentsRouteScreen,
       linking: "environments",
-      options: {
-        title: "Environments",
-      },
+      options: localizedSettingsTitle("environments"),
     }),
     SettingsEnvironmentDetail: createNativeStackScreen({
       screen: SettingsEnvironmentDetailRouteScreen,
       linking: "environments/:environmentId",
-      options: { title: "Environment" },
+      options: localizedSettingsTitle("environment"),
     }),
     SettingsEnvironmentNewThreads: createNativeStackScreen({
       screen: SettingsEnvironmentNewThreadsRouteScreen,
       linking: "new-threads",
-      options: { title: "New threads" },
+      options: localizedSettingsTitle("newThreads"),
     }),
     SettingsEnvironmentSourceControl: createNativeStackScreen({
       screen: SettingsEnvironmentSourceControlRouteScreen,
       linking: "source-control",
-      options: { title: "Source control" },
+      options: localizedSettingsTitle("sourceControl"),
     }),
     SettingsEnvironmentAgentBehavior: createNativeStackScreen({
       screen: SettingsEnvironmentAgentBehaviorRouteScreen,
       linking: "agent-behavior",
-      options: { title: "Agent behavior" },
+      options: localizedSettingsTitle("agentBehavior"),
     }),
     SettingsEnvironmentMaintenance: createNativeStackScreen({
       screen: SettingsEnvironmentMaintenanceRouteScreen,
       linking: "maintenance",
-      options: { title: "Maintenance" },
+      options: localizedSettingsTitle("maintenance"),
     }),
     SettingsNotifications: createNativeStackScreen({
       screen: SettingsNotificationsRouteScreen,
       linking: "notifications",
-      options: { title: "Notifications" },
+      options: localizedSettingsTitle("notifications"),
     }),
     SettingsThreads: createNativeStackScreen({
       screen: SettingsThreadsRouteScreen,
       linking: "thread-preferences",
-      options: { title: "Thread behavior" },
+      options: localizedSettingsTitle("threadBehavior"),
     }),
     SettingsAbout: createNativeStackScreen({
       screen: SettingsAboutRouteScreen,
       linking: "about",
-      options: { title: "About T3 Code" },
+      options: localizedSettingsTitle("about"),
     }),
     SettingsEnvironmentNew: createNativeStackScreen({
       screen: ConnectionsNewRouteScreen,
       linking: "environment-new",
-      options: {
-        title: "Add Environment",
-      },
+      options: localizedSettingsTitle("addEnvironment"),
     }),
     SettingsArchive: createNativeStackScreen({
       screen: ArchivedThreadsRouteScreen,
       linking: "archive",
-      options: {
-        title: "Archived Threads",
-      },
+      options: localizedSettingsTitle("archivedThreads"),
     }),
     SettingsAppearance: createNativeStackScreen({
       screen: SettingsAppearanceRouteScreen,
       linking: "appearance",
-      options: {
-        title: "Appearance",
-      },
+      options: localizedSettingsTitle("appearance"),
     }),
     SettingsProjectGrouping: createNativeStackScreen({
       screen: SettingsProjectGroupingRouteScreen,
       linking: "project-grouping",
-      options: {
-        title: "Organization",
-      },
+      options: localizedSettingsTitle("organization"),
     }),
     SettingsOrganization: createNativeStackScreen({
       screen: SettingsProjectGroupingRouteScreen,
       linking: "organization",
-      options: {
-        title: "Organization",
-      },
+      options: localizedSettingsTitle("organization"),
     }),
     SettingsProjectOverview: createNativeStackScreen({
       screen: SettingsProjectOverviewRouteScreen,
       linking: "project",
-      options: { title: "Project overview" },
+      options: localizedSettingsTitle("projectOverview"),
     }),
     SettingsKeyboard: createNativeStackScreen({
       screen: SettingsKeyboardRouteScreen,
       linking: "keyboard",
-      options: {
-        title: "Keyboard",
-      },
+      options: localizedSettingsTitle("keyboard"),
     }),
     SettingsClientStorage: createNativeStackScreen({
       screen: SettingsClientStorageRouteScreen,
       linking: "client-storage",
-      options: {
-        title: "Client Storage",
-      },
+      options: localizedSettingsTitle("clientStorage"),
     }),
     SettingsDiagnostics: createNativeStackScreen({
       screen: SettingsDiagnosticsRouteScreen,
       linking: "diagnostics",
-      options: {
-        title: "Diagnostics",
-      },
+      options: localizedSettingsTitle("diagnostics"),
     }),
     // Deliberately the one settings screen with no `linking:` path. Its params
     // are a tap-time snapshot, not a stable resource address: `now` is the
@@ -306,28 +330,22 @@ const SettingsContentStack = createNativeStackNavigator({
     // tapped account segment.
     SettingsUsageAccount: createNativeStackScreen({
       screen: UsageLimitAccountScreen,
-      options: { title: "Account" },
+      options: localizedSettingsTitle("account"),
     }),
     SettingsOpenSourceLicenses: createNativeStackScreen({
       screen: SettingsOpenSourceLicensesRouteScreen,
       linking: "open-source-licenses",
-      options: {
-        title: "Open source licenses",
-      },
+      options: localizedSettingsTitle("openSourceLicenses"),
     }),
     SettingsOpenSourceLicense: createNativeStackScreen({
       screen: SettingsOpenSourceLicenseRouteScreen,
       linking: "open-source-licenses/:entryKey",
-      options: {
-        title: "License notice",
-      },
+      options: localizedSettingsTitle("licenseNotice"),
     }),
     SettingsUsage: createNativeStackScreen({
       screen: UsageRouteScreen,
       linking: "usage",
-      options: {
-        title: "Usage",
-      },
+      options: localizedSettingsTitle("usage"),
     }),
   },
 });
@@ -387,9 +405,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
     NewTask: createNativeStackScreen({
       screen: NewTaskRouteScreen,
       linking: "",
-      options: {
-        title: "Choose project",
-      },
+      options: localizedSettingsTitle("chooseProject"),
     }),
     NewTaskDraft: createNativeStackScreen({
       screen: NewTaskDraftRouteScreen,
@@ -402,16 +418,12 @@ const NewTaskSheetStack = createNativeStackNavigator({
     NewTaskEnvironment: createNativeStackScreen({
       screen: NewTaskEnvironmentPickerRouteScreen,
       linking: "draft/environment",
-      options: {
-        title: "Environment",
-      },
+      options: localizedSettingsTitle("environment"),
     }),
     NewTaskBranch: createNativeStackScreen({
       screen: NewTaskBranchPickerRouteScreen,
       linking: "draft/branch",
-      options: {
-        title: "Branch",
-      },
+      options: localizedSettingsTitle("branch"),
     }),
     // The same file view the thread composer pushes. A draft has no thread, so it names its
     // own workspace through route params instead of resolving one from a selected thread.
@@ -443,9 +455,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
     AddProject: createNativeStackScreen({
       screen: AddProjectSourceRoute,
       linking: "add-project",
-      options: {
-        title: "Add Project",
-      },
+      options: localizedSettingsTitle("addProject"),
     }),
     AddProjectRepository: createNativeStackScreen({
       screen: AddProjectRepositoryRoute,
@@ -559,6 +569,7 @@ function RootStackLayout(props: {
 }
 
 function NotFoundScreen() {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
   const primaryBgStyle = StyleSheet.flatten(useResolveClassNames("bg-primary"));
@@ -585,13 +596,13 @@ function NotFoundScreen() {
       style={[{ flex: 1 }, screenBgStyle]}
     >
       <Text className="text-3xl font-t3-bold text-foreground" selectable>
-        Route not found
+        {t("routeNotFound")}
       </Text>
       <Pressable
         style={returnHomeButtonStyle}
         onPress={() => navigation.dispatch(StackActions.replace("Home"))}
       >
-        <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
+        <Text className="text-base font-t3-bold text-primary-foreground">{t("returnHome")}</Text>
       </Pressable>
     </ScrollView>
   );
@@ -656,7 +667,7 @@ const RootStackConfig = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
-        title: "Files",
+        ...localizedSettingsTitle("files"),
       },
     }),
     ThreadFile: createNativeStackScreen({
@@ -740,7 +751,7 @@ const RootStackConfig = createNativeStackNavigator({
       linking: "settings/legal",
       options: {
         ...LEGAL_DOCUMENT_HEADER_OPTIONS,
-        title: "Legal",
+        ...localizedSettingsTitle("legal"),
       },
     }),
     ConnectOnboarding: createNativeStackScreen({
@@ -750,7 +761,7 @@ const RootStackConfig = createNativeStackNavigator({
         // A root-level Android formSheet does not host the native stack bar;
         // the route renders an embedded AndroidSheetHeader instead.
         ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
-        title: "Set up T3 Connect",
+        ...localizedSettingsTitle("setupConnect"),
         gestureEnabled: true,
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.6, 0.95],
@@ -761,7 +772,7 @@ const RootStackConfig = createNativeStackNavigator({
       screen: ConnectionsRouteScreen,
       linking: "connections",
       options: {
-        title: "Environments",
+        ...localizedSettingsTitle("environments"),
         // Android: full page; the screen renders its own AndroidScreenHeader,
         // so the native bar stays hidden. iOS keeps the sheet.
         ...(Platform.OS === "android"

@@ -1,5 +1,6 @@
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Alert, View } from "react-native";
 import {
   isAtomCommandInterrupted,
@@ -29,6 +30,7 @@ type NewTaskDraftRouteParams = {
 };
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+  const { t } = useTranslation();
   const params = useMemo(() => route.params ?? {}, [route.params]);
   const pendingTaskId = Array.isArray(params.pendingTaskId)
     ? params.pendingTaskId[0]
@@ -156,7 +158,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       />
       {preparingBranch ? (
         <View className="flex-1 items-center justify-center bg-screen">
-          <Text className="text-foreground">Switching branch...</Text>
+          <Text className="text-foreground">{t("switchingBranch")}</Text>
         </View>
       ) : (
         <NewTaskDraftScreen

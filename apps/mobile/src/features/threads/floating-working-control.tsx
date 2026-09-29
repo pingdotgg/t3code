@@ -1,6 +1,7 @@
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   ActivityIndicator,
   type LayoutChangeEvent,
@@ -258,15 +259,20 @@ export function FloatingWorkingControl(props: {
 }
 
 function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) => void }) {
+  const { t } = useTranslation();
   return (
-    <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5" onLayout={props.onLayout}>
+    <StatusLabelRow
+      accessibilityLabel={t("compacting")}
+      className="gap-1.5"
+      onLayout={props.onLayout}
+    >
       <SymbolView
         name="arrow.down.right.and.arrow.up.left"
         size={13}
         tintColorClassName="foreground"
         type="monochrome"
       />
-      <Text className="font-t3-medium text-xs text-foreground">Compacting…</Text>
+      <Text className="font-t3-medium text-xs text-foreground">{t("compacting")}</Text>
     </StatusLabelRow>
   );
 }
@@ -389,6 +395,7 @@ function WorkingDuration(props: {
   readonly startedAt: string;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
+  const { t } = useTranslation();
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -398,11 +405,11 @@ function WorkingDuration(props: {
   }, [props.startedAt]);
 
   const duration = formatWorkingDuration(props.startedAt, nowMs);
-  const label = `Working for ${duration}`;
+  const label = t("workingFor", { duration });
 
   return (
     <StatusLabelRow accessibilityLabel={label} onLayout={props.onLayout}>
-      <Text className="font-t3-medium text-xs text-foreground">Working for </Text>
+      <Text className="font-t3-medium text-xs text-foreground">{t("workingForPrefix")}</Text>
       <SystemText
         className="text-xs text-foreground"
         style={{ fontVariant: ["tabular-nums"], fontWeight: "500" }}

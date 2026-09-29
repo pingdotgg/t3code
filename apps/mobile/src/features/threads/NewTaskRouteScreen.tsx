@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
+import { useTranslation } from "@t3tools/i18n/react";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { MaterialButton } from "../../components/MaterialButton";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
@@ -29,23 +30,36 @@ type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
 };
 
-function deriveProjectEmptyState(catalogState: WorkspaceState): {
-  readonly title: string;
-  readonly detail: string;
+type ProjectEmptyState = {
+  readonly titleKey:
+    | "loadingEnvironments"
+    | "noEnvironmentsConnected"
+    | "environmentUnavailable"
+    | "connectingToEnvironment"
+    | "noProjectsFound";
+  readonly detailKey:
+    | "checkingSavedEnvironments"
+    | "addEnvironmentBeforeTask"
+    | "savedEnvironmentOffline"
+    | "loadingProjects"
+    | "connectedEnvironmentNoProjects";
+  readonly detailOverride?: string;
   readonly loading: boolean;
-} {
+};
+
+function deriveProjectEmptyState(catalogState: WorkspaceState): ProjectEmptyState {
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      titleKey: "loadingEnvironments",
+      detailKey: "checkingSavedEnvironments",
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment before creating a task.",
+      titleKey: "noEnvironmentsConnected",
+      detailKey: "addEnvironmentBeforeTask",
       loading: false,
     };
   }
@@ -57,10 +71,9 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     !catalogState.hasLoadedShellSnapshot
   ) {
     return {
-      title: "Environment unavailable",
-      detail:
-        catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+      titleKey: "environmentUnavailable",
+      detailKey: "savedEnvironmentOffline",
+      ...(catalogState.connectionError ? { detailOverride: catalogState.connectionError } : {}),
       loading: false,
     };
   }
@@ -71,15 +84,15 @@ function deriveProjectEmptyState(catalogState: WorkspaceState): {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects from the saved environment.",
+      titleKey: "connectingToEnvironment",
+      detailKey: "loadingProjects",
       loading: true,
     };
   }
 
   return {
-    title: "No projects found",
-    detail: "The connected environment did not report any projects.",
+    titleKey: "noProjectsFound",
+    detailKey: "connectedEnvironmentNoProjects",
     loading: false,
   };
 }
@@ -92,6 +105,7 @@ function NewTaskHeader(props: {
   readonly onSearchTextChange: (text: string) => void;
 }) {
   const navigation = useNavigation();
+  const { t } = useTranslation();
   const { layout } = useAdaptiveWorkspaceLayout();
   return (
     <ScreenHeader
@@ -99,7 +113,7 @@ function NewTaskHeader(props: {
       subtitle={props.subtitle ?? undefined}
       sidebar={false}
       backInSplitView={{
-        accessibilityLabel: "Go back",
+        accessibilityLabel: t("back"),
         icon: "chevron.left",
       }}
       options={{ headerBackVisible: !layout.usesSplitView }}
@@ -109,7 +123,7 @@ function NewTaskHeader(props: {
         props.canAddProject
           ? [
               {
-                accessibilityLabel: "Add project",
+                accessibilityLabel: t("addProject"),
                 icon: "plus",
                 onPress: () => navigation.dispatch(StackActions.push("AddProject")),
               },
@@ -119,13 +133,14 @@ function NewTaskHeader(props: {
       search={{
         value: props.searchText,
         onChangeText: props.onSearchTextChange,
-        placeholder: "Search projects",
+        placeholder: t("searchProjects"),
       }}
     />
   );
 }
 
 export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRouteParams | undefined>) {
+  const { t } = useTranslation();
   const projects = useProjects();
   const [searchText, setSearchText] = useState("");
   const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
@@ -140,12 +155,21 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const incomingShare = routeShareId ? getShare(routeShareId) : null;
   const incomingShareSubtitle = incomingShare
     ? incomingShare.attachments.length === 0
-      ? "Choose a project for what you shared"
+      ? t("chooseProjectForSharedContent")
       : incomingShare.attachments.length === 1
-        ? `Choose a project for the ${incomingShare.attachments[0]?.type === "image" ? "image" : "file"} you shared`
-        : `Choose a project for the ${incomingShare.attachments.length} ${incomingShare.attachments.every((attachment) => attachment.type === "image") ? "images" : "files"} you shared`
+        ? t(
+            incomingShare.attachments[0]?.type === "image"
+              ? "chooseProjectForImage"
+              : "chooseProjectForFile",
+          )
+        : t(
+            incomingShare.attachments.every((attachment) => attachment.type === "image")
+              ? "chooseProjectForImages"
+              : "chooseProjectForFiles",
+            { count: incomingShare.attachments.length },
+          )
     : null;
-  const screenTitle = incomingShare ? "Start a task" : "Choose project";
+  const screenTitle = t(incomingShare ? "startTask" : "chooseProject");
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const visibleScopes = filterProjectScopes(projectScopes, searchText);
   const resumedDestinationKeyRef = useRef<string | null>(null);
@@ -163,10 +187,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
         Alert.alert(
-          "Could not change project",
-          error instanceof Error
-            ? error.message
-            : "The shared content reservation could not be updated.",
+          t("couldNotChangeProject"),
+          error instanceof Error ? error.message : t("sharedContentReservationCouldNotBeUpdated"),
         );
         return;
       }
@@ -258,14 +280,16 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 <ActivityIndicator colorClassName="accent-icon-muted" />
               ) : null}
               <Text className="text-center text-lg font-t3-bold text-foreground">
-                {projectEmptyState.title}
+                {t(projectEmptyState.titleKey)}
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
-                {projectEmptyState.detail}
+                {projectEmptyState.detailOverride ?? t(projectEmptyState.detailKey)}
               </Text>
               {Platform.OS === "android" ? (
                 <MaterialButton
-                  label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
+                  label={
+                    catalogState.hasReadyEnvironment ? t("addNewProject") : t("addEnvironment")
+                  }
                   tone="primary"
                   onPress={() =>
                     catalogState.hasReadyEnvironment
@@ -279,7 +303,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   onPress={() => navigation.navigate("ConnectionsNew")}
                 >
                   <Text className="text-sm font-t3-bold text-primary-foreground">
-                    Add environment
+                    {t("addEnvironment")}
                   </Text>
                 </Pressable>
               ) : (
@@ -288,7 +312,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                   onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                 >
                   <Text className="text-sm font-t3-bold text-primary-foreground">
-                    Add new project
+                    {t("addNewProject")}
                   </Text>
                 </Pressable>
               )}
@@ -296,10 +320,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
           ) : visibleScopes.length === 0 ? (
             <View className="items-center gap-2 px-6 py-8">
               <Text className="text-center text-lg font-t3-bold text-foreground">
-                No matching projects
+                {t("noMatchingProjects")}
               </Text>
               <Text className="text-center text-sm leading-normal text-foreground-muted">
-                Try a different project name or workspace path.
+                {t("tryDifferentProjectSearch")}
               </Text>
             </View>
           ) : (

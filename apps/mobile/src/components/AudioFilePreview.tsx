@@ -1,6 +1,7 @@
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
+import { useTranslation } from "@t3tools/i18n/react";
 import { AppText as Text } from "./AppText";
 
 function timestamp(seconds: number) {
@@ -9,6 +10,7 @@ function timestamp(seconds: number) {
 }
 
 export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
+  const { t } = useTranslation();
   const player = useAudioPlayer({ uri: props.uri }, { updateInterval: 500 });
   const status = useAudioPlayerStatus(player);
   const [seekError, setSeekError] = useState(false);
@@ -66,7 +68,7 @@ export function AudioFilePreview(props: { uri: string; onRetry: () => void }) {
             This audio could not be played. Try again or save it to open in another app.
           </Text>
           <Pressable accessibilityRole="button" onPress={props.onRetry} className="p-3">
-            <Text className="text-foreground">Try again</Text>
+            <Text className="text-foreground">{t("retry")}</Text>
           </Pressable>
         </View>
       ) : null}

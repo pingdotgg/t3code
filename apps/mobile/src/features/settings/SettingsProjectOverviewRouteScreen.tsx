@@ -2,6 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { AppText as Text, AppTextInput } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
+import { useTranslation } from "@t3tools/i18n/react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
@@ -60,6 +61,7 @@ function ProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
   readonly environments: readonly SettingsTarget[];
 }) {
+  const { t } = useTranslation();
   const representative = props.members[0]!;
   const displayName = deriveProjectGroupLabel({ representative, members: props.members });
   const [draftName, setDraftName] = useState<string | null>(null);
@@ -114,7 +116,7 @@ function ProjectOverviewContent(props: {
 
       <SettingsSection title="Project">
         <View className="gap-3 p-4">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+          <Text className="text-sm font-t3-medium text-foreground-muted">{t("projectName")}</Text>
           <View className="flex-row items-center gap-3">
             <AppTextInput
               accessibilityLabel="Project name"
@@ -132,7 +134,7 @@ function ProjectOverviewContent(props: {
                 onPress={saveName}
                 className="rounded-full bg-subtle-strong px-4 py-2 active:opacity-70"
               >
-                <Text className="text-sm font-t3-medium text-foreground">Save</Text>
+                <Text className="text-sm font-t3-medium text-foreground">{t("save")}</Text>
               </Pressable>
             ) : null}
           </View>
