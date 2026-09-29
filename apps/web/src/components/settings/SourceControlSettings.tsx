@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlProviderKind,
@@ -56,6 +56,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
@@ -64,6 +65,7 @@ import {
   SettingsPageContainer,
   SettingsSearchTarget,
   SettingsSection,
+  useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -233,7 +235,9 @@ function itemSummary({
       );
     }
 
-    if (!item.executable) {
+    // API integrations have no CLI to sign in with; an unverified saved credential falls
+    // through to the "could not verify" detail instead of repeating the setup hint.
+    if (!item.executable && auth.status === "unauthenticated") {
       return <span>Available. {item.installHint}</span>;
     }
 
@@ -273,6 +277,17 @@ function DiscoveryItemRow({
   const authAccount = auth ? optionLabel(auth.account) : null;
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
+  const searchTargetId = useSettingsSearchTargetId();
+
+  useEffect(() => {
+    if (
+      (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
+      (item.kind === "bitbucket" &&
+        searchTargetId === searchableSetting("bitbucket-credentials").id)
+    ) {
+      setIsExpanded(true);
+    }
+  }, [item.kind, searchTargetId]);
 
   return (
     <div
@@ -580,7 +595,18 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {item.kind === "bitbucket" ? (
+                    <SettingsSearchTarget id={searchableSetting("bitbucket-credentials").id}>
+                      <BitbucketCredentialsSettings
+                        // Drafts belong to one environment; switching must not carry them over.
+                        key={environmentId}
+                        environmentId={environmentId}
+                        onSaved={handleScan}
+                      />
+                    </SettingsSearchTarget>
+                  ) : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}
