@@ -215,7 +215,13 @@ export function ThreadRelationshipsPanel(props: {
     () =>
       orderWebThreadLineageRows({
         graph,
-        rows: immediateThreadRelationships(graph, props.threadId),
+        // Side chats of this thread have their own section; listing them here too
+        // would show each one twice. A side chat's own Lineage still shows its parent.
+        rows: immediateThreadRelationships(graph, props.threadId).filter(
+          ({ threadId, edge }) =>
+            isParentThreadRelationship(edge, props.threadId) ||
+            graph.nodes.get(threadId)?.thread?.sideChat !== true,
+        ),
         currentThreadId: props.threadId,
         mergeTargetThreadId,
       }),

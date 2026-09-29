@@ -40,5 +40,5 @@ Use the menu in the side chat's header:
 Closing a side chat's tab keeps it under **Side chats** in the thread details, under **Previous**
 once it stops running. Closing one that never got a message discards it.
 
-Side chats also appear in **Lineage** like any related thread. On mobile they show as ordinary
+Side chats are listed in the **Side chats** section only, not in **Lineage**. A side chat's own Lineage shows its parent, and a promoted side chat appears in its parent's Lineage like any other thread. On mobile they show as ordinary
 threads for now.
