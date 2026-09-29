@@ -95,6 +95,8 @@ export interface EnvironmentThreadShell {
   readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
   readonly branch: string | null;
   readonly worktreePath: string | null;
+  /** Presentation flag: lives in the right panel, out of the sidebar. */
+  readonly sideChat: boolean;
   readonly lineage: OrchestrationV2ThreadShell["lineage"];
   readonly forkedFrom: OrchestrationV2ThreadShell["forkedFrom"];
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
@@ -230,6 +232,7 @@ export function presentThreadShell(
     pullRequests: threadPullRequestsOf(thread),
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
+    sideChat: thread.sideChat === true,
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     activeProviderThreadId: thread.activeProviderThreadId,

@@ -74,6 +74,9 @@ export interface CreateThreadInput extends CommandMetadata {
   readonly interactionMode: ProviderInteractionMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
+  /** Link under an existing thread without transferring any of its context. */
+  readonly parentThreadId?: ThreadId;
+  readonly sideChat?: boolean;
 }
 
 export interface ThreadCommandInput extends CommandMetadata {
@@ -130,6 +133,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly regenerateTitle?: boolean;
   /** Link (object) or unlink (null) a pull request (#8160). */
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
+  /** `false` promotes a side chat to an ordinary thread. */
+  readonly sideChat?: boolean;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -213,8 +218,11 @@ export type StopThreadSessionInput = ThreadCommandInput;
 export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
-  readonly runId: RunId;
+  /** Omitted forks at the latest stable point, which a running source resolves to its last completed run. */
+  readonly runId?: RunId;
   readonly title?: string;
+  readonly sideChat?: boolean;
+  readonly runtimeMode?: RuntimeMode;
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -401,6 +409,8 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
     interactionMode: input.interactionMode,
     branch: input.branch,
     worktreePath: input.worktreePath,
+    ...(input.parentThreadId === undefined ? {} : { parentThreadId: input.parentThreadId }),
+    ...(input.sideChat === undefined ? {} : { sideChat: input.sideChat }),
   });
 });
 
@@ -562,6 +572,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
+      input.sideChat !== undefined ||
       input.limitRecovery !== undefined
     ) {
       result = yield* dispatch({
@@ -576,6 +587,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.linkedPullRequest === undefined
           ? {}
           : { linkedPullRequest: input.linkedPullRequest }),
+        ...(input.sideChat === undefined ? {} : { sideChat: input.sideChat }),
       });
     }
     if (input.modelSelection !== undefined) {
@@ -918,8 +930,11 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     creationSource: input.creationSource ?? "web",
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
-    sourcePoint: { type: "run", runId: input.runId },
+    sourcePoint:
+      input.runId === undefined ? { type: "latest_stable" } : { type: "run", runId: input.runId },
     ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.sideChat === undefined ? {} : { sideChat: input.sideChat }),
+    ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
   });
 });
 

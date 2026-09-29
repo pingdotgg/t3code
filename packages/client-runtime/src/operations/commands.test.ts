@@ -40,6 +40,7 @@ import {
   archiveThread,
   cancelQueuedRun,
   createProject,
+  createThread,
   dismissThreadUserInput,
   editQueuedRun,
   forkThreadFromRun,
@@ -666,6 +667,56 @@ describe("V2 environment commands", () => {
         // A text-only edit must not send an attachments replacement list.
         expect(commands[5]).not.toHaveProperty("attachments");
       }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("starts side chats as a latest-stable fork or a linked thread, and promotes one", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const provide = Effect.provideService(
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisor,
+      );
+
+      yield* forkThreadFromRun({
+        commandId: CommandId.make("side-fork"),
+        sourceThreadId: v2ThreadId,
+        targetThreadId: ThreadId.make("thread-side-fork"),
+        sideChat: true,
+        runtimeMode: "approval-required",
+      }).pipe(provide);
+      yield* createThread({
+        commandId: CommandId.make("side-linked"),
+        threadId: ThreadId.make("thread-side-linked"),
+        projectId: ProjectId.make("project-1"),
+        title: "Side chat",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        parentThreadId: v2ThreadId,
+        sideChat: true,
+      }).pipe(provide);
+      yield* updateThreadMetadata({
+        commandId: CommandId.make("side-promote"),
+        threadId: ThreadId.make("thread-side-fork"),
+        sideChat: false,
+      }).pipe(provide);
+
+      expect(commands[0]).toMatchObject({
+        type: "thread.fork",
+        sourcePoint: { type: "latest_stable" },
+        sideChat: true,
+        runtimeMode: "approval-required",
+      });
+      expect(commands[1]).toMatchObject({
+        type: "thread.create",
+        parentThreadId: v2ThreadId,
+        sideChat: true,
+      });
+      expect(commands[2]).toMatchObject({ type: "thread.metadata.update", sideChat: false });
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
   it.effect("delegates model selection to the server without fetching the full projection", () =>

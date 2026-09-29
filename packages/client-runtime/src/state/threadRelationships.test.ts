@@ -38,6 +38,27 @@ describe("thread relationships", () => {
     ]);
   });
 
+  it("labels a linked thread that inherited nothing as a parent link, never a fork", () => {
+    const parent = ThreadId.make("thread-parent");
+    const linked = ThreadId.make("thread-linked");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: linked,
+          title: "Side chat without history",
+          status: "idle",
+          forkedFrom: null,
+          lineage: { rootThreadId: parent, parentThreadId: parent, relationshipToParent: null },
+        },
+      ] as never,
+      projection: null,
+    });
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ sourceThreadId: parent, targetThreadId: linked, kind: "parent" }),
+    ]);
+  });
+
   it("keeps missing parents and cycles navigable without recursive traversal", () => {
     const root = ThreadId.make("thread-root");
     const child = ThreadId.make("thread-child");
