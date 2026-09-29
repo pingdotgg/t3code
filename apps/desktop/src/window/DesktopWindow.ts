@@ -600,6 +600,10 @@ export const make = Effect.gen(function* () {
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
       installContextMenu(window, contents);
+      // Guests start muted: the tab's mute is only known once the renderer
+      // registers the webview, and the page may already be loading by then.
+      // registerWebview applies the tab's committed mute, unmuting if needed.
+      contents.setAudioMuted(true);
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {

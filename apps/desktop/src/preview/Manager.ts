@@ -2289,8 +2289,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
       wc.setZoomFactor(currentTab.zoomFactor),
     );
-    // A replacement guest attaches unmuted, so reassert the tab's mute before it
-    // is published rather than letting it emit audio the user already silenced.
+    // Guests attach muted (see did-attach-webview in DesktopWindow), so assert
+    // the tab's mute before it is published, unmuting only if the tab wants it.
     // Settled again after attach, below, the same way zoom is.
     yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
       wc.setAudioMuted(currentTab.audioMuted),

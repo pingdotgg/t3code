@@ -186,6 +186,7 @@ describe("HostedBrowserWebview settings hydration", () => {
     expect(mocks.createTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId, {
       zoomFactor: 1.25,
       colorScheme: "dark",
+      audioMuted: false,
     });
     expect(mocks.registerWebview).not.toHaveBeenCalled();
 

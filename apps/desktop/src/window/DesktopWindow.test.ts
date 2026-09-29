@@ -443,6 +443,7 @@ describe("DesktopWindow", () => {
           }),
           copyImageAt: vi.fn(),
           replaceMisspelling: vi.fn(),
+          setAudioMuted: vi.fn(),
         });
         return contents;
       };
@@ -470,6 +471,8 @@ describe("DesktopWindow", () => {
         assert.isDefined(attach);
         attach({}, guest);
         attach({}, guest);
+        // Muted until registerWebview applies the tab's own mute.
+        assert.deepStrictEqual(guest.setAudioMuted.mock.calls[0], [true]);
         guest.emit("did-create-window", popupWindow);
         guest.emit("did-create-window", popupWindow);
 
