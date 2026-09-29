@@ -154,24 +154,19 @@ while (packageDir !== path.dirname(packageDir)) {
   if (fs.existsSync(packageJsonPath)) {
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
     if (packageJson.name === "t3") {
-      const requiredNativePackages = ["node-pty", "msgpackr-extract", "@ff-labs/fff-node"];
-      let nodeModules = path.dirname(packageDir);
+      const platformPackageName = `@t3code/t3-${process.platform}-${process.arch}`;
+      const requireFromT3 = createRequire(packageJsonPath);
+      let platformPackageJsonPath;
 
-      if (requiredNativePackages.some((packageName) => !fs.existsSync(path.join(nodeModules, packageName, "package.json")))) {
-        const platformPackageName = `@t3code/t3-${process.platform}-${process.arch}`;
-        const requireFromT3 = createRequire(packageJsonPath);
-        let platformPackageJsonPath;
-
-        try {
-          platformPackageJsonPath = requireFromT3.resolve(`${platformPackageName}/package.json`);
-        } catch {
-          throw new Error(`t3@latest is missing its native runtime package ${platformPackageName}`);
-        }
-
-        nodeModules = path.join(path.dirname(platformPackageJsonPath), "node_modules");
+      try {
+        platformPackageJsonPath = requireFromT3.resolve(`${platformPackageName}/package.json`);
+      } catch {
+        throw new Error(`t3@latest is missing its native runtime package ${platformPackageName}`);
       }
 
-      for (const packageName of requiredNativePackages) {
+      const platformPackage = JSON.parse(fs.readFileSync(platformPackageJsonPath, "utf8"));
+      const nodeModules = path.join(path.dirname(platformPackageJsonPath), "node_modules");
+      for (const packageName of Object.keys(platformPackage.dependencies ?? {})) {
         if (!fs.existsSync(path.join(nodeModules, packageName, "package.json"))) {
           throw new Error(`t3@latest is missing native runtime package ${packageName}`);
         }
