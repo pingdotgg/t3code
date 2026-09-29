@@ -303,7 +303,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             hasPendingApprovals: false,
             hasPendingUserInput: false,
             snoozedUntil: input.snoozedUntil,
-            snoozedAt: thread.snoozedUntil === input.snoozedUntil ? (thread.snoozedAt ?? now) : now,
+            snoozedAt: now,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({

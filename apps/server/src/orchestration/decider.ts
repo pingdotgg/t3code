@@ -668,14 +668,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `thread ${command.threadId} has a queued turn start and cannot be snoozed`,
         });
       }
-      // Re-snoozing an already-snoozed thread to the SAME wake time is a
-      // duplicate (double-click, raced clients): re-emit with the original
-      // timestamps so the projection is a no-op. A different wake time is a
-      // real change and stamps fresh.
-      const existingSnoozedAt =
-        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt != null
-          ? thread.snoozedAt
-          : null;
+      // Every snooze stamps fresh, even to the same wake time: snoozedAt is
+      // the baseline a later failure or completion must beat to raise the
+      // thread's hand, and re-snoozing a woken thread is the user saying
+      // "seen it, not now". Retries are already deduplicated by commandId.
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -687,8 +683,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           snoozedUntil: command.snoozedUntil,
-          snoozedAt: existingSnoozedAt ?? occurredAt,
-          updatedAt: existingSnoozedAt !== null ? thread.updatedAt : occurredAt,
+          snoozedAt: occurredAt,
+          updatedAt: occurredAt,
         },
       };
     }
