@@ -127,6 +127,11 @@ The linked pull request participates in automatic settlement.
 
 ## Find and reference work
 
+On web and desktop, use the sidebar's environment and project filters to focus the thread list.
+Check more than one entry to include any of those environments or projects. The two filters
+combine, so a thread must match both when both are active. Choose **All environments** or
+**All projects** to clear that filter.
+
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.

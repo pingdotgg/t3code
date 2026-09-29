@@ -950,13 +950,21 @@ export function filterSidebarScopeItems<TItem extends { readonly value: string }
   return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
 }
 
+export function resolveSidebarScopeSelection(
+  currentIds: readonly string[],
+  selectedIds: readonly string[],
+): string[] {
+  if (currentIds.length > 0 && selectedIds.includes("all")) return [];
+  return selectedIds.filter((id) => id !== "all");
+}
+
 export function sidebarItemMatchesScope(
   item: { readonly environmentId: string; readonly projectId: string },
-  environmentScopeId: string | null,
+  environmentScopeIds: ReadonlySet<string> | null,
   scopedProjectKeys: ReadonlySet<string> | null,
 ): boolean {
   return (
-    (environmentScopeId === null || item.environmentId === environmentScopeId) &&
+    (environmentScopeIds === null || environmentScopeIds.has(item.environmentId)) &&
     (scopedProjectKeys === null || scopedProjectKeys.has(`${item.environmentId}:${item.projectId}`))
   );
 }

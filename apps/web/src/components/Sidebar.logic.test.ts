@@ -12,6 +12,7 @@ import {
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarScopeItems,
+  resolveSidebarScopeSelection,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   reduceSidebarScopeMenuState,
@@ -932,15 +933,54 @@ describe("filterSidebarScopeItems", () => {
 describe("sidebarItemMatchesScope", () => {
   const item = { environmentId: "environment-a", projectId: "project-a" };
 
+  it("includes any selected environment and intersects selected projects", () => {
+    expect(
+      sidebarItemMatchesScope(
+        item,
+        new Set(["environment-a", "environment-b"]),
+        new Set(["environment-a:project-a", "environment-b:project-b"]),
+      ),
+    ).toBe(true);
+    expect(
+      sidebarItemMatchesScope(
+        { environmentId: "environment-b", projectId: "project-b" },
+        new Set(["environment-a", "environment-b"]),
+        new Set(["environment-a:project-a", "environment-b:project-b"]),
+      ),
+    ).toBe(true);
+    expect(
+      sidebarItemMatchesScope(
+        item,
+        new Set(["environment-b"]),
+        new Set(["environment-a:project-a"]),
+      ),
+    ).toBe(false);
+  });
+
   it("intersects environment and project scopes", () => {
     expect(sidebarItemMatchesScope(item, null, null)).toBe(true);
-    expect(sidebarItemMatchesScope(item, "environment-a", null)).toBe(true);
-    expect(sidebarItemMatchesScope(item, "environment-b", null)).toBe(false);
+    expect(sidebarItemMatchesScope(item, new Set(["environment-a"]), null)).toBe(true);
+    expect(sidebarItemMatchesScope(item, new Set(["environment-b"]), null)).toBe(false);
     expect(sidebarItemMatchesScope(item, null, new Set(["environment-a:project-a"]))).toBe(true);
     expect(sidebarItemMatchesScope(item, null, new Set(["environment-a:project-b"]))).toBe(false);
     expect(
-      sidebarItemMatchesScope(item, "environment-b", new Set(["environment-a:project-a"])),
+      sidebarItemMatchesScope(
+        item,
+        new Set(["environment-b"]),
+        new Set(["environment-a:project-a"]),
+      ),
     ).toBe(false);
+  });
+});
+
+describe("resolveSidebarScopeSelection", () => {
+  it("selects items from All, combines selections, and resets through All or the last unchecked item", () => {
+    expect(resolveSidebarScopeSelection([], ["all", "environment-a"])).toEqual(["environment-a"]);
+    expect(
+      resolveSidebarScopeSelection(["environment-a"], ["environment-a", "environment-b"]),
+    ).toEqual(["environment-a", "environment-b"]);
+    expect(resolveSidebarScopeSelection(["environment-a"], ["environment-a", "all"])).toEqual([]);
+    expect(resolveSidebarScopeSelection(["environment-a"], [])).toEqual([]);
   });
 });
 
@@ -1059,10 +1099,9 @@ describe("sortThreadsForSidebar", () => {
       updatedAt: "2026-03-09T11:00:00.000Z",
     };
 
-    expect(sortThreadsForSidebar([running, waiting], "updated_at").map((thread) => thread.id)).toEqual([
-      "waiting",
-      "running",
-    ]);
+    expect(
+      sortThreadsForSidebar([running, waiting], "updated_at").map((thread) => thread.id),
+    ).toEqual(["waiting", "running"]);
     expect(
       sortThreadsForSidebar(
         [{ ...running, lastFinishedAt: "2026-03-09T14:00:00.000Z" }, waiting],

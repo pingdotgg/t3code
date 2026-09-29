@@ -13,8 +13,9 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
-  setSidebarEnvironmentScopeId,
-  setSidebarProjectScopeKey,
+  setSidebarEnvironmentScopeIds,
+  setSidebarProjectScopeKeys,
+  toggleSidebarScopeSelection,
   setSidebarThreadSortOrder,
   setSidebarThreadStatusFilter,
   setThreadChangedFilesExpanded,
@@ -25,8 +26,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
-    sidebarEnvironmentScopeId: null,
-    sidebarProjectScopeKey: null,
+    sidebarEnvironmentScopeIds: [],
+    sidebarProjectScopeKeys: [],
     sidebarThreadSortOrder: "created_at",
     sidebarThreadStatusFilter: "all",
     threadLastVisitedAtById: {},
@@ -38,6 +39,24 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("migrates existing single sidebar scopes to multi-selection", () => {
+    expect(
+      parsePersistedState({
+        sidebarEnvironmentScopeId: "environment-a",
+        sidebarProjectScopeKey: "project-a",
+      }),
+    ).toMatchObject({
+      sidebarEnvironmentScopeIds: ["environment-a"],
+      sidebarProjectScopeKeys: ["project-a"],
+    });
+    expect(
+      parsePersistedState({
+        sidebarEnvironmentScopeIds: ["environment-a", "environment-b", "environment-a"],
+        sidebarEnvironmentScopeId: "old-environment",
+      }).sidebarEnvironmentScopeIds,
+    ).toEqual(["environment-a", "environment-b"]);
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -154,22 +173,26 @@ describe("uiStateStore pure functions", () => {
     });
   });
 
-  it("stores the sidebar project scope and resets it to all projects", () => {
-    const scoped = setSidebarProjectScopeKey(makeUiState(), "github.com/pingdotgg/t3code");
+  it("stores selected projects and resets to all projects", () => {
+    const scoped = setSidebarProjectScopeKeys(makeUiState(), ["project-a", "project-b"]);
 
-    expect(scoped.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
-    expect(setSidebarProjectScopeKey(scoped, "github.com/pingdotgg/t3code")).toBe(scoped);
-    expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
-    expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
+    expect(scoped.sidebarProjectScopeKeys).toEqual(["project-a", "project-b"]);
+    expect(setSidebarProjectScopeKeys(scoped, ["project-a", "project-b"])).toBe(scoped);
+    expect(setSidebarProjectScopeKeys(scoped, []).sidebarProjectScopeKeys).toEqual([]);
   });
 
-  it("stores the sidebar environment scope and resets it to all environments", () => {
-    const scoped = setSidebarEnvironmentScopeId(makeUiState(), "environment-a");
+  it("stores selected environments and resets to all environments", () => {
+    const scoped = setSidebarEnvironmentScopeIds(makeUiState(), ["environment-a", "environment-b"]);
 
-    expect(scoped.sidebarEnvironmentScopeId).toBe("environment-a");
-    expect(setSidebarEnvironmentScopeId(scoped, "environment-a")).toBe(scoped);
-    expect(setSidebarEnvironmentScopeId(scoped, null).sidebarEnvironmentScopeId).toBeNull();
-    expect(setSidebarEnvironmentScopeId(scoped, "").sidebarEnvironmentScopeId).toBeNull();
+    expect(scoped.sidebarEnvironmentScopeIds).toEqual(["environment-a", "environment-b"]);
+    expect(setSidebarEnvironmentScopeIds(scoped, ["environment-a", "environment-b"])).toBe(scoped);
+    expect(setSidebarEnvironmentScopeIds(scoped, []).sidebarEnvironmentScopeIds).toEqual([]);
+    expect(toggleSidebarScopeSelection([], "environment-a")).toEqual(["environment-a"]);
+    expect(toggleSidebarScopeSelection(["environment-a"], "environment-b")).toEqual([
+      "environment-a",
+      "environment-b",
+    ]);
+    expect(toggleSidebarScopeSelection(["environment-a"], "environment-a")).toEqual([]);
   });
 
   it("stores the current sidebar thread sort order", () => {
@@ -248,8 +271,8 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarEnvironmentScopeId: null,
-      sidebarProjectScopeKey: null,
+      sidebarEnvironmentScopeIds: [],
+      sidebarProjectScopeKeys: [],
       sidebarThreadSortOrder: "created_at",
       sidebarThreadStatusFilter: "all",
       pullRequestMergeMethod: "merge",
@@ -373,8 +396,8 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarEnvironmentScopeId: null,
-      sidebarProjectScopeKey: null,
+      sidebarEnvironmentScopeIds: [],
+      sidebarProjectScopeKeys: [],
       sidebarThreadSortOrder: "created_at",
       sidebarThreadStatusFilter: "all",
       threadChangedFilesExpansionVersion: 2,
@@ -392,25 +415,29 @@ describe("uiStateStore persistence", () => {
   });
 
   it("restores the sidebar project scope across reloads", () => {
-    persistState(makeUiState({ sidebarProjectScopeKey: "github.com/pingdotgg/t3code" }));
+    persistState(makeUiState({ sidebarProjectScopeKeys: ["project-a", "project-b"] }));
 
     const persisted = JSON.parse(
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
 
-    expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
-      "github.com/pingdotgg/t3code",
-    );
+    expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual([
+      "project-a",
+      "project-b",
+    ]);
   });
 
   it("restores the sidebar environment scope across reloads", () => {
-    persistState(makeUiState({ sidebarEnvironmentScopeId: "environment-a" }));
+    persistState(makeUiState({ sidebarEnvironmentScopeIds: ["environment-a", "environment-b"] }));
 
     const persisted = JSON.parse(
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
 
-    expect(parsePersistedState(persisted).sidebarEnvironmentScopeId).toBe("environment-a");
+    expect(parsePersistedState(persisted).sidebarEnvironmentScopeIds).toEqual([
+      "environment-a",
+      "environment-b",
+    ]);
   });
 
   it("restores the current sidebar thread sort order across reloads", () => {

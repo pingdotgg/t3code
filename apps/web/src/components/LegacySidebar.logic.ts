@@ -15,13 +15,14 @@ export type LegacySidebarFilterableThread = ThreadSnoozeShell & {
 export function legacySidebarThreadMatchesFilters(
   thread: LegacySidebarFilterableThread,
   input: {
-    readonly environmentId: string | null;
+    readonly environmentIds: readonly string[];
     readonly status: SidebarThreadStatusFilter;
     readonly now: string;
   },
 ): boolean {
   if (thread.archivedAt !== null) return false;
-  if (input.environmentId !== null && thread.environmentId !== input.environmentId) return false;
+  if (input.environmentIds.length > 0 && !input.environmentIds.includes(thread.environmentId))
+    return false;
   if (input.status === "all") return true;
 
   const status = effectiveSnoozed(thread, { now: input.now })

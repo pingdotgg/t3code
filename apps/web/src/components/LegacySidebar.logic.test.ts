@@ -26,17 +26,26 @@ function thread(
 }
 
 describe("legacySidebarThreadMatchesFilters", () => {
+  it("includes threads from any selected environment", () => {
+    expect(
+      legacySidebarThreadMatchesFilters(thread(), {
+        environmentIds: ["environment-a", "environment-b"],
+        status: "all",
+        now: NOW,
+      }),
+    ).toBe(true);
+  });
   it("filters archived threads and threads from other environments", () => {
     expect(
       legacySidebarThreadMatchesFilters(thread({ archivedAt: NOW }), {
-        environmentId: null,
+        environmentIds: [],
         status: "all",
         now: NOW,
       }),
     ).toBe(false);
     expect(
       legacySidebarThreadMatchesFilters(thread(), {
-        environmentId: "environment-b",
+        environmentIds: ["environment-b"],
         status: "all",
         now: NOW,
       }),
@@ -50,21 +59,21 @@ describe("legacySidebarThreadMatchesFilters", () => {
     });
     expect(
       legacySidebarThreadMatchesFilters(snoozed, {
-        environmentId: null,
+        environmentIds: [],
         status: "snoozed",
         now: NOW,
       }),
     ).toBe(true);
     expect(
       legacySidebarThreadMatchesFilters(snoozed, {
-        environmentId: null,
+        environmentIds: [],
         status: "settled",
         now: NOW,
       }),
     ).toBe(false);
     expect(
       legacySidebarThreadMatchesFilters(thread(), {
-        environmentId: null,
+        environmentIds: [],
         status: "active",
         now: NOW,
       }),
