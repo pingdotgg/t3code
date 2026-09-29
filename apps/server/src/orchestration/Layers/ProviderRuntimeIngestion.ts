@@ -62,6 +62,21 @@ const providerCommandIdFromEventId = (eventId: string, tag: string): CommandId =
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   providerCommandIdFromEventId(event.eventId, tag);
 
+/**
+ * Deterministic command id for assistant finalization dispatches. Unlike the
+ * random-suffixed ids above, reprocessing the same provider event reproduces
+ * the same command id, so the engine's command receipt deduplicates the retry
+ * instead of appending a second copy of already-finalized text. The message
+ * id keeps concurrently finalized messages under one event distinct.
+ * (Mirrors the deterministic `provider:<eventId>:assistant-delta` streaming
+ * flush ids.)
+ */
+const finalizeCommandId = (
+  event: ProviderRuntimeEvent,
+  tag: string,
+  messageId: MessageId,
+): CommandId => CommandId.make(`provider:${event.eventId}:${tag}:${messageId}`);
+
 interface AssistantSegmentState {
   baseKey: string;
   nextSegmentIndex: number;
@@ -1323,6 +1338,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    existingText?: string | undefined;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
@@ -1333,11 +1349,19 @@ const make = Effect.gen(function* () {
             ? input.fallbackText!
             : "";
       const hasRenderableText = hasRenderableAssistantText(text);
+      // A redelivered snapshot (duplicate item.completed / turn.completed
+      // finalization, or a late replay of an older part) must not re-append
+      // text the projection already ends with. The completion marker below
+      // still flows so the message settles non-streaming.
+      const alreadyDelivered =
+        (input.existingText?.length ?? 0) > 0 &&
+        text.length > 0 &&
+        input.existingText!.endsWith(text);
 
-      if (hasRenderableText) {
+      if (hasRenderableText && !alreadyDelivered) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.delta",
-          commandId: providerCommandId(input.event, input.finalDeltaCommandTag),
+          commandId: finalizeCommandId(input.event, input.finalDeltaCommandTag, input.messageId),
           threadId: input.threadId,
           messageId: input.messageId,
           delta: text,
@@ -1349,7 +1373,7 @@ const make = Effect.gen(function* () {
       if (input.hasProjectedMessage || hasRenderableText) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
-          commandId: providerCommandId(input.event, input.commandTag),
+          commandId: finalizeCommandId(input.event, input.commandTag, input.messageId),
           threadId: input.threadId,
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -1880,7 +1904,21 @@ const make = Effect.gen(function* () {
               terminalTurnId,
             );
             yield* Effect.forEach(
-              assistantMessageIds,
+              // Late replays of older parts can drag a previous turn's
+              // message id into this turn's remembered set; finalizing those
+              // here would re-append their already-completed text. Only the
+              // terminal turn's own messages are finalized.
+              [...assistantMessageIds].filter((assistantMessageId) => {
+                const projected = thread.messages.find((entry) => entry.id === assistantMessageId);
+                if (projected === undefined || projected.streaming !== false) {
+                  return true;
+                }
+                const messageTurnId = projected.turnId;
+                if (messageTurnId === null || messageTurnId === undefined) {
+                  return true;
+                }
+                return sameId(String(messageTurnId), String(terminalTurnId));
+              }),
               (assistantMessageId) =>
                 finalizeAssistantMessage({
                   event,
@@ -1893,6 +1931,8 @@ const make = Effect.gen(function* () {
                   hasProjectedMessage: thread.messages.some(
                     (entry) => entry.id === assistantMessageId,
                   ),
+                  existingText: thread.messages.find((entry) => entry.id === assistantMessageId)
+                    ?.text,
                 }),
               { concurrency: 1 },
             ).pipe(Effect.asVoid);
@@ -1986,6 +2026,24 @@ const make = Effect.gen(function* () {
           event,
           ...(turnId ? { turnId } : {}),
         });
+        if (turnId && !assistantTextUpdate.replaceExisting) {
+          // A completed message from an earlier turn must not absorb a
+          // replayed snapshot: the adapter replays older parts on later
+          // turns (reconnects, reconcile sweeps), and appending their full
+          // text here duplicates the message. Genuine edits arrive with
+          // replaceExisting and always flow.
+          const projected = thread.messages.find((entry) => entry.id === assistantMessageId);
+          const projectedTurnId = projected?.turnId;
+          if (
+            projected !== undefined &&
+            projected.streaming === false &&
+            projectedTurnId !== null &&
+            projectedTurnId !== undefined &&
+            !sameId(String(projectedTurnId), String(turnId))
+          ) {
+            return;
+          }
+        }
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
@@ -2144,6 +2202,9 @@ const make = Effect.gen(function* () {
             hasProjectedMessage: existingAssistantMessage !== undefined,
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
+              : {}),
+            ...(existingAssistantMessage !== undefined
+              ? { existingText: existingAssistantMessage.text }
               : {}),
           });
 
