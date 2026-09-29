@@ -5600,10 +5600,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               Effect.mapError((cause) =>
                 cause._tag === "ProviderAdapterProtocolError"
                   ? cause
-                  : toProtocolError(
-                      `Failed to unload Codex thread for provider thread ${unloadInput.providerThread.id}.`,
-                      normalizeCodexCause(cause),
-                    ),
+                  : new ProviderAdapterProtocolError({
+                      driver: CODEX_PROVIDER,
+                      detail: `Failed to unload Codex thread for provider thread ${unloadInput.providerThread.id}`,
+                      cause: normalizeCodexCause(cause),
+                    }),
               ),
             ),
           interruptTurn: (turnInput) =>
