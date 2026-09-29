@@ -1,6 +1,11 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  PanelsTopLeftIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -14,6 +19,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
+import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import {
   SidebarFooter,
   SidebarMenu,
@@ -23,6 +29,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { toastManager } from "../ui/toast";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
@@ -126,6 +133,68 @@ function SidebarUtilityItem({
   );
 }
 
+function DesktopUiSourceSwitcher({ onConfigure }: { onConfigure: () => void }) {
+  const bridge = window.desktopBridge;
+  const [activeUrl] = useState(() => bridge?.getLocalRendererUrl?.() ?? null);
+  const [lastUrl] = useState(() => bridge?.getLastLocalRendererUrl?.() ?? activeUrl);
+  const [pending, setPending] = useState(false);
+  if (!bridge?.getLocalRendererUrl || !bridge.setLocalRendererUrl) return null;
+
+  const switchTo = async (url: string | null) => {
+    setPending(true);
+    try {
+      await bridge.setLocalRendererUrl!(url);
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: "Could not switch desktop UI",
+        description: cause instanceof Error ? cause.message : "Try again from Settings.",
+      });
+      setPending(false);
+    }
+  };
+
+  return (
+    <SidebarMenuItem className="shrink-0">
+      <Menu>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <SidebarMenuButton
+                    aria-label={`UI source: ${activeUrl === null ? "Built-in" : "Local Vite"}`}
+                    disabled={pending}
+                    size="icon"
+                  >
+                    <PanelsTopLeftIcon />
+                  </SidebarMenuButton>
+                }
+              />
+            }
+          />
+          <TooltipPopup side="top">UI source</TooltipPopup>
+        </Tooltip>
+        <MenuPopup side="top" align="start">
+          <MenuRadioGroup
+            value={activeUrl === null ? "built-in" : "local"}
+            onValueChange={(value) => {
+              if (value === "built-in") void switchTo(null);
+              else if (lastUrl !== null) void switchTo(lastUrl);
+            }}
+          >
+            <MenuRadioItem value="built-in">Built-in UI</MenuRadioItem>
+            <MenuRadioItem value="local" disabled={lastUrl === null}>
+              Local Vite UI
+            </MenuRadioItem>
+          </MenuRadioGroup>
+          <MenuItem onClick={onConfigure}>Set local UI URL…</MenuItem>
+        </MenuPopup>
+      </Menu>
+    </SidebarMenuItem>
+  );
+}
+
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
@@ -167,6 +236,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     closeMobileSidebar();
     void navigateToMainApp();
   }, [closeMobileSidebar, navigateToMainApp]);
+  const handleConfigureUi = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/settings/general" });
+  }, [closeMobileSidebar, navigate]);
 
   return (
     <SidebarMenu className="flex-row items-center">
@@ -198,6 +271,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
+      <DesktopUiSourceSwitcher onConfigure={handleConfigureUi} />
       <SidebarUpdatePill />
     </SidebarMenu>
   );

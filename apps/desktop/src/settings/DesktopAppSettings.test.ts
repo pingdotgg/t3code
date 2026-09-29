@@ -106,6 +106,7 @@ describe("DesktopSettings", () => {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* settings.setLocalRendererUrl("http://localhost:6233");
         assert.equal((yield* settings.load).localRendererUrl, "http://localhost:6233/");
+        assert.equal((yield* settings.get).lastLocalRendererUrl, "http://localhost:6233/");
         assert.isTrue((yield* settings.get).localEnvironmentEnabled);
 
         const invalid = yield* settings
@@ -116,6 +117,7 @@ describe("DesktopSettings", () => {
 
         yield* settings.setLocalRendererUrl(null);
         assert.isNull((yield* settings.load).localRendererUrl);
+        assert.equal((yield* settings.get).lastLocalRendererUrl, "http://localhost:6233/");
       }),
     ),
   );
@@ -155,6 +157,7 @@ describe("DesktopSettings", () => {
         linuxPasswordStore: "auto",
         localEnvironmentEnabled: true,
         localRendererUrl: null,
+        lastLocalRendererUrl: null,
         mainWindowBounds: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
@@ -186,6 +189,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "gnome-libsecret",
           localEnvironmentEnabled: true,
           localRendererUrl: null,
+          lastLocalRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -295,6 +299,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           localRendererUrl: null,
+          lastLocalRendererUrl: null,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -353,6 +358,7 @@ describe("DesktopSettings", () => {
             linuxPasswordStore: "auto",
             localEnvironmentEnabled: true,
             localRendererUrl: null,
+            lastLocalRendererUrl: null,
             mainWindowBounds: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
@@ -403,6 +409,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           localRendererUrl: null,
+          lastLocalRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -433,6 +440,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           localRendererUrl: null,
+          lastLocalRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -462,6 +470,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           localRendererUrl: null,
+          lastLocalRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",

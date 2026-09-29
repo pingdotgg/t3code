@@ -8,7 +8,9 @@ export function DesktopRendererSourceSetting() {
   const bridge = window.desktopBridge;
   const setLocalRendererUrl = bridge?.setLocalRendererUrl;
   const [currentUrl] = useState(() => bridge?.getLocalRendererUrl?.() ?? null);
-  const [draftUrl, setDraftUrl] = useState(currentUrl ?? "http://localhost:5733");
+  const [draftUrl, setDraftUrl] = useState(
+    currentUrl ?? bridge?.getLastLocalRendererUrl?.() ?? "http://localhost:5733",
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!bridge?.getLocalRendererUrl || !setLocalRendererUrl) return null;

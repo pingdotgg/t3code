@@ -27,6 +27,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
   readonly localRendererUrl: string | null;
+  readonly lastLocalRendererUrl: string | null;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
@@ -77,6 +78,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
   localRendererUrl: null,
+  lastLocalRendererUrl: null,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
@@ -100,6 +102,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 const DesktopSettingsDocument = Schema.Struct({
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
   localRendererUrl: Schema.optionalKey(Schema.String),
+  lastLocalRendererUrl: Schema.optionalKey(Schema.String),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
@@ -277,13 +280,18 @@ function normalizeDesktopSettingsDocument(
   const wslBackendEnabled =
     parsed.wslBackendEnabled === true ||
     (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
+  const localRendererUrl =
+    parsed.localRendererUrl === undefined
+      ? null
+      : normalizeLocalRendererUrl(parsed.localRendererUrl);
 
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
-    localRendererUrl:
-      parsed.localRendererUrl === undefined
-        ? null
-        : normalizeLocalRendererUrl(parsed.localRendererUrl),
+    localRendererUrl,
+    lastLocalRendererUrl:
+      parsed.lastLocalRendererUrl === undefined
+        ? localRendererUrl
+        : normalizeLocalRendererUrl(parsed.lastLocalRendererUrl),
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
@@ -312,6 +320,9 @@ function toDesktopSettingsDocument(
   }
   if (settings.localRendererUrl !== null) {
     document.localRendererUrl = settings.localRendererUrl;
+  }
+  if (settings.lastLocalRendererUrl !== null) {
+    document.lastLocalRendererUrl = settings.lastLocalRendererUrl;
   }
 
   if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
@@ -444,7 +455,17 @@ function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean)
 }
 
 function setLocalRendererUrl(settings: DesktopSettings, url: string | null): DesktopSettings {
-  return settings.localRendererUrl === url ? settings : { ...settings, localRendererUrl: url };
+  if (
+    settings.localRendererUrl === url &&
+    (url === null || settings.lastLocalRendererUrl === url)
+  ) {
+    return settings;
+  }
+  return {
+    ...settings,
+    localRendererUrl: url,
+    lastLocalRendererUrl: url ?? settings.lastLocalRendererUrl,
+  };
 }
 
 function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {

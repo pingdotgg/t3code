@@ -15,6 +15,15 @@ export const getLocalRendererUrl = makeSyncIpcMethod({
   }),
 });
 
+export const getLastLocalRendererUrl = makeSyncIpcMethod({
+  channel: IpcChannels.GET_LAST_LOCAL_RENDERER_URL_CHANNEL,
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.rendererSource.getLast")(function* () {
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    return (yield* settings.get).lastLocalRendererUrl;
+  }),
+});
+
 export const setLocalRendererUrl = makeIpcMethod({
   channel: IpcChannels.SET_LOCAL_RENDERER_URL_CHANNEL,
   payload: Schema.NullOr(Schema.String),

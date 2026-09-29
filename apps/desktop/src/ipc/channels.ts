@@ -29,6 +29,7 @@ export const GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL = "desktop:get-local-envir
 export const GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:get-local-environment-enabled";
 export const SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:set-local-environment-enabled";
 export const GET_LOCAL_RENDERER_URL_CHANNEL = "desktop:get-local-renderer-url";
+export const GET_LAST_LOCAL_RENDERER_URL_CHANNEL = "desktop:get-last-local-renderer-url";
 export const SET_LOCAL_RENDERER_URL_CHANNEL = "desktop:set-local-renderer-url";
 export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
   "desktop:get-local-environment-bearer-token";

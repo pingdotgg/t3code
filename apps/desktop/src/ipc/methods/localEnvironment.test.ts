@@ -11,7 +11,11 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { getLocalEnvironmentEnabled, setLocalEnvironmentEnabled } from "./localEnvironment.ts";
-import { getLocalRendererUrl, setLocalRendererUrl } from "./rendererSource.ts";
+import {
+  getLastLocalRendererUrl,
+  getLocalRendererUrl,
+  setLocalRendererUrl,
+} from "./rendererSource.ts";
 
 // `relaunch` declares the lifecycle runtime services as requirements even
 // though the mocked relaunch never touches them.
@@ -50,6 +54,7 @@ describe("local environment IPC", () => {
       assert.deepEqual(relaunchReasons, ["localRendererUrl=local"]);
       yield* setLocalRendererUrl.handler(null);
       assert.isNull(yield* getLocalRendererUrl.handler());
+      assert.equal(yield* getLastLocalRendererUrl.handler(), "http://localhost:6233/");
       assert.deepEqual(relaunchReasons, ["localRendererUrl=local", "localRendererUrl=bundled"]);
     }).pipe(Effect.provide(layer));
   });

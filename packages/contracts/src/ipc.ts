@@ -1144,6 +1144,7 @@ export interface DesktopBridge {
   getLocalEnvironmentEnabled?: () => boolean;
   setLocalEnvironmentEnabled?: (enabled: boolean) => Promise<void>;
   getLocalRendererUrl?: () => string | null;
+  getLastLocalRendererUrl?: () => string | null;
   setLocalRendererUrl?: (url: string | null) => Promise<void>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
