@@ -4051,14 +4051,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : listIndentForTab(snapshot.value, selection.start, selection.end);
         if (
           edit &&
-          applyPromptReplacement(
-            edit.start,
-            edit.end,
-            edit.replacement,
-            key === "Tab"
-              ? { expandedCursorAfterReplace: selection.start + edit.replacement.length }
-              : undefined,
-          )
+          applyPromptReplacement(edit.start, edit.end, edit.replacement, {
+            expandedCursorAfterReplace: edit.cursorAfter,
+          })
         ) {
           return true;
         }
