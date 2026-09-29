@@ -51,6 +51,7 @@
     "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
+    "@vitest/coverage-v8": "^4.1.9",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vitest": "catalog:"
