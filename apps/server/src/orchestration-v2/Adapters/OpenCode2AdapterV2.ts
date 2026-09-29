@@ -38,11 +38,11 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import type { ServerConfig } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
 import type { OpenCode2StreamEvent } from "../../provider/opencode2/OpenCode2Client.ts";
-import type {
-  OpenCode2Connection,
+import {
   OpenCode2Server,
+  type OpenCode2Connection,
 } from "../../provider/opencode2/OpenCode2Server.ts";
 import {
   parseOpenCodeModelSlug,
@@ -52,7 +52,7 @@ import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts"
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
-import type { IdAllocatorV2Shape } from "../IdAllocator.ts";
+import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -66,6 +66,7 @@ import {
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterTurnStartError,
+  ProviderAdapterV2,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2Shape,
@@ -251,15 +252,14 @@ const sameModel = (left: ReturnType<typeof modelRef>, right: ReturnType<typeof m
   left?.id === right?.id &&
   (left?.variant ?? "default") === (right?.variant ?? "default");
 
-export interface OpenCode2AdapterOptions {
-  readonly instanceId: ProviderInstanceId;
-  readonly server: OpenCode2Server["Service"];
-  readonly idAllocator: IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfig["Service"];
-}
-
-export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): ProviderAdapterV2Shape {
-  const { idAllocator, instanceId, serverConfig } = options;
+/**
+ * The adapter for one provider instance. It talks to the instance's
+ * {@link OpenCode2Server}, which the driver builds from the instance's settings.
+ */
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
+  const server = yield* OpenCode2Server;
+  const idAllocator = yield* IdAllocatorV2;
+  const serverConfig = yield* ServerConfig;
   const driver = OPENCODE_PROVIDER;
 
   const openSession = Effect.fn("OpenCode2Adapter.openSession")(function* (
@@ -928,7 +928,15 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
           turn.interrupted = true;
           const reply = yield* client.session
             .interrupt({ sessionID: Session.ID.make(sessionId) })
-            .pipe(Effect.timeoutOption(INTERRUPT_TIMEOUT));
+            .pipe(
+              Effect.timeoutOption(INTERRUPT_TIMEOUT),
+              // A Stop that never reached the server stopped nothing.
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  turn.interrupted = false;
+                }),
+              ),
+            );
           if (reply._tag === "None") {
             return yield* finishTurn(state, { status: "interrupted" });
           }
@@ -999,7 +1007,7 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
     return runtime;
   });
 
-  return {
+  return ProviderAdapterV2.of({
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(OpenCode2ProviderCapabilities),
@@ -1009,7 +1017,7 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
     openSession: (input) =>
       Effect.gen(function* () {
         const lent = yield* Deferred.make<OpenCode2Connection, OpenCodeRuntimeError>();
-        yield* options.server
+        yield* server
           .withConnection((connection) =>
             Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
           )
@@ -1028,5 +1036,5 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
             }),
         ),
       ),
-  };
-}
+  });
+});

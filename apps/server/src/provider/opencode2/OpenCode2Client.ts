@@ -24,9 +24,18 @@ const OPENCODE_USERNAME = "opencode";
  */
 export interface OpenCode2UnreadableTerminal {
   readonly type: "unreadable.execution.ended";
-  readonly executionType: string;
+  readonly executionType: (typeof EXECUTION_ENDS)[number];
   readonly sessionID: string;
 }
+
+/** The events that end an execution; any other undecodable event is skipped. */
+const EXECUTION_ENDS = [
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+] as const;
+const isExecutionEnd = (type: string): type is (typeof EXECUTION_ENDS)[number] =>
+  (EXECUTION_ENDS as ReadonlyArray<string>).includes(type);
 
 /** The server sent nothing, not even a heartbeat, for `SILENT_STREAM_TIMEOUT`. */
 export class OpenCode2SilentStreamError extends Schema.TaggedError<OpenCode2SilentStreamError>()(
@@ -93,7 +102,7 @@ const undecodable = (data: string) =>
     const envelope = decodeEnvelope(data);
     const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
     const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
-    if (type.startsWith("session.execution.") && sessionID !== undefined) {
+    if (isExecutionEnd(type) && sessionID !== undefined) {
       yield* Effect.logWarning(
         "Ended an OpenCode execution from an event this build cannot decode.",
         {

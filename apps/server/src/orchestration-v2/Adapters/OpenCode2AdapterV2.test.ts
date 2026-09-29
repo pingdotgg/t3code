@@ -216,6 +216,61 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a turn running through a start event this build cannot decode", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_executionstartedx",
+              created: 1,
+              type: "session.execution.started",
+              data: { sessionID: SESSION },
+              durable: "not-an-envelope",
+            },
+          },
+        },
+        event("session.text.started", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+          ordinal: 0,
+        }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+          ordinal: 0,
+          text: "DONE",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      const terminals = seen.filter((event) => event.type === "turn.terminal");
+      assert.deepEqual(
+        terminals.map((event) => event.type === "turn.terminal" && event.status),
+        ["completed"],
+      );
+      // The reply after the malformed start still reached the turn.
+      assert.isTrue(
+        seen.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "DONE",
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("denies the subagent tool on the sessions it creates", () =>
     Effect.gen(function* () {
       const runtime = yield* openCode2ReplayRuntime([
@@ -294,6 +349,28 @@ describe("OpenCode2 adapter", () => {
         })
         .pipe(Effect.flip);
       assert.equal(failed._tag, "ProviderAdapterInterruptError");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports a turn as completed when its Stop request failed", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", {
+          status: 500,
+          body: { _tag: "UnknownError", message: "interrupt failed" },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const failed = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.flip);
+      assert.equal(failed._tag, "ProviderAdapterInterruptError");
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }).pipe(Effect.scoped),
   );
 

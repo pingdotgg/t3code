@@ -22,7 +22,8 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 
 import { ServerConfig } from "../../config.ts";
 import * as OpenCode2Client from "../../provider/opencode2/OpenCode2Client.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { makeLayer } from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
@@ -33,7 +34,7 @@ import {
   OpenCodeReplayController,
   OpenCodeReplayTranscriptDecodeError,
 } from "./OpenCodeAdapterV2.testkit.ts";
-import { makeOpenCode2Adapter } from "./OpenCode2AdapterV2.ts";
+import * as OpenCode2AdapterV2 from "./OpenCode2AdapterV2.ts";
 
 export const OPENCODE2_HTTP_PROTOCOL = "opencode2-http.sse" as const;
 const BASE_URL = "http://opencode2.replay";
@@ -103,6 +104,9 @@ const replayHttpClient = (controller: OpenCodeReplayController) =>
           query,
           raw === undefined ? undefined : decodeJson(raw),
         );
+        // The event stream and requests are separate connections: a request
+        // is matched only once the events recorded before it were delivered.
+        if (operation.type !== "event.subscribe") await controller.untilEventsDelivered();
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
           const encoder = new TextEncoder();
@@ -154,12 +158,12 @@ const makeReplayAdapter = (
       version: transcript.version,
       external: options?.external ?? false,
     };
-    return makeOpenCode2Adapter({
-      instanceId: ProviderInstanceId.make("opencode"),
-      server: { withConnection: (use) => use(connection) },
-      idAllocator: yield* IdAllocatorV2,
-      serverConfig: yield* ServerConfig,
-    });
+    return yield* OpenCode2AdapterV2.make(ProviderInstanceId.make("opencode")).pipe(
+      Effect.provideService(
+        OpenCode2Server.OpenCode2Server,
+        OpenCode2Server.OpenCode2Server.of({ withConnection: (use) => use(connection) }),
+      ),
+    );
   });
 
 const replayServerConfig = (scenario: string) =>
@@ -172,7 +176,7 @@ function makeRegistryLayer(transcript: OpenCode2ReplayTranscript) {
     makeReplayAdapter(transcript, { external: true }).pipe(
       Effect.map((adapter) => makeLayer([adapter])),
     ),
-  ).pipe(Layer.provide(Layer.mergeAll(replayServerConfig(transcript.scenario), idAllocatorLayer)));
+  ).pipe(Layer.provide(Layer.mergeAll(replayServerConfig(transcript.scenario), IdAllocator.layer)));
 }
 
 /**
@@ -204,7 +208,7 @@ export const openCode2ReplayRuntime = (
       runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
     });
   }).pipe(
-    Effect.provide(Layer.mergeAll(replayServerConfig("opencode2_adapter"), idAllocatorLayer)),
+    Effect.provide(Layer.mergeAll(replayServerConfig("opencode2_adapter"), IdAllocator.layer)),
   );
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<

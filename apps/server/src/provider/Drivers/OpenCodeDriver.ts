@@ -25,12 +25,8 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
-import {
-  OpenCodeAdapterV2Driver,
-  type OpenCodeAdapterV2DriverEnv,
-} from "../../orchestration-v2/Adapters/OpenCodeAdapterV2.ts";
-import { makeOpenCode2Adapter } from "../../orchestration-v2/Adapters/OpenCode2AdapterV2.ts";
-import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import * as OpenCodeAdapterV2 from "../../orchestration-v2/Adapters/OpenCodeAdapterV2.ts";
+import * as OpenCode2AdapterV2 from "../../orchestration-v2/Adapters/OpenCode2AdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
@@ -168,7 +164,7 @@ function selectOpenCodeRuntimeTextGeneration(
 }
 
 export type OpenCodeDriverEnv =
-  | OpenCodeAdapterV2DriverEnv
+  | OpenCodeAdapterV2.OpenCodeAdapterV2DriverEnv
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -226,7 +222,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
         ),
       );
-      const openCodeV1Adapter = yield* OpenCodeAdapterV2Driver.create({
+      const openCodeV1Adapter = yield* OpenCodeAdapterV2.OpenCodeAdapterV2Driver.create({
         instanceId,
         displayName,
         accentColor,
@@ -263,12 +259,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
         probe: runtimeProbe,
         v1: openCodeV1Adapter,
-        v2: makeOpenCode2Adapter({
-          instanceId,
-          server: openCode2Server,
-          idAllocator: yield* IdAllocatorV2,
-          serverConfig,
-        }),
+        v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+        ),
       });
       const serverOwner = yield* OpenCodeServerOwner.make({
         binaryPath: effectiveConfig.binaryPath,

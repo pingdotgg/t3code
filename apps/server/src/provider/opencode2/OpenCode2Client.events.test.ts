@@ -129,6 +129,14 @@ describe("OpenCode2Client events", () => {
                   type: "session.hologram.projected",
                   data: { sessionID: "ses_x" },
                 },
+                // A start is not an end: an undecodable one is skipped like any other event.
+                {
+                  id: "evt_0",
+                  created: 1,
+                  type: "session.execution.started",
+                  data: { sessionID: "ses_x", lane: 7 },
+                  durable: "not-an-envelope",
+                },
                 {
                   id: "evt_2",
                   created: 1,

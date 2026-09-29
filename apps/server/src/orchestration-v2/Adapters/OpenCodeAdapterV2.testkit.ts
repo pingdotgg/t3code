@@ -219,6 +219,20 @@ export class OpenCodeReplayController {
     }
   }
 
+  /**
+   * Resolves once the server events recorded before the next entry have been
+   * delivered. For transports whose events and requests travel separately, a
+   * request is matched at its recorded point instead of racing those events.
+   */
+  async untilEventsDelivered(): Promise<void> {
+    while (true) {
+      this.throwFailure();
+      const entry = this.transcript.entries[this.cursor];
+      if (entry?.type !== "emit_inbound" || frameRecord(entry.frame)?.type !== "sdk.event") return;
+      await this.changed();
+    }
+  }
+
   async *events(signal?: AbortSignal): AsyncIterable<unknown> {
     while (true) {
       if (signal?.aborted === true) return;
