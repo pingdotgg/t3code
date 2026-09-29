@@ -145,6 +145,13 @@ const ManualSchemas: Record<string, Schema.Json> = {
   },
 };
 
+// Codex adds plan slugs between our protocol refreshes (0.159 added `promax`).
+// T3 Code only uses the plan for labels, so an unknown slug must not fail the
+// whole `account/read` decode and take the provider down with it.
+const DefinitionOverrides: Record<string, Schema.Json> = {
+  PlanType: { type: "string" },
+};
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -643,7 +650,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
         normalizeNullableTypes(
           rewriteExternalRefs(
-            definitionSchema,
+            DefinitionOverrides[definitionName] ?? definitionSchema,
             localDefinitionNames,
             file.namespace,
             exportNameByQualifiedName,
