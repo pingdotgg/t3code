@@ -199,10 +199,21 @@ export function transcriptionCustomWords(
     ServerSettings,
     "speechCustomWords" | "speechCorrectionWord" | "speechPostProcessingEnabled"
   >,
+  projectName?: string,
 ): string[] {
-  return normalizeSpeechCustomWords(
+  const words = normalizeSpeechCustomWords(
     settings.speechPostProcessingEnabled
       ? [{ term: settings.speechCorrectionWord, aliases: [] }, ...settings.speechCustomWords]
       : settings.speechCustomWords,
   ).map(({ term }) => term);
+  const projectWord = projectName?.replace(/\s+/g, " ").trim() ?? "";
+  if (
+    !projectWord ||
+    words.some((word) => word.toLocaleLowerCase() === projectWord.toLocaleLowerCase())
+  )
+    return words;
+  const correction = normalizeWord(settings.speechCorrectionWord);
+  const prefix =
+    settings.speechPostProcessingEnabled && words[0] === correction ? words.slice(0, 1) : [];
+  return [...prefix, projectWord, ...words.slice(prefix.length, 99)];
 }

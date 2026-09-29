@@ -80,7 +80,7 @@ it.live("acknowledges binary audio and returns the finalized transcript over a r
     }),
   };
   return withServer(
-    Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => closed.resolve())),
+    () => Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => closed.resolve())),
     async (url) => {
       const connection = client(url);
       try {
@@ -110,7 +110,7 @@ it.live("releases in-flight inference after disconnect", () => {
     finish: Effect.succeed("unexpected"),
   };
   return withServer(
-    Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => closed.resolve())),
+    () => Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => closed.resolve())),
     async (url) => {
       const connection = client(url);
       try {
@@ -149,20 +149,23 @@ it.live("processes pipelined audio before the finish command", () => {
       return "done";
     }),
   };
-  return withServer(Effect.succeed(stream), async (url) => {
-    const connection = client(url);
-    try {
-      expect(await connection.next()).toEqual({ type: "ready" });
-      connection.socket.send(new Float32Array([0.25]));
-      await firstFeed.promise;
-      connection.socket.send(new Float32Array([0.5]));
-      connection.socket.send(JSON.stringify({ type: "finish" }));
-      releaseFirst.resolve();
-      expect(await connection.next()).toMatchObject({ type: "update", revision: 1 });
-      expect(await connection.next()).toMatchObject({ type: "update", revision: 2 });
-      expect(await connection.next()).toEqual({ type: "finished", text: "done" });
-    } finally {
-      connection.socket.close();
-    }
-  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest));
+  return withServer(
+    () => Effect.succeed(stream),
+    async (url) => {
+      const connection = client(url);
+      try {
+        expect(await connection.next()).toEqual({ type: "ready" });
+        connection.socket.send(new Float32Array([0.25]));
+        await firstFeed.promise;
+        connection.socket.send(new Float32Array([0.5]));
+        connection.socket.send(JSON.stringify({ type: "finish" }));
+        releaseFirst.resolve();
+        expect(await connection.next()).toMatchObject({ type: "update", revision: 1 });
+        expect(await connection.next()).toMatchObject({ type: "update", revision: 2 });
+        expect(await connection.next()).toEqual({ type: "finished", text: "done" });
+      } finally {
+        connection.socket.close();
+      }
+    },
+  ).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest));
 });

@@ -3575,6 +3575,7 @@ export default function ChatView(props: ChatViewProps) {
                             <ChatComposer
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
+                              projectName={activeProject?.title}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===

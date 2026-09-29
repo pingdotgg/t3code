@@ -376,6 +376,7 @@ export interface ChatComposerProps {
   promptHistoryEntries: ReadonlyArray<TimelineEntry>;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
+  projectName?: string | undefined;
 
   phase: SessionPhase;
   canInterrupt: boolean;
@@ -1843,6 +1844,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
+    projectName: props.projectName,
     ownerKey: JSON.stringify(composerDraftTarget),
     draftText: prompt,
     readDraft: () => {

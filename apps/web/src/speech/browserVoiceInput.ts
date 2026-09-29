@@ -18,6 +18,7 @@ import workletUrl from "./pcmWorklet.ts?worker&url";
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
+  readonly getProjectName?: () => string | undefined;
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
@@ -157,9 +158,12 @@ export function createBrowserVoiceInputPlatform(input: {
     try {
       const response = await fetch(uri, { signal: transcriptionSignal });
       const pcm = new Uint8Array(await response.arrayBuffer());
-      const result = await runtime.runPromise(transcribeEnvironmentPcm(input.prepared, pcm), {
-        signal: transcriptionSignal,
-      });
+      const result = await runtime.runPromise(
+        transcribeEnvironmentPcm(input.prepared, pcm, input.getProjectName?.()),
+        {
+          signal: transcriptionSignal,
+        },
+      );
       throwIfVoiceTranscriptionAborted(transcriptionSignal);
       return result.text;
     } catch (cause) {
@@ -191,7 +195,7 @@ export function createBrowserVoiceInputPlatform(input: {
         if (!status.supported) throw new VoiceTranscriptionError("unavailable", status.reason);
         if (status.supportsStreaming) {
           const url = await runtime.runPromise(
-            getEnvironmentSpeechStreamUrl(input.prepared),
+            getEnvironmentSpeechStreamUrl(input.prepared, input.getProjectName?.()),
             options,
           );
           const session = openSpeechStream({

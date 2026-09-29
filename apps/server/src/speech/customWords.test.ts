@@ -71,5 +71,10 @@ describe("speech custom words", () => {
     expect(transcriptionCustomWords({ ...settings, speechPostProcessingEnabled: false })).toEqual(
       speechCustomWords.map(({ term }) => term),
     );
+    expect(transcriptionCustomWords(settings, "Acme Studio")).toEqual([
+      "err",
+      "Acme Studio",
+      ...speechCustomWords.slice(0, 98).map(({ term }) => term),
+    ]);
   });
 });

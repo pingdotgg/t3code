@@ -78,7 +78,10 @@ export const getEnvironmentSpeechStatus = (prepared: PreparedConnection) =>
     run: ({ client, headers }) => client.status({ headers }),
   });
 
-export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
+export const getEnvironmentSpeechStreamUrl = (
+  prepared: PreparedConnection,
+  projectName?: string,
+) => {
   let endpoint = prepared.httpBaseUrl;
   return request({
     group: "auth",
@@ -94,6 +97,7 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
       const url = new URL(SPEECH_STREAM_PATH, endpoint);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       url.searchParams.set("wsTicket", ticket);
+      if (projectName) url.searchParams.set("projectName", projectName);
       return url.toString();
     }),
   );
@@ -147,13 +151,21 @@ export const cancelEnvironmentSpeechModelDownload = (
     run: ({ client, headers }) => client.cancelModelDownload({ headers, payload: { modelId } }),
   });
 
-export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint8Array) =>
+export const transcribeEnvironmentPcm = (
+  prepared: PreparedConnection,
+  pcm: Uint8Array,
+  projectName?: string,
+) =>
   request({
     group: "voice",
     prepared,
     method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.transcribe(),
-    run: ({ client, headers }) => client.transcribe({ headers, payload: pcm }),
+    run: ({ client, headers }) =>
+      client.transcribe({
+        headers: { ...headers, ...(projectName ? { "x-t3-project-name": projectName } : {}) },
+        payload: pcm,
+      }),
   });
 
 export const postProcessEnvironmentTranscript = (

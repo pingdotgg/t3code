@@ -21,6 +21,7 @@ const decodeCommand = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStrea
 export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   socket: Socket.Socket,
   speech: Pick<SpeechService.SpeechService["Service"], "startStream">,
+  projectName?: string,
 ) {
   const scope = yield* Scope.Scope;
   const writer = yield* socket.writer;
@@ -62,7 +63,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   const reader = yield* socket.reader;
   yield* Effect.gen(function* () {
     yield* Effect.gen(function* () {
-      stream = yield* speech.startStream.pipe(Scope.provide(scope));
+      stream = yield* speech.startStream(projectName).pipe(Scope.provide(scope));
       yield* send({ type: "ready" });
     }).pipe(
       Effect.catch(() =>
@@ -103,8 +104,11 @@ export const speechStreamRouteLayer = Layer.unwrap(
         if (session._tag === "Failure") return HttpServerResponse.empty({ status: 401 });
         if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
           return HttpServerResponse.empty({ status: 403 });
+        const projectName = new URL(request.url, "http://localhost").searchParams
+          .get("projectName")
+          ?.slice(0, 200);
         const socket = yield* request.upgrade;
-        yield* runSpeechSocket(socket, speech).pipe(Effect.scoped);
+        yield* runSpeechSocket(socket, speech, projectName).pipe(Effect.scoped);
         return HttpServerResponse.empty();
       }),
     );

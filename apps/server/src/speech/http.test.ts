@@ -77,7 +77,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           updateLanguage: () => Effect.succeed({ supported: false as const, reason: "test" }),
           updateTranslation: () => Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
-          startStream: Effect.die("not used"),
+          startStream: () => Effect.die("not used"),
           removeModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
         }),
       ),
@@ -159,7 +159,7 @@ effectIt.effect.each([
         updateLanguage: () => Effect.fail(error),
         updateTranslation: () => Effect.fail(error),
         transcribe: () => Effect.fail(error),
-        startStream: Effect.fail(error),
+        startStream: () => Effect.fail(error),
         removeModel: () => Effect.fail(error),
       });
       const api = HttpApi.make("environment").add(EnvironmentVoiceHttpApi);

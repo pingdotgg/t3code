@@ -40,6 +40,7 @@ type DraftInput = {
 
 type HookInput = {
   readonly environmentId: EnvironmentId;
+  readonly projectName?: string | undefined;
   readonly ownerKey: string;
   readonly draftText: string;
   readonly readDraft: () => DraftInput;
@@ -139,6 +140,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     let controller: VoiceInputController<true>;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
+      getProjectName: () => {
+        const name = latestInputRef.current.projectName;
+        return name && name.length <= 200 ? name : undefined;
+      },
       getMicrophoneId: () => microphoneIdRef.current,
       onLevel: setLevel,
       onDurationLimit: () => void controller.stop(),

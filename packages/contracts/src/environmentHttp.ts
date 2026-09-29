@@ -883,7 +883,10 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   )
   .add(
     HttpApiEndpoint.post("transcribe", "/api/voice/transcribe", {
-      headers: OptionalBearerHeaders,
+      headers: Schema.Struct({
+        ...OptionalBearerHeaders.fields,
+        "x-t3-project-name": Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+      }),
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
       success: EnvironmentSpeechTranscriptionResult,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],

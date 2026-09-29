@@ -243,17 +243,19 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           if (args.payload.byteLength > SpeechService.MAX_SPEECH_BYTES) {
             return yield* failEnvironmentInvalidRequest("invalid_audio");
           }
-          const text = yield* speech.transcribe(args.payload).pipe(
-            Effect.catchTags({
-              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
-              SpeechUnsupportedPlatformError: () =>
-                failEnvironmentInvalidRequest("speech_unavailable"),
-              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
-              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
-              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
-              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
-            }),
-          );
+          const text = yield* speech
+            .transcribe(args.payload, args.headers["x-t3-project-name"])
+            .pipe(
+              Effect.catchTags({
+                SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+                SpeechUnsupportedPlatformError: () =>
+                  failEnvironmentInvalidRequest("speech_unavailable"),
+                SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+                SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
+                SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+                SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+              }),
+            );
           return { text };
         }),
       )
