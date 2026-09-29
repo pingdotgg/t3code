@@ -50,6 +50,14 @@ describe("provider environment selection", () => {
     ).toEqual([primaryId, relayId, sshId]);
   });
 
+  it("restricts device selection to the settings scope and falls back inside that scope", () => {
+    const options = buildProviderEnvironmentOptions(environments, primaryId, [sshId, relayId]);
+    expect(options.map((environment) => environment.environmentId)).toEqual([relayId, sshId]);
+    expect(resolveSelectedProviderEnvironmentId(options, primaryId, primaryId)).toBe(relayId);
+    expect(resolveSelectedProviderEnvironmentId(options, sshId, primaryId)).toBe(sshId);
+    expect(buildProviderEnvironmentOptions(environments, primaryId, [])).toEqual([]);
+  });
+
   it("keeps a valid selection, then falls back to primary or the first environment", () => {
     const options = buildProviderEnvironmentOptions(environments, primaryId);
 

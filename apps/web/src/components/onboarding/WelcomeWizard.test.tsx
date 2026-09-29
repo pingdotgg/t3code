@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   complete: vi.fn(),
   refresh: vi.fn(),
   toast: vi.fn(),
+  providers: [] as unknown[],
+  config: null as unknown,
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
 }));
 vi.mock("../../state/agentSessions", () => ({ agentSessionImport: "import" }));
@@ -40,8 +42,8 @@ vi.mock("../../state/environments", () => {
 });
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
-    providersValueAtom: () => [],
-    configValueAtom: () => null,
+    providersValueAtom: () => mocks.providers,
+    configValueAtom: () => mocks.config,
     refreshProviders: "refresh",
   },
 }));
@@ -74,6 +76,32 @@ vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
 vi.mock("../clerk/useT3ConnectAuthPrompt", () => ({ useT3ConnectAuthPrompt: vi.fn() }));
 vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
 vi.mock("../ThreadTerminalDrawer", () => ({ TerminalViewport: () => null }));
+vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
+vi.mock("../settings/CodexSetupSection", () => ({
+  CodexSetupSection: (props: {
+    instanceId: string;
+    displayName?: string;
+    provider?: { displayName: string };
+    mode: string;
+  }) => (
+    <div data-account={props.instanceId} data-mode={props.mode}>
+      {props.displayName ?? props.provider?.displayName}
+    </div>
+  ),
+  AddManagedCodexAccountDialog: (props: {
+    onAccountCreated: (id: string, name: string) => void;
+    onClose: () => void;
+  }) => (
+    <button
+      onClick={() => {
+        props.onAccountCreated("codex_added", "ChatGPT - Personal");
+        props.onClose();
+      }}
+    >
+      Create test account
+    </button>
+  ),
+}));
 vi.mock("../cloud/CloudEnvironmentConnectList", () => ({
   CloudEnvironmentConnectRows: () => null,
 }));
@@ -88,6 +116,8 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.providers = [];
+  mocks.config = null;
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -206,4 +236,46 @@ it("keeps setup open when saving completion fails and preserves the import warni
       description: "Imported 28 threads. 1 thread could not be imported.",
     }),
   );
+});
+
+it("keeps the added account in place when provider and settings snapshots arrive separately", async () => {
+  const codex = {
+    instanceId: "codex",
+    displayName: "Codex",
+    driver: "codex",
+    installed: true,
+    enabled: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+  };
+  mocks.providers = [codex];
+  mocks.config = {
+    settings: {
+      providerInstances: {},
+      providers: { codex: { enabled: true, setupMode: "existing" } },
+    },
+  };
+  const onDone = vi.fn();
+  const render = () =>
+    act(async () => root.render(<WelcomeWizard localAvailable onDone={onDone} />));
+  await render();
+  await click("Continue");
+  await click("Connect another ChatGPT account");
+  await click("Create test account");
+  const account = document.querySelector('[data-account="codex_added"]');
+  expect(account?.textContent).toBe("ChatGPT - Personal");
+  expect(account?.getAttribute("data-mode")).toBe("managed");
+  mocks.providers = [
+    codex,
+    {
+      ...codex,
+      instanceId: "codex_added",
+      displayName: "ChatGPT - Personal",
+      auth: { status: "unauthenticated" },
+    },
+  ];
+  await render();
+  expect(document.querySelector('[data-account="codex_added"]')).toBe(account);
+  expect(account?.getAttribute("data-mode")).toBe("managed");
+  expect(document.querySelectorAll('[data-account="codex_added"]')).toHaveLength(1);
 });

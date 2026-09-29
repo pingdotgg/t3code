@@ -6,8 +6,11 @@ import {
   projectAxisValue,
   selectEnvironmentAxis,
   selectProjectAxis,
+  selectSingleEnvironmentScope,
   settingsScopeEnvironmentLabel,
 } from "./settingsScopeAxis";
+
+import { resolveSettingsScope } from "./settingsScope";
 
 const first = {
   environmentId: EnvironmentId.make("first"),
@@ -84,5 +87,66 @@ describe("environmentAxisValue", () => {
     expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
     expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
     expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
+  });
+});
+
+describe("single environment provider scope", () => {
+  const environments = [first, second].map((environment) => ({
+    ...environment,
+    connection: { phase: "connected" as const },
+  }));
+
+  it("defaults to the primary environment and resolves exactly one write target", () => {
+    const search = selectSingleEnvironmentScope(
+      {},
+      resolveSettingsScope({}, [], environments),
+      environments,
+      second.environmentId,
+    );
+    expect(search).toEqual({ machine: second.environmentId });
+    expect(resolveSettingsScope(search, [], environments).environmentIds).toEqual([
+      second.environmentId,
+    ]);
+  });
+
+  it("keeps an explicit offline or removed environment instead of switching targets", () => {
+    const search = { machine: "removed" };
+    expect(
+      selectSingleEnvironmentScope(
+        search,
+        resolveSettingsScope(search, [], environments),
+        environments,
+        first.environmentId,
+      ),
+    ).toEqual(search);
+    const offline = environments.map((environment) => ({
+      ...environment,
+      connection: { phase: "offline" as const },
+    }));
+    expect(
+      selectSingleEnvironmentScope(
+        { machine: second.environmentId },
+        resolveSettingsScope({ machine: second.environmentId }, [], offline),
+        offline,
+        first.environmentId,
+      ),
+    ).toEqual({ machine: second.environmentId });
+  });
+
+  it("falls back to a connected candidate while retaining project and checkout narrowing", () => {
+    const search = { project: "app", checkout: "checkout" };
+    const scope = {
+      kind: "all" as const,
+      label: "app",
+      members: [],
+      environmentIds: [second.environmentId],
+    };
+    expect(selectSingleEnvironmentScope(search, scope, environments, first.environmentId)).toEqual({
+      ...search,
+      machine: second.environmentId,
+    });
+    expect(selectSingleEnvironmentScope({}, resolveSettingsScope({}, [], []), [], null)).toEqual(
+      {},
+    );
   });
 });
