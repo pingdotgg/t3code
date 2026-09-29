@@ -42,6 +42,7 @@ import {
   GlobeIcon,
   HammerIcon,
   InfoIcon,
+  LoaderCircle,
   Minimize2Icon,
   PaintbrushIcon,
   RadarIcon,
@@ -113,7 +114,9 @@ import {
 } from "./userMessageTerminalContexts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { selectSidebarThreadSummaryByRef, useStore, type AppState } from "../../store";
-import { ensureEnvironmentApi } from "~/environmentApi";
+import { ensureEnvironmentApi, readEnvironmentApi } from "~/environmentApi";
+import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via useContext.
@@ -526,6 +529,134 @@ type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
+type TimelineAttachment = NonNullable<TimelineMessage["attachments"]>[number];
+
+/**
+ * One attachment tile in a user message. Images that already carry a
+ * server preview URL open directly; anything else mints a signed
+ * `attachment` asset URL on demand so files staged outside the workspace
+ * still open in-app instead of dead-ending on a bare filename.
+ */
+const TimelineAttachmentTile = memo(function TimelineAttachmentTile({
+  attachment,
+  images,
+  environmentId,
+  onImageExpand,
+}: {
+  attachment: TimelineAttachment;
+  images: ReadonlyArray<TimelineAttachment>;
+  environmentId: EnvironmentId;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+}) {
+  const [opening, setOpening] = useState(false);
+  const openAttachment = useCallback(async () => {
+    if (attachment.previewUrl) {
+      const preview = buildExpandedImagePreview(images, attachment.id);
+      if (preview) onImageExpand(preview);
+      return;
+    }
+    if (opening) return;
+    const environmentApi = readEnvironmentApi(environmentId);
+    const httpBaseUrl = getEnvironmentHttpBaseUrl(environmentId);
+    if (!environmentApi || !httpBaseUrl) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open attachment",
+          description: "The environment is unavailable.",
+        }),
+      );
+      return;
+    }
+    setOpening(true);
+    try {
+      const resolved = await Promise.all(
+        images.map(async (image) => {
+          if (image.previewUrl) return image;
+          try {
+            const asset = await environmentApi.assets.createUrl({
+              resource: {
+                _tag: "attachment",
+                attachmentId: image.id,
+                fileName: image.name,
+                mimeType: image.mimeType,
+                disposition: "inline",
+              },
+            });
+            return {
+              ...image,
+              previewUrl: new URL(asset.relativeUrl, httpBaseUrl).toString(),
+            };
+          } catch (error) {
+            // Sibling failures degrade gracefully, but the clicked
+            // attachment's own failure must reach the outer catch so a
+            // transient error reports its real cause instead of reading as
+            // a missing attachment.
+            if (image.id === attachment.id) throw error;
+            return null;
+          }
+        }),
+      );
+      const preview = buildExpandedImagePreview(
+        resolved.filter((image) => image !== null),
+        attachment.id,
+      );
+      if (!preview) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open attachment",
+            description: "The attachment is no longer available.",
+          }),
+        );
+        return;
+      }
+      onImageExpand(preview);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open attachment",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setOpening(false);
+    }
+  }, [attachment, environmentId, images, onImageExpand, opening]);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border/80 bg-background/70">
+      {attachment.previewUrl ? (
+        <button
+          type="button"
+          className="h-full w-full cursor-zoom-in"
+          aria-label={`Preview ${attachment.name}`}
+          onClick={() => void openAttachment()}
+        >
+          <img
+            src={attachment.previewUrl}
+            alt={attachment.name}
+            className="block h-auto max-h-[220px] w-full object-cover"
+          />
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={opening}
+          onClick={() => void openAttachment()}
+          aria-label={opening ? `Opening ${attachment.name}` : `Open ${attachment.name}`}
+          title={opening ? `Opening ${attachment.name}…` : `Open ${attachment.name}`}
+          className="flex min-h-[72px] w-full flex-col items-center justify-center gap-1 px-2 py-3 text-center text-[11px] text-muted-foreground/70 hover:text-foreground disabled:opacity-70"
+        >
+          {opening ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden /> : null}
+          <span className="break-all">{attachment.name}</span>
+        </button>
+      )}
+    </div>
+  );
+});
+
 const TimelineRowContent = memo(function TimelineRowContent(props: { row: TimelineRow }) {
   const ctx = use(TimelineRowCtx);
   const { row } = props;
@@ -619,37 +750,15 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
               >
                 {regularImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {regularImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(regularImages, image.id);
-                                if (!preview) return;
-                                ctx.onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="block h-auto max-h-[220px] w-full object-cover"
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
+                    {regularImages.map((image) => (
+                      <TimelineAttachmentTile
+                        key={image.id}
+                        attachment={image}
+                        images={regularImages}
+                        environmentId={ctx.activeThreadEnvironmentId}
+                        onImageExpand={ctx.onImageExpand}
+                      />
+                    ))}
                   </div>
                 )}
                 {previewAnnotations.map((annotation) => (
