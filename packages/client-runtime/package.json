@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./vcs-configuration": {
+      "types": "./src/vcsConfiguration.ts",
+      "default": "./src/vcsConfiguration.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

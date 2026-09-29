@@ -1,3 +1,4 @@
+import { gitLargeFileThresholdMib } from "@t3tools/client-runtime/vcs-configuration";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -32,7 +33,10 @@ function ConfigurationRow({
   disabled: boolean;
   onWrite: (setting: Setting, value: string | null) => Promise<void>;
 }) {
-  const [value, setValue] = useState(entry.repository ?? entry.effective ?? "");
+  const [value, setValue] = useState(() => {
+    const initial = entry.repository ?? entry.effective;
+    return setting === "largeFile" ? gitLargeFileThresholdMib(initial) : (initial ?? "");
+  });
   const hasOverride = entry.repository !== null;
   return (
     <SettingsRow

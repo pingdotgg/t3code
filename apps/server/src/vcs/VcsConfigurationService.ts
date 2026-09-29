@@ -27,16 +27,17 @@ function validateValue(
 ): Effect.Effect<string, VcsUnsupportedOperationError> {
   const trimmed = value.trim();
   if (setting === "largeFile") {
-    const match = /^([1-9]\d{0,3})(?:\s*(?:m|mib))?$/i.exec(trimmed);
+    const match = /^(\d+(?:\.\d+)?)(?:\s*(?:m|mib))?$/i.exec(trimmed);
     const mebibytes = match ? Number(match[1]) : 0;
-    if (mebibytes >= 1 && mebibytes <= 4096) {
-      return Effect.succeed(`${mebibytes}m`);
+    const bytes = mebibytes * 1024 ** 2;
+    if (bytes > 0 && Number.isSafeInteger(bytes) && mebibytes <= 4096) {
+      return Effect.succeed(Number.isInteger(mebibytes) ? `${mebibytes}m` : String(bytes));
     }
     return Effect.fail(
       new VcsUnsupportedOperationError({
         operation: "VcsConfigurationService.write",
         kind: "git",
-        detail: "Enter a large-file threshold between 1 and 4096 MiB.",
+        detail: "Enter a threshold above 0 and up to 4096 MiB, precise to a whole byte.",
       }),
     );
   }

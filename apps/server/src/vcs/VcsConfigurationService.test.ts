@@ -101,3 +101,30 @@ it.effect("edits and resets an active worktree override", () =>
     assert.equal(after.userName.scope, "local");
   }).pipe(Effect.provide(TestLayer)),
 );
+
+it.effect("saves fractional MiB thresholds without rounding", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-git-config-size-" });
+    yield* runGit(root, ["init", "--initial-branch=main"]);
+    const configuration = yield* VcsConfigurationService.VcsConfigurationService;
+    for (const [value, bytes] of [
+      ["1024", "1073741824"],
+      ["1.5", "1572864"],
+      ["0.5", "524288"],
+      ["0.00000095367431640625", "1"],
+    ]) {
+      yield* configuration.write({ cwd: root, setting: "largeFile", value: value! });
+      assert.equal(
+        (yield* runGit(root, ["config", "--int", "--get", "core.bigFileThreshold"])).trim(),
+        bytes,
+      );
+    }
+    for (const value of ["0", "-1", "0.0000001", "4097"]) {
+      const error = yield* configuration
+        .write({ cwd: root, setting: "largeFile", value })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "VcsUnsupportedOperationError");
+    }
+  }).pipe(Effect.provide(TestLayer)),
+);

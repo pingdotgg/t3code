@@ -1,3 +1,4 @@
+import { gitLargeFileThresholdMib } from "@t3tools/client-runtime/vcs-configuration";
 import {
   type GitActionRequestInput,
   buildMenuItems,
@@ -79,7 +80,10 @@ function ConfigurationField({
   disabled: boolean;
   onWrite: (setting: VcsConfigurationWriteInput["setting"], value: string | null) => void;
 }) {
-  const [value, setValue] = useState(entry.repository ?? entry.effective ?? "");
+  const [value, setValue] = useState(() => {
+    const initial = entry.repository ?? entry.effective;
+    return setting === "largeFile" ? gitLargeFileThresholdMib(initial) : (initial ?? "");
+  });
   return (
     <View className="gap-2 border-t border-border px-4 py-3">
       <Text className="text-sm font-t3-bold">{label}</Text>
