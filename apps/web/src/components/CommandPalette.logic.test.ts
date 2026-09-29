@@ -408,4 +408,49 @@ describe("match source and highlight", () => {
     const parts = splitPaletteHighlightParts("Fix Navbar Spacing", "navbar");
     expect(parts.filter((part) => part.highlighted).map((part) => part.text)).toEqual(["Navbar"]);
   });
+
+  it("badges the best-scoring term when an early field matches weakly", () => {
+    const items = buildThreadActionItems({
+      threads: [makeThread({ title: "Kickoff notes for the quarterly planning session" })],
+      projectTitleById: new Map([[PROJECT_ID, "Planning"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    expect(getPaletteMatchSource(items[0]!, "planning")).toBe("Project");
+  });
+
+  it("badges PR matches for full PR URLs with query suffixes", () => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({
+          title: "Implementation",
+          pullRequests: [
+            {
+              pullRequest: {
+                number: 10839,
+                url: "https://github.com/pingdotgg/t3code/pull/10839",
+                title: "Find linked PR threads",
+                baseBranch: "main",
+                headBranch: "feat/search",
+                state: "open",
+              },
+              source: "manual",
+              linkedAt: "2026-09-08T00:00:00Z",
+            },
+          ],
+        }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    expect(
+      getPaletteMatchSource(
+        items[0]!,
+        "https://github.com/pingdotgg/t3code/pull/10839?tab=files#diff-123",
+      ),
+    ).toBe("PR");
+  });
 });

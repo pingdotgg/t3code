@@ -345,12 +345,13 @@ function scorePaletteToken(field: string, token: string, fieldBase: number): num
 function scorePaletteIndex(
   index: CommandPaletteSearchIndex,
   tokens: ReadonlyArray<string>,
-): { score: number; bestTermIndex: number } | null {
+): { score: number; bestTermIndex: number; sourceTermIndex: number } | null {
   if (index.normalizedTerms.length === 0 || tokens.length === 0) {
     return null;
   }
   let total = 0;
   let bestScore = Number.POSITIVE_INFINITY;
+  let sourceTermIndex = 0;
   let bestTermIndex = Number.POSITIVE_INFINITY;
   for (const token of tokens) {
     let tokenBest: number | null = null;
@@ -374,9 +375,10 @@ function scorePaletteIndex(
     total += tokenBest;
     if (tokenBest < bestScore) {
       bestScore = tokenBest;
+      sourceTermIndex = tokenBestIndex;
     }
   }
-  return { score: total, bestTermIndex };
+  return { score: total, bestTermIndex, sourceTermIndex };
 }
 
 export function tokenizePaletteQuery(normalizedQuery: string): string[] {
@@ -389,7 +391,9 @@ export function getPaletteMatchSource(
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
   normalizedQuery: string,
 ): PaletteMatchSource | null {
-  const tokens = tokenizePaletteQuery(normalizedQuery);
+  const tokens = tokenizePaletteQuery(
+    normalizeSearchText(normalizeThreadPullRequestSearchQuery(normalizedQuery) ?? normalizedQuery),
+  );
   if (tokens.length === 0) {
     return null;
   }
@@ -399,8 +403,8 @@ export function getPaletteMatchSource(
     return null;
   }
   const sources = item.searchTermSources;
-  if (sources && sources[scored.bestTermIndex]) {
-    return sources[scored.bestTermIndex] ?? null;
+  if (sources && sources[scored.sourceTermIndex]) {
+    return sources[scored.sourceTermIndex] ?? null;
   }
   if (item.value.startsWith("transcript:")) {
     return "Content";
