@@ -56,6 +56,29 @@ update can roll back to the previous version. If the update still fails:
 2. Check that you updated the server's machine, not only the device you are using.
 3. For a command-line server, stop it and relaunch the exact version shown in the notice.
 
+## Provider CLI updates and models
+
+Updating a provider in **Settings → Providers** updates its CLI on the selected
+environment. After the update command succeeds, T3 refreshes its model manifest
+and clears its discovery caches for enabled instances of that provider. Each
+instance is checked with its own configuration, including instances that share
+an installation. Results reach other connected clients automatically. The
+existing update progress and verification result remain visible while this runs.
+
+After updating a CLI outside T3, use **Refresh** in provider settings to refresh
+models. On mobile, pull to refresh the thread settings. Refresh keeps custom
+models, favorites, hidden models, ordering, and your selected model. A model
+hidden in your preferences stays hidden; showing a model in a catalog does not
+guarantee that your account can use it. Remote manifest fetching still follows
+the provider update-check setting. Provider-owned caches are not cleared.
+
+Model refresh does not replace an already-running provider session. Existing
+chats can keep using the old CLI process until that session ends and is resumed.
+T3 does not yet identify those sessions or offer a coordinated refresh when they
+become idle. An update does not automatically interrupt a turn or change
+credentials. If discovery fails, check the provider status and retry **Refresh**;
+T3 retains the previous catalog where the provider supports recovery.
+
 ## Mobile updates
 
 To update an environment from your phone, open **Settings → Environments** and
