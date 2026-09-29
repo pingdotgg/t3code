@@ -271,6 +271,7 @@ export type DefaultThemePreference = typeof DefaultThemePreference.Type;
  */
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
+export const DEFAULT_BROWSER_MUTE_NEW_PREVIEWS = false;
 export const BROWSER_RECORDING_FRAME_RATES = [30, 60] as const;
 export const BrowserRecordingFrameRate = Schema.Literals(BROWSER_RECORDING_FRAME_RATES);
 export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
@@ -347,6 +348,10 @@ export const ClientSettingsSchema = Schema.Struct({
    */
   browserAutoShowFloatingPreview: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
+  ),
+  /** Whether new preview tabs start muted. The tab's mute toggle still overrides. */
+  browserMuteNewPreviews: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_MUTE_NEW_PREVIEWS)),
   ),
   /**
    * User-created browser profiles. The built-in Default and Incognito profiles
@@ -1606,6 +1611,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
+  browserMuteNewPreviews: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),

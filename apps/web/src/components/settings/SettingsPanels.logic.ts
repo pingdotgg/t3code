@@ -119,6 +119,7 @@ export type BrowserDefaultSettings = Pick<
   | "browserRecordingShowMousePresses"
   | "browserLinkTarget"
   | "browserAutoShowFloatingPreview"
+  | "browserMuteNewPreviews"
 >;
 
 /**
@@ -166,6 +167,9 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
       ? ["Floating preview"]
+      : []),
+    ...(settings.browserMuteNewPreviews !== DEFAULT_UNIFIED_SETTINGS.browserMuteNewPreviews
+      ? ["Mute new previews"]
       : []),
   ];
 }

@@ -663,6 +663,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
   {
+    id: "browser-mute-new-previews",
+    title: "Mute new browser previews",
+    to: "/settings/integrations",
+    searchTerms: ["browser preview audio sound silent mute tabs"],
+  },
+  {
     id: "automatic-pull",
     title: "Automatically pull",
     to: "/settings/source-control",

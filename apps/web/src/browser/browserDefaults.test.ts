@@ -19,6 +19,7 @@ const withDefaultProfile = (browserDefaultProfileId: string) => {
     browserDefaultZoomFactor: 1,
     browserDefaultAppearance: "system",
     browserAutoShowFloatingPreview: true,
+    browserMuteNewPreviews: false,
     browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
     browserDefaultProfileId,
   };

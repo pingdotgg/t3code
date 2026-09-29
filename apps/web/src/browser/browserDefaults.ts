@@ -35,6 +35,7 @@ export interface BrowserDefaults {
   readonly zoomFactor: number;
   readonly appearance: PreviewAppearancePreference;
   readonly autoShowFloatingPreview: boolean;
+  readonly muteNewPreviews: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
   readonly profileId: string;
 }
@@ -44,6 +45,7 @@ const toBrowserDefaults = (settings: {
   readonly browserDefaultZoomFactor: number;
   readonly browserDefaultAppearance: PreviewAppearancePreference;
   readonly browserAutoShowFloatingPreview: boolean;
+  readonly browserMuteNewPreviews: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
 }): BrowserDefaults => {
@@ -53,6 +55,7 @@ const toBrowserDefaults = (settings: {
     zoomFactor: settings.browserDefaultZoomFactor,
     appearance: settings.browserDefaultAppearance,
     autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
+    muteNewPreviews: settings.browserMuteNewPreviews,
     profiles,
     // A default pointing at a deleted profile falls back rather than opening
     // tabs into a partition with no profile behind it.
@@ -91,14 +94,18 @@ export function useBrowserDefaults(): BrowserDefaults {
 }
 
 /**
- * The zoom/appearance half of the defaults, in the shape `createTab` takes.
+ * The zoom/appearance/mute half of the defaults, in the shape `createTab` takes.
  * Passing these at creation rather than after registration keeps the guest from
- * painting a frame at 100%/system first.
+ * painting a frame at 100%/system first, or playing audio before it is muted.
  */
 export function browserDefaultTabState(
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): DesktopPreviewTabDefaults {
-  return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
+  return {
+    zoomFactor: defaults.zoomFactor,
+    colorScheme: defaults.appearance,
+    audioMuted: defaults.muteNewPreviews,
+  };
 }
 
 /**

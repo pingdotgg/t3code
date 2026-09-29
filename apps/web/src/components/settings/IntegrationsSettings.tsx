@@ -20,6 +20,7 @@ import {
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
+  DEFAULT_BROWSER_MUTE_NEW_PREVIEWS,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_LINK_TARGET,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
@@ -888,6 +889,38 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
+function BrowserMuteNewPreviewsSetting({ disabled }: { readonly disabled: boolean }) {
+  const muteNewPreviews = useClientSettings((settings) => settings.browserMuteNewPreviews);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-mute-new-previews")}
+      description="Always mute new browser previews. Unmute a tab from its toolbar."
+      resetAction={
+        !disabled && muteNewPreviews !== DEFAULT_BROWSER_MUTE_NEW_PREVIEWS ? (
+          <SettingResetButton
+            label="mute new previews"
+            onClick={() =>
+              updateSettings({ browserMuteNewPreviews: DEFAULT_BROWSER_MUTE_NEW_PREVIEWS })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          disabled={disabled}
+          checked={muteNewPreviews}
+          onCheckedChange={(checked) =>
+            updateSettings({ browserMuteNewPreviews: Boolean(checked) })
+          }
+          aria-label="Mute new browser previews"
+        />
+      }
+    />
+  );
+}
+
 /**
  * Profile list, its header menu, and the import flow.
  *
@@ -1438,6 +1471,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
       <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
+      <BrowserMuteNewPreviewsSetting disabled={previewDefaultsDisabled} />
     </>
   );
 

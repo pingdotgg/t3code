@@ -2125,7 +2125,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           zoomFactor: normalizeZoomFactor(defaults?.zoomFactor),
           pictureInPicture: false,
           colorScheme: defaults?.colorScheme ?? "system",
-          audioMuted: false,
+          audioMuted: defaults?.audioMuted ?? false,
           audible: false,
           controller: "none",
           updatedAt,
