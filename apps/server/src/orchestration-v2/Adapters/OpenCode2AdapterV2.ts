@@ -31,19 +31,16 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
-import * as P from "effect/Predicate";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
 import type { OpenCode2StreamEvent } from "../../provider/opencode2/OpenCode2Client.ts";
-import {
-  OpenCode2Server,
-  type OpenCode2Connection,
-} from "../../provider/opencode2/OpenCode2Server.ts";
+import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
 import {
   parseOpenCodeModelSlug,
   type OpenCodeRuntimeError,
@@ -52,7 +49,7 @@ import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts"
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
-import { IdAllocatorV2 } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -196,7 +193,7 @@ interface ThreadState {
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   /** What the native session runs now, so a changed selection is switched before prompting. */
-  model: ReturnType<typeof modelRef>;
+  model: ModelRef | undefined;
 }
 
 const protocolError = (detail: string) =>
@@ -235,36 +232,58 @@ export const OPENCODE_2_FULL_ACCESS_ONLY =
 const QUESTION_REPLY = "Questions aren't supported by this OpenCode integration yet.";
 
 const INTERRUPT_TIMEOUT = "10 seconds";
+const REQUEST_REPLY_TIMEOUT = "10 seconds";
 
-/** The model OpenCode should run for a `provider/model` slug and its reasoning variant. */
+/** Whether an answer to a paused request reached the server, trying twice. */
+const deliver = <E>(answer: Effect.Effect<void, E>) =>
+  answer.pipe(
+    Effect.retry({ times: 1 }),
+    Effect.timeout(REQUEST_REPLY_TIMEOUT),
+    Effect.exit,
+    Effect.map(Exit.isSuccess),
+  );
+
+type ModelRef = ReturnType<typeof Model.Ref.make>;
+
+/**
+ * The model OpenCode should run for a `provider/model` slug and its reasoning
+ * variant. Any other slug fails: sending none would run OpenCode's default
+ * while T3 records the requested model.
+ */
 const modelRef = (selection: ProviderAdapterV2TurnInput["modelSelection"]) => {
   const parsed = parseOpenCodeModelSlug(selection.model);
-  if (parsed === null) return undefined;
+  if (parsed === null) {
+    return Effect.fail(
+      protocolError(`OpenCode model '${selection.model}' must use provider/model format`),
+    );
+  }
   const variant = getModelSelectionStringOptionValue(selection, "variant");
-  return Model.Ref.make({
-    providerID: Provider.ID.make(parsed.providerID),
-    id: Model.ID.make(parsed.modelID),
-    ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
-  });
+  return Effect.succeed(
+    Model.Ref.make({
+      providerID: Provider.ID.make(parsed.providerID),
+      id: Model.ID.make(parsed.modelID),
+      ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+    }),
+  );
 };
-const sameModel = (left: ReturnType<typeof modelRef>, right: ReturnType<typeof modelRef>) =>
-  left?.providerID === right?.providerID &&
-  left?.id === right?.id &&
-  (left?.variant ?? "default") === (right?.variant ?? "default");
+const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
+  left.providerID === right?.providerID &&
+  left.id === right?.id &&
+  (left.variant ?? "default") === (right?.variant ?? "default");
 
 /**
  * The adapter for one provider instance. It talks to the instance's
- * {@link OpenCode2Server}, which the driver builds from the instance's settings.
+ * {@link OpenCode2Server.OpenCode2Server}, which the driver builds from the instance's settings.
  */
 export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
-  const server = yield* OpenCode2Server;
-  const idAllocator = yield* IdAllocatorV2;
+  const server = yield* OpenCode2Server.OpenCode2Server;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
   const driver = OPENCODE_PROVIDER;
 
   const openSession = Effect.fn("OpenCode2Adapter.openSession")(function* (
     input: Parameters<ProviderAdapterV2Shape["openSession"]>[0],
-    connection: OpenCode2Connection,
+    connection: OpenCode2Server.OpenCode2Connection,
   ) {
     const { client } = connection;
     const now = yield* DateTime.now;
@@ -529,31 +548,55 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    // Answers a permission or form T3 cannot show yet, so a session never waits on it.
-    const refuseRequest = (event: EventOf<"permission.asked"> | EventOf<"form.created">) => {
-      const refusal =
-        event.type === "permission.asked"
-          ? client.permission
-              .reply({
-                sessionID: event.data.sessionID,
-                requestID: event.data.id,
-                decision: "reject",
-                message: "T3 Code cannot answer this request for OpenCode 2 yet.",
-              })
-              .pipe(Effect.ignore({ log: true }))
-          : client.session.form
-              .reply({
-                sessionID: event.data.form.sessionID,
-                formID: event.data.form.id,
-                answer: Object.fromEntries(
-                  event.data.form.fields.map((field) => [field.key, QUESTION_REPLY]),
-                ),
-              })
-              .pipe(Effect.ignore({ log: true }));
-      return Effect.logWarning("Answered an OpenCode request this runtime cannot show yet.", {
+    /**
+     * Answers a permission or form T3 cannot show yet, so a session never waits
+     * on it. An answer that cannot be delivered leaves OpenCode paused, so the
+     * turn it would block ends as failed and the session is stopped instead.
+     */
+    const refuseRequest = Effect.fnUntraced(function* (
+      event: EventOf<"permission.asked"> | EventOf<"form.created">,
+    ) {
+      const sessionId =
+        event.type === "permission.asked" ? event.data.sessionID : event.data.form.sessionID;
+      yield* Effect.logWarning("Answered an OpenCode request this runtime cannot show yet.", {
         type: event.type,
-      }).pipe(Effect.andThen(refusal));
-    };
+      });
+      const delivered = yield* event.type === "permission.asked"
+        ? deliver(
+            client.permission.reply({
+              sessionID: event.data.sessionID,
+              requestID: event.data.id,
+              decision: "reject",
+              message: "T3 Code cannot answer this request for OpenCode 2 yet.",
+            }),
+          )
+        : deliver(
+            client.session.form.reply({
+              sessionID: event.data.form.sessionID,
+              formID: event.data.form.id,
+              answer: Object.fromEntries(
+                event.data.form.fields.map((field) => [field.key, QUESTION_REPLY]),
+              ),
+            }),
+          );
+      if (delivered) return;
+      yield* Effect.logWarning("Could not answer an OpenCode request; ending its turn.", {
+        type: event.type,
+      });
+      const state = threads.get(sessionId);
+      if (state !== undefined) {
+        yield* finishTurn(state, {
+          status: "failed",
+          failure: makeProviderFailure({
+            message: "OpenCode is waiting on a request T3 Code couldn't answer.",
+            class: "provider_error",
+          }),
+        });
+      }
+      yield* client.session
+        .interrupt({ sessionID: Session.ID.make(sessionId) })
+        .pipe(Effect.timeout("2 seconds"), Effect.ignore({ log: true }));
+    });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2StreamEvent) {
       if (event.type === "unreadable.execution.ended") {
@@ -683,7 +726,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const register = (
       providerThread: OrchestrationV2ProviderThread,
       sessionId: string,
-      model: ReturnType<typeof modelRef>,
+      model: ModelRef | undefined,
     ) => {
       const existing = threads.get(sessionId);
       if (existing !== undefined) {
@@ -728,12 +771,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               providerThread: threadInput.existingProviderThread,
             });
           }
-          const model = modelRef(threadInput.modelSelection);
+          const model = yield* modelRef(threadInput.modelSelection);
           const created = yield* client.session.create({
             location: Location.PublicRef.make({
               directory: AbsolutePath.make(threadInput.runtimePolicy.cwd ?? serverConfig.cwd),
             }),
-            ...(model === undefined ? {} : { model }),
+            model,
             permissions: SESSION_PERMISSIONS,
           });
           const createdAt = yield* DateTime.now;
@@ -818,8 +861,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           // A selection changed since the last turn applies now; OpenCode keeps
           // the session's model otherwise.
-          const model = modelRef(turnInput.modelSelection);
-          if (model !== undefined && !sameModel(model, state.model)) {
+          const model = yield* modelRef(turnInput.modelSelection);
+          if (!sameModel(model, state.model)) {
             yield* client.session.switchModel({ sessionID: Session.ID.make(sessionId), model });
             state.model = model;
           }
@@ -864,11 +907,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           yield* client.session
             .prompt({ sessionID: Session.ID.make(sessionId), text: prompt(turnInput) })
             .pipe(
-              Effect.catchIf(
-                (cause) => P.isTagged(cause, "SessionNotFoundError"),
-                // Deleted outside T3: the thread is broken, and forgetting it makes
-                // the next turn resume, fail, and recreate it with a handoff.
-                () =>
+              // Deleted outside T3: the thread is broken, and forgetting it makes
+              // the next turn resume, fail, and recreate it with a handoff.
+              Effect.catchTags({
+                SessionNotFoundError: () =>
                   finishTurn(
                     state,
                     {
@@ -881,7 +923,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     },
                     "broken",
                   ).pipe(Effect.andThen(Effect.sync(() => threads.delete(sessionId)))),
-              ),
+              }),
               Effect.tapError((cause) =>
                 state.active === turn
                   ? finishTurn(state, {
@@ -1016,7 +1058,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // spawned server is not idle-stopped under a long tool call.
     openSession: (input) =>
       Effect.gen(function* () {
-        const lent = yield* Deferred.make<OpenCode2Connection, OpenCodeRuntimeError>();
+        const lent = yield* Deferred.make<
+          OpenCode2Server.OpenCode2Connection,
+          OpenCodeRuntimeError
+        >();
         yield* server
           .withConnection((connection) =>
             Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),

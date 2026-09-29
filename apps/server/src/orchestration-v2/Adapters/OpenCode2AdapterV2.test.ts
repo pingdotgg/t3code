@@ -416,6 +416,90 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("refuses a model slug that is not provider/model before creating a session", () =>
+    Effect.gen(function* () {
+      // Nothing but the session's opening is expected: no create, no prompt.
+      const runtime = yield* openCode2ReplayRuntime([out("event.subscribe")]);
+      const created = yield* runtime
+        .ensureThread({
+          threadId,
+          modelSelection: { instanceId, model: "big-pickle" },
+          runtimePolicy: policy(),
+        })
+        .pipe(Effect.flip);
+      assert.include(
+        String((created.cause as { detail?: string } | undefined)?.detail),
+        "OpenCode model 'big-pickle' must use provider/model format",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a turn whose model slug is not provider/model before prompting", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([]);
+      const refused = yield* runtime
+        .startTurn(turnInput(thread, { instanceId, model: "big-pickle" }))
+        .pipe(Effect.flip);
+      assert.include(
+        String((refused.cause as { detail?: string } | undefined)?.detail),
+        "must use provider/model format",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("ends the turn when a permission it refuses cannot be answered", () =>
+    Effect.gen(function* () {
+      const failedReply = reply("permission.reply", {
+        status: 500,
+        body: { _tag: "UnknownError", message: "reply failed" },
+      });
+      const replyOut = out("permission.reply", {
+        sessionID: SESSION,
+        requestID: "per_0eb7c4d7e001Pyt8o50Vi4KrOO",
+        decision: "reject",
+        message: "<any>",
+      });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_permissionasked0",
+              created: 1,
+              type: "permission.asked",
+              data: {
+                id: "per_0eb7c4d7e001Pyt8o50Vi4KrOO",
+                sessionID: SESSION,
+                action: "shell",
+                resources: ["echo FIRST"],
+              },
+            },
+          },
+        },
+        // One try and one retry, then the turn ends and the session is stopped.
+        replyOut,
+        failedReply,
+        replyOut,
+        failedReply,
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.equal(
+        ended?.status === "failed" ? ended.failure.message : undefined,
+        "OpenCode is waiting on a request T3 Code couldn't answer.",
+      );
+      // Let the best-effort interrupt reach the server before the scope closes.
+      for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("answers a question form instead of cancelling it", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
