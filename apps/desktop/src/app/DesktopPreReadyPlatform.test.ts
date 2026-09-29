@@ -14,6 +14,10 @@ const {
   mkdirSyncMock,
   writeFileSyncMock,
   copyFileSyncMock,
+  statSyncMock,
+  setPathMock,
+  onceMock,
+  encryptionAvailableMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -23,10 +27,16 @@ const {
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   copyFileSyncMock: vi.fn(),
+  statSyncMock: vi.fn(),
+  setPathMock: vi.fn(),
+  onceMock: vi.fn(),
+  encryptionAvailableMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
   app: {
+    setPath: setPathMock,
+    once: onceMock,
     setDesktopName: setDesktopNameMock,
     getVersion: () => "0.0.37",
     isPackaged: true,
@@ -37,12 +47,14 @@ vi.mock("electron", () => ({
       hasSwitch: hasSwitchMock,
     },
   },
+  safeStorage: { isEncryptionAvailable: encryptionAvailableMock },
   protocol: {
     registerSchemesAsPrivileged: registerSchemesMock,
   },
 }));
 
 vi.mock("node:fs", () => ({
+  statSync: statSyncMock,
   readFileSync: () => "{}",
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
@@ -61,6 +73,77 @@ describe("DesktopPreReadyPlatform", () => {
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
     copyFileSyncMock.mockReset();
+    statSyncMock.mockReset();
+    setPathMock.mockReset();
+    onceMock.mockReset();
+    encryptionAvailableMock.mockReset();
+  });
+
+  for (const development of [false, true]) {
+    for (const legacyExists of [false, true]) {
+      it.effect(
+        `selects the ${development ? "development" : "packaged"} ${legacyExists ? "legacy" : "current"} Windows key profile before startup yields`,
+        () => {
+          vi.stubEnv("APPDATA", "C:\\Users\\test\\AppData\\Roaming");
+          vi.stubEnv("VITE_DEV_SERVER_URL", development ? "http://localhost:5173" : "");
+          const root = "C:\\Users\\test\\AppData\\Roaming";
+          const legacy = `${root}\\${development ? "T3 Code (Dev)" : "T3 Code (Alpha)"}`;
+          const expected = legacyExists
+            ? legacy
+            : `${root}\\${development ? "t3code-dev" : "t3code"}`;
+          statSyncMock.mockImplementation((path: string) =>
+            path === legacy && legacyExists ? {} : undefined,
+          );
+          let selectedProfile = "default-electron-profile";
+          let keyProfile: string | undefined;
+          const readyListeners: Array<() => void> = [];
+          setPathMock.mockImplementation((_name: string, path: string) => {
+            selectedProfile = path;
+          });
+          onceMock.mockImplementation((event: string, listener: () => void) => {
+            assert.equal(event, "ready");
+            readyListeners.push(listener);
+          });
+          encryptionAvailableMock.mockImplementation(() => {
+            keyProfile ??= selectedProfile;
+            return true;
+          });
+
+          return Effect.scoped(
+            Effect.gen(function* () {
+              const ready = Promise.resolve().then(() => {
+                for (const listener of readyListeners) listener();
+                return selectedProfile;
+              });
+              yield* Layer.build(
+                DesktopPreReadyPlatform.layer.pipe(
+                  Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+                ),
+              );
+              assert.equal(yield* Effect.promise(() => ready), expected);
+              assert.equal(keyProfile, expected);
+              assert.deepEqual(setPathMock.mock.calls, [["userData", expected]]);
+              assert.equal(encryptionAvailableMock.mock.calls.length, 1);
+            }),
+          ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+        },
+      );
+    }
+  }
+
+  it.effect("does not switch profiles when inspecting the legacy Windows profile fails", () => {
+    const error = new Error("profile permission denied");
+    statSyncMock.mockImplementation(() => {
+      throw error;
+    });
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.catchDefect((cause) => Effect.succeed(cause)),
+      Effect.map((result) => {
+        assert.strictEqual(result, error);
+        assert.equal(setPathMock.mock.calls.length, 0);
+      }),
+    );
   });
 
   it.effect("preserves an explicit Linux password-store switch", () => {

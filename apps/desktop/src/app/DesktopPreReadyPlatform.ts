@@ -52,6 +52,25 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
+    if (platform === "win32") {
+      const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL?.trim());
+      const appDataDirectory =
+        process.env.APPDATA?.trim() || NodePath.win32.join(NodeOS.homedir(), "AppData", "Roaming");
+      const legacyPath = NodePath.win32.join(
+        appDataDirectory,
+        isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
+      );
+      // Async profile discovery can yield until Electron initializes a different
+      // Local State key. Select the existing profile before the first yield.
+      Electron.app.setPath(
+        "userData",
+        NodeFS.statSync(legacyPath, { throwIfNoEntry: false }) !== undefined
+          ? legacyPath
+          : NodePath.win32.join(appDataDirectory, isDevelopment ? "t3code-dev" : "t3code"),
+      );
+      Electron.app.once("ready", () => Electron.safeStorage.isEncryptionAvailable());
+    }
+
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
