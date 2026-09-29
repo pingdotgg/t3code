@@ -175,6 +175,93 @@ describeJj("JjReviewDiff preview", () => {
     ),
   );
 
+  it.effect("compares a merge change with all parents and expands its own edits", () =>
+    withRepo(
+      Effect.fnUntraced(function* (context) {
+        yield* write(context, "base.txt", "base\n");
+        yield* runJj(context.root, ["commit", "-m", "base"]);
+        const base = yield* commitId(context.root, "@-");
+        yield* write(context, "left.txt", "left\n");
+        yield* runJj(context.root, ["commit", "-m", "left"]);
+        const left = yield* commitId(context.root, "@-");
+        yield* runJj(context.root, ["new", base, "-m", "right"]);
+        yield* write(context, "right.txt", "inherited\n");
+        yield* runJj(context.root, ["commit", "-m", "right"]);
+        const right = yield* commitId(context.root, "@-");
+        yield* runJj(context.root, ["new", left, right, "-m", "merge"]);
+
+        const clean = yield* context.getDiffPreview({ cwd: context.root });
+        assert.deepEqual(clean.sources[0]!.files, []);
+        assert.equal(clean.sources[0]!.diff, "");
+
+        yield* write(context, "right.txt", "edited without newline");
+        const edited = yield* context.getDiffPreview({ cwd: context.root });
+        assert.deepEqual(edited.sources[0]!.files, [
+          { path: "right.txt", previousPath: null, additions: 1, deletions: 1 },
+        ]);
+        assert.include(edited.sources[0]!.diff, "-inherited");
+        assert.notInclude(edited.sources[0]!.diff, "left.txt");
+        assert.deepEqual(
+          yield* context.getDiffFileContents({
+            cwd: context.root,
+            sourceKind: "working-tree",
+            baseRef: "@-",
+            headRef: "@",
+            changeType: "change",
+            oldPath: "right.txt",
+            newPath: "right.txt",
+          }),
+          { oldContents: "inherited\n", newContents: "edited without newline" },
+        );
+      }),
+    ),
+  );
+
+  it.effect("keeps binary metadata and empty-file expansion correct in merge changes", () =>
+    withRepo(
+      Effect.fnUntraced(function* (context) {
+        yield* write(context, "base.txt", "base\n");
+        yield* runJj(context.root, ["commit", "-m", "base"]);
+        const base = yield* commitId(context.root, "@-");
+        yield* write(context, "left.txt", "left\n");
+        yield* runJj(context.root, ["commit", "-m", "left"]);
+        const left = yield* commitId(context.root, "@-");
+        yield* runJj(context.root, ["new", base, "-m", "right"]);
+        yield* write(context, "empty.txt", "");
+        yield* runJj(context.root, ["commit", "-m", "right"]);
+        const right = yield* commitId(context.root, "@-");
+        yield* runJj(context.root, ["new", left, right, "-m", "merge"]);
+        yield* write(context, "binary.bin", "a\0b");
+        yield* context.fileSystem.remove(context.path.join(context.root, "empty.txt"));
+        const preview = yield* context.getDiffPreview({ cwd: context.root });
+        assert.deepEqual(preview.sources[0]!.files, [
+          { path: "binary.bin", previousPath: null, additions: 0, deletions: 0 },
+          { path: "empty.txt", previousPath: null, additions: 0, deletions: 0 },
+        ]);
+        assert.deepEqual(
+          yield* context.getDiffFileContents({
+            cwd: context.root,
+            sourceKind: "working-tree",
+            changeType: "deleted",
+            oldPath: "empty.txt",
+            newPath: "empty.txt",
+          }),
+          { oldContents: "", newContents: "" },
+        );
+        const failure = yield* context
+          .getDiffFileContents({
+            cwd: context.root,
+            sourceKind: "working-tree",
+            changeType: "new",
+            oldPath: "binary.bin",
+            newPath: "binary.bin",
+          })
+          .pipe(Effect.flip);
+        assert.equal(failure._tag, "VcsProcessExitError");
+      }),
+    ),
+  );
+
   it.effect("marks a conflicted working copy in the source title", () =>
     withRepo(
       Effect.fnUntraced(function* (context) {

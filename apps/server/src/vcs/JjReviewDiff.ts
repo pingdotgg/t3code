@@ -12,9 +12,9 @@ import {
 } from "@t3tools/contracts";
 import { parseReviewNumstat, PATCH_RENDER_PREFIX_ARGS } from "./GitVcsDriverCore.ts";
 import { EMPTY_TREE_OID, JJ_CONFLICT_PATHSPECS } from "./JjCheckpoints.ts";
-import { colocatedGitCommand } from "./JjProcess.ts";
+import { colocatedGitCommand, jjCommand } from "./JjProcess.ts";
 import type { JjChange } from "./JjVcsDriver.ts";
-import { refNameToRevset } from "./JjRevset.ts";
+import { literalFilesetPath, refNameToRevset } from "./JjRevset.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
 import type * as VcsProcess from "./VcsProcess.ts";
 
@@ -42,6 +42,30 @@ function hashDiff(diff: string, files: ReadonlyArray<ReviewDiffFileStat>): strin
   return NodeCrypto.createHash("sha256")
     .update(JSON.stringify([diff, files]), "utf8")
     .digest("hex");
+}
+
+function fullContextContents(patch: string): { oldContents: string; newContents: string } | null {
+  let inHunk = false;
+  let previousPrefix = "";
+  let oldContents = "";
+  let newContents = "";
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@ ")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    const prefix = line[0];
+    if (line === "\\ No newline at end of file") {
+      if (previousPrefix !== "+") oldContents = oldContents.slice(0, -1);
+      if (previousPrefix !== "-") newContents = newContents.slice(0, -1);
+    } else if (prefix === " " || prefix === "-" || prefix === "+") {
+      if (prefix !== "+") oldContents += `${line.slice(1)}\n`;
+      if (prefix !== "-") newContents += `${line.slice(1)}\n`;
+      previousPrefix = prefix;
+    }
+  }
+  return inHunk ? { oldContents, newContents } : null;
 }
 
 export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
@@ -96,6 +120,57 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
     return { ...patch, files };
   });
 
+  const runMergedParentDiff = Effect.fn("JjVcsDriver.getDiffPreview.mergedParents")(function* (
+    operation: string,
+    gitDir: string,
+    cwd: string,
+    commitId: string,
+    ignoreWhitespace: boolean | undefined,
+    file: ReviewDiffPreviewInput["file"],
+  ) {
+    const args = [
+      "diff",
+      "-r",
+      commitId,
+      "--git",
+      ...(ignoreWhitespace ? ["--ignore-all-space"] : []),
+    ];
+    const paths = file
+      ? [
+          "--",
+          literalFilesetPath(file.path),
+          ...(file.previousPath ? [literalFilesetPath(file.previousPath)] : []),
+        ]
+      : [];
+    // A zero-context native patch supplies complete numstat without materializing parent trees.
+    const metadata = yield* jjCommand(
+      deps.process,
+      operation,
+      cwd,
+      [...args, "--context=0", ...paths],
+      { ignoreWorkingCopy: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    );
+    const stats =
+      metadata.stdout === ""
+        ? ""
+        : (yield* colocatedGitCommand(
+            deps.process,
+            operation,
+            { gitDir, cwd },
+            ["apply", "--numstat", "-z"],
+            { stdin: metadata.stdout, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+          )).stdout;
+    const files = parseReviewNumstat(stats);
+    if (files.length === 0) return { stdout: "", stdoutTruncated: false, files };
+    const patch = yield* jjCommand(deps.process, operation, cwd, [...args, ...paths], {
+      ignoreWorkingCopy: true,
+      maxOutputBytes: file ? REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES : REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+      outputMode: "truncate",
+      appendTruncationMarker: true,
+    });
+    return { ...patch, files };
+  });
+
   const resolveBaseChange = Effect.fn("JjVcsDriver.getDiffPreview.resolveBase")(function* (
     cwd: string,
     baseRef: string | undefined,
@@ -120,14 +195,23 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
       const workingTreeResult =
         input.file?.sourceKind === "branch-range"
           ? empty
-          : yield* runDiff(
-              operation,
-              gitDir,
-              input.cwd,
-              [workingTreeBase, change.commitId],
-              input.ignoreWhitespace,
-              input.file,
-            );
+          : change.parentCommitIds.length > 1
+            ? yield* runMergedParentDiff(
+                operation,
+                gitDir,
+                input.cwd,
+                change.commitId,
+                input.ignoreWhitespace,
+                input.file,
+              )
+            : yield* runDiff(
+                operation,
+                gitDir,
+                input.cwd,
+                [workingTreeBase, change.commitId],
+                input.ignoreWhitespace,
+                input.file,
+              );
 
       const base = yield* resolveBaseChange(input.cwd, input.baseRef);
       const baseResult =
@@ -246,6 +330,50 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
 
     // `@` and `@-` both read the working copy, and every read snapshots it, so share one.
     const workingCopy = yield* Effect.cached(deps.currentChange(input.cwd));
+    if (input.sourceKind === "working-tree" && baseRef === "@-" && headRef === "@") {
+      const change = yield* workingCopy;
+      if (change.parentCommitIds.length > 1) {
+        const patch = yield* jjCommand(
+          deps.process,
+          operation,
+          input.cwd,
+          [
+            "diff",
+            "-r",
+            change.commitId,
+            "--git",
+            "--context=1048576",
+            "--",
+            literalFilesetPath(input.newPath),
+          ],
+          { ignoreWorkingCopy: true, maxOutputBytes: 2 * REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES },
+        );
+        if (/^Binary files /m.test(patch.stdout)) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "jj diff",
+            cwd: input.cwd,
+            exitCode: 0,
+            detail: `Cannot expand binary file '${input.newPath}'.`,
+          });
+        }
+        const contents = fullContextContents(patch.stdout);
+        if (contents !== null) return contents;
+        // A pure rename or unchanged file has no hunks; both sides share the target contents.
+        if (input.changeType === "new" || input.changeType === "deleted") {
+          return { oldContents: "", newContents: "" };
+        }
+        const contentsAtHead = yield* readFileAtRevision(
+          operation,
+          gitDir,
+          input.cwd,
+          change.commitId,
+          input.newPath,
+        );
+        return { oldContents: contentsAtHead, newContents: contentsAtHead };
+      }
+    }
+
     const [baseOid, headOid] = yield* Effect.all([
       resolveFileRevision(input.cwd, baseRef, workingCopy),
       resolveFileRevision(input.cwd, headRef, workingCopy),
