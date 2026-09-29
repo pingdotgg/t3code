@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
@@ -29,7 +30,10 @@ export function EnvironmentMachineSymbol(props: {
 }) {
   return (
     <SymbolView
-      accessibilityLabel={ENVIRONMENT_MACHINE_KIND_LABELS[props.kind]}
+      accessibilityLabel={translate(
+        `common:mobileEnvironmentMachine.${props.kind}`,
+        ENVIRONMENT_MACHINE_KIND_LABELS[props.kind],
+      )}
       name={SYMBOL_BY_KIND[props.kind]}
       size={props.size}
       tintColorClassName={props.tintColorClassName}

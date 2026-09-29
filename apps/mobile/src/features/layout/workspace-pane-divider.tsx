@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -64,14 +65,22 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
       <Pressable
         className="relative z-[100] -mx-[22px] w-11 self-stretch justify-center"
         accessibilityActions={[
-          { name: "increment", label: "Make pane wider" },
-          { name: "decrement", label: "Make pane narrower" },
+          {
+            name: "increment",
+            label: translate("common:mobileLabels.makePaneWider", "Make pane wider"),
+          },
+          {
+            name: "decrement",
+            label: translate("common:mobileLabels.makePaneNarrower", "Make pane narrower"),
+          },
         ]}
         accessibilityLabel={props.accessibilityLabel}
         accessibilityRole="adjustable"
         accessibilityValue={{
           now: Math.round(props.currentWidth),
-          text: `${Math.round(props.currentWidth)} points wide`,
+          text: translate("common:mobileLabels.paneWidth", "{{width}} points wide", {
+            width: Math.round(props.currentWidth),
+          }),
         }}
         onAccessibilityAction={handleAccessibilityAction}
       >

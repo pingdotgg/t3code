@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useState } from "react";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -87,7 +88,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       ) : null}
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Commit changes"
+          title={translate("gitActions:commitChanges", "Commit changes")}
           onBack={() => navigation.goBack()}
           hideBottomBorder
         />
@@ -114,7 +115,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             </View>
             {isDefaultRef ? (
               <Text className="text-xs leading-normal text-warning-foreground">
-                Warning: this is the default branch.
+                {translate(
+                  "common:mobileBranchIsDefaultWarning",
+                  "Warning: this is the default branch.",
+                )}
               </Text>
             ) : null}
           </View>
@@ -123,10 +127,18 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <View className="flex-row items-center justify-between gap-3">
               <View className="gap-1">
                 <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
-                  Files
+                  {translate("common:mobileFilesHeading", "Files")}
                 </Text>
                 <Text className="text-foreground-muted text-xs leading-normal">
-                  {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
+                  {translate(
+                    "common:mobileSelectedFilesSummary",
+                    "{{count}} selected · +{{insertions}} / -{{deletions}}",
+                    {
+                      count: selectedFiles.length,
+                      insertions: selectedInsertions,
+                      deletions: selectedDeletions,
+                    },
+                  )}
                 </Text>
               </View>
               <View className="flex-row items-center gap-2">
@@ -136,7 +148,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                     onPress={() => setExcludedFiles(new Set())}
                   >
                     <Text className="android:text-primary-text android:text-sm android:font-t3-medium ios:text-foreground ios:text-2xs ios:font-t3-bold ios:uppercase">
-                      Reset
+                      {translate("common:mobileResetAction", "Reset")}
                     </Text>
                   </Pressable>
                 ) : null}
@@ -153,7 +165,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
             {allFiles.length === 0 ? (
               <Text className="text-foreground-secondary text-sm leading-normal">
-                No changed files are available to commit.
+                {translate(
+                  "common:mobileNoChangedFilesToCommit",
+                  "No changed files are available to commit.",
+                )}
               </Text>
             ) : !isEditingFiles ? (
               <View className="gap-2">
@@ -172,7 +187,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 ))}
                 {selectedFiles.length > selectedFilePreview.length ? (
                   <Text className="text-foreground-muted text-xs leading-snug">
-                    +{selectedFiles.length - selectedFilePreview.length} more files
+                    {translate("common:mobileMoreFiles", "+{{count}} more files", {
+                      count: selectedFiles.length - selectedFilePreview.length,
+                    })}
                   </Text>
                 ) : null}
               </View>
@@ -236,7 +253,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                           </Text>
                           {!included ? (
                             <Text className="text-foreground-muted text-2xs leading-normal">
-                              Excluded from this commit
+                              {translate(
+                                "common:mobileExcludedFromCommit",
+                                "Excluded from this commit",
+                              )}
                             </Text>
                           ) : null}
                         </View>
@@ -258,14 +278,17 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
           <View className="android:gap-3 android:rounded-[20px] android:bg-card android:p-4 ios:gap-2">
             <Text className="text-foreground android:text-base android:font-t3-medium ios:text-sm ios:font-t3-bold">
-              Commit message
+              {translate("common:mobileCommitMessage", "Commit message")}
             </Text>
             <TextInput
               multiline
-              accessibilityLabel="Commit message"
+              accessibilityLabel={translate("common:mobileCommitMessage", "Commit message")}
               value={dialogCommitMessage}
               onChangeText={setDialogCommitMessage}
-              placeholder="Leave empty to auto-generate"
+              placeholder={translate(
+                "gitActions:autoGenerateCommitMessage",
+                "Leave empty to auto-generate",
+              )}
               textAlignVertical="top"
               className="min-h-[128px] px-4 py-3.5 android:rounded-xl android:bg-sheet-solid ios:rounded-[20px]"
             />
@@ -275,7 +298,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <View className="ios:flex-1">
               <SheetActionButton
                 icon="arrow.branch"
-                label="Commit on new branch"
+                label={translate("gitActions:commitOnNewBranch", "Commit on new branch")}
                 disabled={noneSelected || busy}
                 onPress={() => void runCommitAction(true)}
               />
@@ -283,7 +306,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <View className="ios:flex-1">
               <SheetActionButton
                 icon="checkmark.circle"
-                label="Commit"
+                label={translate("gitActions:commit", "Commit")}
                 tone="primary"
                 disabled={noneSelected || busy}
                 onPress={() => void runCommitAction(false)}

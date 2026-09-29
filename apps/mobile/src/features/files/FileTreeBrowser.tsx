@@ -271,7 +271,10 @@ export function FileTreeBrowser(props: {
           ) : null}
           {props.searchTruncated ? (
             <Text className="mx-4 my-2 text-xs text-foreground-muted">
-              More search results available. Refine your search to see them.
+              {translate(
+                "common:mobileMoreSearchResults",
+                "More search results are available. Refine your search to see them.",
+              )}
             </Text>
           ) : null}
         </>
@@ -313,3 +316,4 @@ export function FileTreeBrowser(props: {
     />
   );
 }
+import { translate } from "@t3tools/i18n";

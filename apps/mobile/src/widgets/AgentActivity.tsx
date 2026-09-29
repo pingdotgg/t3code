@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
@@ -134,19 +135,40 @@ export function AgentActivity(
   // minimal glyph — must agree, and a failure anywhere should dominate a
   // newer success.
   const allDone = props.activeCount === 0;
-  const doneLabel = failedRow ? "Failed" : "Done";
-  const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
+  const doneLabel = failedRow
+    ? translate("common:mobileWidgets.failed", "Failed")
+    : translate("common:mobileWidgets.done", "Done");
+  const outcomeLabel = failedRow
+    ? translate("common:mobileWidgets.agentWorkFailed", "Agent work failed")
+    : translate("common:mobileWidgets.agentWorkCompleted", "Agent work completed");
 
   // Header copy: "5 active agents" + (", 1 needs attention"). The banner renders
   // the two parts in-line so the attention half can carry the accent color;
   // `summary` is the short form for tight spots (expanded center, watch card).
-  const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone ? outcomeLabel : `${props.activeCount} active ${agentWord}`;
+  const agentsLabel = allDone
+    ? outcomeLabel
+    : translate(
+        props.activeCount === 1
+          ? "common:mobileWidgets.activeAgentSingular"
+          : "common:mobileWidgets.activeAgentPlural",
+        props.activeCount === 1 ? "{{count}} active agent" : "{{count}} active agents",
+        { count: props.activeCount },
+      );
   const attentionSuffix =
     attentionRows.length > 0
-      ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
+      ? translate(
+          attentionRows.length === 1
+            ? "common:mobileWidgets.needsAttentionSingular"
+            : "common:mobileWidgets.needsAttentionPlural",
+          attentionRows.length === 1 ? "{{count}} needs attention" : "{{count}} need attention",
+          { count: attentionRows.length },
+        )
       : "";
-  const activeLabel = allDone ? doneLabel : `${props.activeCount} active`;
+  const activeLabel = allDone
+    ? doneLabel
+    : translate("common:mobileWidgets.activeCount", "{{count}} active", {
+        count: props.activeCount,
+      });
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -336,8 +358,8 @@ export function AgentActivity(
       <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
+            ? translate("common:mobileWidgets.approval", "Approval")
+            : translate("common:mobileWidgets.input", "Input")
           : activeLabel}
       </Text>
     ),

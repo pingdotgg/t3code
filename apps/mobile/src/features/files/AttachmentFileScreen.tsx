@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 /* oxlint-disable react/no-array-index-key -- Captured table rows and columns have stable positions and may contain identical values. */
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -63,34 +64,46 @@ function AttachmentDocumentBody(props: {
     return (
       <View className="flex-1 items-center justify-center bg-sheet px-6">
         <EmptyState
-          title="File unavailable"
+          title={translate("common:mobileFileUnavailable", "File unavailable")}
           detail={document.error}
-          actionLabel="Try again"
+          actionLabel={translate("common:tryAgainAction", "Try again")}
           onAction={document.retry}
         />
       </View>
     );
   }
   if (props.nativeViewer !== null && props.nativeViewer !== "unavailable") {
-    return <FilePreviewLoading message="Opening in file viewer..." />;
+    return (
+      <FilePreviewLoading
+        message={translate("common:mobileFiles.openingInFileViewer", "Opening in file viewer…")}
+      />
+    );
   }
   if (!document.uri || (document.needsText && !document.content)) {
-    return <FilePreviewLoading message="Loading file..." />;
+    return (
+      <FilePreviewLoading message={translate("common:mobileFiles.loadingFile", "Loading file…")} />
+    );
   }
   if (document.needsText && document.content) {
     const { content, table } = document;
     return (
       <View className="flex-1 bg-sheet">
         {content.truncated ? (
-          <FilePreviewNotice title="Partial file">
-            Preview limited to the first 1 MB. Save or share the file to read it in full.
+          <FilePreviewNotice title={translate("common:mobilePartialFile", "Partial file")}>
+            {translate(
+              "common:mobileAttachmentPreviewLimit",
+              "Preview limited to the first 1 MB. Save or share the file to read it in full.",
+            )}
           </FilePreviewNotice>
         ) : null}
         {table && document.activeMode === "table" ? (
           <ScrollView className="flex-1">
             {table.truncated ? (
               <FilePreviewNotice>
-                Table limited to the first 100 rows and 30 columns. Source shows the rest.
+                {translate(
+                  "common:mobileTablePreviewLimit",
+                  "Table limited to the first 100 rows and 30 columns. Source shows the rest.",
+                )}
               </FilePreviewNotice>
             ) : null}
             <ScrollView horizontal>
@@ -146,12 +159,12 @@ function AttachmentDocumentBody(props: {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <EmptyState
-        title="No preview for this file"
+        title={translate("chatView:noPreviewForFile", "No preview for this file")}
         detail={
           props.nativeError ??
           "No app on this device can show this format. Save or share it to open it elsewhere."
         }
-        actionLabel="Try again"
+        actionLabel={translate("common:tryAgainAction", "Try again")}
         onAction={props.onOpenNative}
       />
     </View>
@@ -218,7 +231,8 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     pendingNativeError.current = null;
     if (nativeViewer === null) {
       // A file this screen renders itself: an explicit viewer failure is worth a word.
-      if (message) Alert.alert("Could not open document", message);
+      if (message)
+        Alert.alert(translate("common:couldNotOpenDocument", "Could not open document"), message);
       return;
     }
     if (message) {
@@ -242,7 +256,10 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         renderedMode
           ? ({
               id: "preview",
-              title: renderedMode === "table" ? "Table" : "Preview",
+              title:
+                renderedMode === "table"
+                  ? translate("common:mobileFiles.table", "Table")
+                  : translate("common:mobileFiles.preview", "Preview"),
               icon: renderedMode === "table" ? "tablecells" : "eye",
               inline: true,
               onPress: () => setRendered(true),
@@ -251,7 +268,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         renderedMode
           ? ({
               id: "source",
-              title: "Source",
+              title: translate("common:mobileFiles.source", "Source"),
               icon: "doc.text",
               inline: true,
               onPress: () => setRendered(false),
@@ -260,7 +277,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         content && activeMode === "source"
           ? ({
               id: "word-wrap",
-              title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
+              title: appearance.codeWordBreak
+                ? translate("common:mobileFiles.disableWrap", "Disable word wrap")
+                : translate("common:mobileFiles.enableWrap", "Enable word wrap"),
               icon: "text.alignleft",
               inline: false,
               onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
@@ -269,7 +288,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         content
           ? ({
               id: "copy",
-              title: content.truncated ? "Copy preview" : "Copy contents",
+              title: content.truncated
+                ? translate("common:mobileFiles.copyPreview", "Copy preview")
+                : translate("common:mobileFiles.copyContents", "Copy contents"),
               icon: "doc.on.doc",
               inline: false,
               onPress: () => copyTextWithHaptic(content.text),
@@ -278,7 +299,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         uri
           ? ({
               id: "share",
-              title: sharing ? "Opening share sheet…" : "Save or share",
+              title: sharing
+                ? translate("common:mobileFiles.openingShareSheet", "Opening share sheet…")
+                : translate("common:mobileFiles.saveOrShare", "Save or share"),
               icon: "square.and.arrow.up",
               inline: false,
               onPress: () => void share(),
@@ -287,7 +310,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         uri
           ? ({
               id: "open-viewer",
-              title: "Open in file viewer",
+              title: translate("common:mobileFiles.openInFileViewer", "Open in file viewer"),
               icon: "arrow.up.left.and.arrow.down.right",
               inline: false,
               onPress: () => {
@@ -299,7 +322,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         draftKey
           ? ({
               id: "remove",
-              title: "Remove from draft",
+              title: translate("common:removeFromDraft", "Remove from draft"),
               icon: "trash",
               inline: false,
               destructive: true,
@@ -361,16 +384,22 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
             <ControlPillMenu
               actions={androidMenuActions}
               isAnchoredToRight
-              title="File actions"
+              title={translate("common:mobileFileActions", "File actions")}
               onPressAction={handleAndroidMenuAction}
             >
-              <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
+              <AndroidHeaderIconButton
+                accessibilityLabel={translate("common:mobileFileActions", "File actions")}
+                icon="ellipsis"
+              />
             </ControlPillMenu>
           }
         />
       ) : null}
       <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
+        <NativeHeaderToolbar.Menu
+          accessibilityLabel={translate("common:mobileFileActions", "File actions")}
+          icon="ellipsis"
+        >
           {renderedMode ? (
             <NativeHeaderToolbar.Menu inline>
               {menuActions

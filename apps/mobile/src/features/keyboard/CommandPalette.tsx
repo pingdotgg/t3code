@@ -1,3 +1,5 @@
+import { translate } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
@@ -136,6 +138,7 @@ export function CommandPalette(props: {
   readonly onClose: () => void;
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
 }) {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const { themeVariables } = useAppearancePreferences();
   const { selectThread } = useAdaptiveWorkspaceLayout();
@@ -181,21 +184,21 @@ export function CommandPalette(props: {
       {
         key: "newTask",
         kind: "action",
-        title: "New thread in…",
+        title: t("mobileCommandPalette.newThreadIn"),
         searchTerms: ["new task", "chat", "create", "project"],
         run: () => navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
       },
       {
         key: "addProject",
         kind: "action",
-        title: "Add project",
+        title: t("mobileCommandPalette.addProject"),
         searchTerms: ["folder", "clone", "repository", "git"],
         run: () => navigation.navigate("NewTaskSheet", { screen: "AddProject" }),
       },
       {
         key: "settings",
         kind: "action",
-        title: "Open settings",
+        title: t("mobileCommandPalette.openSettings"),
         searchTerms: ["preferences", "configuration"],
         run: () =>
           navigation.navigate("SettingsSheet", {
@@ -206,7 +209,7 @@ export function CommandPalette(props: {
       {
         key: "appearance",
         kind: "action",
-        title: "Appearance",
+        title: t("mobileCommandPalette.appearance"),
         searchTerms: ["theme", "colors", "dark", "light"],
         run: () =>
           navigation.navigate("SettingsSheet", {
@@ -217,7 +220,7 @@ export function CommandPalette(props: {
       {
         key: "environments",
         kind: "action",
-        title: "Manage environments",
+        title: t("mobileCommandPalette.manageEnvironments"),
         searchTerms: ["connections", "server", "remote"],
         run: () =>
           navigation.navigate("SettingsSheet", {
@@ -228,7 +231,7 @@ export function CommandPalette(props: {
       {
         key: "usage",
         kind: "action",
-        title: "Usage",
+        title: t("mobileCommandPalette.usage"),
         searchTerms: ["limits", "accounts", "quota"],
         run: () =>
           navigation.navigate("SettingsSheet", {
@@ -239,7 +242,7 @@ export function CommandPalette(props: {
       {
         key: "archive",
         kind: "action",
-        title: "Archived threads",
+        title: t("mobileCommandPalette.archivedThreads"),
         searchTerms: ["restore", "history"],
         run: () =>
           navigation.navigate("SettingsSheet", {
@@ -258,7 +261,7 @@ export function CommandPalette(props: {
       actions.unshift({
         key: "newThread",
         kind: "action",
-        title: `New thread in ${activeProject.title}`,
+        title: t("mobileCommandPalette.newThreadInProject", { project: activeProject.title }),
         searchTerms: ["new task", "chat", "create"],
         run: () =>
           navigation.navigate("NewTaskSheet", {
@@ -273,10 +276,14 @@ export function CommandPalette(props: {
     }
     if (activeThreadRef) {
       const threadActions = [
-        ["files", "Go to file", ["open", "files", "browse", "search"]],
-        ["terminal", "Open terminal", ["shell", "console"]],
-        ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
+        ["files", t("mobileCommandPalette.goToFile"), ["open", "files", "browse", "search"]],
+        ["terminal", t("mobileLabels.openTerminal"), ["shell", "console"]],
+        ["review", t("mobileCommandPalette.reviewChanges"), ["diff", "git", "pull request"]],
+        [
+          "copyThreadReference",
+          t("mobileCommandPalette.copyThreadReference"),
+          ["reference", "clipboard"],
+        ],
       ] as const;
       actions.push(
         ...threadActions.map(([command, title, searchTerms]) => ({
@@ -292,7 +299,10 @@ export function CommandPalette(props: {
       key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
       kind: "project",
       title: project.title,
-      detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
+      detail: t("mobileCommandPalette.newThreadDetail", {
+        environment:
+          savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId,
+      }),
       searchTerms: [project.workspaceRoot, "new thread", "project"],
       run: () =>
         navigation.navigate("NewTaskSheet", {
@@ -339,6 +349,7 @@ export function CommandPalette(props: {
     savedConnectionsById,
     selectThread,
     threads,
+    t,
   ]);
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),
@@ -414,7 +425,10 @@ export function CommandPalette(props: {
           >
             <Pressable
               className="absolute inset-0 bg-backdrop"
-              accessibilityLabel="Close command palette"
+              accessibilityLabel={translate(
+                "common:mobileCloseCommandPalette",
+                "Close command palette",
+              )}
               onPress={() => close()}
             />
             <GlassSurface
@@ -438,8 +452,14 @@ export function CommandPalette(props: {
                   />
                   <TextInput
                     ref={inputRef}
-                    accessibilityLabel="Search commands, projects, and threads"
-                    placeholder="Search commands, projects, and threads…"
+                    accessibilityLabel={translate(
+                      "common:mobileCommandSearchLabel",
+                      "Search commands, projects, and threads",
+                    )}
+                    placeholder={translate(
+                      "common:mobileCommandSearchPlaceholder",
+                      "Search commands, projects, and threads…",
+                    )}
                     placeholderTextColorClassName="accent-placeholder"
                     autoCorrect={false}
                     autoCapitalize="none"

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { TextInputWrapper } from "expo-paste-input";
 import { AppTextInput as TextInput } from "../../components/AppText";
 import { useNativePaste } from "../../lib/useNativePaste";
@@ -104,11 +105,19 @@ export function QuestionAttachments(props: {
           (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
         ) {
           if (append(key, images) > 0)
-            Alert.alert("Could not paste image", "Too many attachments.");
+            Alert.alert(
+              translate("common:mobileFeedback.couldNotPasteImage", "Could not paste image"),
+              translate("common:mobileFeedback.tooManyAttachments", "Too many attachments."),
+            );
         } else await releaseUnusedComposerAttachmentFiles(images);
       })
       .catch((error) =>
-        Alert.alert("Could not paste image", error instanceof Error ? error.message : "Try again."),
+        Alert.alert(
+          translate("common:mobileFeedback.couldNotPasteImage", "Could not paste image"),
+          error instanceof Error
+            ? error.message
+            : translate("common:mobileFeedback.tryAgain", "Try again."),
+        ),
       )
       .finally(() => changeQuestionAttachmentPreparation(key, -1));
   });
@@ -149,9 +158,18 @@ export function QuestionAttachments(props: {
       }
       const rejected = append(key, picked);
       if (result.error || rejected > 0)
-        Alert.alert("Could not attach file", result.error ?? "Too many attachments.");
+        Alert.alert(
+          translate("common:mobileFeedback.couldNotAttachFile", "Could not attach file"),
+          result.error ??
+            translate("common:mobileFeedback.tooManyAttachments", "Too many attachments."),
+        );
     } catch (error) {
-      Alert.alert("Could not attach file", error instanceof Error ? error.message : "Try again.");
+      Alert.alert(
+        translate("common:mobileFeedback.couldNotAttachFile", "Could not attach file"),
+        error instanceof Error
+          ? error.message
+          : translate("common:mobileFeedback.tryAgain", "Try again."),
+      );
     } finally {
       changeQuestionAttachmentPreparation(key, -1);
     }
@@ -197,7 +215,7 @@ export function QuestionAttachments(props: {
           onChangeText={props.onChangeText}
           onFocus={() => props.onInputFocusChange?.(true)}
           onBlur={() => props.onInputFocusChange?.(false)}
-          placeholder="Or type a custom answer"
+          placeholder={translate("common:mobileOrTypeACustomAnswer", "Or type a custom answer")}
           className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
         />
       </TextInputWrapper>

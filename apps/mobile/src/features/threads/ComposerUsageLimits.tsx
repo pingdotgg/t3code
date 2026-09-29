@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import { useTranslation } from "@t3tools/i18n/react";
 import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
@@ -27,7 +28,7 @@ export function ComposerUsageLimits({
   const { height } = useWindowDimensions();
   const close = (
     <Pressable
-      accessibilityLabel="Dismiss usage limits"
+      accessibilityLabel={translate("common:mobileDismissUsageLimits", "Dismiss usage limits")}
       accessibilityRole="button"
       hitSlop={12}
       onPress={onClose}

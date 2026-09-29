@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import { PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
@@ -239,7 +240,16 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
           if (persisted) {
             setDrafts(persisted);
           }
-          setError(cause instanceof Error ? cause : new Error("Could not import shared content."));
+          setError(
+            cause instanceof Error
+              ? cause
+              : new Error(
+                  translate(
+                    "common:mobileFeedback.couldNotImportSharedContent",
+                    "Could not import shared content",
+                  ),
+                ),
+          );
         }
       }
     })().finally(() => {
@@ -278,16 +288,27 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     if (!error) {
       return;
     }
-    Alert.alert("Could not import shared content", error.message, [
-      { text: "Dismiss", style: "cancel", onPress: () => setError(null) },
-      {
-        text: "Retry",
-        onPress: () => {
-          setError(null);
-          void refresh();
+    Alert.alert(
+      translate(
+        "common:mobileFeedback.couldNotImportSharedContent",
+        "Could not import shared content",
+      ),
+      error.message,
+      [
+        {
+          text: translate("common:mobileFeedback.dismiss", "Dismiss"),
+          style: "cancel",
+          onPress: () => setError(null),
         },
-      },
-    ]);
+        {
+          text: translate("common:mobileFeedback.retry", "Retry"),
+          onPress: () => {
+            setError(null);
+            void refresh();
+          },
+        },
+      ],
+    );
   }, [error, refresh]);
 
   const consumeShare = useCallback(async (shareId: string) => {

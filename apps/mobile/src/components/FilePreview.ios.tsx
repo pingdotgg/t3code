@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId } from "react";
 import { Alert } from "react-native";
@@ -24,7 +25,14 @@ function NativeFilePreview(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Alert.alert("Could not open preview", "The file could not be loaded. Please try again.");
+    else
+      Alert.alert(
+        translate("common:mobileFeedback.couldNotOpenPreview", "Could not open preview"),
+        translate(
+          "common:mobileFeedback.previewCouldNotLoad",
+          "The file could not be loaded. Please try again.",
+        ),
+      );
   });
 
   useEffect(() => {

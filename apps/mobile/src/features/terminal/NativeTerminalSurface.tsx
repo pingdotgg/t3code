@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { memo, useCallback, useEffect, useRef } from "react";
 import {
   Pressable,
@@ -135,7 +136,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           autoCorrect={false}
           blurOnSubmit={false}
           editable={props.isRunning}
-          placeholder="type and press return"
+          placeholder={translate("common:mobileTypeAndPressReturn", "type and press return")}
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
           className="text-sm"

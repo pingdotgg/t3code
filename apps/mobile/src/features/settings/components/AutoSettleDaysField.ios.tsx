@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Button, Host, HStack, Picker, Popover, Text, VStack } from "@expo/ui/swift-ui";
 import {
   accessibilityLabel,
@@ -42,7 +43,9 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
             modifiers={[
               buttonStyle("bordered"),
               disabled(props.disabled),
-              accessibilityLabel(`Days before auto-settle: ${props.value}`),
+              accessibilityLabel(
+                `${translate("common:mobileDaysBeforeAutoSettle", "Days before auto-settle")}: ${props.value}`,
+              ),
               frame({ minWidth: 64, minHeight: 44 }),
               foregroundStyle(colors["--color-primary-text"]),
               font({ size: appearance.baseFontSize }),
@@ -60,7 +63,7 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
             ]}
           >
             <Picker
-              label="Days before auto-settle"
+              label={translate("common:mobileDaysBeforeAutoSettle", "Days before auto-settle")}
               selection={draft}
               onSelectionChange={setDraft}
               modifiers={[pickerStyle("wheel"), frame({ height: 180 })]}
@@ -76,12 +79,12 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
             </Picker>
             <HStack spacing={24}>
               <Button
-                label="Cancel"
+                label={translate("common:cancel", "Cancel")}
                 onPress={() => setOpen(false)}
                 modifiers={[foregroundStyle(colors["--color-primary-text"])]}
               />
               <Button
-                label="Done"
+                label={translate("common:done", "Done")}
                 onPress={() => {
                   setOpen(false);
                   if (!props.disabled && draft !== props.value) props.onValueChange(draft);

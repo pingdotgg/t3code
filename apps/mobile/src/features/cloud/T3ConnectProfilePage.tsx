@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -33,27 +34,43 @@ const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "mediu
 function linkedAtLabel(value: string): string {
   const linkedAt = new Date(value);
   return Number.isNaN(linkedAt.getTime())
-    ? "Link date unavailable"
-    : `Linked ${linkedAtFormatter.format(linkedAt)}`;
+    ? translate("common:mobileT3Connect.linkDateUnavailable", "Link date unavailable")
+    : translate("common:mobileT3Connect.linkedAt", "Linked {{date}}", {
+        date: linkedAtFormatter.format(linkedAt),
+      });
 }
 
 function endpointLabel(environment: RelayClientEnvironmentRecord): string {
   return environment.endpoint.providerKind === "cloudflare_tunnel"
-    ? "Managed tunnel"
-    : "Activity publishing only";
+    ? translate("common:mobileT3Connect.managedTunnel", "Managed tunnel")
+    : translate("common:mobileT3Connect.activityPublishingOnly", "Activity publishing only");
 }
 
 function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {
-  const title = "Deregister server?";
-  const message = `“${environment.label}” will be removed from this account. T3 Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
+  const title = translate("common:mobileT3Connect.deregisterTitle", "Deregister server?");
+  const message = translate(
+    "common:mobileT3Connect.deregisterDescription",
+    "“{{environment}}” will be removed from this account. T3 Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.",
+    { environment: environment.label },
+  );
   if (process.env.EXPO_OS === "ios") {
     Alert.alert(title, message, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Deregister", style: "destructive", onPress: onConfirm },
+      { text: translate("common:mobileT3Connect.cancel", "Cancel"), style: "cancel" },
+      {
+        text: translate("common:mobileT3Connect.deregister", "Deregister"),
+        style: "destructive",
+        onPress: onConfirm,
+      },
     ]);
     return;
   }
-  showConfirmDialog({ title, message, confirmText: "Deregister", destructive: true, onConfirm });
+  showConfirmDialog({
+    title,
+    message,
+    confirmText: translate("common:mobileT3Connect.deregister", "Deregister"),
+    destructive: true,
+    onConfirm,
+  });
 }
 
 /**
@@ -103,7 +120,13 @@ export function T3ConnectProfilePage() {
     if (isAtomCommandInterrupted(result)) return;
 
     const cause = squashAtomCommandFailure(result);
-    const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
+    const message =
+      cause instanceof Error
+        ? cause.message
+        : translate(
+            "common:mobileT3Connect.deregisterFallback",
+            "Could not deregister the server.",
+          );
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not deregister environment", {
       environmentId: environment.environmentId,
@@ -112,15 +135,15 @@ export function T3ConnectProfilePage() {
       cause,
     });
     Alert.alert(
-      "Could not deregister server",
+      translate("common:mobileT3Connect.couldNotDeregister", "Could not deregister server"),
       traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
       traceId
         ? [
             {
-              text: "Copy trace ID",
+              text: translate("common:mobileT3Connect.copyTraceId", "Copy trace ID"),
               onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
             },
-            { text: "OK", style: "cancel" },
+            { text: translate("common:mobileT3Connect.ok", "OK"), style: "cancel" },
           ]
         : undefined,
     );
@@ -155,12 +178,15 @@ export function T3ConnectProfilePage() {
       {environmentsState.error ? (
         <>
           <ClerkRow
-            title="Could not load T3 Connect environments"
+            title={translate(
+              "common:mobileCouldNotLoadT3ConnectEnvironments",
+              "Could not load T3 Connect environments",
+            )}
             subtitle={environmentsState.error}
           />
           {errorTraceId ? (
             <ClerkButtonRow
-              label="Copy trace ID"
+              label={translate("common:copyTraceIdLabel", "Copy trace ID")}
               onPress={() => {
                 copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
               }}
@@ -183,14 +209,18 @@ export function T3ConnectProfilePage() {
                 <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
               ) : (
                 <ControlPillMenu
-                  actions={ENVIRONMENT_MENU_ACTIONS}
+                  actions={environmentMenuActions()}
                   isAnchoredToRight
                   onPressAction={() =>
                     confirmDeregister(environment, () => void handleDeregister(environment))
                   }
                 >
                   <Pressable
-                    accessibilityLabel={`Actions for ${environment.label}`}
+                    accessibilityLabel={translate(
+                      "common:mobileT3Connect.actionsForEnvironment",
+                      "Actions for {{environment}}",
+                      { environment: environment.label },
+                    )}
                     accessibilityRole="button"
                     disabled={deregisteringEnvironmentId !== null}
                     className="size-[30px] items-center justify-center active:opacity-60 disabled:opacity-50"
@@ -211,21 +241,34 @@ export function T3ConnectProfilePage() {
         ))
       ) : (
         <ClerkRow
-          title="No servers registered"
-          subtitle="Link a server from its local Settings to reach it through T3 Connect."
+          title={translate("common:mobileNoServersRegistered", "No servers registered")}
+          subtitle={translate(
+            "common:mobileConnectServerFromSettings",
+            "Link a server from its local Settings to reach it through T3 Connect.",
+          )}
         />
       )}
 
       <Text className="px-6 pt-6 text-xs leading-normal text-clerk-foreground-muted">
-        Connections on this device are managed in Settings.
+        {translate(
+          "common:mobileConnectionsManagedInSettings",
+          "Connections on this device are managed in Settings.",
+        )}
       </Text>
     </ScrollView>
   );
 }
 
-const ENVIRONMENT_MENU_ACTIONS = [
-  { id: "deregister", title: "Deregister", image: "trash", attributes: { destructive: true } },
-] satisfies MenuAction[];
+function environmentMenuActions(): MenuAction[] {
+  return [
+    {
+      id: "deregister",
+      title: translate("common:mobileT3Connect.deregister", "Deregister"),
+      image: "trash",
+      attributes: { destructive: true },
+    },
+  ];
+}
 
 // Layout primitives that mirror clerk-ios ClerkKitUI's profile rows so a custom
 // page reads as one of Clerk's own screens. System font on purpose: Clerk's

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   DatePicker,
   Host,
@@ -38,15 +39,8 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 
 const durationAmounts = Array.from({ length: 99 }, (_, index) => index + 1);
 const SnoozeStack = createNativeStackNavigator<{ CustomSnooze: undefined }>();
-const modes = [
-  { value: "date", label: "Date and time" },
-  { value: "duration", label: "Duration" },
-] as const;
-const units = [
-  { value: "minutes", label: "Minutes" },
-  { value: "hours", label: "Hours" },
-  { value: "days", label: "Days" },
-] as const;
+const modes = [{ value: "date" }, { value: "duration" }] as const;
+const units = [{ value: "minutes" }, { value: "hours" }, { value: "days" }] as const;
 
 export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
@@ -116,7 +110,7 @@ export function CustomSnoozeSheet(props: {
                 modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
               >
                 <Picker
-                  label="Snooze mode"
+                  label={translate("common:mobileSnoozeMode", "Snooze mode")}
                   selection={mode}
                   onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
                     setMode(value);
@@ -126,13 +120,18 @@ export function CustomSnoozeSheet(props: {
                 >
                   {modes.map((option) => (
                     <Text key={option.value} modifiers={[tag(option.value)]}>
-                      {option.label}
+                      {translate(
+                        option.value === "date"
+                          ? "common:mobileSnoozeOptions.dateAndTime"
+                          : "common:mobileSnoozeOptions.duration",
+                        option.value === "date" ? "Date and time" : "Duration",
+                      )}
                     </Text>
                   ))}
                 </Picker>
                 {mode === "date" ? (
                   <DatePicker
-                    title="Snooze until"
+                    title={translate("common:mobileSnoozeUntil", "Snooze until")}
                     selection={date}
                     displayedComponents={["date", "hourAndMinute"]}
                     onDateChange={updateDate}
@@ -145,7 +144,7 @@ export function CustomSnoozeSheet(props: {
                 ) : (
                   <HStack spacing={0}>
                     <Picker
-                      label="Duration amount"
+                      label={translate("common:mobileDurationAmount", "Duration amount")}
                       selection={amount}
                       onSelectionChange={(value: number) => {
                         setAmount(value);
@@ -168,7 +167,7 @@ export function CustomSnoozeSheet(props: {
                       ))}
                     </Picker>
                     <Picker
-                      label="Duration unit"
+                      label={translate("common:mobileDurationUnit", "Duration unit")}
                       selection={unit}
                       onSelectionChange={(value: typeof unit) => {
                         setUnit(value);
@@ -189,7 +188,14 @@ export function CustomSnoozeSheet(props: {
                             foregroundStyle(colors["--color-foreground"]),
                           ]}
                         >
-                          {option.label}
+                          {translate(
+                            `common:mobileSnoozeOptions.${option.value}`,
+                            option.value === "minutes"
+                              ? "Minutes"
+                              : option.value === "hours"
+                                ? "Hours"
+                                : "Days",
+                          )}
                         </Text>
                       ))}
                     </Picker>
@@ -243,7 +249,7 @@ function SnoozePopoverNavigation(props: {
                   headerTintColor: colors["--color-foreground"],
                   headerTitleStyle: { fontSize: 17, fontWeight: "700" },
                   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
-                  title: "Custom snooze",
+                  title: translate("common:mobileSnoozeOptions.custom", "Custom snooze"),
                 }}
               >
                 <SnoozeStack.Screen name="CustomSnooze">
@@ -251,13 +257,19 @@ function SnoozePopoverNavigation(props: {
                     <>
                       <NativeHeaderToolbar placement="left">
                         <NativeHeaderToolbar.Button
-                          accessibilityLabel="Cancel custom snooze"
+                          accessibilityLabel={translate(
+                            "common:mobileCancelCustomSnooze",
+                            "Cancel custom snooze",
+                          )}
                           icon="xmark"
                           onPress={props.onClose}
                         />
                       </NativeHeaderToolbar>
                       <NativeHeaderToolbar placement="right">
-                        <NativeHeaderToolbar.Button label="Snooze" onPress={props.onSubmit} />
+                        <NativeHeaderToolbar.Button
+                          label={translate("common:snooze", "Snooze")}
+                          onPress={props.onSubmit}
+                        />
                       </NativeHeaderToolbar>
                       <ScrollView
                         contentInsetAdjustmentBehavior="automatic"

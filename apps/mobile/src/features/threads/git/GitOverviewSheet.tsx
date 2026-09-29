@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   type GitActionRequestInput,
   buildMenuItems,
@@ -8,6 +9,7 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
+import { pullRequestStateLabel } from "../pullRequestStateLabel";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   CommonActions,
@@ -123,11 +125,23 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
+      Alert.alert(
+        translate("common:mobileFeedback.noOpenPullRequest", "No open PR"),
+        translate(
+          "common:mobileFeedback.branchHasNoOpenPullRequest",
+          "This branch does not have an open pull request.",
+        ),
+      );
       return;
     }
     if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
+      Alert.alert(
+        translate("common:mobileFeedback.unableToOpenPullRequest", "Unable to open PR"),
+        translate(
+          "common:mobileFeedback.pullRequestCouldNotBeOpened",
+          "The pull request could not be opened.",
+        ),
+      );
     }
   }, [gitStatus.data]);
 
@@ -271,8 +285,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
             <SheetListRow
               icon="arrow.down.circle"
-              title="Pull latest"
-              subtitle={`${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`}
+              title={translate("common:mobilePullLatest", "Pull latest")}
+              subtitle={translate(
+                "common:mobileUiCommitsBehindUpstream",
+                "{{count}} commit{{plural}} behind upstream",
+                { count: behindCount, plural: behindCount === 1 ? "" : "s" },
+              )}
               disabled={busy || !isRepo}
               onPress={() => void gitActions.onPullSelectedThreadBranch()}
             />
@@ -281,8 +299,11 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="text.bubble"
-          title="Review changes"
-          subtitle="Inspect turn diffs, worktree changes, and base branch diff"
+          title={translate("settings:reviewChanges", "Review changes")}
+          subtitle={translate(
+            "common:mobileGitDiffOverview",
+            "Inspect turn diffs, worktree changes, and base branch diff",
+          )}
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
@@ -296,8 +317,11 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
-          subtitle="Switch branch, create branch, or move to a worktree"
+          title={translate("common:mobileBranchesAndWorktrees", "Branches & worktrees")}
+          subtitle={translate(
+            "common:mobileSwitchCreateOrMoveWorktree",
+            "Switch branch, create branch, or move to a worktree",
+          )}
           disabled={busy || !isRepo}
           onPress={() =>
             navigation.navigate("GitBranches", {
@@ -311,7 +335,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       {linkedPrChains.length > 0 ? (
         <View className="gap-2">
           <Text className="px-1 text-xs font-t3-bold text-foreground-muted">
-            Linked pull requests
+            {translate("common:mobileLinkedPullRequests", "Linked pull requests")}
           </Text>
           {linkedPrChains.map((chain) => (
             <View
@@ -326,8 +350,19 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
                     tintColorClassName="accent-foreground-muted"
                   />
                   <Text className="text-xs text-foreground-muted">
-                    {chain.kind === "native" ? "Stack" : "Branch stack"} · {chain.layers.length} PRs
-                    · bottom to top
+                    {translate(
+                      "common:mobileBranchStackDirection",
+                      "{{stackType}} · {{count}} PRs · bottom to top",
+                      {
+                        stackType: translate(
+                          chain.kind === "native"
+                            ? "common:mobileStack"
+                            : "common:mobileBranchStack",
+                          chain.kind === "native" ? "Stack" : "Branch stack",
+                        ),
+                        count: chain.layers.length,
+                      },
+                    )}
                   </Text>
                 </View>
               ) : null}
@@ -338,12 +373,21 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
                   ) : null}
                   <SheetListRow
                     icon="arrow.triangle.pull"
-                    title={`#${link.number} ${link.snapshot?.title ?? "Pull request"}`}
-                    subtitle={`${link.repository} · ${link.snapshot === null ? "Status pending" : link.snapshot.isDraft && link.snapshot.state === "open" ? "Draft" : link.snapshot.state}`}
+                    title={`#${link.number} ${link.snapshot?.title ?? translate("common:mobileUiPullRequestFallback", "Pull request")}`}
+                    subtitle={`${link.repository} · ${link.snapshot === null ? translate("common:mobileUiStatusPending", "Status pending") : link.snapshot.isDraft && link.snapshot.state === "open" ? translate("common:mobileUiDraft", "Draft") : pullRequestStateLabel(link.snapshot.state)}`}
                     onPress={() => {
                       void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
                         if (!opened)
-                          Alert.alert("Unable to open PR", "The pull request could not be opened.");
+                          Alert.alert(
+                            translate(
+                              "common:mobileFeedback.unableToOpenPullRequest",
+                              "Unable to open PR",
+                            ),
+                            translate(
+                              "common:mobileFeedback.pullRequestCouldNotBeOpened",
+                              "The pull request could not be opened.",
+                            ),
+                          );
                       });
                     }}
                   />
@@ -354,7 +398,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {currentWorktreePath ? (
+        <MetaCard
+          label={translate("branchToolbar:worktree", "Worktree")}
+          value={currentWorktreePath}
+        />
+      ) : null}
     </ScrollView>
   );
 
@@ -427,11 +476,14 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 
   const refreshMenu = (
     <AndroidAnchoredMenu
-      title="Repository options"
+      title={translate("common:mobileRepositoryOptions", "Repository options")}
       actions={[
         {
           id: "refresh",
-          title: "Refresh repository status",
+          title: translate(
+            "common:mobileThreadList.refreshRepositoryStatus",
+            "Refresh repository status",
+          ),
           attributes: { disabled: busy || isPullRefreshing },
         },
       ]}
@@ -441,7 +493,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     >
       {(open) => (
         <AndroidHeaderIconButton
-          accessibilityLabel="Repository options"
+          accessibilityLabel={translate("common:mobileRepositoryOptions", "Repository options")}
           icon="ellipsis"
           onPress={open}
         />
@@ -498,7 +550,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             </Pressable>
           )}
           <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
-            Repository
+            {translate("common:mobileRepository", "Repository")}
           </Text>
           <Text className="pr-10 text-xl font-t3-bold">{currentBranchLabel}</Text>
           <Text className="text-foreground-secondary text-sm font-medium leading-normal">
@@ -517,7 +569,10 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
               ? undefined
               : [
                   {
-                    accessibilityLabel: "Refresh repository status",
+                    accessibilityLabel: translate(
+                      "common:mobileThreadList.refreshRepositoryStatus",
+                      "Refresh repository status",
+                    ),
                     disabled: busy,
                     icon: "arrow.clockwise",
                     onPress: () => void gitActions.refreshSelectedThreadGitStatus(),

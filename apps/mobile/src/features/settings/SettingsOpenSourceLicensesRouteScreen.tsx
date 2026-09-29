@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
@@ -41,7 +42,10 @@ function LicenseRow(props: {
 }) {
   return (
     <Pressable
-      accessibilityHint="Opens the complete license notice"
+      accessibilityHint={translate(
+        "common:mobileOpenCompleteLicenseNotice",
+        "Opens the complete license notice",
+      )}
       accessibilityLabel={`${props.entry.name}, ${props.entry.license}`}
       accessibilityRole="button"
       onPress={props.onPress}
@@ -100,10 +104,13 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 
   if (!manifest) {
     return (
-      <SettingsScreen title="Open source licenses">
+      <SettingsScreen title={translate("settings:openSourceLicenses", "Open source licenses")}>
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
-            License notices are unavailable in this build.
+            {translate(
+              "common:mobileLicenseNoticesUnavailable",
+              "License notices are unavailable in this build.",
+            )}
           </Text>
         </View>
       </SettingsScreen>
@@ -111,7 +118,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
   }
 
   return (
-    <SettingsScreen title="Open source licenses">
+    <SettingsScreen title={translate("settings:openSourceLicenses", "Open source licenses")}>
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           options={{
@@ -119,7 +126,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
               ? () => [
                   createNativeMailSearchToolbarItem({
                     onSearchTextChange: setQuery,
-                    placeholder: "Search packages",
+                    placeholder: translate("common:mobileSearchPackages", "Search packages"),
                     searchTextChangeId: "open-source-licenses-search-text",
                     showsSearchDismissButton: true,
                   }),
@@ -135,7 +142,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
                   obscureBackground: false,
                   onCancelButtonPress: () => setQuery(""),
                   onChangeText: (event) => setQuery(event.nativeEvent.text),
-                  placeholder: "Search packages",
+                  placeholder: translate("common:mobileSearchPackages", "Search packages"),
                 },
           }}
         />
@@ -164,7 +171,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
         ListEmptyComponent={
           <View className="items-center px-6 py-12">
             <Text className="text-center text-base text-foreground-muted">
-              No licenses match that search.
+              {translate("common:mobileNoLicensesMatchSearch", "No licenses match that search.")}
             </Text>
           </View>
         }
@@ -172,12 +179,15 @@ export function SettingsOpenSourceLicensesRouteScreen() {
           Platform.OS !== "ios" ? (
             <View className="px-5 pt-4 pb-5">
               <TextInput
-                accessibilityLabel="Search open-source licenses"
+                accessibilityLabel={translate(
+                  "common:mobileSearchOpenSourceLicenses",
+                  "Search open-source licenses",
+                )}
                 autoCapitalize="none"
                 autoCorrect={false}
                 clearButtonMode="while-editing"
                 onChangeText={setQuery}
-                placeholder="Search packages"
+                placeholder={translate("common:mobileSearchPackages", "Search packages")}
                 returnKeyType="search"
                 value={query}
               />
@@ -204,10 +214,13 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
 
   if (!entry) {
     return (
-      <SettingsScreen title="License notice">
+      <SettingsScreen title={translate("settings:licenseNotice", "License notice")}>
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
-            This license notice is unavailable.
+            {translate(
+              "common:mobileLicenseNoticeUnavailable",
+              "This license notice is unavailable.",
+            )}
           </Text>
         </View>
       </SettingsScreen>
@@ -215,7 +228,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
   }
 
   return (
-    <SettingsScreen title="License notice">
+    <SettingsScreen title={translate("settings:licenseNotice", "License notice")}>
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -232,7 +245,10 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
           </Text>
           {sourceUrl ? (
             <Pressable
-              accessibilityHint="Opens the project website"
+              accessibilityHint={translate(
+                "common:mobileOpenProjectWebsite",
+                "Opens the project website",
+              )}
               accessibilityRole="link"
               onPress={() => void Linking.openURL(sourceUrl)}
               className="min-h-12 flex-row items-center gap-2 self-start py-2 active:opacity-60"

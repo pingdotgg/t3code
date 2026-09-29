@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import type { NativeSyntheticEvent } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import * as Arr from "effect/Array";
@@ -32,6 +33,7 @@ export function useReviewCommentSelectionController(input: {
   readonly selectedSection: ReviewSectionItem | null;
   readonly nativeReviewDiffData: NativeReviewDiffData;
 }) {
+  const { t } = useTranslation();
   const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
   const navigation = useNavigation();
   const activeCommentTarget = useReviewCommentTarget();
@@ -79,7 +81,9 @@ export function useReviewCommentSelectionController(input: {
       activeCommentTarget.startIndex !== activeCommentTarget.endIndex
     ) {
       return {
-        title: `Comment on ${formatReviewSelectedRangeLabel(activeCommentTarget)}`,
+        title: t("mobileReview.commentOnRange", {
+          range: formatReviewSelectedRangeLabel(activeCommentTarget),
+        }),
         onOpenComment: openReviewCommentSheet,
       };
     }
@@ -89,7 +93,7 @@ export function useReviewCommentSelectionController(input: {
       pendingNativeCommentSelection.sectionTitle === selectedSection?.title
     ) {
       return {
-        title: "Select range end",
+        title: t("mobileReview.selectRangeEnd"),
         onOpenComment: null,
       };
     }
@@ -100,6 +104,7 @@ export function useReviewCommentSelectionController(input: {
     openReviewCommentSheet,
     pendingNativeCommentSelection,
     selectedSection?.title,
+    t,
   ]);
 
   useEffect(() => {

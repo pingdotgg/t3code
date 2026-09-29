@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Pressable, type StyleProp, type ViewStyle } from "react-native";
 import { useTranslation } from "@t3tools/i18n/react";
 
@@ -16,7 +17,7 @@ export function MaterialNewThreadButton(props: {
   const { t } = useTranslation();
   return (
     <Pressable
-      accessibilityLabel="New thread"
+      accessibilityLabel={translate("common:newThread", "New thread")}
       accessibilityRole="button"
       onPress={props.onPress}
       className={cn(

@@ -4,5 +4,12 @@ export function resolveAgentAwarenessPlatformPresentation(platform: string): {
 } {
   return platform === "ios" || platform === "android"
     ? { supported: true, subtitle: undefined }
-    : { supported: false, subtitle: "Unavailable on this platform" };
+    : {
+        supported: false,
+        subtitle: translate(
+          "common:mobileLabels.unavailableOnPlatform",
+          "Unavailable on this platform",
+        ),
+      };
 }
+import { translate } from "@t3tools/i18n";

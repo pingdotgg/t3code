@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { createContext, useContext } from "react";
 import { Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
@@ -30,7 +31,7 @@ function ImagePreviewHeader() {
         <MediaActionsMenu media={mediaActions} inModal />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Close image"
+          accessibilityLabel={translate("common:mobileCloseImage", "Close image")}
           onPress={props.onRequestClose}
           className="min-h-11 min-w-11 items-center justify-center"
         >

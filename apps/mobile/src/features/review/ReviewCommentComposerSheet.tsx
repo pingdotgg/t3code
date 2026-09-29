@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -185,7 +186,10 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
             <View className="rounded-[22px] border border-border bg-card px-4 py-5">
               <Text className="text-base font-t3-bold text-foreground">{t("noSelection")}</Text>
               <Text className="mt-1 text-sm leading-normal text-foreground-muted">
-                Select a diff line or range first.
+                {translate(
+                  "common:mobileSelectDiffLineFirst",
+                  "Select a diff line or range first.",
+                )}
               </Text>
             </View>
           ) : (
@@ -260,7 +264,10 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                         autoFocus
                         multiline
                         scrollEnabled
-                        placeholder="Leave a comment..."
+                        placeholder={translate(
+                          "common:mobileReviewCommentPlaceholder",
+                          "Leave a comment…",
+                        )}
                         textAlignVertical="top"
                         value={commentText}
                         onChangeText={setCommentText}
@@ -292,15 +299,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         {!isAndroid && target ? (
           <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
             <ControlPill
-              accessibilityLabel="Add image"
+              accessibilityLabel={translate("common:mobileAddImage", "Add image")}
               icon="plus"
               onPress={() => void handlePickImages()}
             />
             <View className="flex-1" />
             <ControlPill
-              accessibilityLabel="Comment"
+              accessibilityLabel={translate("common:comment", "Comment")}
               icon="arrow.up"
-              label="Comment"
+              label={translate("common:comment", "Comment")}
               variant="primary"
               disabled={!canSubmit}
               onPress={handleSubmit}
@@ -318,15 +325,15 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
             style={{ paddingBottom: Math.max(insets.bottom, 10) }}
           >
             <ControlPill
-              accessibilityLabel="Add image"
+              accessibilityLabel={translate("common:mobileAddImage", "Add image")}
               icon="plus"
               onPress={() => void handlePickImages()}
             />
             <View className="flex-1" />
             <ControlPill
-              accessibilityLabel="Comment"
+              accessibilityLabel={translate("common:comment", "Comment")}
               icon="arrow.up"
-              label="Comment"
+              label={translate("common:comment", "Comment")}
               variant="primary"
               disabled={!canSubmit}
               onPress={handleSubmit}

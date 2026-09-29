@@ -4,6 +4,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { SymbolView } from "../../components/AppSymbol";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 
@@ -12,17 +13,31 @@ import { AppText as Text } from "../../components/AppText";
 function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string): string {
   switch (phase) {
     case "offline":
-      return "You are offline";
+      return translate("common:mobileConnections.offline", "You are offline");
     case "connecting":
-      return `Connecting to ${environmentLabel}...`;
+      return translate("common:mobileConnections.connecting", "Connecting to {{environment}}…", {
+        environment: environmentLabel,
+      });
     case "reconnecting":
-      return `Reconnecting to ${environmentLabel}...`;
+      return translate(
+        "common:mobileConnections.reconnecting",
+        "Reconnecting to {{environment}}…",
+        { environment: environmentLabel },
+      );
     case "unsupported":
-      return "Client not supported";
+      return translate("common:mobileConnections.clientNotSupported", "Client not supported");
     case "error":
-      return `${environmentLabel} is unavailable`;
+      return translate(
+        "common:mobileConnections.environmentUnavailable",
+        "{{environment}} is unavailable",
+        { environment: environmentLabel },
+      );
     case "available":
-      return `${environmentLabel} is disconnected`;
+      return translate(
+        "common:mobileConnections.environmentDisconnected",
+        "{{environment}} is disconnected",
+        { environment: environmentLabel },
+      );
     case "connected":
       return "";
   }
@@ -34,20 +49,41 @@ function noticeDetail(
   error: string | null,
 ): string {
   if (error) {
-    return phase === "reconnecting" ? `The app will keep retrying automatically. ${error}` : error;
+    return phase === "reconnecting"
+      ? translate(
+          "common:mobileConnections.retryingAutomatically",
+          "The app will keep retrying automatically. {{error}}",
+          { error },
+        )
+      : error;
   }
 
   switch (phase) {
     case "offline":
-      return `Cached data remains available. The ${resourceName} will load when your connection returns.`;
+      return translate(
+        "common:mobileConnections.cachedDataAvailable",
+        "Cached data remains available. The {{resource}} will load when your connection returns.",
+        { resource: resourceName },
+      );
     case "connecting":
     case "reconnecting":
-      return `The ${resourceName} will load as soon as the environment is ready.`;
+      return translate(
+        "common:mobileConnections.resourceLoadsWhenReady",
+        "The {{resource}} will load as soon as the environment is ready.",
+        { resource: resourceName },
+      );
     case "unsupported":
-      return "Use compatible versions of the app and server to connect.";
+      return translate(
+        "common:mobileConnections.compatibleVersions",
+        "Use compatible versions of the app and server to connect.",
+      );
     case "available":
     case "error":
-      return `Reconnect the environment to load the ${resourceName}.`;
+      return translate(
+        "common:mobileConnections.reconnectForResource",
+        "Reconnect the environment to load the {{resource}}.",
+        { resource: resourceName },
+      );
     case "connected":
       return "";
   }

@@ -21,14 +21,20 @@ export function projectThreadContentPresentation(input: {
   if (input.detailDeleted) {
     return {
       kind: "unavailable",
-      title: "Thread unavailable",
-      detail: "This thread was deleted or is no longer available.",
+      title: translate("common:mobileThreadUnavailable", "Thread unavailable"),
+      detail: translate(
+        "common:mobileFeedback.threadDeletedOrUnavailable",
+        "This thread was deleted or is no longer available.",
+      ),
     };
   }
   if (input.detailError !== null) {
     return {
       kind: "unavailable",
-      title: "Could not load conversation",
+      title: translate(
+        "common:mobileFeedback.couldNotLoadConversation",
+        "Could not load conversation",
+      ),
       detail: input.detailError,
     };
   }
@@ -43,7 +49,11 @@ export function projectThreadContentPresentation(input: {
   }
   return {
     kind: "unavailable",
-    title: "Messages not cached",
-    detail: "Reconnect this environment to load the conversation.",
+    title: translate("common:mobileFeedback.messagesNotCached", "Messages not cached"),
+    detail: translate(
+      "common:mobileFeedback.reconnectToLoadConversation",
+      "Reconnect this environment to load the conversation.",
+    ),
   };
 }
+import { translate } from "@t3tools/i18n";

@@ -28,24 +28,34 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
       />
       <MaterialIconButton
         icon="minus"
-        accessibilityLabel="Decrease days before auto-settle"
+        accessibilityLabel={translate(
+          "common:mobileDecreaseDaysBeforeAutoSettle",
+          "Decrease days before auto-settle",
+        )}
         disabled={props.disabled || props.value <= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         onPress={() => adjust(-1)}
       />
       <AppText
         className="min-w-8 text-center text-base"
         style={{ fontVariant: ["tabular-nums"] }}
-        accessibilityLabel={`${props.value} ${props.value === 1 ? "day" : "days"} before auto-settle`}
+        accessibilityLabel={
+          translate("common:mobileDaysBeforeAutoSettle", "Days before auto-settle") +
+          `: ${props.value}`
+        }
         accessibilityLiveRegion="polite"
       >
         {props.value}
       </AppText>
       <MaterialIconButton
         icon="plus"
-        accessibilityLabel="Increase days before auto-settle"
+        accessibilityLabel={translate(
+          "common:mobileIncreaseDaysBeforeAutoSettle",
+          "Increase days before auto-settle",
+        )}
         disabled={props.disabled || props.value >= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         onPress={() => adjust(1)}
       />
     </View>
   );
 }
+import { translate } from "@t3tools/i18n";

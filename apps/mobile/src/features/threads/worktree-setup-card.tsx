@@ -1,8 +1,5 @@
-import {
-  worktreeSetupStageLabel,
-  type WorktreeSetupSnapshot,
-  type WorktreeSetupStage,
-} from "@t3tools/contracts";
+import { translate } from "@t3tools/i18n";
+import type { WorktreeSetupSnapshot, WorktreeSetupStage } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useState } from "react";
@@ -43,28 +40,34 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
   const backgroundSetup = handedOff && running;
-  const scriptName = snapshot.setupScript?.name ?? "Setup script";
+  const scriptName =
+    snapshot.setupScript?.name ?? translate("common:mobileUiSetupScript", "Setup script");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const now = useSetupClock(running || working);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
   const label =
     handedOff && working
-      ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
+      ? translate("common:mobileUiWorkingFor", "Working for {{duration}}", {
+          duration: elapsed(turnStartedAt, null, now) ?? "0s",
+        })
       : running
         ? handedOff
-          ? "Setup continues…"
-          : "Setting up worktree…"
+          ? translate("common:mobileUiSetupContinue", "Setup continues…")
+          : translate("common:mobileUiSettingUpWorktree", "Setting up worktree…")
         : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
+          ? translate("common:mobileUiSetupCancelled", "Worktree setup cancelled")
           : snapshot.phase === "failed"
-            ? "Worktree setup failed"
+            ? translate("common:mobileUiSetupFailed", "Worktree setup failed")
             : failed
-              ? "Setup script failed"
-              : "Worktree ready";
+              ? translate("common:mobileUiSetupScriptFailed", "Setup script failed")
+              : translate("common:mobileUiWorktreeReady", "Worktree ready");
 
   return (
-    <View accessibilityLabel="Worktree setup" className="py-1">
+    <View
+      accessibilityLabel={translate("common:mobileWorktreeSetup", "Worktree setup")}
+      className="py-1"
+    >
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel
           label={label}
@@ -83,8 +86,12 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           accessibilityRole="button"
           accessibilityLabel={
             backgroundSetup
-              ? `${scriptName} is still running. Show setup progress.`
-              : "Worktree setup details"
+              ? translate(
+                  "common:mobileUiSetupRunning",
+                  "{{script}} is still running. Show setup progress.",
+                  { script: scriptName },
+                )
+              : translate("common:mobileUiWorktreeSetupDetails", "Worktree setup details")
           }
           accessibilityState={{ expanded: detailsOpen }}
           onPress={() => setDetailsOpen(true)}
@@ -111,7 +118,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               />
             ) : null}
             <Text numberOfLines={1} className="shrink text-2xs text-foreground-secondary">
-              {backgroundSetup ? scriptName : "Details"}
+              {backgroundSetup ? scriptName : translate("common:mobileUiDetails", "Details")}
             </Text>
             {!backgroundSetup ? (
               <SymbolView name="chevron.right" size={10} tintColorClassName="accent-icon-muted" />
@@ -147,7 +154,12 @@ export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
-        <HeaderLabel label={`Working for ${elapsed(startedAt, null, now) ?? "0s"}`} active />
+        <HeaderLabel
+          label={translate("common:mobileUiWorkingFor", "Working for {{duration}}", {
+            duration: elapsed(startedAt, null, now) ?? "0s",
+          })}
+          active
+        />
       </View>
     </View>
   );
@@ -243,7 +255,10 @@ function SetupDetailsSheet({
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel={translate(
+                "common:mobileCancelWorktreeSetup",
+                "Cancel worktree setup",
+              )}
               onPress={() => {
                 onClose();
                 onCancel();
@@ -285,20 +300,25 @@ function StageRow({
   animate?: boolean;
 }) {
   const label =
-    stage.id === "setup-script"
-      ? (scriptName ?? worktreeSetupStageLabel(stage.id))
-      : worktreeSetupStageLabel(stage.id);
+    stage.id === "setup-script" && scriptName ? scriptName : localizedWorktreeStageLabel(stage.id);
   const detail =
     stage.status === "pending"
       ? null
       : stage.status === "skipped"
-        ? (stage.detail ?? "skipped")
+        ? (stage.detail ?? translate("common:mobileUiStageSkipped", "Skipped"))
         : stage.id === "checkout" && stage.status === "running" && stage.percent !== null
           ? `${stage.percent}%`
           : stage.detail;
   return (
     <View
-      accessibilityLabel={`${label}, ${stage.status}`}
+      accessibilityLabel={translate(
+        "common:mobileUiStageAccessibilityLabel",
+        "{{label}}, {{status}}",
+        {
+          label,
+          status: localizedWorktreeStageStatus(stage.status),
+        },
+      )}
       className={compact ? "min-h-8 flex-row items-center" : "min-h-11 flex-row items-center"}
       style={{ columnGap: 8, opacity: stage.status === "pending" ? 0.4 : 1 }}
     >
@@ -359,13 +379,45 @@ function StageRow({
   );
 }
 
+function localizedWorktreeStageLabel(stage: WorktreeSetupStage["id"]) {
+  switch (stage) {
+    case "fetch":
+      return translate("common:mobileUiStageFetchBaseBranch", "Fetch base branch");
+    case "checkout":
+      return translate("common:mobileUiStageCheckout", "Check out files");
+    case "submodules":
+      return translate("common:mobileUiStageSubmodules", "Init submodules");
+    case "setup-script":
+      return translate("common:mobileUiStageSetupScript", "Run setup script");
+    case "agent":
+      return translate("common:mobileUiStageAgent", "Start agent");
+  }
+}
+
+function localizedWorktreeStageStatus(status: WorktreeSetupStage["status"]) {
+  switch (status) {
+    case "pending":
+      return translate("common:mobileUiStagePending", "Pending");
+    case "running":
+      return translate("common:mobileUiStageRunning", "Running");
+    case "done":
+      return translate("common:mobileUiStageDone", "Done");
+    case "skipped":
+      return translate("common:mobileUiStageSkipped", "Skipped");
+    case "warning":
+      return translate("common:mobileUiStageWarning", "Warning");
+    case "failed":
+      return translate("common:mobileUiStageFailed", "Failed");
+  }
+}
+
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
 /** Fixed four-line output window, shown only in Details. */
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   return (
     <View
-      accessibilityLabel="Setup script output"
+      accessibilityLabel={translate("common:mobileSetupScriptOutput", "Setup script output")}
       className={
         failed
           ? "mb-2 ml-8 rounded-md border border-danger-border bg-danger px-3 py-2"

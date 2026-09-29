@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
@@ -88,7 +89,12 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       await action();
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "The action could not be completed. Try again.",
+        cause instanceof Error
+          ? cause.message
+          : translate(
+              "common:mobileEnvironmentDetail.actionFailed",
+              "The action could not be completed. Try again.",
+            ),
       );
     } finally {
       pendingRef.current = false;
@@ -101,12 +107,26 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     if (disabled || !targetVersion || !capabilities || !supportsEnvironmentUpdate(capabilities))
       return;
     Alert.alert(
-      `Update ${environment?.environmentLabel ?? "environment"}?`,
-      `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Running threads may be interrupted.`,
+      translate("common:mobileEnvironmentDetail.updatePromptTitle", "Update {{environment}}?", {
+        environment:
+          environment?.environmentLabel ??
+          translate("common:mobileEnvironmentDetail.environment", "environment"),
+      }),
+      capabilities.serverSelfUpdate === "desktop-managed"
+        ? translate(
+            "common:mobileEnvironmentDetail.installDesktopUpdate",
+            "Install T3 Code {{version}}. The desktop app will close and relaunch. Running threads may be interrupted.",
+            { version: targetVersion },
+          )
+        : translate(
+            "common:mobileEnvironmentDetail.installServerUpdate",
+            "Install T3 Code {{version}}. The server will restart and reconnect. Running threads may be interrupted.",
+            { version: targetVersion },
+          ),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: translate("common:mobileEnvironmentDetail.cancel", "Cancel"), style: "cancel" },
         {
-          text: "Update",
+          text: translate("common:mobileEnvironmentDetail.update", "Update"),
           onPress: () =>
             void run("server", async () => {
               const result = await updateServer({
@@ -121,7 +141,13 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
               });
               if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
               setRelease(null);
-              setNotice(`Updated to ${result.value.targetVersion}.`);
+              setNotice(
+                translate(
+                  "common:mobileEnvironmentDetail.updatedToVersion",
+                  "Updated to {{version}}.",
+                  { version: result.value.targetVersion },
+                ),
+              );
             }),
         },
       ],
@@ -143,7 +169,12 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   }
 
   return (
-    <SettingsScreen title={environment?.environmentLabel ?? "Environment"}>
+    <SettingsScreen
+      title={
+        environment?.environmentLabel ??
+        translate("common:mobileEnvironmentDetail.environment", "Environment")
+      }
+    >
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         className="flex-1"
@@ -152,11 +183,14 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       >
         {!environment ? (
           <Text className="text-base text-foreground-muted">
-            This environment is no longer saved on this device.
+            {translate(
+              "common:mobileEnvironmentNotSavedOnDevice",
+              "This environment is no longer saved on this device.",
+            )}
           </Text>
         ) : (
           <>
-            <SettingsSection title="Connection">
+            <SettingsSection title={translate("common:mobileConnection", "Connection")}>
               <ConnectionEnvironmentRow
                 environment={environment}
                 expanded={connectionExpanded}
@@ -169,15 +203,27 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             </SettingsSection>
             {!connected ? (
               <Text className="px-2 text-sm text-foreground-muted">
-                Connect this environment to manage it.
+                {translate(
+                  "common:mobileConnectEnvironmentToManage",
+                  "Connect this environment to manage it.",
+                )}
               </Text>
             ) : !allowed ? (
               <Text className="px-2 text-sm text-foreground-muted">
                 {AsyncResult.isFailure(sessionResult)
-                  ? "Could not verify your permissions. Reconnect to try again."
+                  ? translate(
+                      "common:mobileEnvironmentDetail.permissionCheckFailed",
+                      "Could not verify your permissions. Reconnect to try again.",
+                    )
                   : session === null
-                    ? "Checking permissions…"
-                    : "This connection does not have permission to manage the environment."}
+                    ? translate(
+                        "common:mobileEnvironmentDetail.checkingPermissions",
+                        "Checking permissions…",
+                      )
+                    : translate(
+                        "common:mobileEnvironmentDetail.permissionDenied",
+                        "This connection does not have permission to manage the environment.",
+                      )}
               </Text>
             ) : null}
             {error ? (
@@ -188,14 +234,26 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config ? (
               <>
-                <SettingsSection title="T3 Code">
+                <SettingsSection title={translate("integrations:t3Code", "T3 Code")}>
                   <View className="gap-1 p-4">
-                    <Text className="text-base text-foreground">Version {version}</Text>
+                    <Text className="text-base text-foreground">
+                      {translate("common:mobileEnvironmentDetail.version", "Version {{version}}", {
+                        version:
+                          version ??
+                          translate("common:mobileEnvironmentDetail.versionUnknown", "unknown"),
+                      })}
+                    </Text>
                     {running ? (
                       <Text className="text-sm text-foreground-muted">
                         {updateState.stage === "resuming"
-                          ? "Restarting and reconnecting…"
-                          : "Downloading update…"}
+                          ? translate(
+                              "common:mobileEnvironmentDetail.restarting",
+                              "Restarting and reconnecting…",
+                            )
+                          : translate(
+                              "common:mobileEnvironmentDetail.downloading",
+                              "Downloading update…",
+                            )}
                       </Text>
                     ) : updateState.status === "failed" ? (
                       <Text selectable className="text-sm text-danger-foreground">
@@ -205,21 +263,34 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                     {checkedRelease ? (
                       <Text className="text-sm text-foreground-muted">
                         {checkedRelease.targetVersion
-                          ? `Version ${checkedRelease.targetVersion} is available.`
-                          : "You are up to date."}
+                          ? translate(
+                              "common:mobileEnvironmentDetail.versionAvailable",
+                              "Version {{version}} is available.",
+                              { version: checkedRelease.targetVersion },
+                            )
+                          : translate(
+                              "common:mobileEnvironmentDetail.upToDate",
+                              "You are up to date.",
+                            )}
                       </Text>
                     ) : null}
                     {!supportsEnvironmentUpdate(config.environment.capabilities) ? (
                       <Text className="text-sm text-foreground-muted">
                         {capabilities?.serverSelfUpdate === "desktop-managed"
-                          ? "Update the desktop app on this machine."
-                          : "Update and restart T3 Code on this machine."}
+                          ? translate(
+                              "common:mobileEnvironmentDetail.updateDesktopApp",
+                              "Update the desktop app on this machine.",
+                            )
+                          : translate(
+                              "common:mobileEnvironmentDetail.updateServer",
+                              "Update and restart T3 Code on this machine.",
+                            )}
                       </Text>
                     ) : null}
                   </View>
                   <SettingsActionRow
                     icon="arrow.clockwise"
-                    label="Check for updates"
+                    label={translate("common:mobileCheckForUpdates", "Check for updates")}
                     disabled={disabled}
                     loading={pending === "check"}
                     onPress={() => {
@@ -248,17 +319,21 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                   supportsEnvironmentUpdate(config.environment.capabilities) ? (
                     <SettingsActionRow
                       icon="arrow.up.circle"
-                      label={`Update to ${checkedRelease.targetVersion}`}
+                      label={translate(
+                        "common:mobileEnvironmentDetail.updateToVersion",
+                        "Update to {{version}}",
+                        { version: checkedRelease.targetVersion },
+                      )}
                       disabled={disabled}
                       loading={pending === "server" || running}
                       onPress={requestServerUpdate}
                     />
                   ) : null}
                 </SettingsSection>
-                <SettingsSection title="Providers">
+                <SettingsSection title={translate("common:providers", "Providers")}>
                   <SettingsActionRow
                     icon="arrow.clockwise"
-                    label="Refresh providers"
+                    label={translate("common:mobileRefreshProviders", "Refresh providers")}
                     disabled={disabled}
                     loading={pending === "refresh"}
                     onPress={() => {
@@ -266,7 +341,12 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       void run("refresh", async () => {
                         const result = await refreshProviders({ environmentId, input: {} });
                         if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
-                        setNotice("Provider status refreshed.");
+                        setNotice(
+                          translate(
+                            "common:mobileEnvironmentDetail.providersRefreshed",
+                            "Provider status refreshed.",
+                          ),
+                        );
                       });
                     }}
                   />
@@ -283,10 +363,17 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           </View>
                           <Text className="text-sm text-foreground-muted">
                             {provider.installed
-                              ? (provider.version ?? "Version unknown")
-                              : "Not installed"}
+                              ? (provider.version ??
+                                translate(
+                                  "common:mobileEnvironmentDetail.versionUnknown",
+                                  "Version unknown",
+                                ))
+                              : translate(
+                                  "common:mobileEnvironmentDetail.notInstalled",
+                                  "Not installed",
+                                )}
                             {provider.versionAdvisory?.latestVersion
-                              ? ` · Latest ${provider.versionAdvisory.latestVersion}`
+                              ? ` · ${translate("common:mobileEnvironmentDetail.latestVersion", "Latest {{version}}", { version: provider.versionAdvisory.latestVersion })}`
                               : ""}
                           </Text>
                           {provider.updateState && provider.updateState.status !== "idle" ? (
@@ -299,7 +386,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                               }
                             >
                               {provider.updateState.message ??
-                                `Update ${provider.updateState.status}`}
+                                translate(
+                                  "common:mobileEnvironmentDetail.updating",
+                                  "Update {{status}}",
+                                  { status: provider.updateState.status },
+                                )}
                             </Text>
                           ) : null}
                           {provider.compatibilityAdvisory?.message ? (
@@ -315,14 +406,23 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           {provider.versionAdvisory?.status === "behind_latest" &&
                           !provider.versionAdvisory.canUpdate ? (
                             <Text className="text-sm text-foreground-muted">
-                              Update this provider on the environment's machine.
+                              {translate(
+                                "common:mobileUpdateProviderOnMachine",
+                                "Update this provider on the environment's machine.",
+                              )}
                             </Text>
                           ) : null}
                         </View>
                         {canUpdateEnvironmentProvider(provider) ? (
                           <SettingsActionRow
                             icon="arrow.up.circle"
-                            label={`Update ${provider.displayName ?? provider.driver}`}
+                            label={translate(
+                              "common:mobileUiUpdateProvider",
+                              "Update {{provider}}",
+                              {
+                                provider: provider.displayName ?? provider.driver,
+                              },
+                            )}
                             disabled={disabled}
                             loading={pending === provider.instanceId}
                             onPress={() => requestProviderUpdate(provider)}

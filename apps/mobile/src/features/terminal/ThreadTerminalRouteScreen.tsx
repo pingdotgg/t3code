@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useTranslation } from "@t3tools/i18n/react";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
@@ -97,24 +98,24 @@ function TerminalHeader(props: {
 }) {
   return (
     <ScreenHeader
-      title="Terminal"
+      title={translate("common:terminal", "Terminal")}
       subtitle={props.subtitle}
       onBack={props.onCloseTerminal}
       backInSplitView={{
-        accessibilityLabel: "Back to chat",
+        accessibilityLabel: translate("common:mobileBackToChat", "Back to chat"),
         icon: "chevron.left",
       }}
       menus={
         props.isEnvironmentReady
           ? [
               {
-                title: "Terminal options",
+                title: translate("common:mobileTerminalOptions", "Terminal options"),
                 icon: "terminal",
                 status: getTerminalStatusLabel(props.status),
                 items: [
                   {
                     id: "text-size",
-                    title: "Text size",
+                    title: translate("common:textSize", "Text size"),
                     icon: "textformat.size",
                     inline: true,
                     items: [
@@ -150,9 +151,17 @@ function TerminalHeader(props: {
                   })),
                   {
                     id: "terminal-new",
-                    title: "Open new terminal",
+                    title: translate("common:openNewTerminal", "Open new terminal"),
                     icon: "plus",
-                    subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
+                    subtitle: translate(
+                      "common:mobileStartAnotherShellIn",
+                      "Start another shell in {{workspace}}",
+                      {
+                        workspace:
+                          basename(props.workspaceRoot) ??
+                          translate("common:mobileThisWorkspace", "this workspace"),
+                      },
+                    ),
                     onPress: props.onOpenNewTerminal,
                   },
                 ],
@@ -174,7 +183,11 @@ class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardRea
   { terminalId: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Failed to read the clipboard for a paste into terminal ${this.terminalId}.`;
+    return translate(
+      "common:mobileTerminalClipboardReadError",
+      "Failed to read the clipboard for a paste into terminal {{terminalId}}.",
+      { terminalId: this.terminalId },
+    );
   }
 }
 
@@ -1142,14 +1155,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   if (!selectedThread) {
     if (workspaceState.isLoadingConnections) {
-      return <LoadingScreen message="Opening terminal…" />;
+      return (
+        <LoadingScreen message={translate("common:mobileOpeningTerminal", "Opening terminal…")} />
+      );
     }
 
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
+          title={translate("common:mobileThreadUnavailable", "Thread unavailable")}
+          detail={translate(
+            "common:mobileTerminalNeedsThreadAndWorkspace",
+            "This terminal route needs an active thread and workspace.",
+          )}
         />
       </View>
     );
@@ -1159,15 +1177,20 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Terminal unavailable"
-          detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
+          title={translate("common:mobileTerminalUnavailable", "Terminal unavailable")}
+          detail={translate(
+            "common:mobileTerminalNeedsWorkspaceRoot",
+            "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
+          )}
         />
       </View>
     );
   }
 
   if (!environment.isReady && environment.presentation === null) {
-    return <LoadingScreen message="Opening terminal…" />;
+    return (
+      <LoadingScreen message={translate("common:mobileOpeningTerminal", "Opening terminal…")} />
+    );
   }
 
   return (
@@ -1221,7 +1244,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               environmentLabel={
                 environment.presentation?.entry.target.label ??
                 selectedEnvironmentConnection?.environmentLabel ??
-                "Environment"
+                translate("common:environment", "Environment")
               }
               connection={
                 environment.presentation?.connection ?? {
@@ -1258,7 +1281,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   captureRequest={captureRequest}
                   onCapture={(text) => {
                     if (text.trim()) setCapturedOutput(text);
-                    else Alert.alert("No terminal output", "There is no visible output to attach.");
+                    else
+                      Alert.alert(
+                        translate("common:mobileNoTerminalOutput", "No terminal output"),
+                        translate(
+                          "common:mobileNoVisibleTerminalOutputToAttach",
+                          "There is no visible output to attach.",
+                        ),
+                      );
                   }}
                   onInput={handleInput}
                   onResize={handleResize}
@@ -1272,14 +1302,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
                   {selectedThread && hasNativeTerminalSurface() ? (
                     <MaterialButton
-                      label="Attach output"
+                      label={translate("common:mobileAttachOutput", "Attach output")}
                       tone="text"
                       onPress={() => setCaptureRequest((value) => value + 1)}
                     />
                   ) : null}
                   <View className="flex-1" />
                   <MaterialIconButton
-                    accessibilityLabel="Show keyboard"
+                    accessibilityLabel={translate("common:mobileShowKeyboard", "Show keyboard")}
                     icon="keyboard"
                     onPress={handleShowKeyboard}
                   />
@@ -1340,7 +1370,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                         })}
                       </ComposerToolbarScroller>
                       <ComposerToolbarButton
-                        accessibilityLabel="Dismiss keyboard"
+                        accessibilityLabel={translate(
+                          "common:mobileDismissKeyboard",
+                          "Dismiss keyboard",
+                        )}
                         icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
                         onPress={handleDismissKeyboard}
                         showChevron={false}
@@ -1350,7 +1383,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 </KeyboardStickyView>
               ) : !keyboardState.isVisible && Platform.OS !== "android" ? (
                 <Pressable
-                  accessibilityLabel="Show keyboard"
+                  accessibilityLabel={translate("common:mobileShowKeyboard", "Show keyboard")}
                   accessibilityRole="button"
                   onPress={handleShowKeyboard}
                   style={({ pressed }) => ({

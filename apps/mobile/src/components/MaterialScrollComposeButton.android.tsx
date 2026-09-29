@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Box, ExtendedFloatingActionButton, Host, Icon, Text } from "@expo/ui/jetpack-compose";
 import {
   defaultMinSize,
@@ -78,7 +79,7 @@ export function MaterialScrollComposeButton(props: {
                     fontWeight: "500",
                   }}
                 >
-                  New thread
+                  {translate("common:newThread", "New thread")}
                 </Text>
               </ExtendedFloatingActionButton.Text>
             </ExtendedFloatingActionButton>
@@ -89,7 +90,7 @@ export function MaterialScrollComposeButton(props: {
       <Pressable
         onPress={props.onPress}
         accessibilityRole="button"
-        accessibilityLabel="New thread"
+        accessibilityLabel={translate("common:newThread", "New thread")}
         android_ripple={{ foreground: true }}
         style={{
           position: "absolute",

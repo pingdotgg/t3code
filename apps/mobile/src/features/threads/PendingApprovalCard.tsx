@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { RequestActionButton } from "./RequestActionButton";
 import type {
   ApprovalRequestId,
@@ -18,22 +19,28 @@ export interface PendingApprovalCardProps {
   ) => Promise<unknown>;
 }
 
-const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  { decision: "accept", label: "Allow once" },
-  { decision: "acceptForSession", label: "Allow session" },
-  { decision: "decline", label: "Decline" },
-];
-
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
-  const options: ReadonlyArray<ProviderApprovalOption> =
-    props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const options: ReadonlyArray<ProviderApprovalOption> = props.approval.options ?? [
+    {
+      decision: "accept",
+      label: translate("common:mobileApprovalOption.allowOnce", "Allow once"),
+    },
+    {
+      decision: "acceptForSession",
+      label: translate("common:mobileApprovalOption.allowSession", "Allow session"),
+    },
+    {
+      decision: "decline",
+      label: translate("common:mobileApprovalOption.decline", "Decline"),
+    },
+  ];
   const warning = options.find((option) => option.warning)?.warning;
   // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
   // behind this card, so a translucent surface bleeds messages through it.
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-        Approval needed
+        {translate("common:mobileApprovalNeeded", "Approval needed")}
       </Text>
       <Text className="font-t3-bold text-lg text-foreground">
         {props.approval.appName ?? props.approval.requestKind}

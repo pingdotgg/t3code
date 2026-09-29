@@ -92,7 +92,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-full-path" as const,
-                  title: "Copy full path",
+                  title: translate("common:mobileFiles.copyFullPath", "Copy full path"),
                   run: () => copyTextWithHaptic(reference.path),
                 },
               ]
@@ -101,7 +101,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-relative-path" as const,
-                  title: "Copy relative path",
+                  title: translate("common:mobileFiles.copyRelativePath", "Copy relative path"),
                   run: () => copyTextWithHaptic(relativePath),
                 },
               ]
@@ -110,7 +110,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-url" as const,
-                  title: "Copy URL",
+                  title: translate("common:mobileFiles.copyUrl", "Copy URL"),
                   run: () => copyTextWithHaptic(reference.url),
                 },
               ]
@@ -119,7 +119,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "open-file" as const,
-                  title: "Open in file viewer",
+                  title: translate("common:mobileFiles.openInFileViewer", "Open in file viewer"),
                   run: () => {
                     onOpenFile?.();
                     navigation.navigate("ThreadFile", {
@@ -133,7 +133,9 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             : []),
           {
             id: "save" as const,
-            title: sharing ? "Opening share sheet…" : "Save or share",
+            title: sharing
+              ? translate("common:mobileFiles.openingShareSheet", "Opening share sheet…")
+              : translate("common:mobileFiles.saveOrShare", "Save or share"),
             run: share,
             disabled: sharing,
           },
@@ -146,3 +148,4 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     share,
   };
 }
+import { translate } from "@t3tools/i18n";

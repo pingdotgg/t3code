@@ -29,13 +29,19 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
         className="text-foreground"
         style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
       >
-        The quick brown fox jumps over the lazy dog.
+        {translate(
+          "common:mobileAppearanceFontSample",
+          "The quick brown fox jumps over the lazy dog.",
+        )}
       </Text>
       <Text
         className="text-foreground-muted"
         style={{ fontSize: sizes.s, lineHeight: Math.round(sizes.s * 1.4) }}
       >
-        Messages, labels, and headings scale with this size.
+        {translate(
+          "common:mobileAppearanceScaleDescription",
+          "Messages, labels, and headings scale with this size.",
+        )}
       </Text>
     </View>
   );
@@ -206,3 +212,4 @@ export function CodeAppearancePreview(props: {
     </View>
   );
 }
+import { translate } from "@t3tools/i18n";

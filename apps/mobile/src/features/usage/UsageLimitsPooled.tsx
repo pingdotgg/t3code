@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -29,13 +30,31 @@ import { useProviderColors } from "./usageProviders";
 import { getLocalizedDateTimeFormatter } from "@t3tools/i18n";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
+function localizedPaceLabel(pace: "ahead" | "on" | "under") {
+  const copy = {
+    ahead: ["common:mobileUsage.paceAhead", "Ahead of pace"],
+    on: ["common:mobileUsage.paceOn", "On pace"],
+    under: ["common:mobileUsage.paceUnder", "Under pace"],
+  } as const;
+  const [key, fallback] = copy[pace];
+  return translate(key, fallback);
+}
+
+function localizedResetsIn(value: string | null) {
+  if (value === null) return null;
+  if (value === "resets now") return translate("common:mobileUsage.resetsNow", "resets now");
+  return translate("common:mobileUsage.resetsIn", "resets in {{duration}}", {
+    duration: value.replace(/^resets in /, ""),
+  });
+}
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
   if (!account.email) return DRIVER_LABEL[account.driver] ?? String(account.driver);
   const [local = "", domain = ""] = account.email.split("@");
-  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
+  return (
+    `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || translate("settings:account", "Account")
+  );
 }
 
 /** The spent share comes back at reset. SVG keeps the hatching static on both platforms. */
@@ -109,18 +128,24 @@ function PoolWindowCard({
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
             </Text>
-            <Text className="text-sm text-foreground-muted">left</Text>
+            <Text className="text-sm text-foreground-muted">
+              {translate("common:mobileLeftLabel", "left")}
+            </Text>
           </View>
         </View>
         {pool.pace ? (
-          <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
+          <Text className="text-xs text-foreground-tertiary">{localizedPaceLabel(pool.pace)}</Text>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
           ↻ +{nextRefill.restoresPercent}%{" "}
-          {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
+          {nextRefill.at <= now
+            ? translate("common:mobileUsage.resetsNow", "now")
+            : translate("common:mobileUsage.inDuration", "in {{duration}}", {
+                duration: formatDuration(nextRefill.at - now),
+              })}
         </Text>
       ) : null}
       <View className="flex-row gap-1">
@@ -130,8 +155,19 @@ function PoolWindowCard({
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
-              accessibilityHint="Show account details"
+              accessibilityLabel={translate(
+                "common:mobileUsage.accountSegmentLabel",
+                "Segment {{index}}, {{account}}, {{percent}}% left",
+                {
+                  index: index + 1,
+                  account: accountName(account),
+                  percent: remainingPercent(window),
+                },
+              )}
+              accessibilityHint={translate(
+                "common:mobileShowAccountDetails",
+                "Show account details",
+              )}
               onPress={() => openAccount(account)}
               className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
             >
@@ -154,12 +190,35 @@ function PoolWindowCard({
           if (!window) return null;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
+          const localizedReset = localizedResetsIn(resetsIn);
+          const creditsLabel = credits
+            ? translate(
+                credits === 1
+                  ? "common:mobileUsage.oneResetCreditLabel"
+                  : "common:mobileUsage.resetCreditsBanked",
+                credits === 1 ? "1 reset credit banked" : "{{count}} reset credits banked",
+                { count: credits },
+              )
+            : "";
           return (
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
-              accessibilityHint="Show account details"
+              accessibilityLabel={translate(
+                "common:mobileUsage.accountSegmentFullLabel",
+                "Segment {{index}}, {{account}}, {{percent}}% left{{reset}}{{credits}}",
+                {
+                  index: index + 1,
+                  account: accountName(account),
+                  percent: remainingPercent(window),
+                  reset: localizedReset ? `, ${localizedReset}` : "",
+                  credits: creditsLabel ? `, ${creditsLabel}` : "",
+                },
+              )}
+              accessibilityHint={translate(
+                "common:mobileShowAccountDetails",
+                "Show account details",
+              )}
               onPress={() => openAccount(account)}
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
             >
@@ -180,7 +239,7 @@ function PoolWindowCard({
               <View className="flex-row items-center gap-1">
                 {resetsIn ? (
                   <Text className="text-xs tabular-nums text-foreground-muted">
-                    {resetsIn.replace("resets in ", "↻ ")}
+                    {localizedReset?.replace(/^resets? /, "↻ ")}
                   </Text>
                 ) : null}
                 {credits ? (
@@ -230,8 +289,14 @@ export function UsageLimitsSection({
       {pools.length === 0 && notices.length === 0 && failedLabels.length === 0 && !cursorPrompt ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
-            ? "Select an environment to see limits."
-            : "No provider on the selected environments reports subscription limits."}
+            ? translate(
+                "common:mobileUsage.selectEnvironmentForLimits",
+                "Select an environment to see limits.",
+              )
+            : translate(
+                "common:mobileUsage.noProviderLimits",
+                "No provider on the selected environments reports subscription limits.",
+              )}
         </Text>
       ) : null}
       {pools.map((pool, index) => {
@@ -288,7 +353,11 @@ export function UsageLimitsSection({
             ))}
             {failedLabels.length > 0 ? (
               <Text className="text-sm font-t3-medium text-warning-foreground">
-                {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
+                {translate(
+                  "common:mobileCouldNotRefreshLimits",
+                  "{{labels}} could not refresh limits. Showing the last known values.",
+                  { labels: failedLabels.join(", ") },
+                )}
               </Text>
             ) : null}
           </View>
@@ -327,7 +396,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   return (
-    <SettingsScreen title="Account">
+    <SettingsScreen title={translate("settings:account", "Account")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
@@ -335,7 +404,10 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
       >
         {!account || !window ? (
           <Text className="text-base text-foreground-muted">
-            This account is no longer reporting limits on the selected environments.
+            {translate(
+              "common:mobileAccountNoLongerReportsLimits",
+              "This account is no longer reporting limits on the selected environments.",
+            )}
           </Text>
         ) : (
           <>
@@ -349,7 +421,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               {account.email ? (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={revealed ? "Hide account email" : "Reveal account email"}
+                  accessibilityLabel={
+                    revealed
+                      ? translate("common:mobileUsage.hideAccountEmail", "Hide account email")
+                      : translate("common:mobileUsage.revealAccountEmail", "Reveal account email")
+                  }
                   onPress={() => setRevealed((value) => !value)}
                   className="min-h-[44px] justify-center"
                 >
@@ -367,11 +443,13 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             <View className="gap-3 rounded-[24px] border-continuous bg-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">{window.label}</Text>
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-                {remainingPercent(window)}% left
+                {translate("common:mobileUsage.remainingPercent", "{{percent}}% left", {
+                  percent: remainingPercent(window),
+                })}
               </Text>
               {window.resetsAt ? (
                 <Text selectable className="text-sm text-foreground-muted">
-                  Resets{" "}
+                  {translate("common:mobileUsage.resetsAt", "Resets")}{" "}
                   {getLocalizedDateTimeFormatter({
                     dateStyle: "medium",
                     timeStyle: "short",
@@ -380,13 +458,19 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               ) : null}
               {reset && reset.restoresPercent > 0 ? (
                 <Text className="text-sm text-foreground-muted">
-                  Restores {reset.restoresPercent}% of the pool
+                  {translate(
+                    "common:mobileUsage.restoresPercent",
+                    "Restores {{percent}}% of the pool",
+                    { percent: reset.restoresPercent },
+                  )}
                 </Text>
               ) : null}
             </View>
             <View className="gap-2 rounded-[24px] border-continuous bg-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">
-                {account.environments.length ? "Signed in" : "Source"}
+                {account.environments.length
+                  ? translate("common:mobileUsage.signedIn", "Signed in")
+                  : translate("common:mobileUsage.source", "Source")}
               </Text>
               {account.environments.length ? (
                 account.environments.map((environment) => (

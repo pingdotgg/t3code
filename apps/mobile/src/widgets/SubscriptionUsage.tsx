@@ -1,3 +1,4 @@
+import { getLocalizedDateTimeFormatter, translate } from "@t3tools/i18n";
 import { HStack, ProgressView, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
   accessibilityElement,
@@ -39,8 +40,18 @@ function SubscriptionUsage(
   const monochrome =
     environment.widgetRenderingMode !== "fullColor" || environment.isLuminanceReduced;
   const providers = props.providers ?? [
-    { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
-    { name: "Claude", detail: "Open T3 to connect", windows: [], expiresAt: 0 },
+    {
+      name: "Codex",
+      detail: translate("common:mobileWidgets.openToConnect", "Open T3 to connect"),
+      windows: [],
+      expiresAt: 0,
+    },
+    {
+      name: "Claude",
+      detail: translate("common:mobileWidgets.openToConnect", "Open T3 to connect"),
+      windows: [],
+      expiresAt: 0,
+    },
   ];
   const columns = providers.map((provider) => {
     const stale = provider.windows.length > 0 && now >= provider.expiresAt;
@@ -73,9 +84,14 @@ function SubscriptionUsage(
               ].slice(0, limit)
             : windows.slice(0, limit);
     const detail = stale
-      ? "Open T3 to refresh"
+      ? translate("common:mobileWidgets.openToRefresh", "Open T3 to refresh")
       : period !== "auto" && windows.length === 0 && provider.windows.length > 0
-        ? `No ${period} limit reported`
+        ? translate("common:mobileWidgets.noPeriodLimit", "No {{period}} limit reported", {
+            period: translate(
+              period === "session" ? "common:mobileUsage.session" : "common:mobileUsage.weekly",
+              period,
+            ),
+          })
         : provider.detail;
     const barModifiers = [
       progressViewStyle("linear"),
@@ -92,7 +108,17 @@ function SubscriptionUsage(
             accessibilityElement("ignore"),
             accessibilityLabel(
               tightest
-                ? `${provider.name}, ${tightest.label}, ${tightest.remaining} percent remaining. ${tightest.reset}. ${provider.detail}.`
+                ? translate(
+                    "common:mobileWidgets.remainingAccessibility",
+                    "{{provider}}, {{window}}, {{percent}} percent remaining. {{reset}}. {{detail}}.",
+                    {
+                      provider: provider.name,
+                      window: tightest.label,
+                      percent: tightest.remaining,
+                      reset: tightest.reset,
+                      detail: provider.detail,
+                    },
+                  )
                 : `${provider.name}. ${detail}.`,
             ),
           ]}
@@ -118,10 +144,12 @@ function SubscriptionUsage(
               ]}
             >
               {tightest
-                ? `${tightest.remaining}% left`
+                ? translate("common:mobileWidgets.percentLeft", "{{percent}}% left", {
+                    percent: tightest.remaining,
+                  })
                 : period !== "auto" && !stale && provider.windows.length > 0
                   ? "N/A"
-                  : "Open T3"}
+                  : translate("common:mobileWidgets.openT3", "Open T3")}
             </Text>
           </HStack>
           {tightest ? (
@@ -168,7 +196,17 @@ function SubscriptionUsage(
             modifiers={[
               accessibilityElement("ignore"),
               accessibilityLabel(
-                `${provider.name}, ${window.label}, ${window.remaining} percent remaining. ${window.reset}. ${provider.detail}.`,
+                translate(
+                  "common:mobileWidgets.remainingAccessibility",
+                  "{{provider}}, {{window}}, {{percent}} percent remaining. {{reset}}. {{detail}}.",
+                  {
+                    provider: provider.name,
+                    window: window.label,
+                    percent: window.remaining,
+                    reset: window.reset,
+                    detail: provider.detail,
+                  },
+                ),
               ),
             ]}
           >
@@ -200,7 +238,9 @@ function SubscriptionUsage(
                   ),
                 ]}
               >
-                {window.remaining}% left
+                {translate("common:mobileWidgets.percentLeft", "{{percent}}% left", {
+                  percent: window.remaining,
+                })}
               </Text>
             </HStack>
             <ProgressView value={window.remaining / 100} modifiers={barModifiers} />
@@ -221,9 +261,11 @@ function SubscriptionUsage(
               lineLimit(1),
             ]}
           >
-            {(period === "auto" ? (provider.totalWindows ?? windows.length) : windows.length) -
-              limit}{" "}
-            more in T3
+            {translate("common:mobileWidgets.moreInT3", "{{count}} more in T3", {
+              count:
+                (period === "auto" ? (provider.totalWindows ?? windows.length) : windows.length) -
+                limit,
+            })}
           </Text>
         ) : null}
       </VStack>
@@ -237,7 +279,10 @@ function SubscriptionUsage(
     >
       {providers.length === 0 ? (
         <Text modifiers={[font({ textStyle: "caption" }), foregroundStyle("secondary")]}>
-          No subscription limits available.
+          {translate(
+            "common:mobileWidgets.noSubscriptionLimits",
+            "No subscription limits available.",
+          )}
         </Text>
       ) : compact ? (
         <VStack alignment="leading" spacing={accessory || dense ? 4 : 8}>
@@ -254,8 +299,15 @@ function SubscriptionUsage(
           modifiers={[font({ textStyle: "caption2" }), foregroundStyle("secondary"), lineLimit(1)]}
         >
           {props.checkedAt
-            ? `As of ${new Date(props.checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`
-            : "Tap to connect in T3"}
+            ? translate("common:mobileWidgets.asOf", "As of {{date}}", {
+                date: getLocalizedDateTimeFormatter({
+                  hour: "numeric",
+                  minute: "2-digit",
+                  month: "short",
+                  day: "numeric",
+                }).format(new Date(props.checkedAt)),
+              })
+            : translate("common:mobileWidgets.tapToConnect", "Tap to connect in T3")}
         </Text>
       ) : null}
     </VStack>

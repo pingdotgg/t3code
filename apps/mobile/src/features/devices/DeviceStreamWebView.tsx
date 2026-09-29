@@ -10,6 +10,7 @@ import {
   type Ref,
 } from "react";
 import { ActivityIndicator, Platform, Pressable, View } from "react-native";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
@@ -107,7 +108,12 @@ function DeviceStreamDocumentView({
   };
   // The shared transport owns video timeouts once the document acknowledges startup.
   const bootstrapTimedOut = useEffectEvent(() =>
-    fail("Device viewer could not start. Reconnect to try again."),
+    fail(
+      translate(
+        "common:mobileDeviceStream.couldNotStart",
+        "Device viewer could not start. Reconnect to try again.",
+      ),
+    ),
   );
   useEffect(() => {
     if (started) return;
@@ -146,7 +152,13 @@ function DeviceStreamDocumentView({
   const processTerminated = () => {
     if (!active.current || failed.current) return;
     void onInputConnected(false);
-    if (!onRecoverProcess()) fail("Device viewer stopped. Reconnect to try again.");
+    if (!onRecoverProcess())
+      fail(
+        translate(
+          "common:mobileDeviceStream.stopped",
+          "Device viewer stopped. Reconnect to try again.",
+        ),
+      );
   };
   return (
     <View className="flex-1" style={{ backgroundColor: background }}>
@@ -161,8 +173,22 @@ function DeviceStreamDocumentView({
         contentInsetAdjustmentBehavior="never"
         setSupportMultipleWindows={false}
         style={{ flex: 1, backgroundColor: background }}
-        onError={() => fail("Device viewer could not load. Reconnect to try again.")}
-        onHttpError={() => fail("Device viewer could not load. Reconnect to try again.")}
+        onError={() =>
+          fail(
+            translate(
+              "common:mobileDeviceStream.couldNotLoad",
+              "Device viewer could not load. Reconnect to try again.",
+            ),
+          )
+        }
+        onHttpError={() =>
+          fail(
+            translate(
+              "common:mobileDeviceStream.couldNotLoad",
+              "Device viewer could not load. Reconnect to try again.",
+            ),
+          )
+        }
         onContentProcessDidTerminate={processTerminated}
         onRenderProcessGone={processTerminated}
         onShouldStartLoadWithRequest={(request) =>
@@ -176,7 +202,11 @@ function DeviceStreamDocumentView({
           else if (message?.type === "retry") onRetry();
           else if (message?.type === "status") {
             setStarted(true);
-            if (message.status === "error") fail(message.detail ?? "Device stream failed.");
+            if (message.status === "error")
+              fail(
+                message.detail ??
+                  translate("common:mobileDeviceStream.streamFailed", "Device stream failed."),
+              );
             else {
               setStatus(message.status);
               if (message.status === "streaming") onStreaming();
@@ -194,7 +224,9 @@ function DeviceStreamDocumentView({
             accessibilityLiveRegion="polite"
             className="text-center text-sm text-foreground-muted"
           >
-            {status === "error" ? error : "Connecting to device..."}
+            {status === "error"
+              ? error
+              : translate("common:mobileDeviceStream.connecting", "Connecting to device…")}
           </AppText>
           {status === "error" ? (
             <Pressable

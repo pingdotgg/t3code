@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
@@ -77,7 +78,7 @@ export function SettingsDiagnosticsRouteScreen() {
   };
 
   return (
-    <SettingsScreen title="Diagnostics">
+    <SettingsScreen title={translate("common:mobileDiagnosticsTitle", "Diagnostics")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -85,7 +86,7 @@ export function SettingsDiagnosticsRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
-        <SettingsSection title="Startup crashes">
+        <SettingsSection title={translate("common:mobileStartupCrashes", "Startup crashes")}>
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
               <ActivityIndicator />
@@ -96,14 +97,20 @@ export function SettingsDiagnosticsRouteScreen() {
           ) : state.status === "unavailable" ? (
             <EmptyState
               icon="exclamationmark.triangle"
-              title="Crash log unavailable"
-              detail="Startup crash records are only kept in store and TestFlight builds."
+              title={translate("common:mobileCrashLogUnavailable", "Crash log unavailable")}
+              detail={translate(
+                "common:mobileCrashLogUnavailableDetail",
+                "Startup crash records are only kept in store and TestFlight builds.",
+              )}
             />
           ) : records.length === 0 ? (
             <EmptyState
               icon="checkmark.circle"
-              title="No startup crashes"
-              detail="Nothing has taken the app down during launch in the last 7 days."
+              title={translate("common:mobileNoStartupCrashes", "No startup crashes")}
+              detail={translate(
+                "common:mobileNoStartupCrashesDetail",
+                "Nothing has taken the app down during launch in the last 7 days.",
+              )}
             />
           ) : (
             records.map((record, index) => (
@@ -113,18 +120,23 @@ export function SettingsDiagnosticsRouteScreen() {
         </SettingsSection>
 
         <View className="gap-3">
-          <SettingsSection title="Actions">
+          <SettingsSection title={translate("common:mobileActionsTitle", "Actions")}>
             <SettingsActionRow
               icon={copied ? "checkmark" : "doc.on.doc"}
-              label={copied ? "Copied" : "Copy crash report"}
+              label={
+                copied
+                  ? translate("common:mobileCopied", "Copied")
+                  : translate("common:mobileCopyCrashReport", "Copy crash report")
+              }
               disabled={state.status !== "ready"}
               onPress={() => void copyReport()}
             />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Paste the report into a GitHub issue. It contains the app version, the JavaScript error
-            message, and the component stack. Error messages can quote values from the app, so read
-            it over before sharing.
+            {translate(
+              "common:mobilePasteReportNote",
+              "Paste the report into a GitHub issue. It contains the app version, the JavaScript error message, and the component stack. Error messages can quote values from the app, so read it over before sharing.",
+            )}
           </Text>
         </View>
       </ScrollView>

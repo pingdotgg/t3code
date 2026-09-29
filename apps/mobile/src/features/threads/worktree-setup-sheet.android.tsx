@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Host, ModalBottomSheet, RNHostView } from "@expo/ui/jetpack-compose";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -28,11 +29,14 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
             }}
           >
             <AndroidSheetHeader
-              title="Worktree setup"
+              title={translate("common:mobileWorktreeSetup", "Worktree setup")}
               trailing={
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Close setup details"
+                  accessibilityLabel={translate(
+                    "common:mobileCloseSetupDetails",
+                    "Close setup details",
+                  )}
                   onPress={onClose}
                   className="min-h-11 justify-center px-2"
                 >

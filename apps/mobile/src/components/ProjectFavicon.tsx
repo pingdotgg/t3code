@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { SymbolView } from "./AppSymbol";
 import { AppText } from "./AppText";
 import { Image } from "expo-image";
@@ -185,7 +186,9 @@ function ProjectFaviconImage(props: {
           }
           cachePolicy={faviconRequest.faviconUrl.startsWith("data:") ? "memory" : "memory-disk"}
           recyclingKey={faviconRequest.cacheKey}
-          accessibilityLabel={`${props.projectTitle} favicon`}
+          accessibilityLabel={translate("common:mobileUiProjectFavicon", "{{project}} favicon", {
+            project: props.projectTitle,
+          })}
           style={{
             width: props.size,
             height: props.size,

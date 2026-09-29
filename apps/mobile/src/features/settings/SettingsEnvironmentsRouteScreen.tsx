@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
@@ -105,15 +106,18 @@ export function SettingsEnvironmentsRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Environments"
+      title={translate("common:environments", "Environments")}
       trailing={
         Platform.OS === "android" && relaySession ? (
           <AndroidAnchoredMenu
-            title="Environment options"
+            title={translate("common:mobileEnvironmentOptions", "Environment options")}
             actions={[
               {
                 id: "refresh",
-                title: "Refresh cloud environments",
+                title: translate(
+                  "common:mobileLabels.refreshCloudEnvironments",
+                  "Refresh cloud environments",
+                ),
                 attributes: { disabled: isRefreshingCloud },
               },
             ]}
@@ -123,7 +127,10 @@ export function SettingsEnvironmentsRouteScreen() {
           >
             {(open) => (
               <AndroidHeaderIconButton
-                accessibilityLabel="Environment options"
+                accessibilityLabel={translate(
+                  "common:mobileEnvironmentOptions",
+                  "Environment options",
+                )}
                 icon="ellipsis"
                 onPress={open}
               />
@@ -133,7 +140,7 @@ export function SettingsEnvironmentsRouteScreen() {
       }
       actions={[
         {
-          accessibilityLabel: "Add environment",
+          accessibilityLabel: translate("common:mobileLabels.addEnvironment", "Add environment"),
           icon: "plus",
           tintColor: headerIconColor,
           onPress: () =>

@@ -161,13 +161,19 @@ function CloudEnvironmentRowsContent(
         <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-grouped-card p-6">
           <ActivityIndicator colorClassName={"accent-icon"} />
           <Text className="text-center text-sm leading-normal text-foreground-muted">
-            Loading linked cloud environments.
+            {translate(
+              "common:mobileLoadingLinkedCloudEnvironments",
+              "Loading linked cloud environments.",
+            )}
           </Text>
         </View>
       ) : controller.relayDiscovery.error ? null : (
         <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
           <Text className="text-sm leading-normal text-foreground-muted">
-            No additional linked cloud environments.
+            {translate(
+              "common:mobileNoAdditionalLinkedCloudEnvironments",
+              "No additional linked cloud environments.",
+            )}
           </Text>
         </View>
       )}
@@ -179,7 +185,10 @@ function CloudEnvironmentRowsContent(
       !controller.relayDiscovery.isRefreshing ? (
         <View collapsable={false} className="gap-3 rounded-[24px] bg-grouped-card p-5">
           <Text className="text-base font-t3-bold text-foreground">
-            Could not load T3 Connect environments
+            {translate(
+              "common:mobileCouldNotLoadT3ConnectEnvironments",
+              "Could not load T3 Connect environments",
+            )}
           </Text>
           <Text className="text-sm text-foreground-muted">{controller.relayDiscovery.error}</Text>
           {controller.relayDiscovery.errorTraceId ? (
@@ -228,7 +237,10 @@ function ConnectedCloudEnvironmentRow(props: {
   }
   return (
     <Pressable
-      accessibilityHint="Long press to remove from this device"
+      accessibilityHint={translate(
+        "common:mobileLongPressToRemoveDevice",
+        "Long press to remove from this device",
+      )}
       accessibilityRole={props.onOpen ? "button" : undefined}
       accessibilityLabel={props.onOpen ? `Manage ${props.environment.environmentLabel}` : undefined}
       onPress={props.onOpen}
@@ -448,3 +460,4 @@ function CopyTraceIdButton(props: { readonly traceId: string }) {
     </Pressable>
   );
 }
+import { translate } from "@t3tools/i18n";

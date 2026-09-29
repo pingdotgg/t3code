@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 import { BackHandler, Keyboard, type TextInput, View, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -65,9 +66,9 @@ export function MaterialThreadListToolbar(props: {
   const searchField = (
     <MaterialSearchField
       inputRef={searchRef}
-      accessibilityLabel="Search threads"
-      clearAccessibilityLabel="Clear search"
-      placeholder="Search"
+      accessibilityLabel={translate("common:searchThreads", "Search threads")}
+      clearAccessibilityLabel={translate("pullRequests:emptyClearSearch", "Clear search")}
+      placeholder={translate("common:search", "Search")}
       value={props.searchQuery}
       onChangeText={onSearchQueryChange}
     />
@@ -86,7 +87,7 @@ export function MaterialThreadListToolbar(props: {
           {searching ? (
             <>
               <AndroidHeaderIconButton
-                accessibilityLabel="Close search"
+                accessibilityLabel={translate("common:mobileCloseSearch", "Close search")}
                 icon="arrow.left"
                 onPress={closeSearch}
               />
@@ -103,12 +104,12 @@ export function MaterialThreadListToolbar(props: {
                 />
               </View>
               <AndroidHeaderIconButton
-                accessibilityLabel="Search threads"
+                accessibilityLabel={translate("common:searchThreads", "Search threads")}
                 icon="magnifyingglass"
                 onPress={openSearch}
               />
               <AndroidHeaderIconButton
-                accessibilityLabel="Open settings"
+                accessibilityLabel={translate("common:openSettings", "Open settings")}
                 icon="gearshape"
                 onPress={props.onOpenSettings}
               />
@@ -130,7 +131,7 @@ export function MaterialThreadListToolbar(props: {
           <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
             {(open) => (
               <MaterialFloatingActionButton
-                label="Filter threads"
+                label={translate("common:filterThreads", "Filter threads")}
                 icon={filterIcon}
                 onPress={open}
               />

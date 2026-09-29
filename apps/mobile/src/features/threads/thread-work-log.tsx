@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import {
   getQuestionAnswerPreview,
@@ -848,7 +849,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           <View className="shrink-0 flex-row items-center gap-px">
             {props.copied ? (
               <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
-                Copied
+                {translate("common:mobileCopied", "Copied")}
               </Text>
             ) : null}
             {failed && toolIcon !== undefined ? (
@@ -931,7 +932,9 @@ export function ThreadWorkGroupToggle(props: {
   readonly onToggle: () => void;
 }) {
   const accessibilityLabel = props.hasFailure
-    ? `${props.summary}, tool call failed`
+    ? translate("common:mobileUiToolCallFailed", "{{label}}, tool call failed", {
+        label: props.summary,
+      })
     : props.summary;
   const icon =
     props.summaryToolIcon ??
@@ -945,7 +948,21 @@ export function ThreadWorkGroupToggle(props: {
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
         accessibilityLabel={accessibilityLabel}
-        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
+        accessibilityHint={translate(
+          props.hiddenCount === 1
+            ? "common:mobileUiHiddenToolCallsOne"
+            : "common:mobileUiHiddenToolCallsMany",
+          props.hiddenCount === 1
+            ? "Double tap to {{action}} {{count}} tool call."
+            : "Double tap to {{action}} {{count}} tool calls.",
+          {
+            action: translate(
+              props.expanded ? "common:mobileUiActionHide" : "common:mobileUiActionShow",
+              props.expanded ? "hide" : "show",
+            ),
+            count: props.hiddenCount,
+          },
+        )}
         hitSlop={4}
         onPress={() => {
           void Haptics.selectionAsync();
@@ -1003,6 +1020,45 @@ const AGENT_SPAWN_TONE_DOT_CLASS = {
   stopped: "bg-foreground-muted",
 } as const satisfies Record<AgentSpawnSummary["tone"], string>;
 
+function localizedAgentSpawnTitle(title: string) {
+  if (title === "Subagents") {
+    return translate("common:mobileUiSubagentsTitle", "Subagents");
+  }
+  const count = /^(\d+) subagents$/.exec(title)?.[1];
+  return count
+    ? translate("common:mobileUiSubagentsCount", "{{count}} subagents", { count })
+    : title;
+}
+
+function localizedAgentSpawnStatus(status: string) {
+  switch (status.toLowerCase()) {
+    case "working":
+      return translate("common:mobileUiAgentWorking", "Working");
+    case "completed":
+      return translate("common:mobileUiAgentCompleted", "Completed");
+    case "failed":
+      return translate("common:mobileUiAgentFailed", "Failed");
+    case "stopped":
+      return translate("common:mobileUiAgentStopped", "Stopped");
+  }
+  const working = /^(\d+) of (\d+) working$/i.exec(status);
+  if (working) {
+    return translate("common:mobileUiAgentsWorking", "{{working}} of {{total}} working", {
+      working: Number(working[1]),
+      total: Number(working[2]),
+    });
+  }
+  for (const [state, key, fallback] of [
+    ["completed", "common:mobileUiAgentsCompletedCount", "{{count}} completed"],
+    ["failed", "common:mobileUiAgentsFailedCount", "{{count}} failed"],
+    ["stopped", "common:mobileUiAgentsStoppedCount", "{{count}} stopped"],
+  ] as const) {
+    const count = new RegExp(`^(\\d+) ${state}$`, "i").exec(status)?.[1];
+    if (count) return translate(key, fallback, { count });
+  }
+  return status;
+}
+
 /**
  * A batch of spawned subagents. The status line updates in place as members
  * report progress; expanding lists each member. Text nodes carry keys tied to
@@ -1021,16 +1077,37 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
   const working = summary.tone === "working";
   const memberCount = summary.members.length;
   const canExpand = memberCount > 0;
+  const title = localizedAgentSpawnTitle(summary.title);
+  const status = localizedAgentSpawnStatus(summary.status);
   return (
     <Animated.View layout={WORK_LOG_LAYOUT_TRANSITION} className="-mx-1 mb-1 px-1">
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
         accessibilityState={canExpand ? { expanded } : undefined}
-        accessibilityLabel={`${summary.title}, ${summary.status}`}
+        accessibilityLabel={translate(
+          "common:mobileUiStageAccessibilityLabel",
+          "{{label}}, {{status}}",
+          {
+            label: title,
+            status,
+          },
+        )}
         accessibilityHint={
           canExpand
-            ? `Double tap to ${expanded ? "hide" : "show"} ${memberCount} ${memberCount === 1 ? "subagent" : "subagents"}. Long press to copy.`
-            : "Long press to copy."
+            ? translate(
+                memberCount === 1 ? "common:mobileUiSubagentsOne" : "common:mobileUiSubagentsMany",
+                memberCount === 1
+                  ? "Double tap to {{action}} {{count}} subagent. Long press to copy."
+                  : "Double tap to {{action}} {{count}} subagents. Long press to copy.",
+                {
+                  action: translate(
+                    expanded ? "common:mobileUiActionHide" : "common:mobileUiActionShow",
+                    expanded ? "hide" : "show",
+                  ),
+                  count: memberCount,
+                },
+              )
+            : translate("common:mobileUiLongPressToCopy", "Long press to copy.")
         }
         hitSlop={4}
         onPress={() => {
@@ -1072,12 +1149,12 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
                   compact
                   icon="brain"
                   iconSubtleColor={props.iconSubtleColor}
-                  label={summary.status}
+                  label={status}
                   showIcon={false}
                 />
               ) : (
                 <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-                  {summary.status}
+                  {status}
                 </Text>
               )}
             </View>
@@ -1137,7 +1214,7 @@ export function ThreadThinkingRow(props: {
   return (
     <View
       accessible
-      accessibilityLabel="Thinking"
+      accessibilityLabel={translate("settings:traitThinking", "Thinking")}
       className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
       style={{ minHeight: props.rowSizing.estimatedRowHeight }}
     >
@@ -1145,7 +1222,7 @@ export function ThreadThinkingRow(props: {
         key={props.rowSizing.textSizeKey}
         icon="brain"
         iconSubtleColor={props.iconSubtleColor}
-        label="Thinking"
+        label={translate("settings:traitThinking", "Thinking")}
         showIcon
       />
     </View>
@@ -1172,7 +1249,16 @@ export function ThreadReasoningRow(props: {
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
         accessibilityLabel={props.label}
-        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the thinking trace.`}
+        accessibilityHint={translate(
+          "common:mobileUiThinkingTrace",
+          "Double tap to {{action}} the thinking trace.",
+          {
+            action: translate(
+              props.expanded ? "common:mobileUiActionHide" : "common:mobileUiActionShow",
+              props.expanded ? "hide" : "show",
+            ),
+          },
+        )}
         hitSlop={4}
         onPress={() => {
           void Haptics.selectionAsync();

@@ -1,11 +1,7 @@
-import {
-  deviceToolVersionLabels,
-  deviceToolUpdateOwnership,
-  deviceToolUpdatePolicy,
-} from "@t3tools/client-runtime/state/device";
+import { translate } from "@t3tools/i18n";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type DeviceToolVersions } from "@t3tools/contracts";
 import { useTranslation } from "@t3tools/i18n/react";
 import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -32,6 +28,61 @@ type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
 }>;
+
+function localizedDeviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
+  if (!tools)
+    return [
+      translate(
+        "common:mobileDevicePreview.versionsNotChecked",
+        "Device tool versions have not been checked.",
+      ),
+    ];
+  return (
+    [
+      ["deviceHub", tools.hub],
+      ["agentTools", tools.agent],
+    ] as const
+  ).map(([nameKey, tool]) => {
+    const name = translate(
+      `common:mobileDevicePreview.${nameKey}`,
+      nameKey === "deviceHub" ? "Device hub" : "Agent tools",
+    );
+    const installed = tool.installedVersions.length
+      ? tool.installedVersions.join(", ")
+      : translate("common:mobileDevicePreview.noneInstalled", "none");
+    const running = tool.runningVersion
+      ? translate("common:mobileDevicePreview.runningVersion", "; running {{version}}", {
+          version: tool.runningVersion,
+        })
+      : "";
+    return translate(
+      "common:mobileDevicePreview.versionDetails",
+      "{{name}}: installed {{installed}}; required {{required}}{{running}}.",
+      { name, installed, required: tool.requiredVersion, running },
+    );
+  });
+}
+
+function localizedDeviceToolUpdatePolicy(tools: DeviceToolVersions | undefined) {
+  if (!tools)
+    return translate(
+      "common:mobileDevicePreview.versionPolicyUnknown",
+      "Versions have not been checked. Reconnect the host and check versions.",
+    );
+  const outdated = [tools.hub, tools.agent].some(
+    (tool) =>
+      tool.installedVersions.length > 0 && !tool.installedVersions.includes(tool.requiredVersion),
+  );
+  return outdated
+    ? translate(
+        "common:mobileDevicePreview.updatePending",
+        "Update pending. Required tools will install automatically when next used. The host needs network access; an older install is not used as a fallback.",
+      )
+    : translate(
+        "common:mobileDevicePreview.autoInstallPolicy",
+        "Required tools are installed automatically when needed. Checking versions does not install or start anything.",
+      );
+}
 
 /** The nested native stack supplies the navigation bar inside the modal. */
 export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
@@ -115,9 +166,11 @@ function DevicePreviewScreen({
           platform: preview.session.platform,
         },
       });
-      if (result._tag === "Failure") {
-        Alert.alert("Could not shut down device", String(Cause.squash(result.cause)));
-      }
+      if (result._tag === "Failure")
+        Alert.alert(
+          translate("common:mobileDevicePreview.shutdownFailed", "Could not shut down device"),
+          String(Cause.squash(result.cause)),
+        );
     } finally {
       setShuttingDown(false);
     }
@@ -131,7 +184,9 @@ function DevicePreviewScreen({
       )
       .map((host) => ({
         id: `retry-${host.id}`,
-        title: `Retry ${host.label}`,
+        title: translate("common:mobileDevicePreview.retryHost", "Retry {{host}}", {
+          host: host.label,
+        }),
         icon: "arrow.clockwise" as const,
         onPress: () => {
           void retryHost({ environmentId, input: { retryHostId: host.id } });
@@ -141,7 +196,10 @@ function DevicePreviewScreen({
       ? [
           {
             id: "check-device-tools",
-            title: "Check device tool versions",
+            title: translate(
+              "common:mobileDevicePreview.checkToolVersions",
+              "Check device tool versions",
+            ),
             icon: "arrow.clockwise" as const,
             onPress: () => {
               void retryHost({ environmentId, input: { inspectOnly: true } });
@@ -151,18 +209,21 @@ function DevicePreviewScreen({
       : []),
     {
       id: "device-tools",
-      title: "Device tool versions",
+      title: translate("common:mobileDevicePreview.toolVersions", "Device tool versions"),
       icon: "info.circle",
       onPress: () =>
         Alert.alert(
-          "Device tool versions",
-          deviceToolUpdateOwnership +
+          translate("common:mobileDevicePreview.toolVersions", "Device tool versions"),
+          translate(
+            "common:mobileDevicePreview.ownership",
+            "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.",
+          ) +
             "\n\n" +
-            deviceToolUpdatePolicy(
+            localizedDeviceToolUpdatePolicy(
               state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
             ) +
             "\n\n" +
-            deviceToolVersionLabels(
+            localizedDeviceToolVersionLabels(
               state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
             ).join("\n") +
             "\n" +
@@ -174,7 +235,7 @@ function DevicePreviewScreen({
     },
     {
       id: "reload",
-      title: "Reload stream",
+      title: translate("common:mobileDevicePreview.reloadStream", "Reload stream"),
       icon: "arrow.clockwise" as const,
       disabled: !preview || shuttingDown,
       onPress: () => {
@@ -186,7 +247,7 @@ function DevicePreviewScreen({
       ? [
           {
             id: "back",
-            title: "Back",
+            title: translate("common:back", "Back"),
             icon: "arrow.left",
             disabled: !inputConnected,
             onPress: () => streamRef.current?.back(),
@@ -195,7 +256,7 @@ function DevicePreviewScreen({
       : []),
     {
       id: "app-switcher",
-      title: "App switcher",
+      title: translate("common:mobileDevicePreview.appSwitcher", "App switcher"),
       icon: "square.on.square",
       disabled: !inputConnected,
       onPress: () => streamRef.current?.appSwitcher(),
@@ -204,7 +265,7 @@ function DevicePreviewScreen({
       ? [
           {
             id: "rotate",
-            title: "Rotate device",
+            title: translate("common:mobileDevicePreview.rotateDevice", "Rotate device"),
             icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
@@ -213,7 +274,9 @@ function DevicePreviewScreen({
       : []),
     {
       id: "shutdown",
-      title: shuttingDown ? "Shutting down…" : "Shut down device",
+      title: shuttingDown
+        ? translate("common:mobileDevicePreview.shuttingDown", "Shutting down…")
+        : translate("common:mobileDevicePreview.shutDown", "Shut down device"),
       icon: "power",
       disabled: !preview || shuttingDown,
       onPress: () => void shutDownDevice(),
@@ -222,13 +285,13 @@ function DevicePreviewScreen({
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
       <ScreenHeader
-        title={preview?.name ?? "Devices"}
+        title={preview?.name ?? translate("common:mobileDevicePreview.devices", "Devices")}
         sidebar={false}
         onBack={onClose}
         options={{ headerBackVisible: false }}
         actions={[
           {
-            accessibilityLabel: "Home",
+            accessibilityLabel: translate("common:mobileHome", "Home"),
             icon: "house",
             disabled: !inputConnected,
             onPress: () => streamRef.current?.home(),
@@ -236,14 +299,14 @@ function DevicePreviewScreen({
         ]}
         menus={[
           {
-            title: "Device options",
+            title: translate("common:mobileDevicePreview.options", "Device options"),
             icon: "ellipsis",
             items: [
               ...(previews.length > 1
                 ? [
                     {
                       id: "devices",
-                      title: "Devices",
+                      title: translate("common:mobileDevicePreview.devices", "Devices"),
                       inline: true,
                       items: previews.map((device) => ({
                         id: device.key,
@@ -264,7 +327,10 @@ function DevicePreviewScreen({
         <NativeHeaderToolbar placement="left">
           <NativeHeaderToolbar.Button
             icon="xmark"
-            accessibilityLabel="Close device preview"
+            accessibilityLabel={translate(
+              "common:mobileCloseDevicePreview",
+              "Close device preview",
+            )}
             onPress={onClose}
             separateBackground
           />

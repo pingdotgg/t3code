@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { ComposerContextRecord, EnvironmentId } from "@t3tools/contracts";
 import { Alert, Pressable, View } from "react-native";
 import { Image } from "expo-image";
@@ -50,7 +51,13 @@ export function ComposerContextAttachment(props: {
         setError(null);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError("The local file is unavailable. Attach it again.");
+        if (!controller.signal.aborted)
+          setError(
+            translate(
+              "common:mobileComposer.localFileUnavailable",
+              "The local file is unavailable. Attach it again.",
+            ),
+          );
       });
     return () => {
       controller.abort();
@@ -72,7 +79,13 @@ export function ComposerContextAttachment(props: {
         }
       } else {
         const url = await refresh();
-        if (!url) throw new Error("Reconnect to the environment and try again.");
+        if (!url)
+          throw new Error(
+            translate(
+              "common:mobileComposer.reconnectAndTryAgain",
+              "Reconnect to the environment and try again.",
+            ),
+          );
         await downloadAndShareAttachment({
           url,
           attachment: record,
@@ -82,8 +95,10 @@ export function ComposerContextAttachment(props: {
       }
     } catch (cause) {
       Alert.alert(
-        "Could not open attachment",
-        cause instanceof Error ? cause.message : "Try again.",
+        translate("common:mobileComposer.couldNotOpenAttachment", "Could not open attachment"),
+        cause instanceof Error
+          ? cause.message
+          : translate("common:mobileComposer.tryAgain", "Try again."),
       );
     } finally {
       setSharing(false);
@@ -94,7 +109,11 @@ export function ComposerContextAttachment(props: {
       {record.kind === "image" && uri ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Preview ${record.name}`}
+          accessibilityLabel={translate(
+            "common:mobileComposer.previewAttachment",
+            "Preview {{name}}",
+            { name: record.name },
+          )}
           onPress={() => setPreviewOpen(true)}
         >
           <Image
@@ -107,7 +126,11 @@ export function ComposerContextAttachment(props: {
       ) : null}
       {error || (!local && asset._tag === "Failure") ? (
         <Text className="text-foreground-muted">
-          {error ?? "Attachment unavailable. Reconnect and try again."}
+          {error ??
+            translate(
+              "common:mobileComposer.attachmentUnavailable",
+              "Attachment unavailable. Reconnect and try again.",
+            )}
         </Text>
       ) : null}
       <PresentationSource identifier={shareSourceIdentifier}>
@@ -118,7 +141,12 @@ export function ComposerContextAttachment(props: {
           className="rounded-xl bg-subtle p-4"
         >
           <Text className="text-foreground">
-            {sharing ? "Opening attachment…" : "Open or share attachment"}
+            {sharing
+              ? translate("common:mobileComposer.openingAttachment", "Opening attachment…")
+              : translate(
+                  "common:mobileComposer.openOrShareAttachment",
+                  "Open or share attachment",
+                )}
           </Text>
         </Pressable>
       </PresentationSource>

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useNavigation } from "@react-navigation/native";
 import { Platform, Pressable } from "react-native";
 
@@ -42,23 +43,35 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
       options={{
         unstable_headerRightItems: () => [
           withNativeGlassHeaderItem({
-            accessibilityLabel: "Filter settings environments and projects",
+            accessibilityLabel: translate(
+              "common:mobileFilterSettingsEnvironmentsAndProjects",
+              "Filter settings environments and projects",
+            ),
             icon: { name: filterIcon, type: "sfSymbol" },
             label: "",
             type: "menu",
             menu: {
-              title: "Settings scope",
+              title: translate("common:mobileSettingsScope", "Settings scope"),
               items: [
                 {
                   type: "submenu",
                   label:
                     selectedIds === null
-                      ? "All environments"
-                      : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
+                      ? translate("common:allEnvironments", "All environments")
+                      : selectedTargets.length === 1
+                        ? translate("common:mobileSettingsFilter.oneEnvironment", "1 environment")
+                        : translate(
+                            "common:mobileSettingsFilter.manyEnvironments",
+                            "{{count}} environments",
+                            { count: selectedTargets.length },
+                          ),
                   items: [
                     {
                       type: "action",
-                      label: "All connected environments",
+                      label: translate(
+                        "common:mobileSettingsFilter.allConnectedEnvironments",
+                        "All connected environments",
+                      ),
                       state: selectedIds === null ? "on" : undefined,
                       onPress: selectAll,
                     },
@@ -77,13 +90,17 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
                 {
                   type: "submenu",
                   label:
-                    selectableProjectGroups.find((group) => group.key === selectedProjectKey)
-                      ?.label ??
-                    (selectedProjectKey === null ? "All projects" : "Unavailable project"),
+                    (selectableProjectGroups.find((group) => group.key === selectedProjectKey)
+                      ?.label ?? selectedProjectKey === null)
+                      ? translate("common:allProjects", "All projects")
+                      : translate(
+                          "common:mobileSettingsFilter.unavailableProject",
+                          "Unavailable project",
+                        ),
                   items: [
                     {
                       type: "action",
-                      label: "All projects",
+                      label: translate("common:allProjects", "All projects"),
                       state: selectedProjectKey === null ? "on" : undefined,
                       onPress: () => selectProject(null),
                     },
@@ -101,7 +118,10 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
           ...(closeSettings
             ? [
                 withNativeGlassHeaderItem({
-                  accessibilityLabel: "Close settings",
+                  accessibilityLabel: translate(
+                    "common:mobileSettingsFilter.closeSettings",
+                    "Close settings",
+                  ),
                   icon: { name: "xmark", type: "sfSymbol" },
                   identifier: "settings-close",
                   label: "",
@@ -135,17 +155,27 @@ export function AndroidSettingsEnvironmentFilter() {
     <ControlPillMenu
       accessible
       accessibilityRole="button"
-      accessibilityLabel="Filter settings environments and projects"
-      title="Settings scope"
+      accessibilityLabel={translate(
+        "common:mobileFilterSettingsEnvironmentsAndProjects",
+        "Filter settings environments and projects",
+      )}
+      title={translate("common:mobileSettingsScope", "Settings scope")}
       actions={[
         {
           id: "all",
-          title: "All connected environments",
+          title: translate(
+            "common:mobileSettingsFilter.allConnectedEnvironments",
+            "All connected environments",
+          ),
           state: selectedIds === null ? ("on" as const) : ("off" as const),
         },
         ...availableTargets.map((entry) => ({
           id: `environment:${entry.environmentId}`,
-          title: `Environment · ${entry.label}`,
+          title: translate(
+            "common:mobileSettingsFilter.environmentNamed",
+            "Environment · {{name}}",
+            { name: entry.label },
+          ),
           subtitle: entry.displayUrl ?? undefined,
           state:
             selectedIds === null || selectedIds.has(entry.environmentId)
@@ -154,12 +184,14 @@ export function AndroidSettingsEnvironmentFilter() {
         })),
         {
           id: "project:all",
-          title: "All projects",
+          title: translate("common:allProjects", "All projects"),
           state: selectedProjectKey === null ? ("on" as const) : ("off" as const),
         },
         ...selectableProjectGroups.map((group) => ({
           id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
+          title: translate("common:mobileSettingsFilter.projectNamed", "Project · {{name}}", {
+            name: group.label,
+          }),
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
       ]}
@@ -181,7 +213,10 @@ export function AndroidSettingsEnvironmentFilter() {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Filter settings environments and projects"
+        accessibilityLabel={translate(
+          "common:mobileFilterSettingsEnvironmentsAndProjects",
+          "Filter settings environments and projects",
+        )}
         className="size-11 items-center justify-center rounded-full"
       >
         <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import Constants from "expo-constants";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -21,7 +22,7 @@ export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="About T3 Code">
+    <SettingsScreen title={translate("common:aboutT3Code", "About T3 Code")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -69,7 +70,8 @@ function AppSettingsSection() {
       // apply immediately instead of prompting.
       await runAppUpdateCheck({
         applyMode: "immediate",
-        onFailure: (message) => Alert.alert("Update failed", message),
+        onFailure: (message) =>
+          Alert.alert(translate("common:mobileAppUpdate.failed", "Update failed"), message),
         onStateChange: setUpdateState,
       });
     } finally {
@@ -88,17 +90,17 @@ function AppSettingsSection() {
 
   const statusLabel =
     updateState === "checking"
-      ? "Checking…"
+      ? translate("common:mobileAppUpdate.checking", "Checking…")
       : updateState === "downloading"
-        ? "Downloading…"
+        ? translate("common:mobileAppUpdate.downloading", "Downloading…")
         : // "ready" appears only when this check joined an in-flight background-mode
           // check; that download installs at the next backgrounding.
           updateState === "ready"
-          ? "Update ready"
+          ? translate("common:mobileAppUpdate.ready", "Update ready")
           : updateState === "restarting"
-            ? "Restarting…"
+            ? translate("common:mobileAppUpdate.restarting", "Restarting…")
             : updateState === "current"
-              ? "Up to date"
+              ? translate("common:mobileAppUpdate.current", "Up to date")
               : null;
 
   const versionRow = (
@@ -121,18 +123,32 @@ function AppSettingsSection() {
   );
 
   return (
-    <SettingsSection title="App">
-      <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
-      <SettingsRow icon="stethoscope" label="Diagnostics" target="SettingsDiagnostics" />
+    <SettingsSection title={translate("common:app", "App")}>
+      <SettingsRow
+        icon="internaldrive"
+        label={translate("settings:clientStorage", "Client Storage")}
+        target="SettingsClientStorage"
+      />
+      <SettingsRow
+        icon="stethoscope"
+        label={translate("common:mobileDiagnosticsTitle", "Diagnostics")}
+        target="SettingsDiagnostics"
+      />
       <SettingsRow
         icon="doc.on.doc"
-        label="Open source licenses"
+        label={translate("settings:openSourceLicenses", "Open source licenses")}
         target="SettingsOpenSourceLicenses"
       />
-      <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
+      <SettingsRow
+        icon="doc.text"
+        label={translate("settings:legal", "Legal")}
+        fullScreenTarget="SettingsLegal"
+      />
       {updateCheckAvailable ? (
         <Pressable
-          accessibilityLabel={`Version ${versionLabel}`}
+          accessibilityLabel={translate("common:mobileUiVersionLabel", "Version {{version}}", {
+            version: versionLabel,
+          })}
           accessibilityRole="text"
           disabled={busy}
           onPress={handleVersionPress}

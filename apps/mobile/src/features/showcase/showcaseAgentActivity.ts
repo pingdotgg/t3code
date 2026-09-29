@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -75,7 +76,7 @@ export function buildShowcaseAgentActivity(
   }
   return {
     title: "T3 Code",
-    subtitle: "Agent work in progress",
+    subtitle: translate("common:mobileWidgets.agentWorkInProgress", "Agent work in progress"),
     activeCount: rows.filter((row) => ACTIVE_PHASES.has(row.phase)).length,
     updatedAt: new Date(now).toISOString(),
     activities: rows,

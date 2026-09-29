@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { computeThreadMoveAvailability } from "../threads/threadOrder";
@@ -157,16 +158,22 @@ function deriveEmptyState(props: {
   const { catalogState } = props;
   if (catalogState.isLoadingConnections) {
     return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
+      title: translate("common:loadingEnvironments", "Loading environments"),
+      detail: translate(
+        "common:checkingSavedEnvironments",
+        "Checking saved environments on this device.",
+      ),
       loading: true,
     };
   }
 
   if (!catalogState.hasConnections) {
     return {
-      title: "No environments connected",
-      detail: "Add an environment to load projects and start coding sessions.",
+      title: translate("common:mobileNoEnvironmentsConnected", "No environments connected"),
+      detail: translate(
+        "common:mobileAddEnvironmentForProjects",
+        "Add an environment to load projects and start coding sessions.",
+      ),
       loading: false,
     };
   }
@@ -181,11 +188,14 @@ function deriveEmptyState(props: {
     return {
       title:
         catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
+          ? translate("common:mobileClientNotSupported", "Client not supported")
+          : translate("common:environmentUnavailable", "Environment unavailable"),
       detail:
         catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
+        translate(
+          "common:savedEnvironmentOffline",
+          "The saved environment is offline. Check the URL or start the environment, then retry.",
+        ),
       loading: false,
     };
   }
@@ -196,23 +206,29 @@ function deriveEmptyState(props: {
     catalogState.connectionError === null
   ) {
     return {
-      title: "Connecting to environment",
-      detail: "Loading projects and threads from the saved environment.",
+      title: translate("common:connectingToEnvironment", "Connecting to environment"),
+      detail: translate("common:loadingProjects", "Loading projects from the saved environment."),
       loading: true,
     };
   }
 
   if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
     return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
+      title: translate("common:noProjectsFound", "No projects found"),
+      detail: translate(
+        "common:connectedEnvironmentNoProjects",
+        "The connected environment did not report any projects.",
+      ),
       loading: false,
     };
   }
 
   return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding session in one of your connected projects.",
+    title: translate("common:noThreadsYet", "No threads yet"),
+    detail: translate(
+      "common:mobileCreateTaskToStartSession",
+      "Create a task to start a new coding session.",
+    ),
     loading: false,
   };
 }
@@ -919,12 +935,16 @@ export function HomeScreen(props: HomeScreenProps) {
             <EmptyState
               title={emptyState.title}
               detail={emptyState.detail}
-              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
+              actionLabel={
+                !props.catalogState.hasReadyEnvironment
+                  ? translate("common:addEnvironment", "Add environment")
+                  : undefined
+              }
               onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
               action={
                 Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
                   <MaterialFloatingActionButton
-                    label="Add environment"
+                    label={translate("common:addEnvironment", "Add environment")}
                     icon="plus"
                     variant="extended"
                     tone="primary"
@@ -956,26 +976,43 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title={translate("common:mobileNoResults", "No results")}
+        detail={translate(
+          "common:mobileNoThreadsMatchingQuery",
+          'No threads matching "{{query}}".',
+          { query: props.searchQuery },
+        )}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        title={translate("common:mobileNoThreadsInProject", "No threads in {{project}}", {
+          project: v2ScopedProjectGroup.title,
+        })}
+        detail={translate(
+          "common:mobileChooseOtherProjectOrTask",
+          "Choose another project or create a new task.",
+        )}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
-        title={`No threads in ${selectedEnvironmentLabel}`}
-        detail="Choose another environment or create a new task."
+        title={translate("common:mobileNoThreadsInEnvironment", "No threads in {{environment}}", {
+          environment: selectedEnvironmentLabel,
+        })}
+        detail={translate(
+          "common:mobileChooseOtherEnvironmentOrTask",
+          "Choose another environment or create a new task.",
+        )}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
       <EmptyState
-        title="No threads yet"
-        detail="Create a task to start a new coding session."
+        title={translate("common:noThreadsYet", "No threads yet")}
+        detail={translate(
+          "common:mobileCreateTaskToStartSession",
+          "Create a task to start a new coding session.",
+        )}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     );

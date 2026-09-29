@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -365,7 +366,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
     onShowUsageLimits(report);
     if (!report) {
-      Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Alert.alert(
+        translate("common:mobileFeedback.usageLimitsUnavailable", "Usage limits unavailable"),
+        translate(
+          "common:mobileFeedback.providerDoesNotReportLimits",
+          "This provider does not currently report limits.",
+        ),
+      );
     }
     return report !== null;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
@@ -893,7 +900,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 />
                 {showStopAction ? (
                   <ComposerActionButton
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={translate("common:mobileStopAgent", "Stop agent")}
                     icon="stop.fill"
                     variant="danger"
                     onPress={props.onStopThread}
@@ -961,7 +968,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     />
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
+                        accessibilityLabel={translate(
+                          "common:modelAndReasoningSettings",
+                          "Model and reasoning settings",
+                        )}
                         emphasized
                         renderIcon={(size) => (
                           <ProviderIcon provider={currentModelOption?.providerDriver} size={size} />
@@ -984,7 +994,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                   {showStopAction ? (
                     <ComposerActionButton
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={translate("common:mobileStopAgent", "Stop agent")}
                       icon="stop.fill"
                       variant="danger"
                       onPress={props.onStopThread}

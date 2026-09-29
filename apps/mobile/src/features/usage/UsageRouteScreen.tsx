@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useTranslation } from "@t3tools/i18n/react";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
@@ -17,7 +18,6 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
-  formatUsageContractMismatch,
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
@@ -45,27 +45,16 @@ import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
 type UsageTab = "usage" | "limits";
-const TAB_OPTIONS = [
-  { value: "usage", label: "Usage" },
-  { value: "limits", label: "Limits" },
-] as const satisfies readonly { value: UsageTab; label: string }[];
-
 // Labels are abbreviated to share a row with the metric toggle; screen
 // readers get the full phrase.
-const WINDOW_OPTIONS = [
-  { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
-  { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
-  { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
-  { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
-] as const;
-
-const METRIC_OPTIONS = [
-  { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
-] as const satisfies readonly { value: UsageChartMetric; label: string }[];
+const WINDOW_DAYS = [1, 7, 30, 90] as const;
 
 const CHART_HEIGHT = 180;
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
+const cursorKeychainCopy = () =>
+  translate(
+    "common:mobileUsage.cursorKeychain",
+    "Requires access to your Cursor login in macOS Keychain.",
+  );
 
 /**
  * Two tabs over one screen. Usage is the transcript-derived spend for a
@@ -89,6 +78,23 @@ export function UsageRouteScreen() {
   }
   const { tab } = selection;
   const setTab = (tab: UsageTab) => setSelection({ params: route.params, tab });
+  const tabOptions = [
+    { value: "usage", label: translate("common:mobileUsage.usageTab", "Usage") },
+    { value: "limits", label: translate("common:mobileUsage.limitsTab", "Limits") },
+  ] as const satisfies readonly { value: UsageTab; label: string }[];
+  const windowOptions = WINDOW_DAYS.map((days) => ({
+    value: days,
+    label: `${days}${days === 1 ? "h" : "d"}`,
+    accessibilityLabel: translate(
+      days === 1 ? "common:mobileUsage.pastHours" : "common:mobileUsage.pastDays",
+      days === 1 ? "Past {{count}} hours" : "Past {{count}} days",
+      { count: days === 1 ? 24 : days },
+    ),
+  }));
+  const metricOptions = [
+    { value: "cost", label: translate("common:mobileUsage.cost", "Cost") },
+    { value: "tokens", label: translate("common:mobileUsage.tokens", "Tokens") },
+  ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -181,8 +187,11 @@ export function UsageRouteScreen() {
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
   const hasLoadingEnvironments = selectedEnvironments.some(isUsageLoading);
   const filterAccessibilityLabel = hasLoadingEnvironments
-    ? "Filter usage environments, some environments are loading"
-    : "Filter usage environments";
+    ? translate(
+        "common:mobileUsage.filterLoading",
+        "Filter usage environments, some environments are loading",
+      )
+    : translate("common:mobileUsage.filter", "Filter usage environments");
   const filterIcon =
     selectedEnvironmentIds === null
       ? "line.3.horizontal.decrease"
@@ -191,7 +200,7 @@ export function UsageRouteScreen() {
     () => [
       {
         id: "all",
-        title: "All environments",
+        title: translate("common:mobileUsage.allEnvironments", "All environments"),
         subtitle: undefined,
         state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
       },
@@ -225,7 +234,7 @@ export function UsageRouteScreen() {
           accessible
           accessibilityRole="button"
           accessibilityLabel={filterAccessibilityLabel}
-          title="Environments"
+          title={translate("common:environments", "Environments")}
           actions={environmentActions}
           onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
         >
@@ -264,7 +273,7 @@ export function UsageRouteScreen() {
   }, [navigation, environmentFilter]);
 
   return (
-    <SettingsScreen title="Usage" trailing={environmentFilter}>
+    <SettingsScreen title={translate("common:usage", "Usage")} trailing={environmentFilter}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -278,7 +287,7 @@ export function UsageRouteScreen() {
           />
         }
       >
-        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
+        <SegmentedControl options={tabOptions} selected={tab} onSelect={setTab} role="tab" />
         <Animated.View
           key={tab}
           entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
@@ -304,14 +313,14 @@ export function UsageRouteScreen() {
                 both change every number below, so they share one bar. */}
               <View className="gap-3 ios:flex-row ios:items-center">
                 <SegmentedControl
-                  options={WINDOW_OPTIONS}
+                  options={windowOptions}
                   selected={windowDays}
                   onSelect={selectWindow}
                   size="compact"
                   className="w-full ios:flex-1"
                 />
                 <SegmentedControl
-                  options={METRIC_OPTIONS}
+                  options={metricOptions}
                   selected={metric}
                   onSelect={setMetric}
                   size="compact"
@@ -320,19 +329,31 @@ export function UsageRouteScreen() {
               </View>
               {merged.duplicateSources.length > 0 ? (
                 <Text className="text-sm text-foreground-muted">
-                  Counted once across environments sharing a transcript directory:{" "}
-                  {merged.duplicateSources.join(", ")}
+                  {translate(
+                    "common:mobileUsage.duplicateSources",
+                    "Counted once across environments sharing a transcript directory: {{sources}}",
+                    { sources: merged.duplicateSources.join(", ") },
+                  )}
                 </Text>
               ) : null}
               {isPending ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
-                  Scanning provider transcripts…
+                  {translate(
+                    "common:mobileScanningProviderTranscripts",
+                    "Scanning provider transcripts…",
+                  )}
                 </Text>
               ) : selectedEnvironments.length === 0 ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
                   {environments.length === 0
-                    ? "Connect an environment to see usage."
-                    : "Select an environment to see usage."}
+                    ? translate(
+                        "common:mobileUsage.noEnvironment",
+                        "Connect an environment to see usage.",
+                      )
+                    : translate(
+                        "common:mobileUsage.chooseEnvironment",
+                        "Select an environment to see usage.",
+                      )}
                 </Text>
               ) : (
                 <>
@@ -374,7 +395,7 @@ function CursorEnableAction({
   environmentId,
   label,
   onEnabled,
-  buttonText = "Enable",
+  buttonText = translate("common:mobileUsage.enable", "Enable"),
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -400,8 +421,12 @@ function CursorEnableAction({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Enable Cursor usage from ${label}`}
-      accessibilityHint={CURSOR_KEYCHAIN_COPY}
+      accessibilityLabel={translate(
+        "common:mobileUsage.enableCursorFrom",
+        "Enable Cursor usage from {{environment}}",
+        { environment: label },
+      )}
+      accessibilityHint={cursorKeychainCopy()}
       disabled={pending}
       onPress={() => void enable()}
       className="rounded-full bg-primary px-4 py-2"
@@ -457,14 +482,20 @@ function CursorEnableLimits({
         <Text className="text-base font-t3-medium text-foreground">Cursor</Text>
       </View>
       <View className="items-start gap-3 rounded-[24px] border-continuous bg-card p-4">
-        <Text className="text-xs text-foreground-muted">{CURSOR_KEYCHAIN_COPY}</Text>
+        <Text className="text-xs text-foreground-muted">{cursorKeychainCopy()}</Text>
         <View className="flex-row flex-wrap gap-2">
           {environments.map((environment) => (
             <CursorEnableAction
               key={environment.environmentId}
               environmentId={environment.environmentId}
               label={environment.label}
-              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
+              buttonText={
+                environments.length > 1
+                  ? translate("common:mobileUsage.enableOn", "Enable on {{environment}}", {
+                      environment: environment.label,
+                    })
+                  : translate("common:mobileUsage.enable", "Enable")
+              }
               onEnabled={onEnabled}
             />
           ))}
@@ -494,15 +525,19 @@ function ChartCard(props: {
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
-          {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+          {metric === "cost"
+            ? translate("common:mobileUsage.rawTokenCost", "Raw token cost")
+            : translate("common:mobileUsage.processedTokens", "Processed tokens")}
         </Text>
         <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
           {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {metric === "cost"
-            ? "* if billed at full API rate"
-            : `Across ${formatCount(merged.sessions)} sessions`}
+            ? translate("common:mobileUsage.billedAtFullApiRate", "* if billed at full API rate")
+            : translate("common:mobileUsage.acrossSessions", "Across {{count}} sessions", {
+                count: formatCount(merged.sessions),
+              })}
         </Text>
       </View>
 
@@ -583,7 +618,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers">
+    <SettingsSection title={translate("common:providers", "Providers")}>
       {rows.map((row, index) => {
         if (row.kind === "enable") {
           return (
@@ -627,8 +662,15 @@ function ProviderSection(props: {
             </View>
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? translate(
+                    "common:mobileUsage.ofCostTokens",
+                    "{{percent}} of cost · {{tokens}} tokens",
+                    { percent: formatPercent(share), tokens: formatTokens(provider.totalTokens) },
+                  )
+                : translate("common:mobileUsage.ofTokensCost", "{{percent}} of tokens · {{cost}}", {
+                    percent: formatPercent(share),
+                    cost: formatUsd(provider.costUsd),
+                  })}
             </Text>
           </View>
         );
@@ -647,41 +689,62 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals">
+    <SettingsSection title={translate("usage:totals", "Totals")}>
       <View className="flex-row flex-wrap">
         <MetricCell
-          label="Processed tokens"
+          label={translate("usage:processedTokens", "Processed tokens")}
           value={formatTokens(merged.totalTokens)}
-          detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
+          detail={translate(
+            "common:mobileUsage.perActivePeriod",
+            "{{count}} per active {{period}}",
+            {
+              count: formatTokens(periodAverage),
+              period: translate(
+                props.isPast24Hours ? "common:mobileUsage.hour" : "common:mobileUsage.day",
+                props.isPast24Hours ? "hour" : "day",
+              ),
+            },
+          )}
         />
         <MetricCell
-          label="Cache savings"
+          label={translate("usage:cacheSavings", "Cache savings")}
           value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           detail={
             merged.costUsd > 0
-              ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
-              : "vs full input rates"
+              ? translate("common:mobileUsage.timesRawCost", "{{count}}x the raw cost", {
+                  count: (merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1),
+                })
+              : translate("common:mobileUsage.vsFullInputRates", "vs full input rates")
           }
         />
         <MetricCell
-          label="Cached input"
+          label={translate("usage:cachedInput", "Cached input")}
           value={formatTokens(merged.cachedInputTokens)}
-          detail={`${formatPercent(cachedShare)} of observed input`}
+          detail={translate("common:mobileUsage.ofObservedInput", "{{count}} of observed input", {
+            count: formatPercent(cachedShare),
+          })}
         />
         <MetricCell
-          label="Uncached input"
+          label={translate("usage:uncachedInput", "Uncached input")}
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail={translate("common:mobileUsage.cacheWrites", "{{count}} cache writes", {
+            count: formatTokens(merged.cacheCreationTokens),
+          })}
         />
         <MetricCell
-          label="Output"
+          label={translate("usage:output", "Output")}
           value={formatTokens(merged.outputTokens)}
-          detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
+          detail={translate("common:mobileUsage.includingReasoning", "incl. {{count}} reasoning", {
+            count: formatTokens(merged.reasoningTokens),
+          })}
         />
         <MetricCell
-          label="Unpriced"
+          label={translate("usage:unpriced", "Unpriced")}
           value={formatPercent(merged.costQuality.unpricedShare)}
-          detail="of records, excluded from cost"
+          detail={translate(
+            "common:mobileUsage.recordsExcludedFromCost",
+            "of records, excluded from cost",
+          )}
         />
       </View>
     </SettingsSection>
@@ -708,7 +771,7 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
   if (merged.models.length === 0) return null;
 
   return (
-    <SettingsSection title="By model">
+    <SettingsSection title={translate("common:mobileByModel", "By model")}>
       {merged.models.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}
@@ -728,12 +791,25 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
             </Text>
             <Text className="text-sm text-foreground-muted">
               {isModelCostUnknown(model)
-                ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+                ? translate(
+                    "common:mobileUsage.noKnownRates",
+                    "no known rates · {{count}} tokens",
+                    { count: formatTokens(model.totalTokens) },
+                  )
+                : translate(
+                    "common:mobileUsage.ofCostTokens",
+                    "{{percent}} of cost · {{tokens}} tokens",
+                    {
+                      percent: formatPercent(model.costShare),
+                      tokens: formatTokens(model.totalTokens),
+                    },
+                  )}
             </Text>
           </View>
           <Text className="text-base tabular-nums text-foreground">
-            {isModelCostUnknown(model) ? "Unpriced" : formatUsd(model.costUsd)}
+            {isModelCostUnknown(model)
+              ? translate("usage:unpriced", "Unpriced")
+              : formatUsd(model.costUsd)}
           </Text>
         </View>
       ))}
@@ -755,18 +831,32 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
     environment.summary &&
     !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
   ) {
-    return formatUsageContractMismatch(environment.label, {
-      direction:
-        environment.summary.contractVersion < USAGE_CONTRACT_VERSION
-          ? "serverBehind"
-          : "clientBehind",
-    });
+    return environment.summary.contractVersion < USAGE_CONTRACT_VERSION
+      ? translate(
+          "common:mobileUsage.serverBehind",
+          "{{environment}} runs an older server version and is excluded from totals.",
+          { environment: environment.label },
+        )
+      : translate(
+          "common:mobileUsage.clientBehind",
+          "This client is older than the server on {{environment}}; its usage is excluded from totals.",
+          { environment: environment.label },
+        );
   }
   if (!environment.isConnected)
-    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
+    return environment.summary
+      ? translate("common:mobileUsage.disconnectedSavedUsage", "Disconnected · showing saved usage")
+      : translate("common:mobileUsage.waitingForConnection", "Waiting for connection…");
   if (environment.error)
-    return environment.summary ? "Usage unavailable · showing saved totals" : "Usage unavailable";
+    return environment.summary
+      ? translate(
+          "common:mobileUsage.usageUnavailableSaved",
+          "Usage unavailable · showing saved totals",
+        )
+      : translate("common:mobileUsage.usageUnavailable", "Usage unavailable");
   if (isUsageLoading(environment))
-    return environment.summary ? "Updating usage…" : "Loading usage…";
-  return "Usage up to date";
+    return environment.summary
+      ? translate("common:mobileUsage.updatingUsage", "Updating usage…")
+      : translate("common:mobileUsage.loadingUsage", "Loading usage…");
+  return translate("common:mobileUsage.upToDate", "Usage up to date");
 }

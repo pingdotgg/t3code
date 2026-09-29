@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { useId } from "react";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
@@ -115,8 +116,10 @@ export function ScreenHeader(props: ScreenHeaderProps) {
             <ScreenHeaderButton
               accessibilityLabel={
                 panes.primarySidebarVisible
-                  ? `Maximize ${props.title.toLowerCase()}`
-                  : "Show threads"
+                  ? translate("common:mobileMaximizeWorkspace", "Maximize {{title}}", {
+                      title: props.title.toLowerCase(),
+                    })
+                  : translate("common:mobileShowThreads", "Show threads")
               }
               icon={
                 panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"

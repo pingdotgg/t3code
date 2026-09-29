@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
 import { Alert, Pressable, type ColorValue } from "react-native";
@@ -40,11 +41,17 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
           if (props.onCopy) await props.onCopy();
           else if (!(await tryCopyTextWithHaptic(props.text))) {
             // A refused clipboard write is the common failure, and silence reads as success.
-            Alert.alert("Could not copy", "Try again.");
+            Alert.alert(
+              translate("common:mobileFeedback.couldNotCopy", "Could not copy"),
+              translate("common:mobileFeedback.tryAgain", "Try again."),
+            );
             return;
           }
         } catch {
-          Alert.alert("Could not copy", "Try again.");
+          Alert.alert(
+            translate("common:mobileFeedback.couldNotCopy", "Could not copy"),
+            translate("common:mobileFeedback.tryAgain", "Try again."),
+          );
           return;
         }
         setCopied(true);

@@ -529,7 +529,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
     const nowIso = new Date(Date.now()).toISOString();
     const activity = startAgentLiveActivity({
       title: "T3 Code",
-      subtitle: "Agent work in progress",
+      subtitle: translate("common:mobileWidgets.agentWorkInProgress", "Agent work in progress"),
       activeCount: 1,
       updatedAt: nowIso,
       activities: [
@@ -1178,3 +1178,4 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
     }
   });
 }
+import { translate } from "@t3tools/i18n";

@@ -5,6 +5,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { useState } from "react";
 import { Alert, Modal, Platform, Pressable, ScrollView, View } from "react-native";
@@ -37,9 +38,21 @@ export function TerminalContextSheet(props: {
       version: 1 as const,
       kind: "terminal" as const,
       contextId: ComposerContextId.make(uuidv4()),
-      label: `${props.terminalLabel} · visible lines ${range.start + 1}–${range.end + 1}`,
+      label: translate(
+        "common:mobileTerminalVisibleLinesLabel",
+        "{{terminalLabel}} · visible lines {{start}}–{{end}}",
+        {
+          terminalLabel: props.terminalLabel,
+          start: range.start + 1,
+          end: range.end + 1,
+        },
+      ),
       terminalId: props.terminalId,
-      terminalLabel: `${props.terminalLabel} (visible output)`,
+      terminalLabel: translate(
+        "common:mobileTerminalVisibleOutputLabel",
+        "{{terminalLabel}} (visible output)",
+        { terminalLabel: props.terminalLabel },
+      ),
       lineStart: range.start + 1,
       lineEnd: range.end + 1,
       text: selectedText,
@@ -72,14 +85,21 @@ export function TerminalContextSheet(props: {
           </Pressable>
         </View>
         <Text className="px-4 pb-3 text-foreground-muted">
-          Tap the first and last line to select a range.
+          {translate(
+            "common:mobileTapLinesToSelectRange",
+            "Tap the first and last line to select a range.",
+          )}
         </Text>
         <ScrollView className="flex-1" contentContainerStyle={{ padding: 16 }}>
           {lines.map((line, index) => (
             <Pressable
               key={index}
               accessibilityRole="button"
-              accessibilityLabel={`Line ${index + 1}: ${line}`}
+              accessibilityLabel={translate(
+                "common:mobileTerminalLineAccessibility",
+                "Line {{line}}: {{content}}",
+                { line: index + 1, content: line },
+              )}
               accessibilityState={{ selected: index >= range.start && index <= range.end }}
               onPress={() => {
                 if (anchor === null) {
@@ -103,7 +123,10 @@ export function TerminalContextSheet(props: {
         </ScrollView>
         {tooLarge ? (
           <Text className="px-4 text-foreground-muted">
-            Select fewer lines to fit the context limit.
+            {translate(
+              "common:mobileSelectFewerLines",
+              "Select fewer lines to fit the context limit.",
+            )}
           </Text>
         ) : null}
         <Pressable

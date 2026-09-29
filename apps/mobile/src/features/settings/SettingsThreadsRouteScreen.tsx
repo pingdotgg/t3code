@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -36,7 +37,10 @@ export function SettingsThreadsRouteScreen() {
   return (
     <>
       <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title="Thread behavior" trailing={<AndroidSettingsEnvironmentFilter />}>
+      <SettingsScreen
+        title={translate("common:threadBehavior", "Thread behavior")}
+        trailing={<AndroidSettingsEnvironmentFilter />}
+      >
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
@@ -164,17 +168,20 @@ function AutoSettleSettingsRows() {
           onClear={clearProjectOverrides}
         />
       ) : null}
-      <SettingsSection title="Auto-settle">
+      <SettingsSection title={translate("common:mobileAutoSettle", "Auto-settle")}>
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
-          label="Auto-settle merged threads"
+          label={translate("common:mobileAutoSettleMergedThreads", "Auto-settle merged threads")}
           value={referenceSettings.sidebarAutoSettleOnMerge}
           disabled={disabled}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
         <SettingsSwitchRow
           icon="clock"
-          label="Auto-settle inactive threads"
+          label={translate(
+            "common:mobileAutoSettleInactiveThreads",
+            "Auto-settle inactive threads",
+          )}
           value={afterDays !== null}
           disabled={disabled}
           onValueChange={(value) =>
@@ -196,7 +203,9 @@ function AutoSettleSettingsRows() {
         ) : null}
       </SettingsSection>
       {pendingWrites === 0 && mismatches.length > 0 ? (
-        <SettingsSection title="Across environments">
+        <SettingsSection
+          title={translate("common:mobileAcrossEnvironments", "Across environments")}
+        >
           <View className="gap-3 p-4">
             <Text className="text-base text-foreground">{t("autoSettleDefaultsDiffer")}</Text>
             <Text className="text-sm text-foreground-muted">
@@ -209,7 +218,7 @@ function AutoSettleSettingsRows() {
               className="self-start rounded-full bg-subtle px-4 py-2 active:opacity-70"
             >
               <Text className="text-sm font-t3-medium text-foreground">
-                Apply auto-settle defaults
+                {translate("common:mobileApplyAutoSettleDefaults", "Apply auto-settle defaults")}
               </Text>
             </Pressable>
           </View>
@@ -232,17 +241,19 @@ function LegacySettingsSection() {
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Legacy">
+      <SettingsSection title={translate("common:legacyValue", "Legacy")}>
         <SettingsSwitchRow
           icon="hammer"
-          label="Plan Mode"
+          label={translate("common:mobilePlanMode", "Plan Mode")}
           value={planModeEnabled}
           onValueChange={(value) => savePreferences({ planModeEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
-        control; otherwise every task runs in Build mode.
+        {translate(
+          "common:mobileLegacyInterfacesCompatibilityDescription",
+          "Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan control; otherwise every task runs in Build mode.",
+        )}
       </Text>
     </View>
   );

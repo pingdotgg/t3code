@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
@@ -78,7 +79,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       ) : null}
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Branches & worktrees"
+          title={translate("common:mobileBranchesAndWorktrees", "Branches & worktrees")}
           onBack={() => navigation.goBack()}
           hideBottomBorder
         />
@@ -98,18 +99,18 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
         >
           <View className="bg-card android:gap-3 android:rounded-[20px] android:p-4 ios:gap-2 ios:rounded-[18px] ios:border ios:border-border ios:px-4 ios:py-4">
             <Text className="android:text-foreground android:text-base android:font-t3-medium ios:text-foreground-secondary ios:text-2xs ios:font-t3-bold ios:tracking-[1px] ios:uppercase">
-              New branch
+              {translate("common:mobileNewBranch", "New branch")}
             </Text>
             <TextInput
               value={newBranchName}
               onChangeText={setNewBranchName}
               placeholder="feature/mobile-polish"
-              accessibilityLabel="New branch name"
+              accessibilityLabel={translate("common:mobileNewBranchName", "New branch name")}
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             <SheetActionButton
               icon="plus"
-              label="Create & checkout"
+              label={translate("common:mobileCreateAndCheckout", "Create & checkout")}
               tone="primary"
               disabled={busy || newBranchName.trim().length === 0}
               onPress={() => {
@@ -125,7 +126,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
           <View className="bg-card android:gap-3 android:rounded-[20px] android:p-4 ios:gap-2 ios:rounded-[18px] ios:border ios:border-border ios:px-4 ios:py-4">
             <Text className="android:text-foreground android:text-base android:font-t3-medium ios:text-foreground-secondary ios:text-2xs ios:font-t3-bold ios:tracking-[1px] ios:uppercase">
-              New worktree
+              {translate("common:mobileNewWorktree", "New worktree")}
             </Text>
             {Platform.OS === "android" ? (
               <Text className="text-foreground-secondary text-sm">{t("baseBranch")}</Text>
@@ -134,7 +135,10 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               value={worktreeBaseBranch}
               onChangeText={setWorktreeBaseBranch}
               placeholder="main"
-              accessibilityLabel="Worktree base branch"
+              accessibilityLabel={translate(
+                "common:mobileWorktreeBaseBranch",
+                "Worktree base branch",
+              )}
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             {Platform.OS === "android" ? (
@@ -144,12 +148,15 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               value={worktreeBranchName}
               onChangeText={setWorktreeBranchName}
               placeholder="feature/mobile-thread"
-              accessibilityLabel="Worktree branch name"
+              accessibilityLabel={translate(
+                "common:mobileWorktreeBranchName",
+                "Worktree branch name",
+              )}
               className="android:rounded-xl android:bg-sheet-solid ios:rounded-[18px]"
             />
             <SheetActionButton
               icon="square.split.2x1"
-              label="Create worktree"
+              label={translate("common:mobileCreateWorktree", "Create worktree")}
               tone="primary"
               disabled={
                 busy ||
@@ -172,16 +179,16 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
           <View className="gap-2">
             <Text className="text-foreground-secondary android:px-4 android:pb-1 android:pt-3 android:text-sm android:font-t3-medium ios:text-2xs ios:font-t3-bold ios:tracking-[1px] ios:uppercase">
-              Existing branches
+              {translate("common:mobileExistingBranches", "Existing branches")}
             </Text>
             {branchesLoading ? (
               <Text className="text-foreground-secondary text-sm font-medium android:px-4">
-                Loading branches...
+                {translate("common:mobileLoadingBranches", "Loading branches…")}
               </Text>
             ) : null}
             {!branchesLoading && availableBranches.length === 0 ? (
               <Text className="text-foreground-secondary text-sm font-medium android:px-4">
-                No local branches found.
+                {translate("common:mobileNoLocalBranches", "No local branches found.")}
               </Text>
             ) : null}
             {availableBranches.map((branch) => {

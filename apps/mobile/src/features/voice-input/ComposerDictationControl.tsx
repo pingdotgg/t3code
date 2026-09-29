@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
 import {
@@ -304,7 +305,10 @@ export function ComposerDictationStatus(props: {
             {props.presentation.statusLabel}
           </Text>
           <Pressable
-            accessibilityLabel="Dismiss voice input error"
+            accessibilityLabel={translate(
+              "common:mobileDismissVoiceInputError",
+              "Dismiss voice input error",
+            )}
             accessibilityRole="button"
             className="size-7 items-center justify-center active:opacity-70"
             hitSlop={8}
@@ -356,7 +360,7 @@ export function ComposerDictationCancelAction(props: {
   if (props.presentation.leadingAction !== "cancel") return null;
   return (
     <VoiceActionButton
-      accessibilityLabel="Cancel dictation"
+      accessibilityLabel={translate("common:mobileCancelDictation", "Cancel dictation")}
       icon="xmark"
       onPress={props.onCancel}
     />

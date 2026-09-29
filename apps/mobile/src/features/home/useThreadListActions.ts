@@ -4,6 +4,7 @@ import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/threa
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { Alert, Platform } from "react-native";
 
 import { withThreadDismissal } from "./thread-dismissal";
@@ -258,6 +259,7 @@ export function useThreadListActions(): {
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
+  const { t } = useTranslation();
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
@@ -548,7 +550,7 @@ export function useThreadListActions(): {
 
       if (Platform.OS === "ios") {
         Alert.prompt(
-          "Rename thread",
+          t("mobileLabels.renameThread"),
           undefined,
           (title) => commit(title ?? ""),
           "plain-text",
@@ -557,13 +559,13 @@ export function useThreadListActions(): {
         return;
       }
       showTextInputDialog({
-        title: "Rename thread",
+        title: t("mobileLabels.renameThread"),
         initialValue: thread.title,
-        confirmText: "Rename",
+        confirmText: t("mobileLabels.rename"),
         onConfirm: commit,
       });
     },
-    [updateThreadMetadata],
+    [t, updateThreadMetadata],
   );
 
   // Plan against the complete section so filtering does not change a move.

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { SourceFileSurface } from "../features/files/SourceFileSurface";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import type {
@@ -21,6 +22,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "@t3tools/i18n/react";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
+import { pullRequestStateLabel } from "../features/threads/pullRequestStateLabel";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
 import {
   composerAttachmentInlineUri,
@@ -72,7 +74,7 @@ function ContextSource(props: { source: ElementContextSource | null }) {
     : null;
   return (
     <ContextField
-      label="Source"
+      label={translate("common:mobileSource", "Source")}
       value={[source.functionName, location].filter(Boolean).join("\n")}
       code
     />
@@ -196,7 +198,7 @@ export function ComposerContextSheet(props: {
         {Platform.OS === "android" ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Dismiss context"
+            accessibilityLabel={translate("common:mobileDismissContext", "Dismiss context")}
             onPress={props.onClose}
             style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
           />
@@ -228,13 +230,16 @@ export function ComposerContextSheet(props: {
               </Text>
               {terminal ? (
                 <Text className="text-xs text-foreground-muted">
-                  Lines {terminal.lineStart}–{terminal.lineEnd}
+                  {translate("common:mobileLinesRange", "Lines {{start}}–{{end}}", {
+                    start: terminal.lineStart,
+                    end: terminal.lineEnd,
+                  })}
                 </Text>
               ) : null}
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Close context"
+              accessibilityLabel={translate("common:mobileCloseContext", "Close context")}
               onPress={props.onClose}
               className="p-3"
             >
@@ -252,13 +257,17 @@ export function ComposerContextSheet(props: {
           >
             {!record ? (
               <Text className="text-foreground">
-                Context unavailable. The reference was copied without its payload. Copy it again
-                from the original message or remove it.
+                {translate(
+                  "common:mobileContextPayloadUnavailable",
+                  "Context unavailable. The reference was copied without its payload. Copy it again from the original message or remove it.",
+                )}
               </Text>
             ) : "payload" in record ? (
               <Text className="text-foreground">
-                This context type is not supported by this version of the app. Its payload will be
-                preserved when sent.
+                {translate(
+                  "common:mobileUnsupportedContextType",
+                  "This context type is not supported by this version of the app. Its payload will be preserved when sent.",
+                )}
               </Text>
             ) : (
               <>
@@ -290,7 +299,16 @@ export function ComposerContextSheet(props: {
                   <>
                     {record.pullRequest ? (
                       <ContextField
-                        label={`#${record.pullRequest.number} · ${record.pullRequest.isDraft ? "draft" : record.pullRequest.state}`}
+                        label={translate(
+                          "common:mobileUiPullRequestContextLabel",
+                          "#{{number}} · {{state}}",
+                          {
+                            number: record.pullRequest.number,
+                            state: record.pullRequest.isDraft
+                              ? translate("common:mobileUiDraft", "Draft")
+                              : pullRequestStateLabel(record.pullRequest.state),
+                          },
+                        )}
                         value={`${record.pullRequest.title}\n${record.pullRequest.headBranch} → ${record.pullRequest.baseBranch}`}
                       />
                     ) : null}
@@ -306,12 +324,24 @@ export function ComposerContextSheet(props: {
                 ) : null}
                 {record.kind === "preview-annotation" ? (
                   <>
-                    <ContextField label="Page" value={record.pageTitle ?? record.pageUrl} />
-                    <ContextField label="URL" value={record.pageUrl} />
-                    <ContextField label="Comment" value={record.comment} />
-                    <ContextField label="Selection" value={record.targetSummary} />
                     <ContextField
-                      label="Requested changes"
+                      label={translate("common:mobilePage", "Page")}
+                      value={record.pageTitle ?? record.pageUrl}
+                    />
+                    <ContextField
+                      label={translate("common:mobileUrlField", "URL")}
+                      value={record.pageUrl}
+                    />
+                    <ContextField
+                      label={translate("common:comment", "Comment")}
+                      value={record.comment}
+                    />
+                    <ContextField
+                      label={translate("common:mobileSelection", "Selection")}
+                      value={record.targetSummary}
+                    />
+                    <ContextField
+                      label={translate("common:mobileRequestedChanges", "Requested changes")}
                       value={record.styleChanges.join("\n")}
                     />
                     {record.elements?.map((element, index) => (
@@ -320,43 +350,84 @@ export function ComposerContextSheet(props: {
                         className="gap-3"
                       >
                         <ContextField
-                          label="Element"
+                          label={translate("common:mobileElement", "Element")}
                           value={element.componentName ?? element.tagName}
                         />
-                        <ContextField label="Selector" value={element.selector} code />
+                        <ContextField
+                          label={translate("common:mobileSelector", "Selector")}
+                          value={element.selector}
+                          code
+                        />
                         <ContextSource source={element.source} />
-                        <ContextField label="HTML" value={element.htmlPreview} code />
-                        <ContextField label="Styles" value={element.styles} code />
+                        <ContextField
+                          label={translate("common:mobileHTML", "HTML")}
+                          value={element.htmlPreview}
+                          code
+                        />
+                        <ContextField
+                          label={translate("common:mobileStyles", "Styles")}
+                          value={element.styles}
+                          code
+                        />
                       </View>
                     ))}
                   </>
                 ) : null}
                 {record.kind === "element" ? (
                   <>
-                    <ContextField label="Page" value={record.pageUrl} />
-                    <ContextField label="Element" value={record.componentName ?? record.tagName} />
-                    <ContextField label="Selector" value={record.selector} code />
+                    <ContextField
+                      label={translate("common:mobilePage", "Page")}
+                      value={record.pageUrl}
+                    />
+                    <ContextField
+                      label={translate("common:mobileElement", "Element")}
+                      value={record.componentName ?? record.tagName}
+                    />
+                    <ContextField
+                      label={translate("common:mobileSelector", "Selector")}
+                      value={record.selector}
+                      code
+                    />
                     <ContextSource source={record.source} />
-                    <ContextField label="HTML" value={record.htmlPreview} code />
-                    <ContextField label="Styles" value={record.styles} code />
+                    <ContextField
+                      label={translate("common:mobileHTML", "HTML")}
+                      value={record.htmlPreview}
+                      code
+                    />
+                    <ContextField
+                      label={translate("common:mobileStyles", "Styles")}
+                      value={record.styles}
+                      code
+                    />
                   </>
                 ) : null}
                 {record.kind === "image" ? (
                   <ContextField
-                    label="File"
+                    label={translate("common:attachmentFile", "File")}
                     value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
                   />
                 ) : null}
                 {record.kind === "mention" ? (
-                  <ContextField label="Path" value={record.path} code />
+                  <ContextField
+                    label={translate("chatView:worktreePath", "Path")}
+                    value={record.path}
+                    code
+                  />
                 ) : null}
                 {record.kind === "skill" ? (
                   <View className="gap-3">
-                    <ContextField label="Skill" value={record.name} />
                     <ContextField
-                      label="Description"
+                      label={translate("common:mobileSkill", "Skill")}
+                      value={record.name}
+                    />
+                    <ContextField
+                      label={translate("pullRequests:description", "Description")}
                       value={
-                        props.skillDescription ?? "No description is available for this skill."
+                        props.skillDescription ??
+                        translate(
+                          "common:mobileComposer.noSkillDescription",
+                          "No description is available for this skill.",
+                        )
                       }
                     />
                     {props.onOpenSkill ? (
@@ -392,7 +463,16 @@ export function ComposerContextSheet(props: {
                 accessibilityRole="link"
                 onPress={() => {
                   void Linking.openURL(pullRequestUrl).catch(() =>
-                    Alert.alert("Could not open pull request", "Try again when connected."),
+                    Alert.alert(
+                      translate(
+                        "common:mobileComposer.couldNotOpenPullRequest",
+                        "Could not open pull request",
+                      ),
+                      translate(
+                        "common:mobileComposer.tryAgainWhenConnected",
+                        "Try again when connected.",
+                      ),
+                    ),
                   );
                 }}
                 className="rounded-xl bg-subtle p-4"

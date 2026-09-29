@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
@@ -86,8 +87,14 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
-          title="Set up T3 Connect"
-          actions={[{ accessibilityLabel: "Close", icon: "xmark", onPress: handleClose }]}
+          title={translate("settings:setupConnect", "Set up T3 Connect")}
+          actions={[
+            {
+              accessibilityLabel: translate("common:close", "Close"),
+              icon: "xmark",
+              onPress: handleClose,
+            },
+          ]}
         />
       ) : (
         <NativeHeaderToolbar placement="right">
@@ -119,7 +126,10 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
+              {translate(
+                "common:mobileSignInForT3Connect",
+                "Sign in to your T3 account to set up T3 Connect.",
+              )}
             </Text>
           </View>
         )}
@@ -131,7 +141,9 @@ function ConfiguredConnectOnboardingRouteScreen() {
             onPress={handleDontShowAgain}
             className="items-center py-1 active:opacity-70"
           >
-            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
+            <Text className="text-xs text-foreground-muted">
+              {translate("common:mobileDontShowAgain", "Don't show this again")}
+            </Text>
           </Pressable>
         ) : null}
       </ScrollView>

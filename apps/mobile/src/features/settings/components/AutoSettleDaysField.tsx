@@ -41,8 +41,9 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
       onChangeText={setDraft}
       onBlur={commit}
       onSubmitEditing={commit}
-      accessibilityLabel="Days before auto-settle"
+      accessibilityLabel={translate("common:mobileDaysBeforeAutoSettle", "Days before auto-settle")}
       editable={!props.disabled}
     />
   );
 }
+import { translate } from "@t3tools/i18n";

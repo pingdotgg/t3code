@@ -12,8 +12,15 @@ export function DevicePreviewButton(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={props.count === 1 ? "View device" : `View ${props.count} devices`}
-      accessibilityHint="Watch and control devices open in this thread"
+      accessibilityLabel={
+        props.count === 1
+          ? translate("common:mobileViewDevice", "View device")
+          : translate("common:mobileViewDevices", "View {{count}} devices", { count: props.count })
+      }
+      accessibilityHint={translate(
+        "common:mobileWatchAndControlThreadDevices",
+        "Watch and control devices open in this thread",
+      )}
       onPress={props.onPress}
       className={
         compact
@@ -39,3 +46,4 @@ export function DevicePreviewButton(props: {
     </Pressable>
   );
 }
+import { translate } from "@t3tools/i18n";

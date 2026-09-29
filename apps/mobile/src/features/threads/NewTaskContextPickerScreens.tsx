@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -210,12 +211,12 @@ export function NewTaskEnvironmentPickerRouteScreen() {
       <NativeStackScreenOptions
         options={{
           headerShown: Platform.OS !== "android",
-          title: "Environment",
+          title: translate("common:environment", "Environment"),
         }}
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Environment"
+          title={translate("common:environment", "Environment")}
           hideBottomBorder
           onBack={() => navigation.goBack()}
         />
@@ -395,7 +396,7 @@ export function NewTaskBranchPickerRouteScreen() {
       >
         <ToggleRow
           onValueChange={flow.setStartFromOrigin}
-          title="Start from origin"
+          title={translate("branchToolbar:startFromOrigin", "Start from origin")}
           value={flow.startFromOrigin}
         />
       </View>
@@ -482,13 +483,13 @@ export function NewTaskBranchPickerRouteScreen() {
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
-            accessibilityLabel="Find a branch"
+            accessibilityLabel={translate("common:mobileFindABranch", "Find a branch")}
             className="h-12 rounded-full border border-input-border bg-input px-4 font-sans text-base text-foreground"
             selectionColorClassName="accent-focus/32"
             cursorColorClassName="accent-focus"
             selectionHandleColorClassName="accent-focus"
             onChangeText={flow.setBranchQuery}
-            placeholder="Find a branch"
+            placeholder={translate("common:mobileFindABranch", "Find a branch")}
             placeholderTextColorClassName="accent-placeholder"
             value={flow.branchQuery}
           />
@@ -508,7 +509,7 @@ export function NewTaskBranchPickerRouteScreen() {
             ? () => [
                 createNativeMailSearchToolbarItem({
                   onSearchTextChange: flow.setBranchQuery,
-                  placeholder: "Find a branch",
+                  placeholder: translate("common:mobileLabels.findBranch", "Find a branch"),
                   searchTextChangeId: "new-task-branch-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -521,7 +522,7 @@ export function NewTaskBranchPickerRouteScreen() {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Find a branch",
+                placeholder: translate("common:mobileLabels.findBranch", "Find a branch"),
                 onChangeText: (event) => {
                   flow.setBranchQuery(event.nativeEvent.text);
                 },

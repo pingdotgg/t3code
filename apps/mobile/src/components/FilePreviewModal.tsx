@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useIsFocused } from "@react-navigation/native";
 import { useEffect, useEffectEvent, useState } from "react";
 import { Alert, Keyboard } from "react-native";
@@ -25,7 +26,11 @@ function ResolvedFilePreview(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onResolutionError = useEffectEvent((error: unknown, fallbackMessage: string) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Alert.alert("Could not open preview", fallbackMessage);
+    else
+      Alert.alert(
+        translate("common:mobileFeedback.couldNotOpenPreview", "Could not open preview"),
+        fallbackMessage,
+      );
     onRequestClose();
   });
   useEffect(() => Keyboard.dismiss(), []);
@@ -44,7 +49,10 @@ function ResolvedFilePreview(props: {
         if (cancelled) return;
         onResolutionError(
           error,
-          "Reconnect to this environment and try again. The file may have been moved or deleted.",
+          translate(
+            "common:mobileFeedback.reconnectOrRestoreFile",
+            "Reconnect to this environment and try again. The file may have been moved or deleted.",
+          ),
         );
       });
     return () => {
@@ -67,7 +75,10 @@ function ResolvedFilePreview(props: {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
-        onResolutionError(error, "Attach the file again and retry.");
+        onResolutionError(
+          error,
+          translate("common:mobileFeedback.attachFileAgain", "Attach the file again and retry."),
+        );
       });
     return () => {
       controller.abort();

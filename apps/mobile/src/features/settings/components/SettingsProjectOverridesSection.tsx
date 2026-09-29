@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Pressable, View } from "react-native";
 import { useTranslation } from "@t3tools/i18n/react";
 
@@ -13,7 +14,7 @@ export function SettingsProjectOverridesSection(props: {
 }) {
   const { t } = useTranslation();
   return (
-    <SettingsSection title="Project">
+    <SettingsSection title={translate("common:project", "Project")}>
       <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
         <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={2}>
           {props.projectLabel}
@@ -21,7 +22,10 @@ export function SettingsProjectOverridesSection(props: {
         {!props.pending && props.supportsOverrides && props.hasOverrides ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Use environment defaults"
+            accessibilityLabel={translate(
+              "common:mobileUseEnvironmentDefaults",
+              "Use environment defaults",
+            )}
             onPress={props.onClear}
             className="px-2 py-2 active:opacity-70"
           >
@@ -31,7 +35,10 @@ export function SettingsProjectOverridesSection(props: {
       </View>
       {!props.supportsOverrides ? (
         <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          Update the selected environments to edit project overrides.
+          {translate(
+            "common:mobileUpdateEnvironmentsForOverrides",
+            "Update the selected environments to edit project overrides.",
+          )}
         </Text>
       ) : null}
     </SettingsSection>

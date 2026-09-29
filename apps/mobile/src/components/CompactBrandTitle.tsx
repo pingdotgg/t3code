@@ -32,7 +32,7 @@ export function CompactBrandTitle(
   return (
     <View
       aria-level={1}
-      accessibilityLabel="T3 Code, Threads"
+      accessibilityLabel={`T3 Code, ${translate("common:mobileThreads", "Threads")}`}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
@@ -76,7 +76,8 @@ export function getCompactBrandHeaderOptions(
   return {
     headerTitle: renderCompactBrandTitle,
     headerTitleStyle: fallbackTitleStyle,
-    title: "Threads",
+    title: translate("common:mobileThreads", "Threads"),
     unstable_headerLeftItems: undefined,
   };
 }
+import { translate } from "@t3tools/i18n";

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
@@ -111,7 +112,7 @@ function ThreadHeader(
     const actions: ScreenHeaderAction[] = [];
     if (props.onReturnToThread) {
       actions.push({
-        accessibilityLabel: "Return to chat",
+        accessibilityLabel: translate("common:mobileLabels.returnToChat", "Return to chat"),
         icon: "chevron.left",
         onPress: props.onReturnToThread,
       });
@@ -127,13 +128,13 @@ function ThreadHeader(
     }
     if (props.hasWorkspaceRoot) {
       actions.push({
-        accessibilityLabel: "Open terminal",
+        accessibilityLabel: translate("common:mobileLabels.openTerminal", "Open terminal"),
         icon: "terminal",
         onPress: () => onOpenTerminal(null),
       });
     }
     actions.push({
-      accessibilityLabel: "Open git controls",
+      accessibilityLabel: translate("common:mobileLabels.openGitControls", "Open git controls"),
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
     });
@@ -209,7 +210,12 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 function OpeningThreadLoadingScreen() {
-  return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+  return (
+    <LoadingScreen
+      message={translate("common:mobileFeedback.threadOpening", "Opening thread…")}
+      messagePlacement="above-spinner"
+    />
+  );
 }
 
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
@@ -239,8 +245,11 @@ function ThreadUnavailableScreen(props: {
       className="bg-screen flex-1"
     >
       <EmptyState
-        title="Thread unavailable"
-        detail="This thread is not available in the current mobile snapshot."
+        title={translate("common:mobileThreadUnavailable", "Thread unavailable")}
+        detail={translate(
+          "common:mobileFeedback.threadSnapshotUnavailable",
+          "This thread is not available in the current mobile snapshot.",
+        )}
         actionLabel={props.actionLabel}
         onAction={props.onAction}
       />
@@ -765,7 +774,10 @@ function ThreadRouteContent(
     auxiliaryPaneControl:
       !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
         ? {
-            accessibilityLabel: "Toggle inspector",
+            accessibilityLabel: translate(
+              "common:mobileLabels.toggleInspector",
+              "Toggle inspector",
+            ),
             onPress: handleToggleInspector,
           }
         : undefined,

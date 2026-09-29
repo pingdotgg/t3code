@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BackHandler, Keyboard, Pressable, TextInput, View } from "react-native";
 import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
@@ -93,7 +94,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
           <View className="flex-row items-center gap-2" style={{ minHeight: buttonSize }}>
             {props.onBack ? (
               <Pressable
-                accessibilityLabel="Navigate up"
+                accessibilityLabel={translate("common:mobileNavigateUp", "Navigate up")}
                 accessibilityRole="button"
                 hitSlop={8}
                 onPress={props.onBack}
@@ -162,7 +163,9 @@ export function ScreenHeader(props: ScreenHeaderProps) {
               ...(search.refreshInToolbar && search.onRefresh
                 ? [
                     {
-                      accessibilityLabel: search.refreshAccessibilityLabel ?? "Refresh",
+                      accessibilityLabel:
+                        search.refreshAccessibilityLabel ??
+                        translate("common:mobileRefresh", "Refresh"),
                       icon: "arrow.clockwise" as const,
                       onPress: search.onRefresh,
                     },
@@ -197,14 +200,20 @@ export function ScreenHeader(props: ScreenHeaderProps) {
             <View className="absolute inset-0 bg-header px-2" style={{ paddingTop, paddingBottom }}>
               <View className="flex-1 flex-row items-center gap-1">
                 <ScreenHeaderButton
-                  accessibilityLabel={search.closeAccessibilityLabel ?? "Close search"}
+                  accessibilityLabel={
+                    search.closeAccessibilityLabel ??
+                    translate("common:mobileCloseSearch", "Close search")
+                  }
                   icon="arrow.left"
                   onPress={closeSearch}
                 />
                 <MaterialSearchField
                   inputRef={inputRef}
                   accessibilityLabel={search.placeholder}
-                  clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}
+                  clearAccessibilityLabel={
+                    search.clearAccessibilityLabel ??
+                    translate("common:mobileClearSearch", "Clear search")
+                  }
                   placeholder={search.placeholder}
                   value={search.value}
                   onChangeText={search.onChangeText}

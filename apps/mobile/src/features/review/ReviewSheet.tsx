@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useTranslation } from "@t3tools/i18n/react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -100,14 +101,17 @@ function ReviewHeader(
       onBack={props.onReturnToThread}
       hideBottomBorder
       options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
-      backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
+      backInSplitView={{
+        accessibilityLabel: translate("common:mobileReview.backToChat", "Back to chat"),
+        icon: "chevron.left",
+      }}
       actions={
         props.showChangedFilesToggle
           ? [
               {
                 accessibilityLabel: panes.auxiliaryPaneVisible
-                  ? "Hide changed files"
-                  : "Show changed files",
+                  ? translate("common:mobileReview.hideChangedFiles", "Hide changed files")
+                  : translate("common:mobileReview.showChangedFiles", "Show changed files"),
                 icon: "sidebar.right",
                 selected: panes.auxiliaryPaneVisible,
                 onPress: toggleAuxiliaryPane,
@@ -120,23 +124,32 @@ function ReviewHeader(
         ...(props.showSectionToolbar
           ? [
               {
-                title: "Select diff",
+                title: translate("common:mobileReview.selectDiff", "Select diff"),
                 icon: presentation.menuIcon,
                 items: [
                   {
                     id: "sections",
                     inline: true,
                     items: [
-                      sectionAction(props.sectionMenu.workingTree, "Working tree"),
-                      sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
-                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                      sectionAction(
+                        props.sectionMenu.workingTree,
+                        translate("common:mobileReview.workingTree", "Working tree"),
+                      ),
+                      sectionAction(
+                        props.sectionMenu.branchChanges,
+                        translate("common:mobileReview.branchChanges", "Branch changes"),
+                      ),
+                      sectionAction(
+                        props.sectionMenu.latestTurn,
+                        translate("common:mobileReview.latestTurn", "Latest turn"),
+                      ),
                     ],
                   },
                   ...(props.sectionMenu.turns.length > 0
                     ? [
                         {
                           id: "turns",
-                          title: "Turn",
+                          title: translate("common:mobileReview.turn", "Turn"),
                           items: props.sectionMenu.turns.map((section) => ({
                             id: `section:${section.id}`,
                             title: section.title,
@@ -407,7 +420,7 @@ function ReviewFileNavigator({
               hideShadow={false}
               navigationItemStyle="editor"
               subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
-              title="Changed files"
+              title={translate("common:changedFiles", "Changed files")}
               titleColor={foregroundColor}
               titleFontSize={17}
               titleFontWeight="700"
@@ -427,7 +440,7 @@ function ReviewFileNavigator({
     >
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Changed files"
+          title={translate("common:changedFiles", "Changed files")}
           subtitle={`${files.length} ${files.length === 1 ? "file" : "files"}`}
           hideBottomBorder
         />
@@ -845,7 +858,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
                       Platform.OS === "android" && "mt-2 text-center",
                     )}
                   >
-                    This thread has no ready turn diffs and the worktree diff is empty.
+                    {translate(
+                      "common:mobileReviewNoTurnDiffs",
+                      "This thread has no ready turn diffs and the worktree diff is empty.",
+                    )}
                   </Text>
                 </View>
               ) : selectedSection.isLoading && selectedSection.diff === null ? (
@@ -902,7 +918,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   )}
                 >
                   <Text className="text-xs leading-normal text-foreground-muted">
-                    Native diff view unavailable. Showing the raw patch.
+                    {translate(
+                      "common:mobileNativeDiffUnavailable",
+                      "Native diff view unavailable. Showing the raw patch.",
+                    )}
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false}>
                     <Text selectable className="font-mono text-xs leading-relaxed text-foreground">

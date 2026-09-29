@@ -1,4 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useCallback, useMemo } from "react";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
@@ -11,6 +12,7 @@ function checkedMenuState(checked: boolean) {
 }
 
 export function HomeHeader(props: HomeHeaderProps) {
+  const { t } = useTranslation();
   // The list uses a fixed creation order and ignores sort/group options, so
   // the filter menu only carries the filters and the "customized" icon state
   // keys off those alone.
@@ -20,11 +22,11 @@ export function HomeHeader(props: HomeHeaderProps) {
     () => [
       {
         id: "environment",
-        title: "Environment",
+        title: t("environment"),
         subactions: [
           {
             id: "environment:all",
-            title: "All environments",
+            title: t("allEnvironments"),
             state: checkedMenuState(props.selectedEnvironmentId === null),
           },
           ...props.environments.map((environment) => ({
@@ -39,11 +41,11 @@ export function HomeHeader(props: HomeHeaderProps) {
         : ([
             {
               id: "project",
-              title: "Project",
+              title: t("project"),
               subactions: [
                 {
                   id: "project:all",
-                  title: "All projects",
+                  title: t("allProjects"),
                   state: checkedMenuState(props.selectedProjectKey === null),
                 },
                 ...props.projects.map((project) => ({
@@ -55,7 +57,7 @@ export function HomeHeader(props: HomeHeaderProps) {
             },
           ] satisfies MenuAction[])),
     ],
-    [props.environments, props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+    [props.environments, props.projects, props.selectedEnvironmentId, props.selectedProjectKey, t],
   );
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {

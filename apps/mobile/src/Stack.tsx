@@ -12,6 +12,7 @@ import {
 } from "@react-navigation/native-stack";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "@t3tools/i18n/react";
+import { translate } from "@t3tools/i18n";
 import {
   Platform,
   Pressable,
@@ -838,10 +839,16 @@ function GuardedScreenLayout(props: {
 function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
   const navigation = useNavigation();
   const exit = navigation.canGoBack()
-    ? { label: "Go back", onPress: () => navigation.goBack() }
+    ? { label: translate("common:mobileGoBack", "Go back"), onPress: () => navigation.goBack() }
     : props.routeName === "Home"
-      ? { label: "Open settings", onPress: () => navigation.navigate("SettingsSheet") }
-      : { label: "Return home", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
+      ? {
+          label: translate("common:openSettings", "Open settings"),
+          onPress: () => navigation.navigate("SettingsSheet"),
+        }
+      : {
+          label: translate("common:mobileReturnHome", "Return home"),
+          onPress: () => navigation.dispatch(StackActions.replace("Home")),
+        };
 
   return <RenderFailureView {...props} exit={exit} />;
 }

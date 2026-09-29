@@ -121,7 +121,10 @@ export function WorkspaceConnectionTitle(props: {
   return (
     <StatusFadeIn grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
-        accessibilityHint="Opens environment settings"
+        accessibilityHint={translate(
+          "common:mobileOpenEnvironmentSettings",
+          "Opens environment settings",
+        )}
         accessibilityLabel={status.label}
         accessibilityRole="button"
         disabled={props.onPress === undefined}
@@ -185,3 +188,4 @@ export function getConnectionAwareBrandHeaderOptions(opts: {
     ),
   };
 }
+import { translate } from "@t3tools/i18n";

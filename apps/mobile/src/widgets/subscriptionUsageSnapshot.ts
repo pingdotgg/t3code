@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   collectLimitAccounts,
   collectLimitPools,
@@ -66,7 +67,7 @@ function subscriptionUsageProps(
         if (!pool)
           return {
             name,
-            detail: "No limits available",
+            detail: translate("common:mobileWidgets.noLimitsAvailable", "No limits available"),
             windows: [],
             expiresAt: 0,
             totalWindows: 0,
@@ -161,7 +162,12 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
       ...snapshot,
       providers: snapshot.providers.map((provider) =>
         provider.windows.length > 0 && provider.expiresAt <= date
-          ? { ...provider, detail: "Open T3 to refresh", windows: [], totalWindows: 0 }
+          ? {
+              ...provider,
+              detail: translate("common:mobileWidgets.openToRefresh", "Open T3 to refresh"),
+              windows: [],
+              totalWindows: 0,
+            }
           : provider,
       ),
     },

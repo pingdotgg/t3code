@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { ComponentProps } from "react";
 import { MaterialFloatingActionButton } from "./MaterialFloatingActionButton.android";
 import { MaterialScrollComposeButton } from "./MaterialScrollComposeButton.android";
@@ -13,7 +14,7 @@ export function MaterialNewThreadButton(
     <MaterialFloatingActionButton
       {...props}
       icon="square.and.pencil"
-      label="New thread"
+      label={translate("common:newThread", "New thread")}
       tone="primary"
       variant={props.extended ? "extended" : "large"}
     />

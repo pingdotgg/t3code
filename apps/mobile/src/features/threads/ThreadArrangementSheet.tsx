@@ -4,6 +4,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "@t3tools/i18n/react";
+import { translate } from "@t3tools/i18n";
 import { Animated, FlatList, Modal, Pressable, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
@@ -112,13 +113,22 @@ function DragHandle(props: {
         collapsable={false}
         accessible
         accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityHint="Move up and Move down reorder within this section. Other actions move between sections."
+        accessibilityLabel={translate("common:mobileReorderThreadTitle", "Reorder {{title}}", {
+          title: props.title,
+        })}
+        accessibilityHint={translate(
+          "common:mobileReorderThreadAccessibilityHint",
+          "Move up and down to reorder within this section. Other actions move items between sections.",
+        )}
         accessibilityState={{ disabled: props.disabled }}
         accessibilityActions={[
           ...props.sectionActions,
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
+          ...(props.canMoveUp
+            ? [{ name: "decrement", label: translate("common:moveUp", "Move up") }]
+            : []),
+          ...(props.canMoveDown
+            ? [{ name: "increment", label: translate("common:moveDown", "Move down") }]
+            : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (props.disabled) return;
@@ -385,7 +395,10 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
             </Pressable>
           </View>
           <Text className="px-5 pb-3 text-sm text-foreground-muted">
-            Drag to reorder, pin, or settle. Changes save when you drop.
+            {translate(
+              "common:mobileDragToReorderThreads",
+              "Drag to reorder, pin, or settle. Changes save when you drop.",
+            )}
           </Text>
           <View
             onLayout={(event) => {

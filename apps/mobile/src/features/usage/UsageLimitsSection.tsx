@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -27,7 +28,23 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
 
-const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
+function localizedPaceLabel(pace: "ahead" | "on" | "under") {
+  const copy = {
+    ahead: ["common:mobileUsage.paceAhead", "ahead of pace"],
+    on: ["common:mobileUsage.paceOn", "on pace"],
+    under: ["common:mobileUsage.paceUnder", "under pace"],
+  } as const;
+  const [key, fallback] = copy[pace];
+  return translate(key, fallback);
+}
+
+function localizedResetsIn(value: string | null) {
+  if (value === null) return null;
+  if (value === "resets now") return translate("common:mobileUsage.resetsNow", "resets now");
+  return translate("common:mobileUsage.resetsIn", "resets in {{duration}}", {
+    duration: value.replace(/^resets in /, ""),
+  });
+}
 
 type Driver = ServerProvider["driver"];
 
@@ -61,7 +78,9 @@ function WindowRow(props: {
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-          {remaining}% left
+          {translate("common:mobileUsage.remainingPercent", "{{percent}}% left", {
+            percent: remaining,
+          })}
         </Text>
       </View>
       <View className="h-3 justify-center">
@@ -90,8 +109,12 @@ function WindowRow(props: {
       </View>
       {pace || resetsIn ? (
         <View className="flex-row justify-between gap-3">
-          <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>
-          <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
+          <Text className="text-xs text-foreground-tertiary">
+            {pace ? localizedPaceLabel(pace) : ""}
+          </Text>
+          <Text className="text-xs tabular-nums text-foreground-tertiary">
+            {localizedResetsIn(resetsIn) ?? ""}
+          </Text>
         </View>
       ) : null}
     </View>
@@ -111,7 +134,11 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
     <Pressable
       className="shrink active:opacity-60"
       accessibilityRole="button"
-      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      accessibilityLabel={
+        revealed
+          ? translate("common:mobileUsage.hideAccountLabel", "Hide account label")
+          : translate("common:mobileUsage.revealAccountLabel", "Reveal account label")
+      }
       onPress={() => setRevealed((current) => !current)}
     >
       <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
@@ -176,11 +203,14 @@ export function AccountLimits(props: {
   );
 }
 
-const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
-  nothingToReset: "Nothing to reset right now.",
-  noCredit: "No reset credit left.",
-  alreadyRedeemed: "That credit was already redeemed.",
+const OUTCOME_COPY: Record<ProviderConsumeResetCreditOutcome, readonly [string, string]> = {
+  reset: ["common:mobileUsage.resetApplied", "Reset applied. Your windows have cleared."],
+  nothingToReset: ["common:mobileUsage.nothingToReset", "Nothing to reset right now."],
+  noCredit: ["common:mobileUsage.noResetCredit", "No reset credit left."],
+  alreadyRedeemed: [
+    "common:mobileUsage.creditAlreadyRedeemed",
+    "That credit was already redeemed.",
+  ],
 };
 
 /**
@@ -209,10 +239,25 @@ export function ResetCredits(props: {
     : null;
   const summary =
     credits.availableCount === 0
-      ? "No reset credits banked"
-      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
-        }`;
+      ? translate("common:mobileUsage.noResetCreditsBanked", "No reset credits banked")
+      : translate(
+          credits.availableCount === 1
+            ? "common:mobileUsage.oneResetCreditBanked"
+            : "common:mobileUsage.resetCreditsBankedSummary",
+          credits.availableCount === 1
+            ? "{{count}} reset credit banked{{expires}}"
+            : "{{count}} reset credits banked{{expires}}",
+          {
+            count: credits.availableCount,
+            expires: expiresIn
+              ? translate(
+                  "common:mobileUsage.nextCreditExpires",
+                  " · next expires in {{duration}}",
+                  { duration: expiresIn },
+                )
+              : "",
+          },
+        );
 
   const redeem = async () => {
     setBusy(true);
@@ -220,23 +265,30 @@ export function ResetCredits(props: {
     const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+      const [key, fallback] = OUTCOME_COPY[result.value.outcome];
+      setStatus(result.value.warning ?? translate(key, fallback));
       return;
     }
     setStatus(
       "error" in result.cause && result.cause.error instanceof Error
         ? result.cause.error.message
-        : "Could not use the reset credit.",
+        : translate("common:mobileUsage.useCreditFailed", "Could not use the reset credit."),
     );
   };
 
   const confirm = () => {
     Alert.alert(
-      "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      translate("common:mobileUsage.confirmUseCredit", "Use a reset credit?"),
+      translate(
+        "common:mobileUsage.confirmUseCreditDescription",
+        "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      ),
       [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem() },
+        { text: translate("common:cancel", "Cancel"), style: "cancel" },
+        {
+          text: translate("common:mobileUsage.useCredit", "Use credit"),
+          onPress: () => void redeem(),
+        },
       ],
     );
   };
@@ -263,7 +315,9 @@ export function ResetCredits(props: {
                 : "text-sm font-t3-medium text-foreground"
             }
           >
-            {busy ? "Using…" : "Use reset"}
+            {busy
+              ? translate("common:mobileUsage.usingCredit", "Using…")
+              : translate("common:mobileUsage.useReset", "Use reset")}
           </Text>
         </Pressable>
       ) : null}

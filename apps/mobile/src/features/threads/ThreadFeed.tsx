@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   WorktreeWorkingHeader,
   WorktreeSetupCard,
@@ -314,7 +315,9 @@ function MessageAttachmentImage(props: {
     <PresentationSource identifier={sourceIdentifier}>
       <Pressable
         accessibilityRole="imagebutton"
-        accessibilityLabel={`Open ${props.name}`}
+        accessibilityLabel={translate("common:mobileUiOpenNamedItem", "Open {{name}}", {
+          name: props.name,
+        })}
         onPress={() =>
           // The viewer mints its own URL from the resource so the image survives a refresh.
           props.onPressPreview({
@@ -487,7 +490,9 @@ function MessageAttachmentFile(props: {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open ${attachment.name}`}
+          accessibilityLabel={translate("common:mobileUiOpenNamedItem", "Open {{name}}", {
+            name: attachment.name,
+          })}
           accessibilityValue={{ text: `${fileTypeLabel}, ${sizeLabel}` }}
           accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
           disabled={opening || httpBaseUrl === null}
@@ -1495,7 +1500,13 @@ function renderFeedEntry(
           rowSizing={props.workRowSizing}
           iconSubtleColor={iconSubtleColor}
           expanded={props.expandedReasoningMessageIds.has(entry.id)}
-          label={`Thought${messages.length > 1 ? ` (×${messages.length})` : ""}`}
+          label={
+            messages.length > 1
+              ? translate("common:mobileUiThoughtCount", "Thought (×{{count}})", {
+                  count: messages.length,
+                })
+              : translate("common:mobileUiThought", "Thought")
+          }
           streaming={false}
           onToggle={() => props.onToggleReasoning(entry.id)}
         >

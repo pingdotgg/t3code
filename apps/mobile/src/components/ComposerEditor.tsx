@@ -2,6 +2,7 @@ import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { Alert } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -109,21 +110,32 @@ export function ComposerEditor({
       }
       if (!insertComposerDraftContext(draftKey, result, insertion)) {
         Alert.alert(
-          "Could not paste context",
-          "Remove some attachments or context items from the draft, then paste again.",
+          translate("common:mobileComposer.couldNotPasteContext", "Could not paste context"),
+          translate(
+            "common:mobileComposer.removeItemsAndPasteAgain",
+            "Remove some attachments or context items from the draft, then paste again.",
+          ),
         );
         return;
       }
       if (result.failures.length > 0)
         Alert.alert(
-          "Some attachments could not be copied",
-          "Reconnect to the source environment and copy them again. References without their files are marked unavailable.",
+          translate(
+            "common:mobileComposer.attachmentsCouldNotCopy",
+            "Some attachments could not be copied",
+          ),
+          translate(
+            "common:mobileComposer.reconnectAndCopyAgain",
+            "Reconnect to the source environment and copy them again. References without their files are marked unavailable.",
+          ),
         );
     } catch (error) {
       if (!controller.signal.aborted)
         Alert.alert(
-          "Could not paste context",
-          error instanceof Error ? error.message : "Try copying again.",
+          translate("common:mobileComposer.couldNotPasteContext", "Could not paste context"),
+          error instanceof Error
+            ? error.message
+            : translate("common:mobileComposer.tryCopyingAgain", "Try copying again."),
         );
     } finally {
       setComposerContextImporting(draftKey, false);

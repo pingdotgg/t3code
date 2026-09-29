@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useState, type ReactNode } from "react";
 import { View } from "react-native";
 
@@ -60,7 +61,7 @@ export function AndroidScreenHeader(props: {
       <View style={{ minHeight: materialToolbarHeight }} className="flex-row items-center gap-1">
         {props.onBack ? (
           <MaterialIconButton
-            accessibilityLabel="Navigate up"
+            accessibilityLabel={translate("common:mobileNavigateUp", "Navigate up")}
             icon="arrow.left"
             tintColorClassName="accent-header-foreground"
             onPress={props.onBack}
@@ -110,7 +111,7 @@ export function AndroidScreenHeader(props: {
           >
             {(open) => (
               <MaterialIconButton
-                accessibilityLabel="More actions"
+                accessibilityLabel={translate("common:mobileMoreActions", "More actions")}
                 icon="ellipsis"
                 tintColorClassName="accent-header-foreground"
                 onPress={open}

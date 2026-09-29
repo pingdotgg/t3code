@@ -41,10 +41,14 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
         </View>
         {!compact ? (
           <Text className="text-xs font-medium text-foreground-muted">
-            Mobile control surface for your live coding environments
+            {translate(
+              "common:mobileBrandTagline",
+              "Mobile control surface for your live coding environments",
+            )}
           </Text>
         ) : null}
       </View>
     </View>
   );
 }
+import { translate } from "@t3tools/i18n";

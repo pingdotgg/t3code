@@ -118,7 +118,7 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
   return [
     {
       id: NEW_TASK_SHORTCUT_ID,
-      title: "New task",
+      title: translate("common:newTask", "New task"),
       icon: SHORTCUT_ICON,
       params: { href: NEW_TASK_SHORTCUT_HREF },
     },
@@ -133,3 +133,4 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
     })),
   ];
 }
+import { translate } from "@t3tools/i18n";

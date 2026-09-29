@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useId, useMemo, useState } from "react";
 import { Image, Pressable, View } from "react-native";
 
@@ -27,9 +28,15 @@ function ResolvedWorkspaceFileImagePreview(props: {
       <MediaActionsMenu media={mediaActions} style={{ flex: 1 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
+          accessibilityLabel={translate(
+            "common:mobileFiles.imageFullScreen",
+            "Open full-screen preview of {{name}}",
+            { name: props.accessibilityLabel },
+          )}
           accessibilityHint={
-            mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            mediaActions.actions.length > 0
+              ? translate("common:mobileFiles.mediaActionsHint", "Touch and hold for media actions")
+              : undefined
           }
           disabled={loadError !== null}
           className="flex-1 p-4 active:bg-subtle-strong"
@@ -51,7 +58,13 @@ function ResolvedWorkspaceFileImagePreview(props: {
               resizeMode="contain"
               onLoadStart={() => setLoadError(null)}
               onError={(event) => {
-                setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+                setLoadError(
+                  event.nativeEvent.error ||
+                    translate(
+                      "common:mobileFiles.imageRenderFailed",
+                      "The image could not be rendered.",
+                    ),
+                );
               }}
             />
           </PresentationSource>
@@ -62,7 +75,10 @@ function ResolvedWorkspaceFileImagePreview(props: {
           pointerEvents="none"
           className="absolute inset-0 items-center justify-center bg-card px-6"
         >
-          <EmptyState title="Image unavailable" detail={loadError} />
+          <EmptyState
+            title={translate("common:imageUnavailable", "Image unavailable")}
+            detail={loadError}
+          />
         </View>
       ) : null}
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
@@ -76,7 +92,12 @@ export function WorkspaceFileImagePreview(props: {
   readonly actionsSource?: MediaActionsSource;
 }) {
   if (props.uri === null) {
-    return <FilePreviewLoading message="Preparing image preview..." background="card" />;
+    return (
+      <FilePreviewLoading
+        message={translate("common:mobileFiles.preparingImage", "Preparing image preview…")}
+        background="card"
+      />
+    );
   }
 
   return (

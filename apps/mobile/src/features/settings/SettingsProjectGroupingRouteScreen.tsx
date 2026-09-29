@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
@@ -47,7 +48,7 @@ export function SettingsProjectGroupingRouteScreen() {
     : null;
 
   return (
-    <SettingsScreen title="Organization">
+    <SettingsScreen title={translate("common:organization", "Organization")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -55,7 +56,7 @@ export function SettingsProjectGroupingRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Project grouping">
+        <SettingsSection title={translate("sidebar:projectGrouping", "Project grouping")}>
           {GROUPING_OPTIONS.map((option, index) => (
             <Pressable
               key={option.mode}
@@ -73,9 +74,14 @@ export function SettingsProjectGroupingRouteScreen() {
               }
             >
               <View className="min-w-0 flex-1 gap-1">
-                <Text className="text-lg text-foreground">{option.label}</Text>
+                <Text className="text-lg text-foreground">
+                  {translate(`common:mobileProjectGrouping.${option.mode}.label`, option.label)}
+                </Text>
                 <Text className="text-sm leading-normal text-foreground-muted">
-                  {option.description}
+                  {translate(
+                    `common:mobileProjectGrouping.${option.mode}.description`,
+                    option.description,
+                  )}
                 </Text>
               </View>
               {selectedMode === option.mode ? (

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -47,7 +48,10 @@ export function SettingsKeyboardRouteScreen() {
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Keyboard" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader
+            title={translate("common:keyboard", "Keyboard")}
+            onBack={() => navigation.goBack()}
+          />
         </>
       ) : null}
       <ScrollView
@@ -57,7 +61,7 @@ export function SettingsKeyboardRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Return key">
+        <SettingsSection title={translate("common:mobileReturnKey", "Return key")}>
           {ENTER_BEHAVIOR_OPTIONS.map((option, index) => (
             <Pressable
               key={option.behavior}
@@ -75,9 +79,14 @@ export function SettingsKeyboardRouteScreen() {
               }
             >
               <View className="min-w-0 flex-1 gap-1">
-                <Text className="text-lg text-foreground">{option.label}</Text>
+                <Text className="text-lg text-foreground">
+                  {translate(`common:mobileEnterBehavior.${option.behavior}.label`, option.label)}
+                </Text>
                 <Text className="text-sm leading-normal text-foreground-muted">
-                  {option.description}
+                  {translate(
+                    `common:mobileEnterBehavior.${option.behavior}.description`,
+                    option.description,
+                  )}
                 </Text>
               </View>
               {selectedBehavior === option.behavior ? (
@@ -93,7 +102,10 @@ export function SettingsKeyboardRouteScreen() {
           ))}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
-          Applies to the composer when a hardware keyboard is connected.
+          {translate(
+            "common:mobileHardwareKeyboardShortcutHint",
+            "Applies to the composer when a hardware keyboard is connected.",
+          )}
         </Text>
       </ScrollView>
     </View>

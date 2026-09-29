@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { createNativeHeaderMenu } from "../../components/nativeHeaderMenu.ios";
 import type { ScreenHeaderMenu } from "../../components/ScreenHeader.types";
 import {
@@ -126,7 +127,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       isRepo
         ? resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote)
         : {
-            label: "Git unavailable",
+            label: translate("common:mobileLabels.gitUnavailable", "Git unavailable"),
             disabled: true,
             kind: "show_hint" as const,
             hint: "This workspace is not a git repository.",
@@ -152,11 +153,23 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
+      Alert.alert(
+        translate("common:mobileFeedback.noOpenPullRequest", "No open PR"),
+        translate(
+          "common:mobileFeedback.branchHasNoOpenPullRequest",
+          "This branch does not have an open pull request.",
+        ),
+      );
       return;
     }
     if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
+      Alert.alert(
+        translate("common:mobileFeedback.unableToOpenPullRequest", "Unable to open PR"),
+        translate(
+          "common:mobileFeedback.pullRequestCouldNotBeOpened",
+          "The pull request could not be opened.",
+        ),
+      );
     }
   }, [gitStatus]);
 
@@ -316,17 +329,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         disabled: !props.canOpenFiles,
         icon: { name: "folder", type: "sfSymbol" },
         identifier: "thread-right-files",
-        label: "Files",
+        label: translate("common:filesLabel", "Files"),
         onPress: model.openFiles,
         sharesBackground: true,
         type: "button",
         variant: "plain",
       },
       git: {
-        accessibilityLabel: "Git actions",
+        accessibilityLabel: translate("common:mobileLabels.gitActions", "Git actions"),
         icon: { name: "point.topleft.down.curvedto.point.bottomright.up", type: "sfSymbol" },
         identifier: "thread-right-git",
-        label: "Git",
+        label: translate("common:mobileLabels.git", "Git"),
         menu: {
           items: [
             {
@@ -352,19 +365,19 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               description: "Turn diffs and worktree changes",
               disabled: !model.isRepo,
               icon: { name: "text.bubble", type: "sfSymbol" },
-              label: "Review changes",
+              label: translate("common:reviewChanges", "Review changes"),
               onPress: model.openReview,
               type: "action",
             },
             {
               description: "Commit, files, branches",
               icon: { name: "ellipsis", type: "sfSymbol" },
-              label: "More",
+              label: translate("common:mobileMoreActions", "More"),
               onPress: model.openGitInspector,
               type: "action",
             },
           ],
-          title: "Git",
+          title: translate("common:mobileLabels.git", "Git"),
         },
         sharesBackground: true,
         type: "menu",
@@ -521,7 +534,7 @@ function threadGitMenuDefinition(
   model: ReturnType<typeof useThreadGitControlModel>,
 ): ScreenHeaderMenu {
   return {
-    title: "Git controls",
+    title: translate("common:mobileLabels.gitControls", "Git controls"),
     icon: "point.topleft.down.curvedto.point.bottomright.up",
     separateBackground: false,
     items: [
@@ -545,17 +558,23 @@ function threadGitMenuDefinition(
       },
       {
         id: "git-review",
-        title: "Review changes",
+        title: translate("common:reviewChanges", "Review changes"),
         icon: "text.bubble",
         disabled: !model.isRepo,
-        subtitle: "Turn diffs and worktree changes",
+        subtitle: translate(
+          "common:mobileLabels.turnDiffsSubtitle",
+          "Turn diffs and worktree changes",
+        ),
         onPress: model.openReview,
       },
       {
         id: "git-more",
-        title: "More",
+        title: translate("common:mobileMoreActions", "More"),
         icon: "ellipsis",
-        subtitle: "Commit, files, branches",
+        subtitle: translate(
+          "common:mobileLabels.commitFilesBranchesSubtitle",
+          "Commit, files, branches",
+        ),
         onPress: model.openGitInspector,
       },
     ],

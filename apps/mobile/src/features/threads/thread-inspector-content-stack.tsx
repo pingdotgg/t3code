@@ -33,7 +33,13 @@ function InspectorContentPane(props: {
       <RenderErrorBoundary
         resetKeys={props.resetKeys}
         renderFallback={(fallback) => (
-          <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+          <RenderFailureView
+            {...fallback}
+            title={translate(
+              "common:mobileInspectorRenderFailure",
+              "The inspector couldn't be displayed",
+            )}
+          />
         )}
       >
         {props.children}
@@ -113,3 +119,4 @@ export function ThreadInspectorContentStack(props: {
     </View>
   );
 }
+import { translate } from "@t3tools/i18n";

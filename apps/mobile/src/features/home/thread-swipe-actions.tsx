@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPillMenu } from "../../components/ControlPill";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -88,10 +89,12 @@ function resolveSecondaryAction(input: {
   if (input.secondaryAction === null) return null;
   if (input.secondaryAction === undefined) {
     return {
-      accessibilityLabel: `Delete ${input.threadTitle}`,
+      accessibilityLabel: translate("common:mobileThreadList.deleteThread", "Delete {{thread}}", {
+        thread: input.threadTitle,
+      }),
       tone: "danger",
       icon: "trash",
-      label: "Delete",
+      label: translate("common:mobileLabels.delete", "Delete"),
       onPress: () => {
         input.close();
         input.onDelete();

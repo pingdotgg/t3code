@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
@@ -32,6 +33,29 @@ const options: ReadonlyArray<{
   },
 ];
 
+const ROUTING_COPY_KEYS: Record<
+  GitHubRoutingPermission,
+  { readonly label: string; readonly description: string }
+> = {
+  off: { label: "off", description: "keepLocal" },
+  read: { label: "readPrs", description: "sharePrData" },
+  "read-write": { label: "readAndAct", description: "broaderPermissions" },
+};
+
+function routingOptionLabel(option: (typeof options)[number]) {
+  return translate(
+    `common:mobileGitHubRoutingOptions.${ROUTING_COPY_KEYS[option.value].label}`,
+    option.label,
+  );
+}
+
+function routingOptionDescription(option: (typeof options)[number]) {
+  return translate(
+    `common:mobileGitHubRoutingOptions.${ROUTING_COPY_KEYS[option.value].description}`,
+    option.description,
+  );
+}
+
 export function GitHubRoutingSettings() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const permissions = useAtomValue(environmentCatalog.githubRoutingPermissionsValueAtom);
@@ -42,7 +66,7 @@ export function GitHubRoutingSettings() {
 
   return (
     <View className="mt-5 gap-3">
-      <SettingsSection title="GitHub routing">
+      <SettingsSection title={translate("common:mobileGitHubRouting", "GitHub routing")}>
         {[...catalog.entries.values()].map((entry) => {
           const environmentId = entry.target.environmentId;
           const selected = gitHubRoutingPermissionFor(entry, permissions);
@@ -51,7 +75,11 @@ export function GitHubRoutingSettings() {
             <View key={environmentId}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${entry.target.label} GitHub routing`}
+                accessibilityLabel={translate(
+                  "common:mobileGitHubRoutingOptions.environmentLabel",
+                  "{{environment}} GitHub routing",
+                  { environment: entry.target.label },
+                )}
                 accessibilityState={{ expanded: expanded === environmentId }}
                 className="flex-row items-center gap-3 p-4"
                 onPress={() => setExpanded(expanded === environmentId ? null : environmentId)}
@@ -65,7 +93,9 @@ export function GitHubRoutingSettings() {
                   </Text>
                 </View>
                 <Text className="text-sm text-foreground-muted">
-                  {options.find((option) => option.value === selected)?.label}
+                  {options.find((option) => option.value === selected)
+                    ? routingOptionLabel(options.find((option) => option.value === selected)!)
+                    : null}
                 </Text>
                 <SymbolView
                   name={expanded === environmentId ? "chevron.up" : "chevron.down"}
@@ -87,16 +117,24 @@ export function GitHubRoutingSettings() {
                           setSaving(false);
                           if (result._tag === "Failure")
                             Alert.alert(
-                              "Could not save GitHub routing permission",
-                              "Try again before leaving this screen.",
+                              translate(
+                                "common:mobileGitHubRoutingOptions.saveFailed",
+                                "Could not save GitHub routing permission",
+                              ),
+                              translate(
+                                "common:mobileGitHubRoutingOptions.retrySave",
+                                "Try again before leaving this screen.",
+                              ),
                             );
                         });
                       }}
                     >
                       <View className="min-w-0 flex-1 gap-1">
-                        <Text className="text-base text-foreground">{option.label}</Text>
+                        <Text className="text-base text-foreground">
+                          {routingOptionLabel(option)}
+                        </Text>
                         <Text className="text-sm leading-normal text-foreground-muted">
-                          {option.description}
+                          {routingOptionDescription(option)}
                         </Text>
                       </View>
                       {selected === option.value ? (
@@ -115,8 +153,10 @@ export function GitHubRoutingSettings() {
         })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Choose environments you trust to share PR data and use each other's GitHub access. Enable
-        both environments. This applies only to this client.
+        {translate(
+          "common:mobileGitHubRoutingOptions.description",
+          "Choose environments you trust to share PR data and use each other's GitHub access. Enable both environments. This applies only to this client.",
+        )}
       </Text>
     </View>
   );

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   codexFeedbackNotice,
   type CodexFeedbackSubmission,
@@ -28,7 +29,10 @@ export function ComposerFeedback({
           </Text>
           {submission.status !== "uploading" ? (
             <Pressable
-              accessibilityLabel="Dismiss feedback notice"
+              accessibilityLabel={translate(
+                "common:mobileDismissFeedbackNotice",
+                "Dismiss feedback notice",
+              )}
               accessibilityRole="button"
               hitSlop={12}
               onPress={onDismiss}

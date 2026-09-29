@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useIsFocused } from "@react-navigation/native";
 import { videoMimeType } from "@t3tools/shared/video";
 import { useEffect, useRef, useState } from "react";
@@ -156,7 +157,7 @@ function OpenVideoPreviewModal(props: {
           <MediaActionsMenu media={mediaActions} inModal />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close video"
+            accessibilityLabel={translate("common:mobileCloseVideo", "Close video")}
             onPress={props.onRequestClose}
             className="size-12 items-center justify-center"
           >
@@ -188,7 +189,7 @@ function OpenVideoPreviewModal(props: {
         ) : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Save or share video"
+          accessibilityLabel={translate("common:mobileSaveOrShareVideo", "Save or share video")}
           disabled={playback.uri === null || mediaActions.sharing}
           onPress={mediaActions.share}
           className="mx-4 my-3 min-h-12 items-center justify-center rounded-xl bg-white/15 px-4"

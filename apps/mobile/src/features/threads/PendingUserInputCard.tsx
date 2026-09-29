@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
@@ -171,17 +172,29 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Expand user input, ${questionCount} question${
-          questionCount === 1 ? "" : "s"
-        }`}
+        accessibilityLabel={translate(
+          questionCount === 1
+            ? "common:mobileUiExpandUserInputOne"
+            : "common:mobileUiExpandUserInputMany",
+          questionCount === 1
+            ? "Expand user input, {{count}} question"
+            : "Expand user input, {{count}} questions",
+          { count: questionCount },
+        )}
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
         <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-          User input needed
+          {translate("common:mobileUserInputNeeded", "User input needed")}
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
-          {questionCount} question{questionCount === 1 ? "" : "s"}
+          {translate(
+            questionCount === 1
+              ? "common:mobileQuestionCountOne"
+              : "common:mobileQuestionCountMany",
+            questionCount === 1 ? "{{count}} question" : "{{count}} questions",
+            { count: questionCount },
+          )}
         </Text>
         <View className="flex-1" />
         <SymbolView
@@ -193,7 +206,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       </Pressable>
       {props.onStopThread ? (
         <ControlPill
-          accessibilityLabel="Stop"
+          accessibilityLabel={translate("chatView:stop", "Stop")}
           icon="stop.fill"
           variant="danger"
           className="h-9 w-9"
@@ -231,13 +244,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Collapse user input"
+        accessibilityLabel={translate("common:mobileCollapseUserInput", "Collapse user input")}
         onPress={props.onToggleCollapsed}
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
           <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-            User input needed
+            {translate("common:mobileUserInputNeeded", "User input needed")}
           </Text>
           <Text className="font-t3-bold text-lg text-foreground">{t("fillPendingAnswers")}</Text>
         </View>
@@ -325,7 +338,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         })}
       </ScrollView>
       <RequestActionButton
-        label="Submit answers"
+        label={translate("common:submitAnswers", "Submit answers")}
         size="large"
         tone={props.answers ? "primary" : "secondary"}
         disabled={
@@ -341,7 +354,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           onPress={() => void props.onDismiss()}
         >
           <Text className="font-t3-bold text-sm text-foreground-muted">
-            Dismiss without answering
+            {translate("common:mobileDismissWithoutAnswering", "Dismiss without answering")}
           </Text>
         </Pressable>
       ) : null}

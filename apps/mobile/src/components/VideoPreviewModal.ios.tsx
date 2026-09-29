@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useIsFocused } from "@react-navigation/native";
 import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId, useState } from "react";
@@ -56,7 +57,10 @@ function NativeVideoPreview(props: {
   }, [playbackUrl, resolvedUrl]);
   useEffect(() => {
     if (!loadError) return;
-    Alert.alert("Could not open video", loadError);
+    Alert.alert(
+      translate("common:mobileFeedback.couldNotOpenVideo", "Could not open video"),
+      loadError,
+    );
     onRequestClose();
   }, [loadError]);
 
@@ -89,12 +93,15 @@ function NativeVideoPreview(props: {
       // AVKit gives no retry, so re-mint now; the cached URL may simply have expired.
       if (ready) void refreshAssetUrl();
       Alert.alert(
-        "Could not open video",
+        translate("common:mobileFeedback.couldNotOpenVideo", "Could not open video"),
         ready
-          ? "This video couldn't be loaded or played. Check the connection, or touch and hold the video to save or share the original."
+          ? translate(
+              "common:mobileFeedback.videoCouldNotBeLoadedOrPlayed",
+              "This video couldn't be loaded or played. Check the connection, or touch and hold the video to save or share the original.",
+            )
           : error instanceof Error
             ? error.message
-            : "Could not load this video.",
+            : translate("common:mobileFeedback.couldNotLoadVideo", "Could not load this video."),
       );
       onRequestClose();
     });

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -528,7 +529,7 @@ export function AddProjectSourceScreen() {
   );
 
   return (
-    <AddProjectShell title="Add project">
+    <AddProjectShell title={translate("common:addProject", "Add project")}>
       {selectedEnvironment === null ? <EmptyEnvironmentState /> : null}
 
       {environmentOptions.length > 1 ? (
@@ -579,8 +580,8 @@ export function AddProjectSourceScreen() {
         <>
           <ListSection>
             <ListRow
-              title="Local folder"
-              subtitle="Browse a folder on disk"
+              title={translate("chatView:paletteLocalFolder", "Local folder")}
+              subtitle={translate("chatView:paletteBrowseFolderOnDisk", "Browse a folder on disk")}
               icon={
                 <SymbolView
                   name="folder.badge.plus"
@@ -648,7 +649,10 @@ function useCreateProject(environment: EnvironmentOption | null) {
         path: workspaceRoot,
       });
       if (existing) {
-        Alert.alert("Project already exists", existing.title);
+        Alert.alert(
+          translate("common:mobileFeedback.projectAlreadyExists", "Project already exists"),
+          existing.title,
+        );
         navigation.dispatch(
           CommonActions.reset({
             index: 0,
@@ -788,7 +792,11 @@ export function AddProjectRepositoryScreen(props: {
             onSubmitEditing={() => void lookupRepository()}
           />
           <PrimaryActionButton
-            label={source === "url" ? "Continue" : "Lookup repository"}
+            label={
+              source === "url"
+                ? translate("common:mobileUiContinue", "Continue")
+                : translate("common:mobileUiLookupRepository", "Lookup repository")
+            }
             disabled={isSubmitting || repositoryInput.trim().length === 0}
             onPress={() => void lookupRepository()}
             loading={isSubmitting}
@@ -929,7 +937,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
 
   return (
-    <AddProjectShell title="Local folder">
+    <AddProjectShell title={translate("chatView:paletteLocalFolder", "Local folder")}>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -939,7 +947,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label="Add project"
+            label={translate("common:addProject", "Add project")}
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
@@ -1072,7 +1080,7 @@ export function AddProjectDestinationScreen(props: {
   ]);
 
   return (
-    <AddProjectShell title="Clone destination">
+    <AddProjectShell title={translate("common:mobileCloneDestination", "Clone destination")}>
       {error ? <ErrorBanner message={error} /> : null}
       {repositoryTitle ? (
         <View className="rounded-[24px] bg-card px-4 py-3">
@@ -1090,7 +1098,7 @@ export function AddProjectDestinationScreen(props: {
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label="Clone project"
+            label={translate("common:mobileCloneProject", "Clone project")}
             disabled={isBrowseNavigating || isSubmitting || !remoteUrl}
             onPress={() => void submitPath()}
             loading={isSubmitting}

@@ -22,6 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { translate } from "@t3tools/i18n";
 import { Platform, useWindowDimensions, View } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -585,8 +586,14 @@ function AdaptiveWorkspaceLayoutContent(
                   renderFallback={(fallback) => (
                     <RenderFailureView
                       {...fallback}
-                      title="The sidebar couldn't be displayed"
-                      exit={{ label: "Open settings", onPress: handleOpenSettings }}
+                      title={translate(
+                        "common:mobileSidebarRenderFailure",
+                        "The sidebar couldn't be displayed",
+                      )}
+                      exit={{
+                        label: translate("common:settings", "Settings"),
+                        onPress: handleOpenSettings,
+                      }}
                     />
                   )}
                 >

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -55,31 +56,31 @@ function ArchivedThreadsHeader(props: {
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
   return (
     <ScreenHeader
-      title="Archived threads"
+      title={translate("settings:mobileScreenTitles.archivedThreads", "Archived threads")}
       sidebar={false}
       onBack={() => navigation.goBack()}
       search={{
         value: props.searchQuery,
         onChangeText: props.onSearchQueryChange,
-        placeholder: "Search archived threads",
-        compactPlaceholder: "Search",
+        placeholder: translate("common:mobileArchive.search", "Search archived threads"),
+        compactPlaceholder: translate("common:mobileArchive.searchCompact", "Search"),
         mode: "inline",
         compactToolbar: width < 700,
       }}
       menus={[
         {
-          title: "Archived thread options",
+          title: translate("common:mobileArchive.options", "Archived thread options"),
           icon: hasCustomFilter
             ? "line.3.horizontal.decrease.circle.fill"
             : "line.3.horizontal.decrease.circle",
           items: [
             {
               id: "environment",
-              title: "Environment",
+              title: translate("common:mobileArchive.environment", "Environment"),
               items: [
                 {
                   id: "environment:all",
-                  title: "All environments",
+                  title: translate("common:mobileArchive.allEnvironments", "All environments"),
                   selected: props.selectedEnvironmentId === null,
                   onPress: () => props.onEnvironmentChange(null),
                 },
@@ -93,17 +94,17 @@ function ArchivedThreadsHeader(props: {
             },
             {
               id: "sort",
-              title: "Sort by archived date",
+              title: translate("common:mobileArchive.sortArchivedDate", "Sort by archived date"),
               items: [
                 {
                   id: "sort:newest",
-                  title: "Newest first",
+                  title: translate("common:mobileArchive.newestFirst", "Newest first"),
                   selected: props.sortOrder === "newest",
                   onPress: () => props.onSortOrderChange("newest"),
                 },
                 {
                   id: "sort:oldest",
-                  title: "Oldest first",
+                  title: translate("common:mobileArchive.oldestFirst", "Oldest first"),
                   selected: props.sortOrder === "oldest",
                   onPress: () => props.onSortOrderChange("oldest"),
                 },
@@ -113,7 +114,7 @@ function ArchivedThreadsHeader(props: {
               ? [
                   {
                     id: "refresh",
-                    title: "Refresh archived threads",
+                    title: translate("common:mobileArchive.refresh", "Refresh archived threads"),
                     onPress: props.onRefresh,
                   },
                 ]
@@ -217,9 +218,13 @@ function ArchivedThreadRow(props: {
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
+        accessibilityLabel: translate(
+          "common:mobileArchive.unarchiveThread",
+          "Unarchive {{thread}}",
+          { thread: props.thread.title },
+        ),
         icon: "arrow.uturn.backward",
-        label: "Unarchive",
+        label: translate("common:mobileArchive.unarchive", "Unarchive"),
         onPress: props.onUnarchive,
       }}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
@@ -405,10 +410,20 @@ export function ArchivedThreadsScreen(props: {
       <EmptyState
         detail={
           isFiltered
-            ? "Try another search or environment."
-            : "Threads you archive will appear here."
+            ? translate(
+                "common:mobileArchive.tryAnotherSearch",
+                "Try another search or environment.",
+              )
+            : translate(
+                "common:mobileArchive.archivedThreadsAppearHere",
+                "Threads you archive will appear here.",
+              )
         }
-        title={isFiltered ? "No matching threads" : "No archived threads"}
+        title={
+          isFiltered
+            ? translate("common:mobileArchive.noMatchingThreads", "No matching threads")
+            : translate("common:mobileArchive.noArchivedThreads", "No archived threads")
+        }
       />
     );
   }, [isFiltered, isInitialLoad]);

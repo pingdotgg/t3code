@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { SymbolView } from "../../components/AppSymbol";
 import { Platform, Pressable, View } from "react-native";
 
@@ -28,7 +29,7 @@ export function WorkspaceEmptyDetail(props: {
             variant="plain"
             action={
               <MaterialFloatingActionButton
-                label="Add environment"
+                label={translate("common:addEnvironment", "Add environment")}
                 icon="plus"
                 variant="extended"
                 tone="primary"
@@ -48,8 +49,14 @@ export function WorkspaceEmptyDetail(props: {
           <Text className="text-center text-xl font-t3-bold">{t("selectThread")}</Text>
           <Text className="text-center text-base text-foreground-muted">
             {Platform.OS === "android"
-              ? "Choose a thread from the sidebar or start a new thread."
-              : "Choose a thread from the sidebar or start a new task."}
+              ? translate(
+                  "common:mobileChooseThreadOrNewThread",
+                  "Choose a thread from the sidebar or start a new thread.",
+                )
+              : translate(
+                  "common:mobileChooseThreadOrNewTask",
+                  "Choose a thread from the sidebar or start a new task.",
+                )}
           </Text>
           {props.onStartNewTask ? (
             Platform.OS === "android" ? (

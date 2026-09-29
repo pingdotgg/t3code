@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
@@ -99,9 +100,13 @@ export function ModelRowContent(
         {props.trailingSelection}
       </Pressable>
       <Pressable
-        accessibilityLabel={`${props.isFavorite ? "Remove from" : "Add to"} favorites: ${
-          props.option.providerLabel
-        }, ${props.option.label}`}
+        accessibilityLabel={translate(
+          props.isFavorite ? "common:mobileUiFavoriteRemove" : "common:mobileUiFavoriteAdd",
+          props.isFavorite
+            ? "Remove from favorites: {{provider}}, {{model}}"
+            : "Add to favorites: {{provider}}, {{model}}",
+          { provider: props.option.providerLabel, model: props.option.label },
+        )}
         accessibilityRole="button"
         accessibilityState={{ disabled: !props.favoritesLoaded, selected: props.isFavorite }}
         className="min-h-11 min-w-11 items-center justify-center"

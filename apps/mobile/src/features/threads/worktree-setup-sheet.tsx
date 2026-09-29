@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useState, type ReactElement } from "react";
 import { Modal, View } from "react-native";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
@@ -40,7 +41,7 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
           >
             {children}
             <NativeHeader
-              title="Worktree setup"
+              title={translate("common:mobileWorktreeSetup", "Worktree setup")}
               titleColorClassName="accent-foreground"
               tintColorClassName="accent-foreground"
               backgroundColorClassName="bg-sheet-solid"
@@ -50,9 +51,12 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
               headerRightBarButtonItems={[
                 {
                   type: "button",
-                  title: "Done",
+                  title: translate("common:done", "Done"),
                   variant: "done",
-                  accessibilityLabel: "Close setup details",
+                  accessibilityLabel: translate(
+                    "common:mobileLabels.closeSetupDetails",
+                    "Close setup details",
+                  ),
                   identifier: "worktree-setup-done",
                   onPress: onClose,
                 },

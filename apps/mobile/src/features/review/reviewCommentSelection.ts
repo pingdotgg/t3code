@@ -114,7 +114,9 @@ export function formatReviewSelectedRangeLabel(target: ReviewCommentTarget): str
   const lastNumber = getReviewUnifiedLineNumber(lastLine);
 
   if (firstNumber === null || lastNumber === null) {
-    return lines.length === 1 ? "line" : `${lines.length} lines`;
+    return lines.length === 1
+      ? translate("common:mobileReview.oneLine", "line")
+      : translate("common:mobileReview.manyLines", "{{count}} lines", { count: lines.length });
   }
 
   const firstMarker = getReviewChangeMarker(firstLine.change).trim();
@@ -352,3 +354,4 @@ export function parseReviewCommentMessageSegments(
 
   return segments;
 }
+import { translate } from "@t3tools/i18n";

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { OrchestrationCheckpointSummary, ReviewDiffPreviewSource } from "@t3tools/contracts";
@@ -251,8 +252,11 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "non-text",
-      title: "Non-text file",
-      message: "Diff preview is not available for this file format.",
+      title: translate("common:mobileReview.nonTextFile", "Non-text file"),
+      message: translate(
+        "common:mobileReview.diffPreviewUnavailable",
+        "Diff preview is not available for this file format.",
+      ),
       actionLabel: null,
     };
   }
@@ -263,9 +267,12 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "large",
-      title: "Large diff",
-      message: "Large diffs are not rendered by default.",
-      actionLabel: "Load diff",
+      title: translate("common:mobileReview.largeDiff", "Large diff"),
+      message: translate(
+        "common:mobileReview.largeDiffNotRendered",
+        "Large diffs are not rendered by default.",
+      ),
+      actionLabel: translate("common:mobileReview.loadDiff", "Load diff"),
     };
   }
 

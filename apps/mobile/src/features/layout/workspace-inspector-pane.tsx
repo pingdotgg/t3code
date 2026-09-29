@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Animated, {
   runOnJS,
@@ -123,7 +124,7 @@ export function WorkspaceInspectorPane(props: {
     <>
       {inspectorVisible ? (
         <WorkspacePaneDivider
-          accessibilityLabel="Resize detail pane"
+          accessibilityLabel={translate("common:mobileResizeDetailPane", "Resize detail pane")}
           currentWidth={inspectorWidth ?? 0}
           resizeDirection={-1}
           onResizeStart={beginResize}
@@ -144,7 +145,13 @@ export function WorkspaceInspectorPane(props: {
             <RenderErrorBoundary
               resetKeys={[props.pathname]}
               renderFallback={(fallback) => (
-                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+                <RenderFailureView
+                  {...fallback}
+                  title={translate(
+                    "common:mobileInspectorRenderFailure",
+                    "The inspector couldn't be displayed",
+                  )}
+                />
               )}
             >
               <InspectorRenderer render={props.renderInspector} />
