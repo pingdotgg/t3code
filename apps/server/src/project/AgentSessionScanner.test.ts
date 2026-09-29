@@ -182,6 +182,91 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
 }
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
+  for (const provider of ["codex", "claudeAgent"] as const) {
+    for (const oversizedFirstRecord of [true, false]) {
+      it.effect(
+        `reads ${provider} sessions beyond the listing prefix (${oversizedFirstRecord ? "large first record" : "late prompt"})`,
+        () =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const base = yield* makeTempDir("t3code-resume-prefix-");
+            const workspace = path.join(base, "workspace");
+            yield* fs.makeDirectory(workspace);
+            const claudeHomePath = path.join(base, "claude");
+            const codexHomePath = path.join(base, "codex");
+            const sessionId = "5c119ee3-f063-4999-87ce-a062d004c37c";
+            const filePath =
+              provider === "codex"
+                ? path.join(
+                    codexHomePath,
+                    "sessions",
+                    "2026",
+                    "08",
+                    "24",
+                    `rollout-${sessionId}.jsonl`,
+                  )
+                : path.join(claudeHomePath, "projects", "prefix", `${sessionId}.jsonl`);
+            const metadata =
+              provider === "codex"
+                ? { type: "session_meta", payload: { id: sessionId, cwd: workspace } }
+                : { type: "system", sessionId, cwd: workspace };
+            const padding = { type: "file-history-snapshot", snapshot: "x".repeat(300_000) };
+            const prompt =
+              provider === "codex"
+                ? {
+                    type: "event_msg",
+                    payload: { type: "user_message", message: "Continue the large session" },
+                  }
+                : {
+                    type: "user",
+                    sessionId,
+                    cwd: workspace,
+                    message: { content: "Continue the large session" },
+                  };
+            const records = [
+              ...(oversizedFirstRecord ? [padding, metadata] : [metadata, padding]),
+              prompt,
+            ];
+            yield* writeTranscript({
+              filePath,
+              contents: records.map((record) => encodeTranscriptRecord(record)).join("\n"),
+              mtimeMs: Date.parse("2026-08-24T12:00:00Z"),
+            });
+            yield* Effect.gen(function* () {
+              const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+              const selected = yield* scanner.readSession(
+                workspace,
+                ProviderInstanceId.make(provider),
+                sessionId,
+              );
+              expect(selected.thread.providerSessionId).toBe(sessionId);
+              expect(selected.session.title).toBe("Continue the large session");
+              expect(selected.thread.messages[0]?.text).toBe("Continue the large session");
+              expect(yield* scanner.listSessions(workspace)).toEqual({
+                sessions: [],
+                truncated: true,
+              });
+              // Filename matching must not bypass the full transcript's native ID check.
+              const wrongIdPath = filePath.replace(
+                sessionId,
+                "6c119ee3-f063-4999-87ce-a062d004c37c",
+              );
+              yield* fs.rename(filePath, wrongIdPath);
+              const error = yield* scanner
+                .readSession(
+                  workspace,
+                  ProviderInstanceId.make(provider),
+                  "6c119ee3-f063-4999-87ce-a062d004c37c",
+                )
+                .pipe(Effect.flip);
+              expect(error._tag).toBe("AgentSessionResumeError");
+            }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+          }),
+      );
+    }
+  }
+
   it.effect(
     "lists and reads sessions across linked worktrees, including T3 worktrees, without importing another clone",
     () =>

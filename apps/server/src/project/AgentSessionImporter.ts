@@ -74,10 +74,12 @@ class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThr
   }
 }
 
+/** Detect published import history independently of the later transcript-source record. */
 function hasImportedHistory(thread: OrchestrationThread): boolean {
   return thread.messages.some((message) => isImportedAgentSessionMessageId(message.id));
 }
 
+/** Prevent an interrupted import from overwriting a thread that has since been used or changed. */
 function hasImportBlockingActivity(
   thread: OrchestrationThread,
   importedHistoryPresent: boolean,

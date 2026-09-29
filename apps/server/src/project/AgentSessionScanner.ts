@@ -333,6 +333,7 @@ export function parseAgentSessionTranscript(
   return parseAgentSessionRecords(input, records);
 }
 
+/** Build bounded text history, requiring a native session ID and at least one user message. */
 function parseAgentSessionRecords(
   input: AgentSessionTranscriptMetadata,
   records: ReadonlyArray<DecodedTranscriptRecord>,
@@ -544,11 +545,29 @@ function parseAgentSessionRecords(
   };
 }
 
+/** Read a recorded working directory from either provider's metadata shape. */
 function extractDecodedCwd(record: DecodedTranscriptRecord): string | null {
   const cwd = record.cwd?.trim() || record.payload?.cwd?.trim();
   return cwd && cwd.length > 0 ? cwd : null;
 }
 
+/** Prefer the user's Codex prompt over injected instructions; preserve Claude's transcript title. */
+function resumableSessionTitle(
+  thread: AgentSessionThread,
+  records: ReadonlyArray<DecodedTranscriptRecord>,
+): string {
+  if (thread.source === "claudeAgent") return thread.title;
+  const prompt =
+    records.find((record) => record.type === "event_msg" && record.payload?.type === "user_message")
+      ?.payload?.message ??
+    thread.messages.find(
+      (message) =>
+        message.role === "user" && !CODEX_INJECTED_PROMPT_PATTERN.test(message.text.trim()),
+    )?.text;
+  return (prompt && firstLine(prompt)) || `Codex session ${thread.providerSessionId.slice(0, 8)}`;
+}
+
+/** Keep metadata and conversation records needed for import while discarding bulky tool output. */
 function shouldRetainDecodedRecord(
   source: AgentSessionSource,
   record: DecodedTranscriptRecord,
@@ -1610,7 +1629,7 @@ export const make = Effect.gen(function* () {
 
   /**
    * Read bounded transcript prefixes to return recent sessions inside the project
-   * scope. Direct selection filters by identity before applying the listing budget.
+   * scope. Direct selection bypasses previews and is validated against full history.
    * Keep transcript paths internal so attachment can re-read the selected history.
    */
   const discoverSessions = Effect.fn("AgentSessionScanner.discoverSessions")(function* (
@@ -1665,7 +1684,25 @@ export const make = Effect.gen(function* () {
     // read once a session is selected. Keep the aggregate read budget bounded.
     let remainingBytes = SESSION_LIST_LIMIT * SESSION_PREFIX_BYTES;
     let inspected = 0;
+    let incompletePreview = false;
     for (const { candidate, transcript, branch } of eligible) {
+      if (selectedSession) {
+        // This is only a location hint. readSession validates the native ID and
+        // replaces the placeholder title after reading the complete transcript.
+        sessions.push({
+          filePath: transcript.filePath,
+          session: {
+            provider: candidate.source,
+            providerInstanceId: candidate.providerInstanceId,
+            sessionId: selectedSession.sessionId,
+            title: "",
+            cwd: candidate.cwd,
+            branch,
+            updatedAt: DateTime.formatIso(DateTime.makeUnsafe(transcript.mtimeMs ?? 0)),
+          },
+        });
+        break;
+      }
       if (sessions.length >= SESSION_LIST_LIMIT || remainingBytes <= 0) break;
       inspected += 1;
       const prefix = yield* Effect.scoped(
@@ -1694,7 +1731,10 @@ export const make = Effect.gen(function* () {
         },
         prefixRecords,
       );
-      if (parsed === null) continue;
+      if (parsed === null) {
+        incompletePreview = true;
+        continue;
+      }
       if (!transcript.filePath.endsWith(`${parsed.providerSessionId}.jsonl`)) continue;
       const key = agentSessionKey(
         parsed.source,
@@ -1707,20 +1747,6 @@ export const make = Effect.gen(function* () {
         !CLAUDE_SESSION_ID_PATTERN.test(parsed.providerSessionId)
       )
         continue;
-      const canonicalPrompt = prefixRecords.find(
-        (record) => record.type === "event_msg" && record.payload?.type === "user_message",
-      )?.payload?.message;
-      const prompt =
-        canonicalPrompt ??
-        parsed.messages.find(
-          (message) =>
-            message.role === "user" && !CODEX_INJECTED_PROMPT_PATTERN.test(message.text.trim()),
-        )?.text;
-      const title =
-        parsed.source === "claudeAgent"
-          ? parsed.title
-          : (prompt && firstLine(prompt)) ||
-            `Codex session ${parsed.providerSessionId.slice(0, 8)}`;
       seen.add(key);
       sessions.push({
         filePath: transcript.filePath,
@@ -1728,7 +1754,7 @@ export const make = Effect.gen(function* () {
           provider: parsed.source,
           providerInstanceId: parsed.providerInstanceId,
           sessionId: parsed.providerSessionId,
-          title,
+          title: resumableSessionTitle(parsed, prefixRecords),
           cwd: candidate.cwd,
           branch,
           updatedAt: DateTime.formatIso(DateTime.makeUnsafe(transcript.mtimeMs ?? 0)),
@@ -1737,7 +1763,11 @@ export const make = Effect.gen(function* () {
     }
     return {
       sessions,
-      truncated: collected.truncated || inspected < eligible.length || remainingBytes <= 0,
+      truncated:
+        collected.truncated ||
+        incompletePreview ||
+        inspected < eligible.length ||
+        remainingBytes <= 0,
     };
   });
 
@@ -1806,12 +1836,16 @@ export const make = Effect.gen(function* () {
       },
       snapshot.records,
     );
-    if (!thread || thread.providerSessionId !== sessionId)
+    if (
+      !thread ||
+      thread.providerSessionId !== sessionId ||
+      (thread.source === "claudeAgent" && !CLAUDE_SESSION_ID_PATTERN.test(sessionId))
+    )
       return yield* new AgentSessionResumeError({
         message: "The session transcript could not be resumed.",
       });
     return {
-      session: selected.session,
+      session: { ...selected.session, title: resumableSessionTitle(thread, snapshot.records) },
       isProjectRoot:
         (yield* directoryIdentity(selected.session.cwd)) ===
         (yield* directoryIdentity(workspaceRoot)),

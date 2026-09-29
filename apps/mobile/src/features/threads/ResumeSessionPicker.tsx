@@ -168,7 +168,7 @@ export function ResumeSessionPicker(props: {
             ListFooterComponent={
               query.data?.truncated ? (
                 <Text className="py-3 text-foreground-muted">
-                  Showing the most recent sessions.
+                  Some sessions could not be listed.
                 </Text>
               ) : null
             }

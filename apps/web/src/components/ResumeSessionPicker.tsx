@@ -186,7 +186,7 @@ export function ResumeSessionPicker({ projectRef }: { projectRef: ScopedProjectR
           </>
         )}
         {query.data?.truncated ? (
-          <ComboboxStatus>Showing the most recent sessions.</ComboboxStatus>
+          <ComboboxStatus>Some sessions could not be listed.</ComboboxStatus>
         ) : null}
       </ComboboxPopup>
     </Combobox>
