@@ -52,7 +52,7 @@ export function mergeEnvironmentThread(
     interactionMode: shell.interactionMode,
     branch: shell.branch,
     worktreePath: shell.worktreePath,
-    ...(shell.executionTarget !== undefined ? { executionTarget: shell.executionTarget } : {}),
+    executionTarget: shell.executionTarget ?? "local",
     latestTurn: shell.latestTurn,
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,

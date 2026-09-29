@@ -211,6 +211,7 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Cached thread",
+      executionTarget: "cloud",
       branch: "stale-branch",
       worktreePath: "/repo/stale-worktree",
       activeOrderKey: "t",
@@ -240,6 +241,7 @@ describe("environment entity projections", () => {
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
     });
+    expect(merged?.executionTarget).toBe("local");
     expect(merged?.messages).toBe(messages);
   });
 

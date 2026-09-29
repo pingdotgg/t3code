@@ -2600,16 +2600,6 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const environmentProviderStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  // A cloud thread sees each provider as its cloud offers it: cloud models,
-  // ready without a local CLI.
-  const requestsCloud = activeThread?.executionTarget === "cloud";
-  const providerStatuses = useMemo(
-    () =>
-      requestsCloud
-        ? environmentProviderStatuses.map(cloudProviderSnapshot)
-        : environmentProviderStatuses,
-    [environmentProviderStatuses, requestsCloud],
-  );
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -2619,7 +2609,7 @@ export default function ChatView(props: ChatViewProps) {
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
     threadProvider,
-    providers: providerStatuses,
+    providers: environmentProviderStatuses,
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
@@ -2850,17 +2840,20 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchThreadContinuation,
     versionMismatchServerLabel,
   ]);
-  const providerInstanceEntries = useMemo(
+  const environmentProviderInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(environmentProviderStatuses),
+          settings,
+        ),
       ),
-    [providerStatuses, settings],
+    [environmentProviderStatuses, settings],
   );
-  const { selectedProviderEntry, requestedDriverKind } = useMemo(
+  const { selectedProviderEntry: environmentProviderEntry, requestedDriverKind } = useMemo(
     () =>
       resolveComposerProviderSelection({
-        entries: providerInstanceEntries,
+        entries: environmentProviderInstanceEntries,
         candidateInstanceIds: [
           selectedProviderByThreadId,
           activeThread?.session?.providerInstanceId,
@@ -2876,18 +2869,43 @@ export default function ChatView(props: ChatViewProps) {
       activeThread?.modelSelection.instanceId,
       activeThread?.session?.providerInstanceId,
       lockedProvider,
-      providerInstanceEntries,
+      environmentProviderInstanceEntries,
       selectedProviderByThreadId,
     ],
+  );
+  // Resolve the instance before projecting its execution target. A local-only
+  // draft must not inherit cloud models or CLI readiness from a stale target.
+  const executionTarget: ThreadExecutionTarget =
+    activeThread?.executionTarget === "cloud" &&
+    (isServerThread || environmentProviderEntry?.snapshot.cloud !== undefined)
+      ? "cloud"
+      : "local";
+  const providerStatuses = useMemo(
+    () =>
+      executionTarget === "cloud"
+        ? environmentProviderStatuses.map(cloudProviderSnapshot)
+        : environmentProviderStatuses,
+    [environmentProviderStatuses, executionTarget],
+  );
+  const providerInstanceEntries = useMemo(
+    () =>
+      executionTarget === "cloud"
+        ? sortProviderInstanceEntries(
+            applyProviderInstanceSettings(
+              deriveProviderInstanceEntries(providerStatuses),
+              settings,
+            ),
+          )
+        : environmentProviderInstanceEntries,
+    [environmentProviderInstanceEntries, executionTarget, providerStatuses, settings],
+  );
+  const selectedProviderEntry = providerInstanceEntries.find(
+    (entry) => entry.instanceId === environmentProviderEntry?.instanceId,
   );
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const activeProviderCloud = activeProviderStatus?.cloud ?? null;
-  // A draft's Cloud choice applies only while its provider can run in the
-  // cloud; a started thread keeps the target it was created with.
-  const executionTarget: ThreadExecutionTarget =
-    requestsCloud && (isServerThread || activeProviderCloud !== null) ? "cloud" : "local";
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
