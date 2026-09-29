@@ -59,25 +59,21 @@ update can roll back to the previous version. If the update still fails:
 ## Provider CLI updates and models
 
 Updating a provider in **Settings → Providers** updates its CLI on the selected
-environment. After the update command succeeds, T3 refreshes its model manifest
-and clears its discovery caches for enabled instances of that provider. Each
-instance is checked with its own configuration, including instances that share
-an installation. Results reach other connected clients automatically. The
-existing update progress and verification result remain visible while this runs.
+environment. After a successful CLI update, T3 Code refreshes models for every
+enabled instance of that provider, using each instance's own configuration.
+Other connected clients see the refreshed models automatically.
 
-After updating a CLI outside T3, use **Refresh** in provider settings to refresh
-models. On mobile, pull to refresh the thread settings. Refresh keeps custom
-models, favorites, hidden models, ordering, and your selected model. A model
-hidden in your preferences stays hidden; showing a model in a catalog does not
-guarantee that your account can use it. Remote manifest fetching still follows
-the provider update-check setting. Provider-owned caches are not cleared.
+After updating a CLI outside T3 Code, use **Refresh** in provider settings to
+refresh models. On mobile, pull to refresh the thread settings. Refresh keeps
+custom models, favorites, hidden models, ordering, and your selected model.
+Hidden models stay hidden. A model can require a newer CLI or access your account
+does not have; appearing in the catalog does not confirm account access.
+Enable provider update checks to include T3 Code's latest model catalog.
 
-Model refresh does not replace an already-running provider session. Existing
-chats can keep using the old CLI process until that session ends and is resumed.
-T3 does not yet identify those sessions or offer a coordinated refresh when they
-become idle. An update does not automatically interrupt a turn or change
-credentials. If discovery fails, check the provider status and retry **Refresh**;
-T3 retains the previous catalog where the provider supports recovery.
+Refreshing models does not restart running chats. A chat can keep using the old
+CLI until its session ends and resumes. Updating does not automatically
+interrupt a turn or change credentials. If refreshing fails, check the provider
+status and retry **Refresh**.
 
 ## Mobile updates
 
