@@ -38,6 +38,7 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import {
+  EnvironmentRequestInvalidError,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -45,6 +46,8 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import {
   isPasteAsTextShortcut,
   nextPastedTextFileName,
@@ -401,6 +404,7 @@ function SnapShotAttachmentFrame({
 }
 
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
+const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
@@ -6107,15 +6111,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         if (!isActive()) return;
         if (result._tag !== "Success") {
-          throw new Error("The source thread could not be read.");
+          throw squashAtomCommandFailure(result);
         }
         await attachDroppedThreadFile(threadContextAttachment(ref.environmentId, result.value));
-      } catch {
+      } catch (error) {
         if (!isActive()) return;
         toastManager.add({
           type: "error",
           title: "Unable to read the dropped thread",
-          description: "Check that its environment is connected and up to date, then try again.",
+          description:
+            isEnvironmentRequestInvalidError(error) &&
+            error.reason === "thread_transcript_too_large"
+              ? "This thread exceeds the attachment size limit. Try a shorter thread."
+              : "Check that its environment is connected and up to date, then try again.",
         });
       } finally {
         toastManager.close(loadingToast);

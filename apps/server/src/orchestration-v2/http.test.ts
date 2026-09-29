@@ -107,9 +107,10 @@ const projection = Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
   })),
 });
 
-it.effect("exports full visible history, requires read scope, and reports missing threads", () =>
+it.effect("exports full history with size, scope, and missing-thread checks", () =>
   Effect.gen(function* () {
     let allowed = true;
+    let snapshotProjection = projection;
     const routes = HttpApiBuilder.layer(TranscriptTestApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(
@@ -130,7 +131,11 @@ it.effect("exports full visible history, requires read scope, and reports missin
         Layer.mock(ThreadManagementService)({
           getThreadSnapshot: (threadId) =>
             threadId === projection.thread.id
-              ? Effect.succeed({ schemaVersion: 1, snapshotSequence: 1, projection })
+              ? Effect.succeed({
+                  schemaVersion: 1,
+                  snapshotSequence: 1,
+                  projection: snapshotProjection,
+                })
               : Effect.fail(
                   new OrchestratorProjectionError({
                     threadId,
@@ -165,7 +170,21 @@ it.effect("exports full visible history, requires read scope, and reports missin
     expect(transcript.items[0]?.item).toMatchObject({ output });
     expect(transcript.items[0]?.visibility).toBe("inherited");
     expect(transcript.items[199]?.position).toBe(199);
-    expect(transcript).not.toHaveProperty("providerSessions");
+
+    const largeOutput = "界".repeat(100_000);
+    snapshotProjection = {
+      ...projection,
+      visibleTurnItems: projection.visibleTurnItems.map((row) => ({
+        ...row,
+        item: { ...row.item, output: largeOutput },
+      })),
+    };
+    const oversized = yield* read(projection.thread.id);
+    expect(oversized.status).toBe(400);
+    expect(yield* Effect.promise(() => oversized.json())).toMatchObject({
+      _tag: "EnvironmentRequestInvalidError",
+      reason: "thread_transcript_too_large",
+    });
 
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;

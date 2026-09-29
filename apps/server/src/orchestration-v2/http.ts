@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ThreadId,
   TurnItemId,
   type OrchestrationProjectShell,
@@ -24,6 +25,7 @@ import {
   decodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
   selectHistoryPageFromCursor,
+  projectedRowEncodedBytes,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
@@ -215,6 +217,13 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
                 }),
               ),
             );
+          let sizeBytes = 0;
+          for (const row of projection.visibleTurnItems) {
+            sizeBytes += projectedRowEncodedBytes(row) + 1;
+            if (sizeBytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+              return yield* failEnvironmentInvalidRequest("thread_transcript_too_large");
+            }
+          }
           return {
             threadId: projection.thread.id,
             title: projection.thread.title,
