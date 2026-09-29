@@ -206,6 +206,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
+          // Text generation is a one-shot helper, not a user session. The Claude
+          // path passes `disableAllHooks` for the same reason. `--config` rather
+          // than `--disable` because older CLIs reject an unknown feature name.
+          "--config",
+          "features.hooks=false",
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,
