@@ -21,7 +21,12 @@ import type {
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
+import {
+  type ClientSettings,
+  type QuitConfirmationMode,
+  type SupportedLocale,
+  SnapShotShortcut,
+} from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 
 import type {
@@ -1137,6 +1142,8 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale?: () => string | null;
+  /** Updates the Electron menu to match the renderer's selected interface language. */
+  setInterfaceLocale?: (locale: SupportedLocale) => Promise<void>;
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.

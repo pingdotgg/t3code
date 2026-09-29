@@ -8,34 +8,46 @@ import { UsageDay, type UsageResolution, type UsageSummaryInput } from "@t3tools
 
 import type { UsageContractMismatch } from "./usageMerge.ts";
 
-const CURRENCY = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+const numberFormatters = new Map<string, Intl.NumberFormat>();
 
-const INTEGER = new Intl.NumberFormat("en-US");
-
-export function formatUsd(value: number): string {
-  return CURRENCY.format(value);
+function numberFormatter(
+  locale: string,
+  options: Intl.NumberFormatOptions = {},
+): Intl.NumberFormat {
+  const key = JSON.stringify([locale, options]);
+  let formatter = numberFormatters.get(key);
+  if (formatter === undefined) {
+    formatter = new Intl.NumberFormat(locale, options);
+    if (numberFormatters.size >= 16) numberFormatters.clear();
+    numberFormatters.set(key, formatter);
+  }
+  return formatter;
 }
 
-export function formatCount(value: number): string {
-  return INTEGER.format(Math.round(value));
+export function formatUsd(value: number, locale = "en-US"): string {
+  return numberFormatter(locale, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+export function formatCount(value: number, locale = "en-US"): string {
+  return numberFormatter(locale).format(Math.round(value));
 }
 
 /**
  * Compacts a token count to three significant figures with a unit suffix, so
  * columns of numbers line up at a glance (`19.9B`, `76.7M`, `804K`).
  */
-export function formatTokens(value: number): string {
+export function formatTokens(value: number, locale = "en-US"): string {
   const abs = Math.abs(value);
   if (abs >= 1e12) return `${trim(value / 1e12)}T`;
   if (abs >= 1e9) return `${trim(value / 1e9)}B`;
   if (abs >= 1e6) return `${trim(value / 1e6)}M`;
   if (abs >= 1e3) return `${trim(value / 1e3)}K`;
-  return INTEGER.format(Math.round(value));
+  return formatCount(value, locale);
 }
 
 function trim(value: number): string {
@@ -44,11 +56,15 @@ function trim(value: number): string {
   return value.toFixed(digits).replace(/\.0+$/, "");
 }
 
-export function formatPercent(share: number, digits = 1): string {
+export function formatPercent(share: number, digits = 1, locale = "en-US"): string {
   const percent = share * 100;
   const smallest = 10 ** -digits;
-  if (percent > 0 && percent < smallest) return `<${smallest.toFixed(digits)}%`;
-  return `${percent.toFixed(digits)}%`;
+  const formatter = numberFormatter(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  if (percent > 0 && percent < smallest) return `<${formatter.format(smallest)}%`;
+  return `${formatter.format(percent)}%`;
 }
 
 export function formatUsageContractMismatch(
@@ -61,24 +77,14 @@ export function formatUsageContractMismatch(
 }
 
 /** `2026-08-07` to `Aug 7`. */
-export function formatDayShort(day: string): string {
+export function formatDayShort(day: string, locale = "en-US"): string {
   const [year, month, dayOfMonth] = day.split("-").map((part) => Number(part));
   if (year === undefined || month === undefined || dayOfMonth === undefined) return day;
-  const MONTHS = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  return `${MONTHS[month - 1] ?? ""} ${dayOfMonth}`;
+  return dateTimeFormatter(locale, {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(Date.UTC(year, month - 1, dayOfMonth)));
 }
 
 /** Inclusive day list between two `YYYY-MM-DD` bounds. */
@@ -132,11 +138,11 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
  * Repeated wall-clock hours during a fall-back transition include their short
  * zone name so the two distinct buckets remain distinguishable.
  */
-export function formatHourShort(hourStart: string, timeZone?: string): string {
+export function formatHourShort(hourStart: string, timeZone?: string, locale = "en-US"): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
   const options = timeZone === undefined ? {} : { timeZone };
-  const hourFormat = dateTimeFormatter("en-US", {
+  const hourFormat = dateTimeFormatter(locale, {
     ...options,
     hour: "numeric",
   });
@@ -154,7 +160,7 @@ export function formatHourShort(hourStart: string, timeZone?: string): string {
   );
 
   if (!isRepeatedHour) return hourFormat.format(instant);
-  return dateTimeFormatter("en-US", {
+  return dateTimeFormatter(locale, {
     ...(timeZone === undefined ? {} : { timeZone }),
     hour: "numeric",
     timeZoneName: "short",
@@ -162,10 +168,10 @@ export function formatHourShort(hourStart: string, timeZone?: string): string {
 }
 
 /** `2026-08-11T14:37:00Z` to `Aug 11, 2 PM` in the requested zone. */
-export function formatDateTimeShort(instant: string, timeZone?: string): string {
+export function formatDateTimeShort(instant: string, timeZone?: string, locale = "en-US"): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
-  return dateTimeFormatter("en-US", {
+  return dateTimeFormatter(locale, {
     ...(timeZone === undefined ? {} : { timeZone }),
     month: "short",
     day: "numeric",
@@ -178,11 +184,12 @@ export function formatRelativeHourShort(
   hourStart: string,
   relativeTo: string,
   timeZone?: string,
+  locale = "en-US",
 ): string {
   const instant = new Date(hourStart);
   const reference = new Date(relativeTo);
   if (Number.isNaN(instant.getTime()) || Number.isNaN(reference.getTime())) {
-    return formatDateTimeShort(hourStart, timeZone);
+    return formatDateTimeShort(hourStart, timeZone, locale);
   }
 
   const dayFormat = dateTimeFormatter("en-CA", {
@@ -194,11 +201,16 @@ export function formatRelativeHourShort(
   const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
   const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
   const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
-  const hour = formatHourShort(hourStart, timeZone);
+  const hour = formatHourShort(hourStart, timeZone, locale);
 
-  if (calendarDaysAgo === 0) return `${hour} today`;
-  if (calendarDaysAgo === 1) return `${hour} yesterday`;
-  return formatDateTimeShort(hourStart, timeZone);
+  if (calendarDaysAgo === 0 || calendarDaysAgo === 1) {
+    const day = new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(
+      -calendarDaysAgo,
+      "day",
+    );
+    return `${hour} ${day}`;
+  }
+  return formatDateTimeShort(hourStart, timeZone, locale);
 }
 
 /**

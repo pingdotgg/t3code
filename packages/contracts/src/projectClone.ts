@@ -114,8 +114,9 @@ export function projectCloneDisplayName(
 /** One-line progress summary: `Receiving objects · 45% · 12.3 MiB | 5.0 MiB/s`. */
 export function projectCloneProgressSummary(
   snapshot: Pick<ProjectCloneSnapshot, "stage" | "percent" | "detail">,
+  stageLabel: (stage: ProjectCloneStage) => string = projectCloneStageLabel,
 ): string {
-  const parts = [projectCloneStageLabel(snapshot.stage)];
+  const parts = [stageLabel(snapshot.stage)];
   if (snapshot.percent !== null) parts.push(`${snapshot.percent}%`);
   if (snapshot.detail) parts.push(snapshot.detail);
   return parts.join(" · ");

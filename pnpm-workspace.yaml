@@ -45,7 +45,9 @@ catalog:
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
   effect: 4.0.0-rc.115
+  i18next: 26.4.2
   jose: 6.2.2
+  react-i18next: 17.0.15
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
   typescript: 7.0.2

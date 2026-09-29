@@ -4,9 +4,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   enumerateHourStarts,
   formatDateTimeShort,
+  formatDayShort,
+  formatCount,
   formatHourShort,
   formatPercent,
   formatRelativeHourShort,
+  formatTokens,
+  formatUsd,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -18,6 +22,29 @@ describe("formatPercent", () => {
     expect(formatPercent(0.001)).toBe("0.1%");
     expect(formatPercent(0.023)).toBe("2.3%");
     expect(formatPercent(0.00004, 2)).toBe("<0.01%");
+  });
+});
+
+describe("usage value formatting", () => {
+  it("uses the requested interface locale for values and calendar labels", () => {
+    const locale = "zh-CN";
+    expect(formatCount(12_345, locale)).toBe(new Intl.NumberFormat(locale).format(12_345));
+    expect(formatUsd(1234.5, locale)).toBe(
+      new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(1234.5),
+    );
+    expect(formatTokens(987, locale)).toBe(new Intl.NumberFormat(locale).format(987));
+    expect(formatDayShort("2026-08-07", locale)).toBe(
+      new Intl.DateTimeFormat(locale, {
+        timeZone: "UTC",
+        month: "short",
+        day: "numeric",
+      }).format(new Date("2026-08-07T00:00:00Z")),
+    );
   });
 });
 
@@ -81,6 +108,17 @@ describe("hourly usage formatting", () => {
         "America/Los_Angeles",
       ),
     ).toBe("6 PM yesterday");
+  });
+
+  it("localizes today and yesterday in hourly tooltips", () => {
+    const today = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" }).format(0, "day");
+    const label = formatRelativeHourShort(
+      "2026-08-11T14:37:00.000Z",
+      "2026-08-11T14:37:00.000Z",
+      "UTC",
+      "zh-CN",
+    );
+    expect(label).toContain(today);
   });
 
   it("builds an exact minute-aligned 24-hour request", () => {

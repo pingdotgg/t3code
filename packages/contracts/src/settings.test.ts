@@ -20,6 +20,23 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ClientSettings locale preference", () => {
+  it("defaults existing installations to the system language", () => {
+    expect(decodeClientSettings({}).localePreference).toBe("system");
+  });
+
+  it.each(["system", "en", "zh-CN"])("persists and patches %s", (localePreference) => {
+    const preference = { localePreference };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+
+  it("rejects unsupported language preferences", () => {
+    expect(() => decodeClientSettings({ localePreference: "unknown" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ localePreference: "unknown" })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

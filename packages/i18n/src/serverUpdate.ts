@@ -1,0 +1,48 @@
+export const serverUpdateResources = {
+  en: {
+    downloading: "Downloading…",
+    restarting: "Restarting…",
+    serverUpdateFailed: "Server update failed.",
+    serverUpdateFailedForServer: "{{server}} update failed",
+    serverUpdated: "{{server}} updated",
+    desktopAppRelaunchedOnVersion: "Desktop app relaunched on {{version}}.",
+    reconnectedOnVersion: "Reconnected on t3@{{version}}.",
+    updateAll: "Update all",
+    confirmDesktopAppsUpdate:
+      "Update the T3 Code desktop apps on {{servers}}? They will close and relaunch on those machines.",
+    update: "Update",
+    copyUpdateCommand: "Copy update command",
+    actionForServer: "{{action}} for {{server}}",
+    updateCommandCopied: "Update command copied",
+    runUpdateCommandOnServer: "Run `{{command}}` on {{server}} to update it.",
+    couldNotCopyUpdateCommand: "Could not copy update command",
+    confirmDesktopAppUpdate:
+      "Update the T3 Code desktop app that runs on {{server}}? It will close and relaunch on that machine.",
+    updateDesktopAppOnMachine: "Update the desktop app on that machine to update this server.",
+    couldNotUpdateServer: "Could not update {{server}}",
+    updatingServer: "Updating {{server}}",
+  },
+  "zh-CN": {
+    downloading: "正在下载…",
+    restarting: "正在重启…",
+    serverUpdateFailed: "服务器更新失败。",
+    serverUpdateFailedForServer: "{{server}}更新失败",
+    serverUpdated: "{{server}}已更新",
+    desktopAppRelaunchedOnVersion: "桌面应用已重新启动，版本为 {{version}}。",
+    reconnectedOnVersion: "已重新连接到 t3@{{version}}。",
+    updateAll: "全部更新",
+    confirmDesktopAppsUpdate:
+      "要更新运行在 {{servers}} 上的 T3 Code 桌面应用吗？这些应用会在对应机器上关闭并重新启动。",
+    update: "更新",
+    copyUpdateCommand: "复制更新命令",
+    actionForServer: "{{server}}：{{action}}",
+    updateCommandCopied: "更新命令已复制",
+    runUpdateCommandOnServer: "请在 {{server}} 上运行 `{{command}}` 以更新。",
+    couldNotCopyUpdateCommand: "无法复制更新命令",
+    confirmDesktopAppUpdate:
+      "要更新运行在 {{server}} 上的 T3 Code 桌面应用吗？它会在该机器上关闭并重新启动。",
+    updateDesktopAppOnMachine: "请先更新该机器上的桌面应用，再更新此服务器。",
+    couldNotUpdateServer: "无法更新 {{server}}",
+    updatingServer: "正在更新 {{server}}",
+  },
+} as const;
