@@ -180,12 +180,20 @@ export interface LocalRebuildRequest {
 /** Confirm-then-invoke flow shared by the settings button and the footer icon. */
 export function useRequestLocalRebuild(): LocalRebuildRequest {
   const lifecycle = useLocalRebuildLifecycle();
-  const isStartingLocalRebuild = lifecycle?.phase === "running";
+  const [requestPending, setRequestPending] = useState(false);
+  const requestPendingRef = useRef(false);
+  const isStartingLocalRebuild = requestPending || lifecycle?.phase === "running";
+
+  useEffect(() => {
+    if (lifecycle?.phase !== "running" || !requestPendingRef.current) return;
+    requestPendingRef.current = false;
+    setRequestPending(false);
+  }, [lifecycle?.phase, lifecycle?.revision]);
 
   const requestLocalRebuild = useCallback(
     (options?: { readonly pullLatest?: boolean }) => {
       const rebuildAndRestart = window.desktopBridge?.rebuildAndRestart;
-      if (!rebuildAndRestart || isStartingLocalRebuild) return;
+      if (!rebuildAndRestart || requestPendingRef.current || isStartingLocalRebuild) return;
       const pullLatest = options?.pullLatest === true;
       if (
         !window.confirm(
@@ -196,31 +204,41 @@ export function useRequestLocalRebuild(): LocalRebuildRequest {
       )
         return;
 
-      void rebuildAndRestart(pullLatest ? { pullLatest: true } : undefined)
-        .then((result) => {
-          if (result.accepted) {
-            return;
-          }
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not start local rebuild",
-              description: [result.message, result.logPath ? `Log: ${result.logPath}` : null]
+      requestPendingRef.current = true;
+      setRequestPending(true);
+      const releaseRequest = (): void => {
+        requestPendingRef.current = false;
+        setRequestPending(false);
+      };
+      const reportFailure = (description: string): void => {
+        releaseRequest();
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start local rebuild",
+            description,
+          }),
+        );
+      };
+
+      try {
+        void rebuildAndRestart(pullLatest ? { pullLatest: true } : undefined)
+          .then((result) => {
+            if (result.accepted) return;
+            reportFailure(
+              [result.message, result.logPath ? `Log: ${result.logPath}` : null]
                 .filter(Boolean)
                 .join(" "),
-            }),
-          );
-        })
-        .catch((error: unknown) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not start local rebuild",
-              description:
-                error instanceof Error ? error.message : "Local rebuild failed to start.",
-            }),
-          );
-        });
+            );
+          })
+          .catch((error: unknown) => {
+            reportFailure(
+              error instanceof Error ? error.message : "Local rebuild failed to start.",
+            );
+          });
+      } catch (error: unknown) {
+        reportFailure(error instanceof Error ? error.message : "Local rebuild failed to start.");
+      }
     },
     [isStartingLocalRebuild],
   );

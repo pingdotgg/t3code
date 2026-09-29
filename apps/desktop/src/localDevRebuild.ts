@@ -941,6 +941,7 @@ export function launchLocalDevRebuild(
         FS.appendFileSync(logPath, `[desktop] Failed to launch local rebuild: ${error.message}\n`);
         if (!settled) {
           settled = true;
+          exited = true;
           resolve({ accepted: false, logPath, message: error.message });
         }
       });

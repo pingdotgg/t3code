@@ -149,4 +149,66 @@ describe("local rebuild hooks", () => {
       logPath: "/tmp/dev-rebuild.log",
     });
   });
+
+  it("admits only one request before the running lifecycle broadcast arrives", async () => {
+    const idle: DesktopLocalRebuildLifecycle = {
+      revision: 0,
+      phase: "idle",
+      logPath: null,
+      message: null,
+    };
+    let resolveRequest!: (result: {
+      accepted: boolean;
+      logPath: string | null;
+      message: string | null;
+    }) => void;
+    const rebuildAndRestart = vi.fn(
+      () =>
+        new Promise<{
+          accepted: boolean;
+          logPath: string | null;
+          message: string | null;
+        }>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+    const desktopBridge = {
+      getLocalRebuildLifecycle: vi.fn(async () => idle),
+      onLocalRebuildLifecycleChanged: vi.fn(() => () => {}),
+      rebuildAndRestart,
+    };
+    const confirm = vi.fn(() => true);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { desktopBridge, confirm },
+    });
+    let request: ReturnType<typeof useRequestLocalRebuild> = {
+      requestLocalRebuild: () => {},
+      isStartingLocalRebuild: false,
+      lifecycle: null,
+    };
+
+    function Probe() {
+      request = useRequestLocalRebuild();
+      return null;
+    }
+
+    await act(async () => {
+      renderer = create(createElement(Probe));
+      await Promise.resolve();
+    });
+
+    act(() => {
+      request.requestLocalRebuild();
+      request.requestLocalRebuild();
+    });
+
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(rebuildAndRestart).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveRequest({ accepted: true, logPath: "/tmp/dev-rebuild.log", message: null });
+      await Promise.resolve();
+    });
+  });
 });

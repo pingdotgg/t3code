@@ -132,7 +132,7 @@ describe("local Dev rebuild", () => {
     });
   });
 
-  it("reports asynchronous launch failures and notifies when the child exits", async () => {
+  it("does not report a child exit after an asynchronous spawn failure", async () => {
     const sourceRoot = makeCheckout();
     const logDirectory = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-log-"));
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
@@ -151,6 +151,24 @@ describe("local Dev rebuild", () => {
       logPath: Path.join(logDirectory, "dev-rebuild.log"),
       message: "async spawn failed",
     });
+    child.emit("exit", 1, null);
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("reports the exit of an installer that spawned successfully", async () => {
+    const sourceRoot = makeCheckout();
+    const logDirectory = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-log-"));
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    const onExit = vi.fn();
+    const resultPromise = launchLocalDevRebuild(
+      { enabled: true, sourceRoot, reason: null },
+      logDirectory,
+      vi.fn(() => child) as unknown as typeof import("node:child_process").spawn,
+      onExit,
+    );
+
+    child.emit("spawn");
+    await expect(resultPromise).resolves.toMatchObject({ accepted: true });
     child.emit("exit", 1, null);
     expect(onExit).toHaveBeenCalledOnce();
     expect(onExit).toHaveBeenCalledWith(1, null);
@@ -716,7 +734,7 @@ describe("local Dev rebuild staleness", () => {
     } finally {
       FS.rmSync(diverged.root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
 
 function makeRealRemoteCheckout(): {
