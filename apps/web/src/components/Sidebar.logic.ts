@@ -1387,6 +1387,11 @@ type SidebarSubagentThread = Pick<
   "environmentId" | "lineage" | "createdAt"
 > & {
   readonly source: Pick<SidebarThreadSummary["source"], "status" | "activityRunStatus">;
+  readonly runtime: Pick<NonNullable<SidebarThreadSummary["runtime"]>, "activityStartedAt"> | null;
+  readonly latestRun: Pick<
+    NonNullable<SidebarThreadSummary["latestRun"]>,
+    "startedAt" | "requestedAt"
+  > | null;
 };
 
 const WORKING_SUBAGENT_STATUSES = new Set([
@@ -1400,16 +1405,18 @@ const WORKING_SUBAGENT_STATUSES = new Set([
 /**
  * Subagent tallies keyed by the parent's scoped thread key. Only parents with
  * a subagent still working get an entry: a quiet thread must not carry a
- * finished batch forever. The batch starts at the oldest subagent still
- * working, so earlier finished rounds drop out. (The parent's latest user
- * message cannot mark the batch: delegated results arrive as user messages.)
+ * finished batch forever. The batch starts when the oldest still-working
+ * subagent started its current run, so earlier finished rounds drop out. Run
+ * start, not creation, marks a subagent: a resumed child keeps its old
+ * createdAt. (The parent's latest user message cannot mark the batch:
+ * delegated results arrive as user messages.)
  */
 export function deriveSidebarSubagentCounts(
   threads: ReadonlyArray<SidebarSubagentThread>,
 ): ReadonlyMap<string, SidebarSubagentCounts> {
   const subagentsByParent = new Map<
     string,
-    Array<{ readonly createdAt: string; readonly status: string }>
+    Array<{ readonly startedAt: string; readonly status: string }>
   >();
   for (const thread of threads) {
     const parentThreadId = thread.lineage.parentThreadId;
@@ -1417,7 +1424,11 @@ export function deriveSidebarSubagentCounts(
     const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
     const subagents = subagentsByParent.get(parentKey) ?? [];
     subagents.push({
-      createdAt: thread.createdAt,
+      startedAt:
+        thread.runtime?.activityStartedAt ??
+        thread.latestRun?.startedAt ??
+        thread.latestRun?.requestedAt ??
+        thread.createdAt,
       status: thread.source.activityRunStatus ?? thread.source.status,
     });
     subagentsByParent.set(parentKey, subagents);
@@ -1427,10 +1438,10 @@ export function deriveSidebarSubagentCounts(
     const working = subagents.filter((subagent) => WORKING_SUBAGENT_STATUSES.has(subagent.status));
     if (working.length === 0) continue;
     const batchStartedAt = working.reduce(
-      (earliest, subagent) => (subagent.createdAt < earliest ? subagent.createdAt : earliest),
-      working[0]!.createdAt,
+      (earliest, subagent) => (subagent.startedAt < earliest ? subagent.startedAt : earliest),
+      working[0]!.startedAt,
     );
-    const batch = subagents.filter((subagent) => subagent.createdAt >= batchStartedAt);
+    const batch = subagents.filter((subagent) => subagent.startedAt >= batchStartedAt);
     counts.set(parentKey, {
       working: working.length,
       done: batch.filter((subagent) => subagent.status === "completed").length,

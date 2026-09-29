@@ -2157,7 +2157,7 @@ describe("deriveSidebarSubagentCounts", () => {
   const parentId = ThreadId.make("thread-subagent-parent");
   const parentKey = scopedThreadKey(scopeThreadRef(environmentId, parentId));
   const child = (
-    status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
+    status: "running" | "queued" | "completed" | "failed" | "interrupted" | "cancelled",
     createdAt: string,
     relationshipToParent: "subagent" | "fork" = "subagent",
   ) => ({
@@ -2165,6 +2165,8 @@ describe("deriveSidebarSubagentCounts", () => {
     lineage: { parentThreadId: parentId, relationshipToParent, rootThreadId: parentId },
     createdAt,
     source: { status, activityRunStatus: null as "running" | null },
+    runtime: null as { activityStartedAt: string } | null,
+    latestRun: null as { startedAt: string | null; requestedAt: string | null } | null,
   });
 
   it("tallies the batch that started with the oldest working subagent", () => {
@@ -2181,6 +2183,46 @@ describe("deriveSidebarSubagentCounts", () => {
     ]);
     // Interrupted and cancelled subagents were stopped, not failed.
     expect(counts.get(parentKey)).toEqual({ working: 2, done: 1, failed: 1 });
+  });
+
+  it("starts a resumed subagent's batch at its current run, not its creation", () => {
+    const counts = deriveSidebarSubagentCounts([
+      // Resumed today after finishing yesterday.
+      {
+        ...child("running", "2026-09-24T09:00:00.000Z"),
+        runtime: { activityStartedAt: "2026-09-25T10:00:00.000Z" },
+      },
+      // Finished yesterday, between the resumed child's creation and today.
+      {
+        ...child("completed", "2026-09-24T09:30:00.000Z"),
+        latestRun: { startedAt: "2026-09-24T09:30:01.000Z", requestedAt: null },
+      },
+      {
+        ...child("completed", "2026-09-25T10:00:01.000Z"),
+        latestRun: { startedAt: "2026-09-25T10:00:02.000Z", requestedAt: null },
+      },
+    ]);
+    expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 0 });
+  });
+
+  it("times a run that has not started by its request", () => {
+    const counts = deriveSidebarSubagentCounts([
+      // Resumed today and still queued.
+      {
+        ...child("queued", "2026-09-24T09:00:00.000Z"),
+        latestRun: { startedAt: null, requestedAt: "2026-09-25T10:00:00.000Z" },
+      },
+      {
+        ...child("completed", "2026-09-24T09:30:00.000Z"),
+        latestRun: { startedAt: "2026-09-24T09:30:01.000Z", requestedAt: null },
+      },
+      // Resumed today and failed before its provider started.
+      {
+        ...child("failed", "2026-09-24T09:45:00.000Z"),
+        latestRun: { startedAt: null, requestedAt: "2026-09-25T10:00:01.000Z" },
+      },
+    ]);
+    expect(counts.get(parentKey)).toEqual({ working: 1, done: 0, failed: 1 });
   });
 
   it("omits parents whose subagents have all finished", () => {
