@@ -12,9 +12,9 @@ import {
   createEnvironmentCommand,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 
@@ -26,7 +26,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:thread-transcript",
       execute: (input: { readonly threadId: ThreadId }) =>
         Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor;
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
           const prepared = yield* SubscriptionRef.get(supervisor.prepared);
           if (Option.isNone(prepared)) {
             return yield* new EnvironmentRpcUnavailableError({
@@ -37,8 +37,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
           return yield* fetchEnvironmentThreadTranscript({
             prepared: prepared.value,
             threadId: input.threadId,
-            signer: yield* Effect.serviceOption(ManagedRelayDpopSigner),
-            remoteAuthorization: yield* Effect.serviceOption(RemoteEnvironmentAuthorization),
+            signer: yield* Effect.serviceOption(ManagedRelayDpopSigner.ManagedRelayDpopSigner),
+            remoteAuthorization: yield* Effect.serviceOption(
+              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+            ),
           });
         }),
     }),

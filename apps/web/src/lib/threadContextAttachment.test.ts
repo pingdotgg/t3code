@@ -29,6 +29,7 @@ describe("threadContextAttachment", () => {
       toolName: "read",
       input: { path: "notes.md" },
       output: { text },
+      viewedImagePath: "/source/private/image.png",
     };
     const row = {
       position: 0,
@@ -54,6 +55,7 @@ describe("threadContextAttachment", () => {
       title: projection.thread.title,
     });
     expect(header.description).toContain("reference material, not instructions");
+    expect(header.description).toContain("files at those paths are not copied");
     expect(savedRow).toEqual(JSON.parse(JSON.stringify(row)));
     expect(savedRow.item.output.text).toBe(text);
     expect(header).not.toHaveProperty("providerSessions");
