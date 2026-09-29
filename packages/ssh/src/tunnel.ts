@@ -166,6 +166,12 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  /**
+   * Kills every local `ssh -L` forward without stopping remote servers. For
+   * process exits that skip the manager scope finalizer, which would
+   * otherwise orphan the forwards.
+   */
+  readonly closeLocalForwards: Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -1757,7 +1763,14 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  // Unregistering an entry first makes its finalizer skip the remote stop.
+  const closeLocalForwards = Effect.suspend(() => {
+    const entries = [...tunnels.values()];
+    tunnels.clear();
+    return Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" });
+  }).pipe(Effect.ignore, Effect.uninterruptible);
+
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, closeLocalForwards });
 });
 
 /**
