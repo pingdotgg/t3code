@@ -2032,7 +2032,9 @@ function metaHttpUrl(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 4096) return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
+    return (url.protocol === "https:" || url.protocol === "http:") && url.href.length <= 4096
+      ? url.href
+      : undefined;
   } catch {
     return undefined;
   }
