@@ -74,7 +74,7 @@
 - Desktop staging must install optional native dependencies for the target architecture and key its cache by install policy; `--no-optional` omits keyring bindings. Load feature-only native modules inside the feature's typed error boundary, never during app startup.
 - Filter archived sidebar hierarchies before tree normalization; archived parents must suppress both real and virtual descendants or stale children are resurrected as roots.
 - Dev rebuild checks must canonicalize abbreviated build SHAs before ancestry tests, fetch missing history into a disposable private ref without moving checkout/tracking refs, and distinguish remote update availability from clean default-branch pull readiness.
-- Stage and validate desktop replacements before quitting or swapping; retain the prior bundle until the replacement is verified, and persist installer completion so a deliberate app quit does not erase a later failure.
+- Stage and validate desktop replacements before quitting or swapping; retain the prior bundle until the replacement is verified, and persist installer completion so a deliberate app quit does not erase a later failure. Trust an installer exit marker only after the running lifecycle records that install's log path; a null path means rebuild setup or pull has not launched an installer.
 
 ## Provider tools and workspace ownership
 

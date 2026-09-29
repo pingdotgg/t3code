@@ -191,6 +191,33 @@ describe("local Dev rebuild", () => {
     }
   });
 
+  it("does not use an unrelated exit marker for a running lifecycle without a log path", () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
+    const statePath = Path.join(root, "lifecycle.json");
+    const logPath = Path.join(root, "dev-rebuild.log");
+    try {
+      persistLocalDevRebuildLifecycle(
+        statePath,
+        { revision: 4, phase: "running", logPath: null, message: null },
+        Number.MAX_SAFE_INTEGER,
+      );
+      FS.writeFileSync(`${logPath}.exit-code`, "0\n");
+
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toMatchObject({
+        lifecycle: {
+          revision: 5,
+          phase: "failed",
+          logPath,
+          message: expect.stringContaining("stopped before reporting its result"),
+        },
+        processId: null,
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a live installer busy across relaunch and surfaces a missing result for a dead process", () => {
     const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
     const statePath = Path.join(root, "lifecycle.json");
@@ -357,6 +384,55 @@ describe("local Dev rebuild staleness", () => {
     });
 
     expect(result).toMatchObject({ available: true, behind: true, behindBy: 2, buildSha: null });
+  });
+
+  it("does not fetch remote history twice when fetching it resolves an abbreviated build SHA", async () => {
+    const calls: Array<readonly string[]> = [];
+    let buildRefAttempts = 0;
+    const runner: GitRunner = async (args) => {
+      calls.push(args);
+      const key = args.join(" ");
+      if (key === "rev-parse HEAD") return { stdout: `${REMOTE_SHA}\n`, exitCode: 0 };
+      if (key === "branch --show-current") return { stdout: "main\n", exitCode: 0 };
+      if (key === "status --porcelain --untracked-files=all --ignore-submodules=none") {
+        return { stdout: "", exitCode: 0 };
+      }
+      if (key === "ls-remote --symref origin HEAD") {
+        return {
+          stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+          exitCode: 0,
+        };
+      }
+      if (key === `rev-parse --verify ${BUILD_SHA.slice(0, 12)}^{commit}`) {
+        buildRefAttempts += 1;
+        return buildRefAttempts === 1
+          ? { stdout: "", exitCode: 128 }
+          : { stdout: `${BUILD_SHA}\n`, exitCode: 0 };
+      }
+      if (key === "rev-parse --is-shallow-repository") {
+        return { stdout: "false\n", exitCode: 0 };
+      }
+      if (args[0] === "fetch" || key.startsWith("update-ref -d ")) {
+        return { stdout: "", exitCode: 0 };
+      }
+      if (key === `merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`) {
+        return { stdout: "", exitCode: 0 };
+      }
+      if (key === `rev-list --count ${BUILD_SHA}..${REMOTE_SHA}`) {
+        return { stdout: "7\n", exitCode: 0 };
+      }
+      throw new Error(`unexpected git invocation: ${key}`);
+    };
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA.slice(0, 12),
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ behind: true, behindBy: 7, error: null });
+    expect(calls.filter(([command]) => command === "fetch")).toHaveLength(1);
   });
 
   it("reports up to date when the remote tip matches the running build", async () => {

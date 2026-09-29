@@ -267,6 +267,7 @@ export async function checkLocalDevRebuildStaleness(input: {
     ...extra,
   });
 
+  let remoteHistoryFetched = false;
   if (!baseSha) {
     const fetched = await fetchRemoteDefaultBranch(runGit, cwd, parsed.branch);
     if (!fetched.ok) {
@@ -277,6 +278,7 @@ export async function checkLocalDevRebuildStaleness(input: {
           "Could not compare the source checkout with the remote default branch.",
       });
     }
+    remoteHistoryFetched = true;
     if (buildReference) {
       try {
         const resolved = await runGit(["rev-parse", "--verify", `${buildReference}^{commit}`], cwd);
@@ -306,7 +308,7 @@ export async function checkLocalDevRebuildStaleness(input: {
     workingTree.exitCode === 0 ? workingTree.stdout : null,
   ]);
   const cached = useCache ? ancestryCache.get(cacheKey) : undefined;
-  if (needsHistory && !cached) {
+  if (needsHistory && !cached && !remoteHistoryFetched) {
     const fetched = await fetchRemoteDefaultBranch(runGit, cwd, parsed.branch);
     if (!fetched.ok) {
       return complete({
@@ -734,7 +736,9 @@ export function restoreLocalDevRebuildLifecycle(
   }
 
   const logPath = lifecycle.logPath ?? fallbackLogPath;
-  const exitResult = readInstallerExitCode(`${logPath}.exit-code`);
+  const exitResult = lifecycle.logPath
+    ? readInstallerExitCode(`${logPath}.exit-code`)
+    : { kind: "missing" as const };
   if (exitResult.kind === "complete") {
     return {
       lifecycle: {
