@@ -937,7 +937,7 @@ export const make = Effect.gen(function* () {
                           try: () => Promise.resolve().then(() => inferenceModel.dispose()),
                           catch: (disposeCause) => speechError("transcription", disposeCause),
                         });
-                        return yield* new SpeechOperationError({ operation: "inference", cause });
+                        return yield* Effect.fail(speechError("inference", cause));
                       }
                       yield* Effect.tryPromise({
                         try: () => Promise.resolve().then(() => inferenceModel.dispose()),
@@ -957,12 +957,7 @@ export const make = Effect.gen(function* () {
                       ).pipe(
                         Effect.catch((fallbackCause) => {
                           dropCachedModel(cpu);
-                          return Effect.fail(
-                            new SpeechOperationError({
-                              operation: "inference",
-                              cause: fallbackCause,
-                            }),
-                          );
+                          return Effect.fail(speechError("inference", fallbackCause));
                         }),
                       );
                     }),

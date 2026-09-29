@@ -667,13 +667,18 @@ it.effect("retries accelerated inference on CPU after the native process fails",
 
 it.effect("uses a selected GPU without falling back to CPU after inference fails", () =>
   Effect.gen(function* () {
-    native.transcribe.mockRejectedValueOnce(new Error("GPU failed"));
+    const failure = new Error("GPU failed");
+    native.transcribe.mockRejectedValueOnce(failure);
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
       const acceleration = 'gpu:["vulkan","gpu-1"]';
       expect(yield* speech.updateAcceleration(acceleration)).toMatchObject({ acceleration });
       const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
-      expect(Result.isFailure(result)).toBe(true);
+      expect(Result.isFailure(result) && result.failure).toMatchObject({
+        _tag: "SpeechOperationError",
+        operation: "transcription",
+        cause: failure,
+      });
       expect(loadNative).toHaveBeenCalledTimes(1);
       expect(loadNative.mock.calls[0]?.[3]).toBe(acceleration);
     }).pipe(Effect.provide(layer));
@@ -932,9 +937,15 @@ it.effect("a failed stream begin does not poison the next stream", () =>
 it.effect("failed CPU fallback is disposed", () =>
   Effect.gen(function* () {
     native.transcribe.mockRejectedValueOnce(new Error("GPU failed"));
-    native.transcribe.mockRejectedValueOnce(new Error("CPU failed"));
+    const failure = new Error("CPU failed");
+    native.transcribe.mockRejectedValueOnce(failure);
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.transcribe(pcm()).pipe(Effect.result);
+    const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
+    expect(Result.isFailure(result) && result.failure).toMatchObject({
+      _tag: "SpeechOperationError",
+      operation: "transcription",
+      cause: failure,
+    });
     expect(native.dispose).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
 );
