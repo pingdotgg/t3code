@@ -41,6 +41,7 @@ Choose Never to keep the model ready until the environment stops, or Immediately
 to release its memory after each transcription.
 
 Add names, technical terms, and other uncommon vocabulary to the **Dictionary**.
+The current project's name is included automatically when transcribing in its threads.
 If transcription repeatedly writes a term differently, add that spelling as an alias
 under the preferred term. Only preferred terms are sent as recognition hints; aliases
 correct matching words and phrases in the transcript.

@@ -930,7 +930,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Transcription options">
         <SettingsRow
           {...searchableSetting("dictionary")}
-          description="Give the transcription model names and uncommon terms to recognize. If a term is transcribed incorrectly, add that version to correct future transcripts."
+          description="Give the transcription model names and uncommon terms to recognize. The current project's name is included automatically. If a term is transcribed incorrectly, add that version to correct future transcripts."
           control={
             <div className="w-full max-w-80">
               <div className="flex items-center gap-1.5">
