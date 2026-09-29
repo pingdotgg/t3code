@@ -3204,43 +3204,10 @@ export const ServerNotification__AuthMode = Schema.Union(
   identifier: "ServerNotification__AuthMode",
 });
 
-export type ServerNotification__PlanType =
-  | "free"
-  | "go"
-  | "plus"
-  | "pro"
-  | "prolite"
-  | "team"
-  | "self_serve_business_prolite"
-  | "self_serve_business_usage_based"
-  | "business"
-  | "ent26"
-  | "enterprise_cbp_automation"
-  | "enterprise_cbp_usage_based"
-  | "enterprise"
-  | "edu"
-  | "edu_plus"
-  | "edu_pro"
-  | "unknown";
-export const ServerNotification__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_prolite",
-  "self_serve_business_usage_based",
-  "business",
-  "ent26",
-  "enterprise_cbp_automation",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
-  "edu_plus",
-  "edu_pro",
-  "unknown",
-]).annotate({ identifier: "ServerNotification__PlanType" });
+export type ServerNotification__PlanType = string;
+export const ServerNotification__PlanType = Schema.String.annotate({
+  identifier: "ServerNotification__PlanType",
+});
 
 export type ServerNotification__CreditsSnapshot = {
   readonly balance?: string | null;
@@ -4138,43 +4105,10 @@ export const V2AccountRateLimitsUpdatedNotification__SpendControlLimitSnapshot =
   used: Schema.String,
 }).annotate({ identifier: "V2AccountRateLimitsUpdatedNotification__SpendControlLimitSnapshot" });
 
-export type V2AccountRateLimitsUpdatedNotification__PlanType =
-  | "free"
-  | "go"
-  | "plus"
-  | "pro"
-  | "prolite"
-  | "team"
-  | "self_serve_business_prolite"
-  | "self_serve_business_usage_based"
-  | "business"
-  | "ent26"
-  | "enterprise_cbp_automation"
-  | "enterprise_cbp_usage_based"
-  | "enterprise"
-  | "edu"
-  | "edu_plus"
-  | "edu_pro"
-  | "unknown";
-export const V2AccountRateLimitsUpdatedNotification__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_prolite",
-  "self_serve_business_usage_based",
-  "business",
-  "ent26",
-  "enterprise_cbp_automation",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
-  "edu_plus",
-  "edu_pro",
-  "unknown",
-]).annotate({ identifier: "V2AccountRateLimitsUpdatedNotification__PlanType" });
+export type V2AccountRateLimitsUpdatedNotification__PlanType = string;
+export const V2AccountRateLimitsUpdatedNotification__PlanType = Schema.String.annotate({
+  identifier: "V2AccountRateLimitsUpdatedNotification__PlanType",
+});
 
 export type V2AccountRateLimitsUpdatedNotification__RateLimitWindow = {
   readonly resetsAt?: number | null;
@@ -4260,43 +4194,10 @@ export const V2AccountUpdatedNotification__AuthMode = Schema.Union(
   identifier: "V2AccountUpdatedNotification__AuthMode",
 });
 
-export type V2AccountUpdatedNotification__PlanType =
-  | "free"
-  | "go"
-  | "plus"
-  | "pro"
-  | "prolite"
-  | "team"
-  | "self_serve_business_prolite"
-  | "self_serve_business_usage_based"
-  | "business"
-  | "ent26"
-  | "enterprise_cbp_automation"
-  | "enterprise_cbp_usage_based"
-  | "enterprise"
-  | "edu"
-  | "edu_plus"
-  | "edu_pro"
-  | "unknown";
-export const V2AccountUpdatedNotification__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_prolite",
-  "self_serve_business_usage_based",
-  "business",
-  "ent26",
-  "enterprise_cbp_automation",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
-  "edu_plus",
-  "edu_pro",
-  "unknown",
-]).annotate({ identifier: "V2AccountUpdatedNotification__PlanType" });
+export type V2AccountUpdatedNotification__PlanType = string;
+export const V2AccountUpdatedNotification__PlanType = Schema.String.annotate({
+  identifier: "V2AccountUpdatedNotification__PlanType",
+});
 
 export type V2AppListUpdatedNotification__AppReview = { readonly status: string };
 export const V2AppListUpdatedNotification__AppReview = Schema.Struct({
@@ -5484,43 +5385,10 @@ export const V2GetAccountRateLimitsResponse__SpendControlLimitSnapshot = Schema.
   used: Schema.String,
 }).annotate({ identifier: "V2GetAccountRateLimitsResponse__SpendControlLimitSnapshot" });
 
-export type V2GetAccountRateLimitsResponse__PlanType =
-  | "free"
-  | "go"
-  | "plus"
-  | "pro"
-  | "prolite"
-  | "team"
-  | "self_serve_business_prolite"
-  | "self_serve_business_usage_based"
-  | "business"
-  | "ent26"
-  | "enterprise_cbp_automation"
-  | "enterprise_cbp_usage_based"
-  | "enterprise"
-  | "edu"
-  | "edu_plus"
-  | "edu_pro"
-  | "unknown";
-export const V2GetAccountRateLimitsResponse__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_prolite",
-  "self_serve_business_usage_based",
-  "business",
-  "ent26",
-  "enterprise_cbp_automation",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
-  "edu_plus",
-  "edu_pro",
-  "unknown",
-]).annotate({ identifier: "V2GetAccountRateLimitsResponse__PlanType" });
+export type V2GetAccountRateLimitsResponse__PlanType = string;
+export const V2GetAccountRateLimitsResponse__PlanType = Schema.String.annotate({
+  identifier: "V2GetAccountRateLimitsResponse__PlanType",
+});
 
 export type V2GetAccountRateLimitsResponse__RateLimitWindow = {
   readonly resetsAt?: number | null;
@@ -5563,43 +5431,10 @@ export const V2GetAccountRateLimitsResponse__RateLimitReachedType = Schema.Liter
   "workspace_member_usage_limit_reached",
 ]).annotate({ identifier: "V2GetAccountRateLimitsResponse__RateLimitReachedType" });
 
-export type V2GetAccountResponse__PlanType =
-  | "free"
-  | "go"
-  | "plus"
-  | "pro"
-  | "prolite"
-  | "team"
-  | "self_serve_business_prolite"
-  | "self_serve_business_usage_based"
-  | "business"
-  | "ent26"
-  | "enterprise_cbp_automation"
-  | "enterprise_cbp_usage_based"
-  | "enterprise"
-  | "edu"
-  | "edu_plus"
-  | "edu_pro"
-  | "unknown";
-export const V2GetAccountResponse__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_prolite",
-  "self_serve_business_usage_based",
-  "business",
-  "ent26",
-  "enterprise_cbp_automation",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
-  "edu_plus",
-  "edu_pro",
-  "unknown",
-]).annotate({ identifier: "V2GetAccountResponse__PlanType" });
+export type V2GetAccountResponse__PlanType = string;
+export const V2GetAccountResponse__PlanType = Schema.String.annotate({
+  identifier: "V2GetAccountResponse__PlanType",
+});
 
 export type V2GetAccountResponse__AccountRoutingOverride = "NO_CONSTRAINT" | "us" | "us_cr";
 export const V2GetAccountResponse__AccountRoutingOverride = Schema.Literals([
