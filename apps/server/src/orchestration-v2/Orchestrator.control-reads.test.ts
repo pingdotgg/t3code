@@ -1,7 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
   CommandId,
   MessageId,
+  RunId,
   EventId,
   NodeId,
   PlanId,
@@ -327,5 +329,166 @@ it.effect("implements a proposed plan that the command projection leaves out", (
     });
 
     assert.equal((yield* projections.getPlan(threadId, planId))?.status, "completed");
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("links a side chat under its parent without claiming a fork, and promotes it", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const projectId = ProjectId.make("project:side-chat");
+    const parentId = ThreadId.make("thread:side-chat-parent");
+    const sideChatId = ThreadId.make("thread:side-chat-child");
+    const base = {
+      projectId,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    } as const;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-side-chat-parent"),
+      threadId: parentId,
+      title: "Parent",
+      ...base,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-side-chat-child"),
+      threadId: sideChatId,
+      title: "Side chat",
+      parentThreadId: parentId,
+      sideChat: true,
+      ...base,
+    });
+
+    const child = yield* projections.getThread(sideChatId);
+    assert.deepEqual(child.lineage, {
+      parentThreadId: parentId,
+      relationshipToParent: null,
+      rootThreadId: parentId,
+    });
+    assert.isNull(child.forkedFrom);
+    assert.equal(child.sideChat, true);
+    assert.equal((yield* projections.getThreadShell(sideChatId))?.sideChat, true);
+    assert.isUndefined((yield* projections.getThread(parentId)).sideChat);
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("promote-side-chat"),
+      threadId: sideChatId,
+      sideChat: false,
+    });
+    assert.equal((yield* projections.getThread(sideChatId)).sideChat, false);
+    assert.equal((yield* projections.getThreadShell(sideChatId))?.sideChat, false);
+
+    const crossProject = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-side-chat-cross-project"),
+        threadId: ThreadId.make("thread:side-chat-cross-project"),
+        title: "Elsewhere",
+        parentThreadId: parentId,
+        sideChat: true,
+        ...base,
+        projectId: ProjectId.make("project:side-chat-other"),
+      }),
+    );
+    assert.equal(crossProject._tag, "Failure");
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("forks a side chat from the last finished run while the source is mid-run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const projectId = ProjectId.make("project:side-chat-active");
+    const sourceId = ThreadId.make("thread:side-chat-active-source");
+    const targetId = ThreadId.make("thread:side-chat-active-target");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-side-chat-active-source"),
+      threadId: sourceId,
+      projectId,
+      title: "Busy parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (ordinal: number, status: "completed" | "running") => ({
+      id: RunId.make(`run:side-chat-active-${ordinal}`),
+      threadId: sourceId,
+      ordinal,
+      providerInstanceId: instanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message:side-chat-active-${ordinal}`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: status === "completed" ? now : null,
+      checkpointId:
+        status === "completed" ? CheckpointId.make(`checkpoint:side-chat-${ordinal}`) : null,
+      contextHandoffId: null,
+    });
+    for (const next of [run(1, "completed"), run(2, "running")]) {
+      yield* projections.apply({
+        id: EventId.make(`event:side-chat-active-${next.ordinal}`),
+        type: "run.updated",
+        threadId: sourceId,
+        runId: next.id,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: next,
+      });
+    }
+
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork-side-chat-active"),
+      sourceThreadId: sourceId,
+      targetThreadId: targetId,
+      sourcePoint: { type: "latest_stable" },
+      sideChat: true,
+      runtimeMode: "approval-required",
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const target = yield* projections.getThread(targetId);
+    assert.deepEqual(target.forkedFrom, {
+      type: "run",
+      threadId: sourceId,
+      runId: RunId.make("run:side-chat-active-1"),
+    });
+    assert.equal(target.sideChat, true);
+    assert.equal(target.runtimeMode, "approval-required");
+    assert.equal(target.lineage.relationshipToParent, "fork");
+
+    // Pinning the run that is still streaming is refused: it is not a stable point.
+    const midRun = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-side-chat-mid-run"),
+        sourceThreadId: sourceId,
+        targetThreadId: ThreadId.make("thread:side-chat-active-refused"),
+        sourcePoint: { type: "run", runId: RunId.make("run:side-chat-active-2") },
+        sideChat: true,
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    );
+    assert.equal(midRun._tag, "Failure");
   }).pipe(Effect.provide(testLayer)),
 );

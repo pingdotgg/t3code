@@ -157,6 +157,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
   /** Server persists a pull request reference on thread.meta.update. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
+  /** Server understands sideChat on thread.create / thread.fork / thread.metadata.update
+      and parentThreadId on thread.create. Older servers would drop the fields and
+      create an ordinary thread, so clients hide side chats instead of sending them. */
+  threadSideChats: Schema.optionalKey(Schema.Boolean),
   /** Server resolves message delivery and model-selection context and validates
       identified rollback readiness. Clients retain projection-based command
       shaping and validation when this is absent. */
