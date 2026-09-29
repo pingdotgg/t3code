@@ -1083,6 +1083,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         // to the root thread state whose active turn owns the request; asks
         // arriving before the relation is known resolve it via session.get.
         const relatedSessionOwners = new Map<string, OpenCodeThreadState>();
+        // Sessions of this runtime that OpenCode reports busy. A background
+        // task child keeps running after its parent turn settles, so idle
+        // release must not close the server under it.
+        const busySessionIds = new Set<string>();
         // Requests settled before their session relation resolved: a late
         // routing attempt must never resurrect them. Bounded because entries
         // only matter for the seconds a routing retry can still be running.
@@ -2727,9 +2731,22 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }
             case "session.deleted":
               relatedSessionOwners.delete(event.properties.info.id);
+              busySessionIds.delete(event.properties.info.id);
               return;
             case "session.status": {
-              const state = threads.get(event.properties.sessionID);
+              const sessionId = event.properties.sessionID;
+              switch (event.properties.status.type) {
+                case "busy":
+                case "retry":
+                  if (threads.has(sessionId) || relatedSessionOwners.has(sessionId)) {
+                    busySessionIds.add(sessionId);
+                  }
+                  break;
+                case "idle":
+                  busySessionIds.delete(sessionId);
+                  break;
+              }
+              const state = threads.get(sessionId);
               if (state === undefined) return;
               if (event.properties.status.type === "busy") {
                 yield* updateProviderThread(state, { status: "active" });
@@ -2749,6 +2766,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               return;
             }
             case "session.idle": {
+              busySessionIds.delete(event.properties.sessionID);
               const state = threads.get(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
                 if (state.activeTurn.admissionPending) {
@@ -2825,6 +2843,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
+              // No further status can clear a busy session once the stream ends.
+              busySessionIds.clear();
               if (closing || abortController.signal.aborted) return;
               const detail = Exit.isSuccess(exit)
                 ? "OpenCode event stream ended unexpectedly."
@@ -3118,6 +3138,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           providerSessionId: input.providerSessionId,
           providerSession: sessionEntity,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          hasPendingBackgroundWork: Effect.sync(() => busySessionIds.size > 0),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               // Only a row that already carries a native session can be
