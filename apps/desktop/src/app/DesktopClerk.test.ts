@@ -268,7 +268,7 @@ for (const entry of ["startup", "open-url"] as const) {
       createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
       const port = yield* Effect.promise(async () => {
         const server = NodeHttp.createServer();
-        await new Promise<void>((resolve) => server.listen(0, "localhost", resolve));
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
         const address = server.address();
         if (!address || typeof address === "string") throw new Error("address");
         await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -278,7 +278,7 @@ for (const entry of ["startup", "open-url"] as const) {
       authorize.search = new URLSearchParams({
         client_id: "dynamic_agent_client",
         response_type: "code",
-        redirect_uri: `http://localhost:${port}/auth/callback`,
+        redirect_uri: `http://127.0.0.1:${port}/auth/callback`,
         state: "a".repeat(43),
         code_challenge_method: "S256",
         code_challenge: "b".repeat(43),
