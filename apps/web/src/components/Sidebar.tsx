@@ -4603,13 +4603,14 @@ export default function Sidebar() {
                       />
                     }
                   >
-                    {environmentScopeIds.length !== 1 ? (
-                      <ServerIcon className="size-4" />
-                    ) : (
+                    {environmentScopeIds.length === 1 &&
+                    selectedEnvironmentScopeItems[0]?.machine ? (
                       <EnvironmentMachineIcon
-                        kind={selectedEnvironmentScopeItems[0]!.machine!}
+                        kind={selectedEnvironmentScopeItems[0].machine}
                         className="size-4"
                       />
+                    ) : (
+                      <ServerIcon className="size-4" />
                     )}
                   </ComboboxTrigger>
                   <ComboboxPopup
