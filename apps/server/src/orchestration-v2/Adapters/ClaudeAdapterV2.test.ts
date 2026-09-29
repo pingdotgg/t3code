@@ -3308,6 +3308,141 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Frame shapes follow the claude_background_monitor_wake recording: Claude
+  // runs a Monitor as a local_bash task, linked to its call by tool_use_id.
+  it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        let frameNumber = 0;
+        const nextUuid = () => `00000000-0000-4000-8000-${String(++frameNumber).padStart(12, "0")}`;
+        const monitorFrames = (index: number) => {
+          const taskId = `monitor-task-${index}`;
+          const toolUseId = `toolu_monitor_${index}`;
+          const description = `Monitor ${index}`;
+          return {
+            taskId,
+            start: [
+              claudeSdkFrame({
+                type: "assistant",
+                message: {
+                  model: "claude-sonnet-4-6",
+                  id: `msg_monitor_${index}`,
+                  type: "message",
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "tool_use",
+                      id: toolUseId,
+                      name: "Monitor",
+                      input: { description, command: "sleep 8 && echo MONITOR_DONE" },
+                    },
+                  ],
+                  stop_reason: null,
+                  stop_sequence: null,
+                  usage: { input_tokens: 1, output_tokens: 1 },
+                },
+                parent_tool_use_id: null,
+                uuid: nextUuid(),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+              claudeSdkFrame({
+                type: "system",
+                subtype: "task_started",
+                task_id: taskId,
+                tool_use_id: toolUseId,
+                description,
+                is_backgrounded: true,
+                task_type: "local_bash",
+                uuid: nextUuid(),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+              claudeSdkFrame({
+                type: "user",
+                message: {
+                  role: "user",
+                  content: [
+                    {
+                      type: "tool_result",
+                      tool_use_id: toolUseId,
+                      content: `Monitor started (task ${taskId}).`,
+                    },
+                  ],
+                },
+                parent_tool_use_id: null,
+                uuid: nextUuid(),
+                session_id: WAKE_NATIVE_SESSION,
+                tool_use_result: { taskId, persistent: false },
+              }),
+            ],
+            end: claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: taskId,
+              tool_use_id: toolUseId,
+              status: "completed",
+              output_file: `/tmp/claude-replay/tasks/${taskId}.output`,
+              summary: `Monitor "${description}" stream ended`,
+              uuid: nextUuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          };
+        };
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-many-monitors"),
+            text: "Watch the deploy, then re-arm short watches.",
+            attachments: [],
+          }),
+        );
+        const longRunning = monitorFrames(0);
+        for (const frame of longRunning.start) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        // More newer monitors start and end than any fixed id cap would hold.
+        for (let index = 1; index <= 65; index++) {
+          const monitor = monitorFrames(index);
+          for (const frame of monitor.start) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          yield* Queue.offer(harness.sdkMessages, monitor.end);
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              {
+                task_id: longRunning.taskId,
+                task_type: "local_bash",
+                description: "Monitor 0",
+              },
+            ],
+            uuid: nextUuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: nextUuid(), result: "Watching." }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+
+        const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+          .pendingBackgroundTasks;
+        assert.deepEqual(roster, [
+          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+        ]);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("stops background work after the turn settled", () =>
     Effect.scoped(
       Effect.gen(function* () {
