@@ -32,6 +32,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
+import { parsePiSessionCommand } from "@t3tools/client-runtime/state/threads";
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
@@ -3294,7 +3295,7 @@ function ChatViewBody(
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (e?: { preventDefault: () => void }, providerCommand?: string) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -3318,10 +3319,13 @@ function ChatViewBody(
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
     const draftPromptForSend = promptRef.current;
-    const promptForSend = composerPreviewAnnotations.reduce(
-      (prompt, annotation) => appendPreviewAnnotationPrompt(prompt, annotation),
-      draftPromptForSend,
-    );
+    const promptForSend =
+      providerCommand !== undefined
+        ? `/${providerCommand}`
+        : composerPreviewAnnotations.reduce(
+            (prompt, annotation) => appendPreviewAnnotationPrompt(prompt, annotation),
+            draftPromptForSend,
+          );
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -3332,6 +3336,125 @@ function ChatViewBody(
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
     });
+    const piSessionCommand = ctxSelectedProvider === "pi" ? parsePiSessionCommand(trimmed) : null;
+    if (piSessionCommand) {
+      const composerHasNonPromptContent =
+        composerImages.length > 0 ||
+        composerTerminalContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0;
+      if ("error" in piSessionCommand || composerHasNonPromptContent) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Invalid Pi command",
+            description:
+              "error" in piSessionCommand
+                ? piSessionCommand.error
+                : "Session commands do not accept attachments or context items.",
+          }),
+        );
+        return;
+      }
+      const hasMessages = isServerThread
+        ? serverMessageIds.length > 0
+        : activeThread.messages.length > 0;
+      if (!isServerThread || !hasMessages) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start a Pi thread first",
+            description: "Send a message before using session commands.",
+          }),
+        );
+        return;
+      }
+      sendInFlightRef.current = true;
+      const notice = toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title:
+            piSessionCommand.command === "share" ? "Sharing Pi session…" : "Running Pi command…",
+          timeout: 0,
+        }),
+      );
+      try {
+        const result = await api.server.sessionCommand({
+          threadId: activeThread.id,
+          ...piSessionCommand,
+        });
+        if (result.command === "copy") {
+          try {
+            await navigator.clipboard?.writeText(result.text);
+          } catch {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not copy the Pi response",
+              }),
+            );
+            return;
+          }
+          toastManager.update(notice, {
+            type: "success",
+            title: "Response copied",
+            timeout: 5_000,
+          });
+        } else if (result.command === "export") {
+          const url = URL.createObjectURL(
+            new Blob([result.html], { type: "text/html;charset=utf-8" }),
+          );
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = result.fileName;
+          anchor.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 0);
+          toastManager.update(notice, {
+            type: "success",
+            title: "Pi session exported",
+            description: result.outputPath,
+            timeout: 5_000,
+          });
+        } else {
+          toastManager.update(notice, {
+            type: "success",
+            title: "Pi session shared",
+            description: (
+              <a href={result.url} target="_blank" rel="noopener noreferrer" className="underline">
+                {result.url}
+              </a>
+            ),
+            actionProps: {
+              children: "Copy link",
+              onClick: () =>
+                void navigator.clipboard?.writeText(result.url).catch(() =>
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Could not copy the share link",
+                    }),
+                  ),
+                ),
+            },
+            timeout: 0,
+          });
+        }
+        if (promptRef.current === promptForSend) {
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+        }
+      } catch (error) {
+        toastManager.update(notice, {
+          type: "error",
+          title: `Could not ${piSessionCommand.command} Pi session`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+          timeout: 0,
+        });
+      } finally {
+        sendInFlightRef.current = false;
+      }
+      return;
+    }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -5259,6 +5382,7 @@ function ChatViewBody(
                     shouldAutoScrollRef={isAtEndRef}
                     scheduleStickToBottom={scrollToEnd}
                     onSend={onSend}
+                    onProviderCommand={(name) => void onSend(undefined, name)}
                     onComposerIntent={prewarmComposerProviderSession}
                     onInterrupt={onInterrupt}
                     onSteer={onSteer}

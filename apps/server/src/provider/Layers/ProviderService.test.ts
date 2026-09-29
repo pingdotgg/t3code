@@ -8,6 +8,8 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSessionCommandInput,
+  ProviderSessionCommandResult,
   ProviderSessionForkInput,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -303,6 +305,14 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         sessions.clear();
       }),
   );
+
+  const sessionCommand = vi.fn(
+    (
+      input: ProviderSessionCommandInput,
+    ): Effect.Effect<ProviderSessionCommandResult, ProviderAdapterError> =>
+      Effect.succeed({ command: "copy", text: `response-${input.threadId}` }),
+  );
+
   const forkSession = vi.fn(
     (input: ProviderSessionForkInput): Effect.Effect<ProviderSession, ProviderAdapterError> =>
       startSession({
@@ -327,6 +337,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    sessionCommand,
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -363,6 +374,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    sessionCommand,
     stopAll,
   };
 }
@@ -1085,6 +1097,68 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect(
+    "routes a session command after recovering a stopped session without sending a turn",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const threadId = asThreadId("thread-session-command-recover");
+        yield* provider.startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/session-command-project",
+          runtimeMode: "full-access",
+        });
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+        routing.codex.sendTurn.mockClear();
+        routing.codex.sessionCommand.mockClear();
+        const result = yield* provider.sessionCommand({ threadId, command: "copy" });
+        assert.deepStrictEqual(result, { command: "copy", text: `response-${threadId}` });
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        assert.deepStrictEqual(routing.codex.sessionCommand.mock.calls, [
+          [{ threadId, command: "copy" }],
+        ]);
+        assert.strictEqual(routing.codex.sendTurn.mock.calls.length, 0);
+      }),
+  );
+
+  it.effect("rejects a session command for an unsupported provider without resuming it", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const threadId = asThreadId("thread-session-command-unsupported");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* routing.claude.stopSession(threadId);
+      routing.claude.startSession.mockClear();
+      // The shared fake supports session commands; simulate a provider that
+      // does not by hiding the optional adapter method for this test.
+      const claudeAdapter = routing.claude.adapter as unknown as {
+        sessionCommand?: unknown;
+      };
+      const saved = claudeAdapter.sessionCommand;
+      claudeAdapter.sessionCommand = undefined;
+      try {
+        const error = yield* provider
+          .sessionCommand({ threadId, command: "copy" })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          error._tag,
+          "ProviderValidationError",
+          `expected validation error, got ${String(error)}`,
+        );
+        assert.strictEqual(routing.claude.startSession.mock.calls.length, 0);
+      } finally {
+        claudeAdapter.sessionCommand = saved;
+      }
     }),
   );
 

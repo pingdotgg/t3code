@@ -373,6 +373,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
+      sessionCommand: unsupported as ProviderServiceShape["sessionCommand"],
       listSessions: () => Effect.succeed(runtimeSessions),
       prewarmSession: () => Effect.void,
       getCapabilities: (_provider) =>

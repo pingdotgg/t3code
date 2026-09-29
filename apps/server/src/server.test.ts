@@ -8,6 +8,7 @@ import {
   type DpopPublicJwk,
 } from "@t3tools/shared/dpop";
 import { ServerAuth, type ServerAuthShape } from "./auth/Services/ServerAuth.ts";
+import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import * as Context from "effect/Context";
 
 import {
@@ -876,6 +877,7 @@ const buildAppUnderTest = (options?: {
               getCapabilities: () => Effect.die("Not implemented in server test."),
               getInstanceInfo: () => Effect.die("Not implemented in server test."),
               rollbackConversation: () => Effect.die("Not implemented in server test."),
+              sessionCommand: () => Effect.die("Not implemented in server test."),
               streamEvents: Stream.empty,
               ...options.layers.providerService,
             }),
@@ -2320,6 +2322,67 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
       assert.equal(response.auth.policy, "desktop-managed-local");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("returns session command results over websocket rpc without dispatching a turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-session-command");
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            sessionCommand: (input) =>
+              Effect.succeed({ command: "copy", text: `response-${input.threadId}` }),
+          },
+        },
+      });
+
+      const { cookie } = yield* bootstrapBrowserSession();
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        cookie?.split(";")[0] ?? "",
+      );
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.providerSessionCommand]({ threadId, command: "copy" }),
+        ),
+      );
+      assert.deepStrictEqual(result, { command: "copy", text: `response-${threadId}` });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps session command failures actionable across websocket rpc", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-session-command-error");
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            sessionCommand: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "pi",
+                  method: "share",
+                  detail: "Run gh auth login on the server.",
+                }),
+              ),
+          },
+        },
+      });
+
+      const { cookie } = yield* bootstrapBrowserSession();
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        cookie?.split(";")[0] ?? "",
+      );
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.providerSessionCommand]({ threadId, command: "share" }),
+          ),
+        ),
+      );
+      assert.strictEqual(error._tag, "ProviderSessionCommandError");
+      assert.include(error.message, "gh auth login on the server");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

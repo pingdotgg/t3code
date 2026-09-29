@@ -1,5 +1,13 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { ClaudeAI, CursorIcon, GithubCopilotIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  GithubCopilotIcon,
+  type Icon,
+  OpenAI,
+  OpenCodeIcon,
+  PiAgentIcon,
+} from "../Icons";
 
 /**
  * A single editable field exposed on a provider instance. `key` must match
@@ -145,6 +153,26 @@ export const DRIVER_OPTIONS: readonly DriverOption[] = [
         placeholder: "Optional",
         type: "password",
         description: "Stored in plain text on disk.",
+      },
+    ],
+  },
+  {
+    value: ProviderDriverKind.make("pi"),
+    label: "Pi",
+    icon: PiAgentIcon,
+    badgeLabel: "Early Access",
+    fields: [
+      {
+        key: "binaryPath",
+        label: "Binary path",
+        placeholder: "pi",
+        description: "Path to the Pi coding agent binary.",
+      },
+      {
+        key: "launchArgs",
+        label: "Launch arguments",
+        placeholder: "e.g. --provider anthropic",
+        description: "Additional CLI arguments passed to pi --mode rpc on session start.",
       },
     ],
   },
