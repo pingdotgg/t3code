@@ -53,7 +53,7 @@ export function SidebarTopActions({
                 />
               }
             >
-              <SearchIcon className="size-3.5" />
+              <SearchIcon className="size-[length:var(--app-sidebar-icon-size)]" />
               <span className="flex-1 truncate text-left">Search</span>
             </CommandDialogTrigger>
           </SidebarMenuItem>
@@ -66,7 +66,7 @@ export function SidebarTopActions({
               className="gap-2 px-2 py-1 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
               onClick={handleNewThreadClick}
             >
-              <PlusIcon className="size-3.5" />
+              <PlusIcon className="size-[length:var(--app-sidebar-icon-size)]" />
               <span className="flex-1 truncate text-left">New thread</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

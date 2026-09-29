@@ -16,7 +16,7 @@ import { SidebarUpdatePill } from "./SidebarUpdatePill";
 const FOOTER_ICON_BUTTON_CLASS =
   "inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors outline-hidden hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
 const FOOTER_ICON_BUTTON_ACTIVE_CLASS = "bg-accent text-foreground";
-const FOOTER_ICON_CLASS = "size-3.5";
+const FOOTER_ICON_CLASS = "size-[length:var(--app-sidebar-icon-size)]";
 
 export function SidebarFooterActions() {
   const navigate = useNavigate();
