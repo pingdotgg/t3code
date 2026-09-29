@@ -1,7 +1,10 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   UsageDay,
   USAGE_CONTRACT_VERSION,
+  type ServerProvider,
   type UsageSummary,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -10,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import { refreshUsage, refreshUsageLimits } from "./usage.ts";
+import { needsCursorKeychainAccess, refreshUsage, refreshUsageLimits } from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -184,6 +187,19 @@ describe("manual usage refresh", () => {
 });
 
 describe("limits refresh cooldown", () => {
+  it("runs a fresh check after an in-flight check when settings change", async () => {
+    const id = EnvironmentId.make("limits-after-enable");
+    const oldCheck = Promise.withResolvers<string>();
+    const first = refreshUsageLimits(id, () => oldCheck.promise, true);
+    const newCheck = vi.fn(async () => "new limits");
+    const afterEnable = refreshUsageLimits(id, newCheck, false, true);
+    expect(newCheck).not.toHaveBeenCalled();
+    oldCheck.resolve("old limits");
+    expect(await first).toBe("old limits");
+    expect(await afterEnable).toBe("new limits");
+    expect(newCheck).toHaveBeenCalledTimes(1);
+  });
+
   it("joins manual calls and gates automatic refreshes after success or failure", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
     try {
@@ -223,5 +239,50 @@ describe("limits refresh cooldown", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+});
+
+describe("needsCursorKeychainAccess", () => {
+  const cursorPrompt: UsageSummary = {
+    ...summary,
+    sources: [
+      {
+        fingerprint: {
+          hostId: "host",
+          provider: "cursor",
+          resolvedHomePath: "/Users/me/.cursor/auth.json",
+          volumeId: "volume",
+        },
+        status: "ok",
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 0,
+        message: "Cursor account usage is off on this environment.",
+        action: "enableCursorKeychain",
+      },
+    ],
+  };
+  const cursor = (status: ServerProvider["status"]): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("cursor"),
+    driver: ProviderDriverKind.make("cursor"),
+    enabled: status !== "disabled",
+    installed: status === "ready",
+    version: null,
+    status,
+    auth: { status: "unknown" },
+    checkedAt: "2026-09-05T12:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  });
+
+  it("offers access only when Cursor is ready on that environment", () => {
+    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("ready")])).toBe(true);
+    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("error")])).toBe(false);
+    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("disabled")])).toBe(false);
+    expect(needsCursorKeychainAccess(cursorPrompt, [])).toBe(false);
+    expect(needsCursorKeychainAccess(cursorPrompt, null)).toBe(false);
+    expect(needsCursorKeychainAccess(summary, [cursor("ready")])).toBe(false);
   });
 });

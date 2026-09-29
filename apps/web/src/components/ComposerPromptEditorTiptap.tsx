@@ -29,6 +29,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
@@ -371,6 +372,16 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       .run();
   }, [editor, nodePos]);
 
+  // Put the caret right after the chip so Enter sends and typing continues the prompt.
+  const onRestoreFocus = useCallback(() => {
+    if (!editor.isEditable) return;
+    const pos = nodePos();
+    if (pos === null) return;
+    const current = editor.state.doc.nodeAt(pos);
+    if (!current || current.type.name !== "composer-citation") return;
+    editor.commands.focus(pos + current.nodeSize);
+  }, [editor, nodePos]);
+
   return (
     <NodeViewWrapper
       as="span"
@@ -378,6 +389,23 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
+      onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
+        // Tab from the comment button returns to the caret after the chip.
+        if (
+          !editor.isEditable ||
+          event.key !== "Tab" ||
+          event.shiftKey ||
+          event.altKey ||
+          event.metaKey ||
+          event.ctrlKey ||
+          !(event.target instanceof HTMLElement) ||
+          event.target.dataset.citationCommentTrigger === undefined
+        ) {
+          return;
+        }
+        event.preventDefault();
+        onRestoreFocus();
+      }}
     >
       <AssistantCitationChip
         citation={citation}
@@ -396,6 +424,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             commentContext.onSubmitAndSend();
             return true;
           },
+          onRestoreFocus,
         }}
       />
     </NodeViewWrapper>
@@ -854,6 +883,32 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                   .scrollIntoView(),
               );
               return true;
+            }
+          }
+          // Shift+Tab from just after a citation reaches its comment button, which
+          // native tab order skips because the chip lives inside the editor.
+          if (
+            event.key === "Tab" &&
+            event.shiftKey &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            view.state.selection.empty
+          ) {
+            const { $from } = view.state.selection;
+            const citation = $from.nodeBefore;
+            if (citation?.type.name === "composer-citation") {
+              const chip = view.nodeDOM($from.pos - citation.nodeSize);
+              const commentButton =
+                chip instanceof HTMLElement
+                  ? chip.querySelector<HTMLElement>("[data-citation-comment-trigger]")
+                  : null;
+              if (commentButton) {
+                event.preventDefault();
+                event.stopPropagation();
+                commentButton.focus();
+                return true;
+              }
             }
           }
           if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) {
