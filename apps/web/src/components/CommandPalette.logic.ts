@@ -51,7 +51,6 @@ export interface CommandPaletteItem {
 
 export interface CommandPaletteSearchIndex {
   readonly normalizedTerms: ReadonlyArray<string>;
-  readonly haystack: string;
 }
 
 export interface CommandPaletteActionItem extends CommandPaletteItem {
@@ -176,7 +175,6 @@ export function buildCommandPaletteSearchIndex(
     normalizedTerms: searchTerms
       .filter((term) => term.length > 0)
       .map((term) => normalizeSearchText(term)),
-    haystack: normalizeSearchText(searchTerms.join(" ")),
   };
 }
 
@@ -194,7 +192,6 @@ function buildPaletteSearchParts(
   return {
     searchIndex: {
       normalizedTerms,
-      haystack: normalizeSearchText(searchTerms.join(" ")),
     },
     searchTermSources: filteredSources,
   };

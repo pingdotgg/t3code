@@ -66,7 +66,6 @@ describe("buildCommandPaletteSearchIndex", () => {
   it("normalizes terms once for filtering and ranking", () => {
     expect(buildCommandPaletteSearchIndex(["  Fix   Navbar  ", "", "Feature/Branch"])).toEqual({
       normalizedTerms: ["fix navbar", "feature/branch"],
-      haystack: "fix navbar feature/branch",
     });
   });
 });
@@ -137,7 +136,6 @@ describe("buildProjectActionItems", () => {
 
     expect(items[0]?.searchIndex).toEqual({
       normalizedTerms: ["web app", "/users/example/large project", "environment-local"],
-      haystack: "web app /users/example/large project environment-local",
     });
 
     const groups = filterCommandPaletteGroups({
