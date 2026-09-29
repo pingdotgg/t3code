@@ -4,14 +4,17 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  EventId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  OrchestrationV2ThreadProjection,
+  OrchestrationV2AppThread,
+  OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -23,13 +26,14 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
-import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import { orchestrationHttpApiLayer } from "./http.ts";
-import { OrchestratorProjectionError } from "./Orchestrator.ts";
-import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
-import { ProjectStoreV2 } from "./ProjectStore.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import { EventSinkV2 } from "./EventSink.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 class TranscriptTestApi extends HttpApi.make("environment").add(
   EnvironmentHttpApi.groups.orchestration,
@@ -40,77 +44,86 @@ const decodeTranscript = Schema.decodeUnknownEffect(
 
 const now = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
 const output = "Full tool output. ".repeat(4_000);
-const projection = Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
-  thread: {
-    id: "source-thread",
-    projectId: "source-project",
-    title: "Source conversation",
-    providerInstanceId: "codex",
-    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    activeProviderThreadId: null,
-    lineage: { rootThreadId: "source-thread", parentThreadId: null, relationshipToParent: null },
-    forkedFrom: null,
-    createdBy: "user",
-    creationSource: "web",
-    createdAt: now,
-    updatedAt: now,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    lastVisitedAt: null,
-    deletedAt: null,
-  },
-  runs: [],
-  attempts: [],
-  nodes: [],
-  subagents: [],
-  providerSessions: [],
-  providerThreads: [],
-  providerTurns: [],
-  runtimeRequests: [],
-  messages: [],
-  plans: [],
-  turnItems: [],
-  checkpointScopes: [],
-  checkpoints: [],
-  contextHandoffs: [],
-  contextTransfers: [],
+const thread = Schema.decodeUnknownSync(OrchestrationV2AppThread)({
+  id: "source-thread",
+  projectId: "source-project",
+  title: "Source conversation",
+  providerInstanceId: "codex",
+  modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: null,
+  worktreePath: null,
+  activeProviderThreadId: null,
+  lineage: { rootThreadId: "source-thread", parentThreadId: null, relationshipToParent: null },
+  forkedFrom: null,
+  createdBy: "user",
+  creationSource: "web",
+  createdAt: now,
   updatedAt: now,
-  visibleTurnItems: Array.from({ length: 200 }, (_, position) => ({
-    position,
-    visibility: "inherited",
-    sourceThreadId: "parent-thread",
-    sourceItemId: `item-${position}`,
-    item: {
-      id: `item-${position}`,
-      threadId: "parent-thread",
-      runId: null,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: position,
-      type: "command_execution",
-      status: "completed",
-      title: "Read notes",
-      input: "cat notes.md",
-      output: position === 0 ? output : "Done",
-      startedAt: now,
-      completedAt: now,
-      updatedAt: now,
-    },
-  })),
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  lastVisitedAt: null,
+  deletedAt: null,
 });
+const items = Schema.decodeUnknownSync(Schema.Array(OrchestrationV2TurnItem))(
+  Array.from({ length: 200 }, (_, position) => ({
+    id: `item-${position}`,
+    threadId: "source-thread",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: position,
+    type: "command_execution",
+    status: "completed",
+    title: "Read notes",
+    input: "cat notes.md",
+    output: position === 0 ? output : "Done",
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+  })),
+);
 
 it.effect("exports full history with size, scope, and missing-thread checks", () =>
   Effect.gen(function* () {
     let allowed = true;
-    let snapshotProjection = projection;
+    const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
+      { name: "thread-transcript" },
+      ProviderAdapterRegistry.makeLayer([]),
+      { runEffectWorker: false },
+    );
+    const services = yield* Layer.build(
+      Layer.mergeAll(
+        runtime,
+        ThreadManagementService.layer.pipe(Layer.provide(runtime)),
+        OrchestrationEventStoreLive,
+        ProjectStore.layer,
+      ).pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+    );
+    const eventSink = Context.get(services, EventSinkV2);
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("create-source"),
+          type: "thread.created",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: thread,
+        },
+        ...items.map((item) => ({
+          id: EventId.make(`create-${item.id}`),
+          type: "turn-item.updated" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload: item,
+        })),
+      ],
+    });
     const routes = HttpApiBuilder.layer(TranscriptTestApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(
@@ -127,26 +140,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
           ),
         ),
       ),
-      Layer.provide(
-        Layer.mock(ThreadManagementService)({
-          getThreadSnapshot: (threadId) =>
-            threadId === projection.thread.id
-              ? Effect.succeed({
-                  schemaVersion: 1,
-                  snapshotSequence: 1,
-                  projection: snapshotProjection,
-                })
-              : Effect.fail(
-                  new OrchestratorProjectionError({
-                    threadId,
-                    cause: new ProjectionStoreThreadNotFoundError({ threadId }),
-                  }),
-                ),
-        }),
-      ),
-      Layer.provide(SqlitePersistenceMemory),
-      Layer.provide(Layer.mock(OrchestrationEventStore)({})),
-      Layer.provide(Layer.mock(ProjectStoreV2)({})),
+      Layer.provide(Layer.succeedContext(services)),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
@@ -163,23 +157,25 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
         ),
       );
 
-    const response = yield* read(projection.thread.id);
+    const response = yield* read(thread.id);
     expect(response.status).toBe(200);
     const transcript = yield* decodeTranscript(yield* Effect.promise(() => response.json()));
     expect(transcript.items).toHaveLength(200);
     expect(transcript.items[0]?.item).toMatchObject({ output });
-    expect(transcript.items[0]?.visibility).toBe("inherited");
+    expect(transcript.items[0]?.visibility).toBe("local");
     expect(transcript.items[199]?.position).toBe(199);
 
     const largeOutput = "界".repeat(100_000);
-    snapshotProjection = {
-      ...projection,
-      visibleTurnItems: projection.visibleTurnItems.map((row) => ({
-        ...row,
-        item: { ...row.item, output: largeOutput },
+    yield* eventSink.write({
+      events: items.map((item) => ({
+        id: EventId.make(`enlarge-${item.id}`),
+        type: "turn-item.updated" as const,
+        threadId: thread.id,
+        occurredAt: now,
+        payload: { ...item, output: largeOutput },
       })),
-    };
-    const oversized = yield* read(projection.thread.id);
+    });
+    const oversized = yield* read(thread.id);
     expect(oversized.status).toBe(400);
     expect(yield* Effect.promise(() => oversized.json())).toMatchObject({
       _tag: "EnvironmentRequestInvalidError",
@@ -188,6 +184,6 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
 
     expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
     allowed = false;
-    expect((yield* read(projection.thread.id)).status).toBe(403);
+    expect((yield* read(thread.id)).status).toBe(403);
   }),
 );
