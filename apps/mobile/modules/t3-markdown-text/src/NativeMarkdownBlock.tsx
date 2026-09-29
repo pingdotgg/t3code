@@ -5,6 +5,7 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import {
+  nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
   nativeMarkdownNodePosition,
@@ -567,18 +568,33 @@ export function NativeMarkdownBlock(props: {
             gap: 6,
           }}
         >
-          {(props.node.children ?? []).map((child, index) => (
-            <NativeMarkdownBlock
-              key={nodeKey(child, index)}
-              node={child}
-              skills={props.skills}
-              textStyle={props.textStyle}
-              highlightCode={props.highlightCode}
-              onLinkPress={props.onLinkPress}
-              depth={depth}
-              compact
-            />
-          ))}
+          {/* Consecutive plain children share one text view so selection can
+          cross paragraphs; iOS selection cannot span separate text views. */}
+          {nativeMarkdownDocumentChunks({
+            type: "document",
+            children: props.node.children ?? [],
+          }).map((chunk) =>
+            chunk.kind === "selectable" ? (
+              <SelectableNode
+                key={chunk.key}
+                node={chunk.node}
+                skills={props.skills}
+                textStyle={props.textStyle}
+                onLinkPress={props.onLinkPress}
+              />
+            ) : (
+              <NativeMarkdownBlock
+                key={chunk.key}
+                node={chunk.node}
+                skills={props.skills}
+                textStyle={props.textStyle}
+                highlightCode={props.highlightCode}
+                onLinkPress={props.onLinkPress}
+                depth={depth}
+                compact
+              />
+            ),
+          )}
         </View>
       );
     case "list":

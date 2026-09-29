@@ -669,6 +669,25 @@ describe("nativeMarkdownDocumentChunks", () => {
     ]);
   });
 
+  it("groups plain blockquote children into one selectable chunk so selection can span paragraphs", () => {
+    const paragraph = (content: string): MarkdownNode => ({
+      type: "paragraph",
+      children: [{ type: "text", content }],
+    });
+    const code: MarkdownNode = { type: "code_block", content: "const a = 1;" };
+
+    const chunks = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [paragraph("First"), paragraph("Second"), code, paragraph("Third")],
+    });
+
+    expect(chunks.map((chunk) => [chunk.kind, chunk.node.children?.length ?? 0])).toEqual([
+      ["selectable", 2],
+      ["rich", 0],
+      ["selectable", 1],
+    ]);
+  });
+
   it("keeps headings and plain lists in one selectable document", () => {
     const document: MarkdownNode = {
       type: "document",
