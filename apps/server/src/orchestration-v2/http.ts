@@ -196,6 +196,34 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "threadTranscript",
+        Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const { projection } = yield* threadManagement
+            .getThreadSnapshot(args.params.threadId)
+            .pipe(
+              Effect.catch(
+                Effect.fnUntraced(function* (error) {
+                  if (isThreadNotFound(error)) {
+                    return yield* failEnvironmentNotFound("thread_not_found");
+                  }
+                  return yield* failEnvironmentInternal(
+                    "orchestration_thread_snapshot_failed",
+                    error,
+                  );
+                }),
+              ),
+            );
+          return {
+            threadId: projection.thread.id,
+            title: projection.thread.title,
+            updatedAt: projection.updatedAt,
+            items: projection.visibleTurnItems,
+          };
+        }),
+      )
+      .handle(
         "threadBoundedSnapshot",
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
