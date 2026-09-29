@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
@@ -72,7 +74,84 @@ const connect = Effect.gen(function* () {
   return yield* opencode.connect({ baseUrl: "http://127.0.0.1:4096", password: "secret" });
 });
 
+/** Sends `events`, then keeps the connection open without another byte, like a frozen server. */
+const servingThenSilent = (events: ReadonlyArray<unknown>) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const event of events) {
+                  controller.enqueue(new TextEncoder().encode(`data: ${encodeJson(event)}\n\n`));
+                }
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+      ),
+    ),
+  );
+
 describe("OpenCode2Client events", () => {
+  it.effect("fails a stream that stops sending anything, even heartbeats", () =>
+    Effect.gen(function* () {
+      const { events } = yield* connect.pipe(
+        Effect.provide(
+          OpenCode2Client.layer.pipe(
+            Layer.provide(servingThenSilent([{ id: "evt_1", type: "server.connected", data: {} }])),
+          ),
+        ),
+      );
+      const drained = yield* (yield* events).pipe(Stream.runDrain, Effect.flip, Effect.forkChild);
+      // Let the first frame arrive and the timer start before the clock moves.
+      for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+      yield* TestClock.adjust("46 seconds");
+      const failure = yield* Fiber.join(drained);
+      assert.strictEqual(failure._tag, "OpenCode2SilentStreamError");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps an execution's end it cannot decode, and skips other unknown events", () =>
+    Effect.gen(function* () {
+      const { events } = yield* connect.pipe(
+        Effect.provide(
+          OpenCode2Client.layer.pipe(
+            Layer.provide(
+              serving([
+                {
+                  id: "evt_1",
+                  created: 1,
+                  type: "session.hologram.projected",
+                  data: { sessionID: "ses_x" },
+                },
+                {
+                  id: "evt_2",
+                  created: 1,
+                  type: "session.execution.interrupted",
+                  data: { sessionID: "ses_x", reason: "budget" },
+                  durable: { aggregateID: "ses_x", seq: 1, version: 1 },
+                },
+              ]),
+            ),
+          ),
+        ),
+      );
+      const received = yield* (yield* events).pipe(Stream.runCollect);
+      assert.deepStrictEqual(received, [
+        {
+          type: "unreadable.execution.ended",
+          executionType: "session.execution.interrupted",
+          sessionID: "ses_x",
+        },
+      ]);
+    }),
+  );
+
   it.effect("skips events a newer server adds and still sees the turn end", () =>
     Effect.gen(function* () {
       const events = yield* newerServerStream;

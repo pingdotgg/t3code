@@ -12,6 +12,7 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -19,6 +20,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -26,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/unstable/http";
 import { describe } from "vite-plus/test";
 
@@ -60,6 +63,8 @@ const MODEL: ModelSelection = {
   instanceId: INSTANCE,
   model: process.env.OPENCODE2_MODEL ?? "opencode/big-pickle",
 };
+// The free model the thread switches to mid-conversation.
+const SWITCHED_MODEL = "opencode/mimo-v2.6-flash-free";
 
 const PlatformTestLayer = Layer.merge(
   NodeServices.layer,
@@ -75,7 +80,7 @@ const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
 const serverSettingsLayer = ServerSettingsService.layerTest({
   providerInstances: {
     [INSTANCE]: {
-      driver: "opencode",
+      driver: ProviderDriverKind.make("opencode"),
       enabled: true,
       environment: [
         { name: "HOME", value: ROOT },
@@ -87,7 +92,7 @@ const serverSettingsLayer = ServerSettingsService.layerTest({
       config: { enabled: true, binaryPath },
     },
   },
-} as never);
+});
 const backgroundPolicyLayer = BackgroundPolicy.layer.pipe(
   Layer.provide(Layer.effect(HostPowerMonitor.HostPowerMonitor, HostPowerMonitor.make())),
   Layer.provide(serverSettingsLayer),
@@ -161,6 +166,7 @@ const send = Effect.fn("OpenCode2Live.send")(function* (
   threadId: ThreadId,
   key: string,
   text: string,
+  modelSelection: ModelSelection = MODEL,
 ) {
   const orchestrator = yield* OrchestratorV2;
   yield* orchestrator.dispatch({
@@ -172,10 +178,35 @@ const send = Effect.fn("OpenCode2Live.send")(function* (
     messageId: MessageId.make(`message:opencode2-live:${key}`),
     text,
     attachments: [],
-    modelSelection: MODEL,
+    modelSelection,
     dispatchMode: { type: "start_immediately" },
   });
 });
+
+const AssistantModel = Schema.fromJsonString(
+  Schema.Struct({ model: Schema.Struct({ providerID: Schema.String, id: Schema.String }) }),
+);
+const decodeAssistantModel = Schema.decodeUnknownSync(AssistantModel);
+
+/**
+ * The `provider/model` of each assistant message in a native session, oldest
+ * first, from the spawned server's own database under the isolated XDG root.
+ */
+const assistantModels = (nativeSessionId: string) =>
+  Effect.sync(() => {
+    const db = new NodeSqlite.DatabaseSync(`${ROOT}/data/opencode/opencode.db`, { readOnly: true });
+    try {
+      return db
+        .prepare(
+          "SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant' ORDER BY seq",
+        )
+        .all(nativeSessionId)
+        .map((row) => decodeAssistantModel(row.data).model)
+        .map((model) => `${model.providerID}/${model.id}`);
+    } finally {
+      db.close();
+    }
+  });
 
 describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchestrator", () => {
   it.live(
@@ -250,7 +281,36 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           (item) => item.type === "command_execution" && item.input.includes("sleep 60"),
         );
         assert.equal(sleep?.status, "interrupted");
-      }).pipe(Effect.provide(liveLayer), Effect.provide(NodeServices.layer), Effect.scoped),
+
+        // A model change applies to the same native session on the next turn.
+        const switched: ModelSelection = { instanceId: INSTANCE, model: SWITCHED_MODEL };
+        yield* send(threadId, "switch", "Reply with exactly: SWITCHED", switched);
+        const third = yield* waitFor(
+          threadId,
+          (projection) => projection.runs.length === 3 && settled(projection),
+        );
+        assert.equal(third.runs.at(-1)?.status, "completed");
+        const sessionId = third.providerThreads[0]?.nativeThreadRef?.nativeId;
+        assert.isDefined(sessionId);
+        const models = yield* assistantModels(sessionId!);
+        assert.equal(models.at(-1), SWITCHED_MODEL);
+        assert.notEqual(models[0], SWITCHED_MODEL);
+
+        // Supervised threads are refused, not run with every tool allowed.
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("command:opencode2-live:runtime-mode"),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* send(threadId, "supervised", "Create a file named supervised.txt containing NO.");
+        const refused = yield* waitFor(
+          threadId,
+          (projection) => projection.runs.length === 4 && settled(projection),
+        );
+        assert.equal(refused.runs.at(-1)?.status, "failed");
+        assert.isFalse(yield* fs.exists(path.join(ROOT, "work", "supervised.txt")));
+      }).pipe(Effect.provide(Layer.merge(liveLayer, NodeServices.layer)), Effect.scoped),
     360_000,
   );
 });

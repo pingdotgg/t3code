@@ -18,17 +18,44 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 const OPENCODE_USERNAME = "opencode";
 
 /**
+ * A session's execution ended, but this build could not decode the event (a
+ * newer server added a field or a value). Only the type and session survive,
+ * so the turn still ends.
+ */
+export interface OpenCode2UnreadableTerminal {
+  readonly type: "unreadable.execution.ended";
+  readonly executionType: string;
+  readonly sessionID: string;
+}
+
+/** The server sent nothing, not even a heartbeat, for `SILENT_STREAM_TIMEOUT`. */
+export class OpenCode2SilentStreamError extends Schema.TaggedError<OpenCode2SilentStreamError>()(
+  "OpenCode2SilentStreamError",
+  {},
+) {
+  override get message(): string {
+    return "The OpenCode server stopped sending events.";
+  }
+}
+
+export type OpenCode2StreamEvent = OpenCodeEvent | OpenCode2UnreadableTerminal;
+
+/**
  * An OpenCode 2 client plus a forward-compatible `/api/event` stream. The
  * client's own `event.subscribe` fails the whole stream on the first event a
  * newer server adds, so `events` decodes each frame on its own and skips the
- * ones this build does not know. `events` succeeds once the server accepted
- * the subscription: the stream is volatile, so callers subscribe before they
- * start work whose events they need.
+ * ones this build does not know, except an execution's end, which it keeps as
+ * an {@link OpenCode2UnreadableTerminal}. `events` succeeds once the server
+ * accepted the subscription: the stream is volatile, so callers subscribe
+ * before they start work whose events they need.
  */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
   readonly events: Effect.Effect<
-    Stream.Stream<OpenCodeEvent, HttpClientError.HttpClientError | Sse.Retry | Sse.SseError>,
+    Stream.Stream<
+      OpenCode2StreamEvent,
+      HttpClientError.HttpClientError | Sse.Retry | Sse.SseError | OpenCode2SilentStreamError
+    >,
     HttpClientError.HttpClientError
   >;
 }
@@ -44,27 +71,62 @@ export class OpenCode2Client extends Context.Service<
   }
 >()("t3/provider/opencode2/OpenCode2Client") {}
 
-const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
-const unknownEventType = (data: string) => {
-  const match = /"type"\s*:\s*"([^"]{1,80})"/.exec(data);
-  return match?.[1] ?? "<unreadable>";
-};
+/**
+ * OpenCode writes a `: heartbeat` comment every 10 to 15 seconds, so this long
+ * without a single byte means the server is stuck, not idle.
+ */
+const SILENT_STREAM_TIMEOUT = "45 seconds";
 
-/** Subscribes to `/api/event`, then streams every frame this build can decode. */
+const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
+// Just enough of an event to route it, for frames the full schema rejects.
+const decodeEnvelope = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.String,
+      data: Schema.optional(Schema.Struct({ sessionID: Schema.optional(Schema.String) })),
+    }),
+  ),
+);
+
+const undecodable = (data: string) =>
+  Effect.gen(function* () {
+    const envelope = decodeEnvelope(data);
+    const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
+    const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
+    if (type.startsWith("session.execution.") && sessionID !== undefined) {
+      yield* Effect.logWarning(
+        "Ended an OpenCode execution from an event this build cannot decode.",
+        {
+          type,
+        },
+      );
+      return Result.succeed<OpenCode2StreamEvent>({
+        type: "unreadable.execution.ended",
+        executionType: type,
+        sessionID,
+      });
+    }
+    yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
+    return Result.failVoid;
+  });
+
+/** Subscribes to `/api/event`, then streams every frame this build can route. */
 const readEvents = (httpClient: HttpClient.HttpClient) =>
   httpClient.get("/api/event", { headers: { accept: "text/event-stream" } }).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.map((response) =>
       response.stream.pipe(
+        Stream.timeoutOrElse({
+          duration: SILENT_STREAM_TIMEOUT,
+          orElse: () => Stream.fail(new OpenCode2SilentStreamError()),
+        }),
         Stream.decodeText,
         Stream.pipeThroughChannel(Sse.decode()),
         Stream.filterMapEffect((frame) => {
           const decoded = decodeEvent(frame.data);
           return Result.isSuccess(decoded)
-            ? Effect.succeed(Result.succeed(decoded.success))
-            : Effect.logDebug("Skipped an OpenCode event this build cannot decode.", {
-                type: unknownEventType(frame.data),
-              }).pipe(Effect.as(Result.failVoid));
+            ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success))
+            : undecodable(frame.data);
         }),
       ),
     ),

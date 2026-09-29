@@ -790,7 +790,10 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           "./opencode2_tool_call/opencode_transcript.ndjson",
           import.meta.url,
         ),
-        modelSelection: { ...OPENCODE2_MODEL_SELECTION, model: "opencode/big-pickle" },
+        modelSelection: {
+          instanceId: OPENCODE2_MODEL_SELECTION.instanceId,
+          model: "opencode/big-pickle",
+        },
         assertOutput: assertOpenCode2ToolCallOutput,
       },
     ],
@@ -805,7 +808,10 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           "./opencode2_interrupt/opencode_transcript.ndjson",
           import.meta.url,
         ),
-        modelSelection: { ...OPENCODE2_MODEL_SELECTION, model: "opencode/big-pickle" },
+        modelSelection: {
+          instanceId: OPENCODE2_MODEL_SELECTION.instanceId,
+          model: "opencode/big-pickle",
+        },
         assertOutput: assertOpenCode2InterruptOutput,
       },
     ],

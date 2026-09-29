@@ -8,6 +8,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderInstanceId,
   ProviderReplayEntry,
+  ProviderSessionId,
+  ThreadId,
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -66,7 +68,21 @@ const operationOf = (
     if (method === "GET" && rest === "") return { type: "session.get", input };
     if (method === "POST" && rest === "/prompt") return { type: "session.prompt", input };
     if (method === "POST" && rest === "/interrupt") return { type: "session.interrupt", input };
+    if (method === "POST" && rest === "/model") return { type: "session.switchModel", input };
+    if (method === "POST" && rest === "/move") return { type: "session.move", input };
     if (method === "GET" && rest === "/message") return { type: "message.list", input };
+    const form = /^\/form\/([^/]+)(\/reply)?$/.exec(rest);
+    if (form !== null) {
+      const formInput = { ...input, formID: form[1] };
+      if (method === "POST" && form[2] !== undefined) {
+        return { type: "session.form.reply", input: formInput };
+      }
+      if (method === "DELETE") return { type: "session.form.cancel", input: formInput };
+    }
+    const permission = /^\/permission\/([^/]+)\/reply$/.exec(rest);
+    if (method === "POST" && permission !== null) {
+      return { type: "permission.reply", input: { ...input, requestID: permission[1] } };
+    }
   }
   return { type: `${method} ${path}`, input: { ...query, body } };
 };
@@ -101,7 +117,15 @@ const replayHttpClient = (controller: OpenCodeReplayController) =>
           return new Response(body, { headers: { "content-type": "text/event-stream" } });
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
+        // `{ status, body }` replays an error status and `"<hang>"` never answers.
         const body = await controller.response(operation.type);
+        if (body === "<hang>") return new Promise<Response>(() => {});
+        if (typeof body === "object" && body !== null && "status" in body && "body" in body) {
+          return new Response(encodeJson(body.body), {
+            status: Number(body.status),
+            headers: { "content-type": "application/json" },
+          });
+        }
         return body === null
           ? new Response(null, { status: 204 })
           : new Response(encodeJson(body), { headers: { "content-type": "application/json" } });
@@ -113,35 +137,75 @@ const replayHttpClient = (controller: OpenCodeReplayController) =>
     }).pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response))),
   );
 
+/** The 2.x adapter over a replayed server, checking at scope close that the transcript ran out. */
+const makeReplayAdapter = (
+  transcript: ProviderReplayTranscript,
+  options?: { external?: boolean },
+) =>
+  Effect.gen(function* () {
+    const controller = new OpenCodeReplayController(transcript);
+    yield* Effect.addFinalizer(() => Effect.sync(() => controller.assertComplete()));
+    const opencode = yield* OpenCode2Client.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, replayHttpClient(controller)),
+    );
+    const connection = {
+      ...(yield* opencode.connect({ baseUrl: BASE_URL, password: "replay" })),
+      url: BASE_URL,
+      version: transcript.version,
+      external: options?.external ?? false,
+    };
+    return makeOpenCode2Adapter({
+      instanceId: ProviderInstanceId.make("opencode"),
+      server: { withConnection: (use) => use(connection) },
+      idAllocator: yield* IdAllocatorV2,
+      serverConfig: yield* ServerConfig,
+    });
+  });
+
+const replayServerConfig = (scenario: string) =>
+  Layer.effect(ServerConfig, makeReplayServerConfig(scenario).pipe(Effect.orDie)).pipe(
+    Layer.provide(NodeServices.layer),
+  );
+
 function makeRegistryLayer(transcript: OpenCode2ReplayTranscript) {
-  const controller = new OpenCodeReplayController(transcript);
-  const serverConfigLayer = Layer.effect(
-    ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
   return Layer.unwrap(
-    Effect.gen(function* () {
-      yield* Effect.addFinalizer(() => Effect.sync(() => controller.assertComplete()));
-      const opencode = yield* OpenCode2Client.make.pipe(
-        Effect.provideService(HttpClient.HttpClient, replayHttpClient(controller)),
-      );
-      const connection = {
-        ...(yield* opencode.connect({ baseUrl: BASE_URL, password: "replay" })),
-        url: BASE_URL,
-        version: transcript.version,
-        external: true,
-      };
-      return makeLayer([
-        makeOpenCode2Adapter({
-          instanceId: ProviderInstanceId.make("opencode"),
-          server: { withConnection: (use) => use(connection) },
-          idAllocator: yield* IdAllocatorV2,
-          serverConfig: yield* ServerConfig,
-        }),
-      ]);
-    }),
-  ).pipe(Layer.provide(Layer.mergeAll(serverConfigLayer, idAllocatorLayer)));
+    makeReplayAdapter(transcript, { external: true }).pipe(
+      Effect.map((adapter) => makeLayer([adapter])),
+    ),
+  ).pipe(Layer.provide(Layer.mergeAll(replayServerConfig(transcript.scenario), idAllocatorLayer)));
 }
+
+/**
+ * An open 2.x session runtime whose server answers from `entries`, for
+ * adapter-level tests of failures a real server cannot produce on demand.
+ */
+export const openCode2ReplayRuntime = (
+  entries: ReadonlyArray<ProviderReplayEntry>,
+  options?: { readonly external?: boolean },
+) =>
+  Effect.gen(function* () {
+    const adapter = yield* makeReplayAdapter(
+      {
+        provider: OPENCODE_PROVIDER,
+        protocol: OPENCODE2_HTTP_PROTOCOL,
+        version: "2.0.18",
+        scenario: "opencode2_adapter",
+        entries,
+      },
+      options,
+    );
+    return yield* adapter.openSession({
+      threadId: ThreadId.make("thread:opencode2-adapter"),
+      providerSessionId: ProviderSessionId.make("provider-session:opencode2-adapter"),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("opencode"),
+        model: "opencode/big-pickle",
+      },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+    });
+  }).pipe(
+    Effect.provide(Layer.mergeAll(replayServerConfig("opencode2_adapter"), idAllocatorLayer)),
+  );
 
 export const OpenCode2OrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   OpenCode2ReplayTranscript,

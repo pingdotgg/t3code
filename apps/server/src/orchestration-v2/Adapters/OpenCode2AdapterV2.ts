@@ -5,8 +5,9 @@
  *
  * A turn is one `session.prompt`; the session's next `session.execution.*`
  * terminal ends it. Approvals, questions, subagents, steering, fork, rollback
- * and compaction arrive in later layers, so the capabilities below say no and
- * a permission or form that still reaches a session is refused so the turn
+ * and compaction arrive in later layers: sessions run in Full access only,
+ * with the `subagent` tool denied, the capabilities below say no, and a
+ * permission or form that still reaches a session is answered so the turn
  * cannot hang.
  *
  * @module orchestration-v2/Adapters/OpenCode2AdapterV2
@@ -30,6 +31,7 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
+import * as P from "effect/Predicate";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -37,6 +39,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { ServerConfig } from "../../config.ts";
+import type { OpenCode2StreamEvent } from "../../provider/opencode2/OpenCode2Client.ts";
 import type {
   OpenCode2Connection,
   OpenCode2Server,
@@ -46,6 +49,8 @@ import {
   type OpenCodeRuntimeError,
 } from "../../provider/opencodeRuntime.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import type { IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -189,6 +194,8 @@ interface ThreadState {
   providerThread: OrchestrationV2ProviderThread;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
+  /** What the native session runs now, so a changed selection is switched before prompting. */
+  model: ReturnType<typeof modelRef>;
 }
 
 const protocolError = (detail: string) =>
@@ -210,6 +217,39 @@ const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
 
 const textOf = (content: ReadonlyArray<{ readonly type: string; readonly text?: string }>) =>
   content.flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n");
+
+/**
+ * Every tool runs without asking, except `subagent`: a background child wakes
+ * its parent in a turn T3 would not see. Both go when approvals and subagents land.
+ */
+const SESSION_PERMISSIONS = [
+  { action: "*", resource: "*", effect: "allow" },
+  { action: "subagent", resource: "*", effect: "deny" },
+] as const;
+
+export const OPENCODE_2_FULL_ACCESS_ONLY =
+  "OpenCode 2 needs Full access for now; approvals come in a later update. Switch this thread's mode to continue.";
+
+// Questions are answered, not cancelled: a cancelled form ends the execution as a user stop.
+const QUESTION_REPLY = "Questions aren't supported by this OpenCode integration yet.";
+
+const INTERRUPT_TIMEOUT = "10 seconds";
+
+/** The model OpenCode should run for a `provider/model` slug and its reasoning variant. */
+const modelRef = (selection: ProviderAdapterV2TurnInput["modelSelection"]) => {
+  const parsed = parseOpenCodeModelSlug(selection.model);
+  if (parsed === null) return undefined;
+  const variant = getModelSelectionStringOptionValue(selection, "variant");
+  return Model.Ref.make({
+    providerID: Provider.ID.make(parsed.providerID),
+    id: Model.ID.make(parsed.modelID),
+    ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+  });
+};
+const sameModel = (left: ReturnType<typeof modelRef>, right: ReturnType<typeof modelRef>) =>
+  left?.providerID === right?.providerID &&
+  left?.id === right?.id &&
+  (left?.variant ?? "default") === (right?.variant ?? "default");
 
 export interface OpenCode2AdapterOptions {
   readonly instanceId: ProviderInstanceId;
@@ -489,7 +529,7 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
       );
     });
 
-    // Refuses a permission or form so a session never waits on a reply T3 cannot give yet.
+    // Answers a permission or form T3 cannot show yet, so a session never waits on it.
     const refuseRequest = (event: EventOf<"permission.asked"> | EventOf<"form.created">) => {
       const refusal =
         event.type === "permission.asked"
@@ -502,14 +542,38 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
               })
               .pipe(Effect.ignore({ log: true }))
           : client.session.form
-              .cancel({ sessionID: event.data.form.sessionID, formID: event.data.form.id })
+              .reply({
+                sessionID: event.data.form.sessionID,
+                formID: event.data.form.id,
+                answer: Object.fromEntries(
+                  event.data.form.fields.map((field) => [field.key, QUESTION_REPLY]),
+                ),
+              })
               .pipe(Effect.ignore({ log: true }));
-      return Effect.logWarning("Refused an OpenCode request this runtime cannot answer yet.", {
+      return Effect.logWarning("Answered an OpenCode request this runtime cannot show yet.", {
         type: event.type,
       }).pipe(Effect.andThen(refusal));
     };
 
-    const handleEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
+    const handleEvent = Effect.fnUntraced(function* (event: OpenCode2StreamEvent) {
+      if (event.type === "unreadable.execution.ended") {
+        const state = threads.get(event.sessionID);
+        if (state === undefined) return;
+        return yield* finishTurn(
+          state,
+          event.executionType === "session.execution.succeeded"
+            ? { status: state.active?.interrupted === true ? "interrupted" : "completed" }
+            : event.executionType === "session.execution.interrupted"
+              ? { status: "interrupted" }
+              : {
+                  status: "failed",
+                  failure: makeProviderFailure({
+                    message: "OpenCode ended the turn with an error this version cannot read.",
+                    class: "provider_error",
+                  }),
+                },
+        );
+      }
       if (event.type === "permission.asked" && threads.has(event.data.sessionID)) {
         return yield* refuseRequest(event);
       }
@@ -583,11 +647,11 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
     // The stream is the only terminal signal, so a lost stream settles every
     // running turn and breaks the session: T3 reopens it for the next turn.
     const failAll = Effect.fnUntraced(function* (message: string) {
-      yield* setSessionStatus("error", message);
       for (const state of threads.values()) {
         const failure = makeProviderFailure({ message, class: "transport_error" });
         yield* finishTurn(state, { status: "failed", failure }, "broken");
       }
+      yield* setSessionStatus("error", message);
       yield* Queue.end(events);
     });
     // Subscribed before any session or prompt call, so no event of theirs is missed.
@@ -601,13 +665,38 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
       Effect.forkScoped,
     );
 
-    const register = (providerThread: OrchestrationV2ProviderThread, sessionId: string) => {
+    // A server T3 did not start keeps running after T3 stops, so stop the turns
+    // it would otherwise finish unseen. A spawned server stops with its owner.
+    if (connection.external) {
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(
+          [...threads].filter(([, state]) => state.active !== undefined),
+          ([sessionId]) =>
+            client.session
+              .interrupt({ sessionID: Session.ID.make(sessionId) })
+              .pipe(Effect.timeout("1 second"), Effect.ignore({ log: true })),
+          { concurrency: 8, discard: true },
+        ),
+      );
+    }
+
+    const register = (
+      providerThread: OrchestrationV2ProviderThread,
+      sessionId: string,
+      model: ReturnType<typeof modelRef>,
+    ) => {
       const existing = threads.get(sessionId);
       if (existing !== undefined) {
         existing.providerThread = providerThread;
+        existing.model = model;
         return providerThread;
       }
-      threads.set(sessionId, { providerThread, providerTurns: new Map(), active: undefined });
+      threads.set(sessionId, {
+        providerThread,
+        providerTurns: new Map(),
+        active: undefined,
+        model,
+      });
       return providerThread;
     };
 
@@ -639,21 +728,13 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
               providerThread: threadInput.existingProviderThread,
             });
           }
-          const parsed = parseOpenCodeModelSlug(threadInput.modelSelection.model);
+          const model = modelRef(threadInput.modelSelection);
           const created = yield* client.session.create({
             location: Location.PublicRef.make({
               directory: AbsolutePath.make(threadInput.runtimePolicy.cwd ?? serverConfig.cwd),
             }),
-            ...(parsed === null
-              ? {}
-              : {
-                  model: Model.Ref.make({
-                    providerID: Provider.ID.make(parsed.providerID),
-                    id: Model.ID.make(parsed.modelID),
-                  }),
-                }),
-            // Full access is the only mode the snapshot offers until layer 5.
-            permissions: [{ action: "*", resource: "*", effect: "allow" }],
+            ...(model === undefined ? {} : { model }),
+            permissions: SESSION_PERMISSIONS,
           });
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
@@ -675,7 +756,7 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
             status: "idle",
             updatedAt: createdAt,
           };
-          return register(providerThread, created.id);
+          return register(providerThread, created.id, created.model);
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -691,7 +772,15 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
           const sessionId = yield* sessionIdOf(threadInput.providerThread);
           // 1.x session ids survive the upgrade; a server without this session
           // fails the resume, so T3 recreates the thread with a handoff.
-          yield* client.session.get({ sessionID: Session.ID.make(sessionId) });
+          const native = yield* client.session.get({ sessionID: Session.ID.make(sessionId) });
+          // A thread moved to another worktree takes its session with it.
+          const cwd = threadInput.runtimePolicy?.cwd;
+          if (cwd != null && native.location.directory !== cwd) {
+            yield* client.session.move({
+              sessionID: Session.ID.make(sessionId),
+              directory: AbsolutePath.make(cwd),
+            });
+          }
           return register(
             {
               ...threadInput.providerThread,
@@ -700,6 +789,7 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
               updatedAt: yield* DateTime.now,
             },
             sessionId,
+            native.model,
           );
         }).pipe(
           Effect.mapError(
@@ -714,6 +804,10 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
         ),
       startTurn: (turnInput) =>
         Effect.gen(function* () {
+          // Sessions allow every tool, so any other mode would silently run as Full access.
+          if (turnInput.runtimePolicy.runtimeMode !== "full-access") {
+            return yield* protocolError(OPENCODE_2_FULL_ACCESS_ONLY);
+          }
           const sessionId = yield* sessionIdOf(turnInput.providerThread);
           const state = threads.get(sessionId);
           if (state === undefined) {
@@ -721,6 +815,13 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
           }
           if (state.active !== undefined) {
             return yield* protocolError(`OpenCode session ${sessionId} already has an active turn`);
+          }
+          // A selection changed since the last turn applies now; OpenCode keeps
+          // the session's model otherwise.
+          const model = modelRef(turnInput.modelSelection);
+          if (model !== undefined && !sameModel(model, state.model)) {
+            yield* client.session.switchModel({ sessionID: Session.ID.make(sessionId), model });
+            state.model = model;
           }
           const startedAt = yield* DateTime.now;
           const nativeTurnId = `${sessionId}:attempt:${turnInput.attemptId}`;
@@ -763,6 +864,24 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
           yield* client.session
             .prompt({ sessionID: Session.ID.make(sessionId), text: prompt(turnInput) })
             .pipe(
+              Effect.catchIf(
+                (cause) => P.isTagged(cause, "SessionNotFoundError"),
+                // Deleted outside T3: the thread is broken, and forgetting it makes
+                // the next turn resume, fail, and recreate it with a handoff.
+                () =>
+                  finishTurn(
+                    state,
+                    {
+                      status: "failed",
+                      failure: makeProviderFailure({
+                        message:
+                          "The OpenCode session no longer exists. Send the message again to continue in a new session.",
+                        class: "provider_error",
+                      }),
+                    },
+                    "broken",
+                  ).pipe(Effect.andThen(Effect.sync(() => threads.delete(sessionId)))),
+              ),
               Effect.tapError((cause) =>
                 state.active === turn
                   ? finishTurn(state, {
@@ -794,11 +913,33 @@ export function makeOpenCode2Adapter(options: OpenCode2AdapterOptions): Provider
       interruptTurn: (interruptInput) =>
         Effect.gen(function* () {
           const sessionId = yield* sessionIdOf(interruptInput.providerThread);
-          const turn = threads.get(sessionId)?.active;
-          if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) return;
+          const state = threads.get(sessionId);
+          const turn = state?.active;
+          if (
+            state === undefined ||
+            turn === undefined ||
+            turn.providerTurn.id !== interruptInput.providerTurnId
+          ) {
+            return;
+          }
+          // The session answers with `session.execution.interrupted`, which ends
+          // the turn. A server that does not answer in time is stuck, so the turn
+          // ends here instead of waiting on it.
           turn.interrupted = true;
-          // The session answers with `session.execution.interrupted`, which ends the turn.
-          yield* client.session.interrupt({ sessionID: Session.ID.make(sessionId) });
+          const reply = yield* client.session
+            .interrupt({ sessionID: Session.ID.make(sessionId) })
+            .pipe(Effect.timeoutOption(INTERRUPT_TIMEOUT));
+          if (reply._tag === "None") {
+            return yield* finishTurn(state, { status: "interrupted" });
+          }
+          // Nothing was running. Unless the execution already ended (its event
+          // is on the way), the turn is still open and nothing stopped.
+          if (!reply.value.interrupted && state.active === turn) {
+            turn.interrupted = false;
+            return yield* protocolError(
+              `OpenCode session ${sessionId} had nothing running to stop`,
+            );
+          }
         }).pipe(
           Effect.mapError(
             (cause) =>

@@ -344,10 +344,11 @@ export const OPENCODE_MODEL_SELECTION = {
   options: [{ id: "agent", value: "build" }],
 } satisfies ModelSelection;
 
-/** The free OpenCode Zen model the OpenCode 2 spike recorded its reasoning run with. */
+/** The free OpenCode Zen model and variant the OpenCode 2 spike recorded its reasoning run with. */
 export const OPENCODE2_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "opencode/space-bunny-free",
+  options: [{ id: "variant", value: "high" }],
 } satisfies ModelSelection;
 
 /** Pi fixtures are recorded against this pinned OpenRouter model; the slug is `provider/model`. */
