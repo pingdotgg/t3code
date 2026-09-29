@@ -104,7 +104,7 @@ export function useSideChatActions(parentRef: ScopedThreadRef | null) {
       const parent = projection.thread;
       const childThreadId = newThreadId();
       const childRef = scopeThreadRef(parentRef.environmentId, childThreadId);
-      const title = `${parent.title} side chat`;
+      const title = "Side chat";
       const created =
         input.history === "with"
           ? await forkFromRun({
@@ -186,9 +186,10 @@ export function useSideChatActions(parentRef: ScopedThreadRef | null) {
 
   const lastHistoryChoice = useSideChatPreferenceStore((state) => state.history);
   const rememberHistoryChoice = useSideChatPreferenceStore((state) => state.setHistory);
-  // The remembered choice, unless this thread cannot share history right now.
-  const defaultHistory: SideChatHistoryChoice =
-    lastHistoryChoice === "with" && historyAvailability.available ? "with" : "without";
+  // `/side`, the keybinding, the palette and selection Ask are questions about
+  // this thread, so they share its history whenever they can. Only the `+`
+  // button remembers a "without history" pick.
+  const defaultHistory: SideChatHistoryChoice = historyAvailability.available ? "with" : "without";
 
   /**
    * `/side`, its keybinding and the palette entry: a question starts a side

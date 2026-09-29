@@ -1,9 +1,10 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ChevronDownIcon, MessageCircleIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useSideChatActions } from "../../hooks/useSideChatActions";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { isPreviousSideChat, sideChatActivity, sideChatsOf } from "../../sideChat.logic";
 import type { SideChatHistoryChoice } from "../../sideChatStore";
 import { useThreadShells } from "../../state/entities";
@@ -55,8 +56,21 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
       setStarting(false);
     }
   };
-  const running = sideChats.filter((thread) => !isPreviousSideChat(thread));
-  const previous = sideChats.filter(isPreviousSideChat);
+  // A side chat open in the panel stays listed as active even when idle, so the
+  // tab you are looking at is never hidden under a collapsed "Previous".
+  const openSurfaces = useRightPanelStore(
+    (state) => state.byThreadKey[scopedThreadKey(parentRef)]?.surfaces,
+  );
+  const openIds = new Set(
+    (openSurfaces ?? []).flatMap((surface) => (surface.kind === "aside" ? [surface.threadId] : [])),
+  );
+  const runningCount = sideChats.filter((thread) => !isPreviousSideChat(thread)).length;
+  const active = sideChats.filter(
+    (thread) => !isPreviousSideChat(thread) || openIds.has(thread.id),
+  );
+  const previous = sideChats.filter(
+    (thread) => isPreviousSideChat(thread) && !openIds.has(thread.id),
+  );
 
   const renderRow = (thread: (typeof sideChats)[number]) => {
     const activity = sideChatActivity(thread);
@@ -66,6 +80,7 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
           size="sm"
           variant="ghost"
           part="row"
+          className="w-auto min-w-0 flex-1"
           onClick={() => actions.open(thread.id)}
         >
           <ThreadRelationshipIcon
@@ -89,6 +104,7 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
                 size="icon-xs"
                 variant="ghost"
                 part="icon"
+                className="shrink-0"
                 aria-label={`Discard ${thread.title}`}
                 onClick={() => void actions.discard(thread.id)}
               />
@@ -105,7 +121,7 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
   return (
     <ThreadDetailsSection
       headingId="thread-details-side-chats-heading"
-      title={running.length > 0 ? `Side chats · ${running.length} running` : "Side chats"}
+      title={runningCount > 0 ? `Side chats · ${runningCount} running` : "Side chats"}
       data-side-chats-section
       actions={
         <div className="flex items-center">
@@ -169,9 +185,9 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
           Ask a question on the side without interrupting this thread.
         </p>
       ) : null}
-      {running.length > 0 ? (
-        <ul aria-label="Running side chats" className="m-0 list-none p-0">
-          {running.map(renderRow)}
+      {active.length > 0 ? (
+        <ul aria-label="Open side chats" className="m-0 list-none p-0">
+          {active.map(renderRow)}
         </ul>
       ) : null}
       {previous.length > 0 ? (
