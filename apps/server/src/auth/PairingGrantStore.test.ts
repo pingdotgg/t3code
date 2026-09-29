@@ -3,7 +3,6 @@ import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
@@ -47,10 +46,10 @@ const makePairingGrantStoreTestLayer = (
         AuthPairingLinks.AuthPairingLinkRepository,
         AuthPairingLinks.AuthPairingLinkRepository.of({
           create: () => Effect.void,
-          consumeAvailable: () => Effect.succeed(Option.none()),
+          consumeAvailable: () => Effect.succeedNone,
           listActive: () => Effect.succeed([]),
           revoke: () => Effect.succeed(false),
-          getByCredential: () => Effect.succeed(Option.none()),
+          getByCredential: () => Effect.succeedNone,
           ...overrides,
         }),
       ),

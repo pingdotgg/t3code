@@ -1,14 +1,15 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-24T00:11:29Z",
+  "updatedAt": "2026-09-28T20:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=0.129.0",
+      "recommendedRange": ">=0.156.0",
       "ranges": [
-        { "range": ">=0.129.0", "status": "supported" },
-        { "range": "<0.129.0", "status": "broken" }
+        { "range": ">=0.156.0", "status": "supported" },
+        { "range": ">=0.149.0 <0.156.0", "status": "unsupported" },
+        { "range": "<0.149.0", "status": "broken" }
       ]
     },
     {
@@ -63,7 +64,7 @@
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5"],
+    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-5"],
     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
@@ -657,6 +658,15 @@
           "badge": "new",
           "profile": "opus-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
+        },
+        {
+          "slug": "claude-sonnet-5-5",
+          "name": "Claude Sonnet 5.5",
+          "aliases": ["sonnet-5.5", "claude-sonnet-5.5"],
+          "status": "current",
+          "badge": "new",
+          "profile": "sonnet-5",
+          "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
         },
         {
           "slug": "claude-fable-5-1",
