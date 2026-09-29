@@ -124,7 +124,6 @@ import {
   toggleSidebarScopeSelection,
   useUiStateStore,
 } from "../uiStateStore";
-import { Checkbox } from "./ui/checkbox";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -277,6 +276,23 @@ const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   created_at: "Creation time",
   updated_at: "Last finished",
 };
+
+function SidebarScopeCheckbox({ checked }: { checked: boolean }) {
+  return (
+    <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
+      <span
+        className={cn(
+          "flex size-3.5 items-center justify-center rounded-xs border",
+          checked
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-muted-foreground/40",
+        )}
+      >
+        {checked ? <CheckIcon className="size-2.5" strokeWidth={3} /> : null}
+      </span>
+    </span>
+  );
+}
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
@@ -4590,18 +4606,13 @@ export default function Sidebar() {
                     <ComboboxList>
                       {(item: (typeof environmentScopeItems)[number]) => (
                         <ComboboxItem key={item.value} hideIndicator value={item}>
-                          <span className="pointer-events-none flex shrink-0">
-                            <Checkbox
-                              render={<span />}
-                              checked={
-                                item.value === "all"
-                                  ? environmentScopeIds.length === 0
-                                  : environmentScopeIds.includes(item.value)
-                              }
-                              tabIndex={-1}
-                              aria-hidden="true"
-                            />
-                          </span>
+                          <SidebarScopeCheckbox
+                            checked={
+                              item.value === "all"
+                                ? environmentScopeIds.length === 0
+                                : environmentScopeIds.includes(item.value)
+                            }
+                          />
                           {item.machine === null ? (
                             <ServerIcon className="size-4 shrink-0" />
                           ) : (
@@ -4723,18 +4734,13 @@ export default function Sidebar() {
                               if (project) handleProjectSettings(event, project);
                             }}
                           >
-                            <span className="pointer-events-none flex shrink-0">
-                              <Checkbox
-                                render={<span />}
-                                checked={
-                                  item.value === "all"
-                                    ? projectScopeKeys.length === 0
-                                    : projectScopeKeys.includes(item.value)
-                                }
-                                tabIndex={-1}
-                                aria-hidden="true"
-                              />
-                            </span>
+                            <SidebarScopeCheckbox
+                              checked={
+                                item.value === "all"
+                                  ? projectScopeKeys.length === 0
+                                  : projectScopeKeys.includes(item.value)
+                              }
+                            />
                             {project ? (
                               <ProjectFavicon project={project} className="size-4 shrink-0" />
                             ) : (
