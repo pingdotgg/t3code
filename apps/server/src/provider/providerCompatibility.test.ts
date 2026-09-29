@@ -83,6 +83,55 @@ describe("provider compatibility", () => {
     }
   });
 
+  it("marks OpenCode 2 broken and recommends a supported downgrade", () => {
+    const bundled = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility;
+    const opencode = ProviderDriverKind.make("opencode");
+    for (const t3CodeVersion of ["0.0.42", "0.0.43-nightly.20260924.2200"]) {
+      for (const [version, expected] of [
+        ["1.14.18", "broken"],
+        ["1.14.19", "supported"],
+        ["1.99.0", "supported"],
+        ["2.0.0", "broken"],
+        ["2.0.3", "broken"],
+        ["v2.0.3", "broken"],
+        ["3.0.0", "broken"],
+      ] as const) {
+        assert.strictEqual(
+          resolveProviderCompatibility(bundled, opencode, version, t3CodeVersion)?.status,
+          expected,
+          `T3 Code ${t3CodeVersion} with OpenCode ${version}`,
+        );
+      }
+    }
+    const broken = resolveProviderCompatibility(bundled, opencode, "2.0.3");
+    assert.strictEqual(broken?.recommendedRange, ">=1.14.19 <2.0.0");
+    assert.strictEqual(broken?.recommendedVersion, "1.14.19");
+    assert.include(broken?.message ?? "", "Use 1.14.19.");
+    assert.strictEqual(
+      resolveProviderCompatibility(bundled, opencode, broken?.recommendedVersion ?? null)?.status,
+      "supported",
+    );
+    const snapshot = applyProviderCompatibility(
+      {
+        ...provider,
+        driver: opencode,
+        version: "1.14.19",
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "1.14.19",
+          latestVersion: "2.0.3",
+          canUpdate: true,
+          updateCommand: "npm install -g opencode-ai@latest",
+          checkedAt: provider.checkedAt,
+          message: null,
+        },
+      },
+      bundled,
+      [],
+    );
+    assert.strictEqual(snapshot.compatibilityAdvisory?.latestVersionStatus, "broken");
+  });
+
   it("compares Cursor build dates without treating semver prereleases as stable", () => {
     const cursor = ProviderDriverKind.make("cursor");
     const cursorPolicy: ProviderCompatibilityPolicy = {
