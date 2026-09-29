@@ -47,22 +47,28 @@ glab auth login
 
 ### Bitbucket
 
-Set an access token in the server's environment:
+Open **Settings → Source Control**, expand **Bitbucket**, and choose how to sign in:
+
+- **Access token**: a token created for one repository, project, or workspace. It can only reach
+  what it was created for.
+- **API token**: an Atlassian API token for your account, used with your account email. It can
+  reach every repository you can. Give it read/write access to repositories and pull requests, plus
+  user read access (`read:user:bitbucket`).
+
+Choose **Save**; the change applies right away, and replaces any credential saved with the other
+method. Credentials are saved on the environment's server, so select a remote environment to
+configure it. Saved tokens can't be viewed again; enter a new one to replace it, or choose
+**Remove**.
+
+If no credentials are saved, T3 Code falls back to these variables in the server's environment.
+Restart the server after changing them:
 
 ```bash
 export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
-```
-
-Or use an Atlassian account email and API token with read/write access to repositories and pull
-requests, plus user read access (`read:user:bitbucket`):
-
-```bash
+# or
 export T3CODE_BITBUCKET_EMAIL="you@example.com"
 export T3CODE_BITBUCKET_API_TOKEN="your-token"
 ```
-
-The access token takes precedence if both are configured. Restart the server after changing these
-variables.
 
 ### Azure DevOps
 
@@ -142,7 +148,8 @@ does not show its diff, so marks are made and read on web and desktop.
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
-  confirm the running server received the environment variables.
+  check the credentials saved in Settings → Source Control, or confirm the running server received
+  the environment variables.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
