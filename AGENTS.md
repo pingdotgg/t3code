@@ -166,5 +166,6 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 ## Additional tips
 
+- Prefer installing software from Homebrew when the Homebrew package is otherwise equivalent to the official direct download.
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
