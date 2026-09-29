@@ -63,6 +63,7 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+    readonly closeLocalForwards: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
 
@@ -152,6 +153,9 @@ export const make = Effect.gen(function* () {
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
       Effect.provide(runtimeContext),
+    ),
+    closeLocalForwards: manager.closeLocalForwards.pipe(
+      Effect.withSpan("desktop.ssh.closeLocalForwards"),
     ),
   });
 });
