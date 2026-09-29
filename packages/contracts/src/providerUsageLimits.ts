@@ -51,6 +51,13 @@ export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** Provider-owned usage settings when quota windows are not available to the client. */
+  externalUsage: Schema.optional(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      url: TrimmedNonEmptyString,
+    }),
+  ),
   unavailable: Schema.optional(
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),
