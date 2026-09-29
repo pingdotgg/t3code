@@ -23,6 +23,8 @@ import {
   BrowserImportSource,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
+  DesktopPreviewManagedSessionInputSchema,
+  DesktopPreviewManagedSessionResultSchema,
   PreviewAnnotationPayloadSchema,
   PreviewAutomationSnapshot,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -34,6 +36,7 @@ import * as NodeURL from "node:url";
 
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
+import { bootstrapManagedPreviewSession } from "../../preview/ManagedPreviewSession.ts";
 import * as PreviewBroadcast from "../../preview/PreviewBroadcast.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
@@ -279,6 +282,32 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const bootstrapManagedPreviewSessionIpc = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_MANAGED_SESSION_CHANNEL,
+  payload: DesktopPreviewManagedSessionInputSchema,
+  result: DesktopPreviewManagedSessionResultSchema,
+  handler: Effect.fn("desktop.ipc.preview.bootstrapManagedPreviewSession")(function* ({
+    environmentId,
+    profileId,
+    targetUrl,
+    managedTargetAuth,
+    timeoutMs,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
+    const browserSession = yield* manager.getBrowserSession(scope, persistent, namespace);
+    return yield* Effect.promise(() =>
+      bootstrapManagedPreviewSession(browserSession, {
+        environmentId,
+        ...(profileId === undefined ? {} : { profileId }),
+        targetUrl,
+        managedTargetAuth,
+        timeoutMs,
+      }),
+    );
+  }),
+});
+
 export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_LIST_BROWSER_IMPORT_SOURCES_CHANNEL,
   payload: Schema.Void,
@@ -467,6 +496,7 @@ export const methods = [
   clearCookies,
   clearCache,
   getPreviewConfig,
+  bootstrapManagedPreviewSessionIpc,
   setAnnotationTheme,
   pickElement,
   cancelPickElement,

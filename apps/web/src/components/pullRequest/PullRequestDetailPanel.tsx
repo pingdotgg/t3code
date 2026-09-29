@@ -13,13 +13,11 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
-  ArrowDownUpIcon,
   ArrowLeftIcon,
   ChevronDownIcon,
   CircleDotIcon,
   ExternalLinkIcon,
   FileDiffIcon,
-  GitCommitHorizontalIcon,
   GitMergeIcon,
   MessageSquareIcon,
   RefreshCwIcon,
@@ -63,8 +61,8 @@ import {
 } from "~/lib/openPullRequestLink";
 import { presentCollaborativeAcceptanceStatus } from "./collaborativeAcceptancePresentation";
 import type { ThreadShell } from "~/types";
-import { PullRequestBody } from "./PullRequestBody";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
+import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import { PullRequestMediaDialog, type PullRequestMediaPreview } from "./PullRequestMediaDialog";
 
 import {
@@ -79,19 +77,19 @@ import {
   PullRequestStateGlyph,
   pullRequestActionLabel,
   pullRequestCheckSummaryLabel,
-  pullRequestReviewVerdictPresentation,
   pullRequestStatePresentation,
   resolvePullRequestMergeSelection,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 
-type DetailTab = "summary" | "timeline" | "code";
+type DetailTab = "summary" | "timeline" | "code" | "collaboration";
 type PullRequestDetailView = PullRequestDetail & PullRequestActivity;
 
 const TABS: readonly { readonly value: DetailTab; readonly label: string }[] = [
   { value: "summary", label: "Summary" },
   { value: "timeline", label: "Timeline" },
   { value: "code", label: "Code" },
+  { value: "collaboration", label: "Agent Collaboration" },
 ];
 
 const LazyPullRequestCodeTab = lazy(() =>
@@ -102,27 +100,6 @@ const LazyPullRequestCodeTab = lazy(() =>
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The request could not be completed.";
-}
-
-/**
- * The verdict a submitted review carries. Delegates wording and tone to the
- * shared presentation helper so every surface reads a verdict the same way.
- */
-function ReviewVerdictBadge({ reviewState }: { readonly reviewState: string | null }) {
-  const presentation = pullRequestReviewVerdictPresentation(reviewState);
-  if (presentation.variant === null) {
-    return (
-      <span className="rounded bg-accent px-1 py-px font-medium text-foreground">
-        {presentation.label}
-      </span>
-    );
-  }
-
-  return (
-    <Badge size="sm" variant={presentation.variant}>
-      {presentation.label}
-    </Badge>
-  );
 }
 
 function isAvailableAction(detail: PullRequestDetailView, action: PullRequestAction): boolean {
@@ -434,8 +411,11 @@ function ReviewComposer({
     });
 
   return (
-    <section className="rounded-lg border border-border/70 bg-card p-3">
-      <div className="flex items-center gap-2 text-sm font-medium">
+    <details
+      className="group border-t border-border/60 px-6 py-3"
+      open={comments.length > 0 || summary.length > 0 || undefined}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
         <MessageSquareIcon className="size-4" />
         Review
         {comments.length > 0 ? (
@@ -443,7 +423,8 @@ function ReviewComposer({
             {comments.length} pending line {comments.length === 1 ? "comment" : "comments"}
           </span>
         ) : null}
-      </div>
+        <ChevronDownIcon className="ml-auto size-3 text-muted-foreground group-open:rotate-180" />
+      </summary>
       {comments.length > 0 ? (
         <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
           {comments.map((comment) => (
@@ -489,7 +470,7 @@ function ReviewComposer({
             </Button>
           ))}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -513,7 +494,11 @@ export function PullRequestDetailPanel({
       ? listEntry
       : null;
   const detailQuery = useQuery(pullRequestDetailQueryOptions({ environmentId, reference }));
-  const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+  const [timelineNewestFirst, setTimelineNewestFirst] = useState(true);
+  const [expandedTimelineGroups, setExpandedTimelineGroups] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const monitorQuery = useQuery(
     pullRequestMonitorStatusQueryOptions({
       environmentId,
@@ -546,6 +531,13 @@ export function PullRequestDetailPanel({
     null,
   );
   const detail = toDetailView(detailQuery.data, activityQuery.data);
+  if (
+    selectedCommit !== null &&
+    activityQuery.isSuccess &&
+    !activityQuery.data.commits.some((commit) => commit.oid === selectedCommit)
+  ) {
+    setSelectedCommit(null);
+  }
   const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
   const owner = useMemo(
     () => findPullRequestBrowserThread(threads, environmentId, reference),
@@ -788,24 +780,6 @@ export function PullRequestDetailPanel({
         }),
       );
   };
-  const timelineItems = useMemo(
-    () =>
-      [
-        ...(detail?.comments ?? []).map((comment) => ({ kind: "comment" as const, item: comment })),
-        ...(detail?.commits ?? []).map((commit) => ({ kind: "commit" as const, item: commit })),
-      ].toSorted((left, right) => {
-        const leftDate = left.kind === "comment" ? left.item.createdAt : left.item.committedDate;
-        const rightDate =
-          right.kind === "comment" ? right.item.createdAt : right.item.committedDate;
-        return leftDate.localeCompare(rightDate);
-      }),
-    [detail?.comments, detail?.commits],
-  );
-  const orderedTimelineItems = useMemo(
-    () => (timelineOrder === "newest" ? timelineItems.toReversed() : timelineItems),
-    [timelineItems, timelineOrder],
-  );
-
   if (detailQuery.isPending) {
     return (
       <div className="flex h-full flex-col gap-4 p-4" aria-busy="true">
@@ -886,7 +860,6 @@ export function PullRequestDetailPanel({
       : checkSummary.pending > 0
         ? "text-muted-foreground"
         : "text-emerald-500";
-  const timelineCount = timelineItems.length;
   const tabs = detail.capabilities.diff ? TABS : TABS.filter((tab) => tab.value !== "code");
   const activeTab = tabs.some((item) => item.value === tab) ? tab : "summary";
   const reviewKey = pullRequestReviewKey(reference);
@@ -927,17 +900,16 @@ export function PullRequestDetailPanel({
         });
       }}
     >
-      <header className="shrink-0 border-b border-border/60 bg-chat-background">
-        <div className="flex h-8 items-center gap-2 border-b border-border/60 px-4 text-xs text-muted-foreground">
+      <header className="relative shrink-0 border-b border-border/60 bg-chat-background">
+        <div className="flex items-center gap-2 px-6 pt-4 text-sm text-muted-foreground">
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            <span className="min-w-0 truncate font-medium">{detail.repository}</span>
-            <span aria-hidden>/</span>
             <a
               className={cn(
                 "inline-flex shrink-0 items-center gap-0.5 font-medium underline-offset-2 hover:underline",
                 statePresentation.className,
               )}
               href={detail.url}
+              title={statePresentation.label}
               onClick={(event) => {
                 if (
                   event.button !== 0 ||
@@ -979,55 +951,17 @@ export function PullRequestDetailPanel({
             <XIcon className="size-3.5" />
           </Button>
         </div>
-        <div className="min-w-0 px-4 pt-3 pb-4">
+        <div className="min-w-0 px-6 pt-2">
           <div className="flex min-w-0 items-start gap-2">
-            <span
-              className={cn(
-                "mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
-                statePresentation.className,
-              )}
+            <h1
+              className="min-w-0 flex-1 text-xl leading-7 font-normal wrap-anywhere"
+              title={detail.title}
             >
-              <PullRequestStateGlyph
-                isDraft={detail.isDraft}
-                mergeability={detail.mergeability}
-                state={detail.state}
-                className="size-3"
-              />
-              {statePresentation.label}
-            </span>
-            <h1 className="min-w-0 flex-1 text-base leading-5 font-semibold" title={detail.title}>
               {detail.title}
             </h1>
           </div>
-          <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            <PullRequestActorLabel actor={detail.author} className="min-w-0 font-medium" />
-            <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-            <span className="shrink-0">updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
-            <a
-              className="ml-auto inline-flex shrink-0 items-center gap-1 hover:text-foreground"
-              href={detail.url}
-              onClick={(event) => {
-                if (
-                  event.button !== 0 ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-                event.preventDefault();
-                void openLink(detail.url).catch((error: unknown) => {
-                  toastManager.add({
-                    type: "error",
-                    title: "Could not open pull request",
-                    description: errorMessage(error),
-                  });
-                });
-              }}
-            >
-              GitHub <ExternalLinkIcon className="size-3" />
-            </a>
+          <div className="mt-2 flex min-w-0 items-center gap-2 text-sm">
+            <PullRequestActorLabel actor={detail.author} className="min-w-0 [&_img]:size-5" />
           </div>
           <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px]">
@@ -1059,100 +993,104 @@ export function PullRequestDetailPanel({
           </div>
         </div>
         {availableActions.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-1 px-4 pb-3">
-            {availableActions
-              .filter((action) => action !== "close")
-              .map((action) => (
-                <span className="inline-flex items-center gap-1" key={action}>
-                  {action === "merge" && showMergeMethodPicker && selectedMergeMethod ? (
-                    <select
-                      aria-label="Merge method"
-                      className="h-6 rounded border border-input bg-background px-1 text-xs"
+          <details className="mx-6 mt-3 text-xs">
+            <summary className="w-fit cursor-pointer text-muted-foreground">
+              Pull request actions
+            </summary>
+            <div className="flex flex-wrap items-center gap-1 py-2">
+              {availableActions
+                .filter((action) => action !== "close")
+                .map((action) => (
+                  <span className="inline-flex items-center gap-1" key={action}>
+                    {action === "merge" && showMergeMethodPicker && selectedMergeMethod ? (
+                      <select
+                        aria-label="Merge method"
+                        className="h-6 rounded border border-input bg-background px-1 text-xs"
+                        disabled={actionPending !== null}
+                        value={selectedMergeMethod}
+                        onChange={(event) =>
+                          setMergeMethodOverride(
+                            event.currentTarget.value as PullRequestMergeMethod,
+                          )
+                        }
+                      >
+                        {allowedMergeMethods.map((method) => (
+                          <option key={method} value={method}>
+                            {method === "merge"
+                              ? "Merge"
+                              : method === "squash"
+                                ? "Squash"
+                                : "Rebase"}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    <Button
+                      aria-label={pullRequestActionLabel(action)}
                       disabled={actionPending !== null}
-                      value={selectedMergeMethod}
-                      onChange={(event) =>
-                        setMergeMethodOverride(event.currentTarget.value as PullRequestMergeMethod)
+                      size="xs"
+                      title={
+                        action === "merge"
+                          ? `Merge ${detail.headBranch} into ${detail.baseBranch}${
+                              selectedMergeMethod ? ` via ${selectedMergeMethod}` : ""
+                            }`
+                          : pullRequestActionLabel(action)
+                      }
+                      variant={action === "merge" ? "default" : "outline"}
+                      onClick={() =>
+                        void performAction(
+                          action,
+                          action === "merge" && selectedMergeMethod
+                            ? { mergeMethod: selectedMergeMethod }
+                            : undefined,
+                        )
                       }
                     >
-                      {allowedMergeMethods.map((method) => (
-                        <option key={method} value={method}>
-                          {method === "merge" ? "Merge" : method === "squash" ? "Squash" : "Rebase"}
-                        </option>
-                      ))}
-                    </select>
-                  ) : null}
-                  <Button
-                    aria-label={pullRequestActionLabel(action)}
-                    disabled={actionPending !== null}
-                    size="xs"
-                    title={
-                      action === "merge"
-                        ? `Merge ${detail.headBranch} into ${detail.baseBranch}${
-                            selectedMergeMethod ? ` via ${selectedMergeMethod}` : ""
-                          }`
-                        : pullRequestActionLabel(action)
-                    }
-                    variant={action === "merge" ? "default" : "outline"}
-                    onClick={() =>
-                      void performAction(
-                        action,
-                        action === "merge" && selectedMergeMethod
-                          ? { mergeMethod: selectedMergeMethod }
-                          : undefined,
-                      )
-                    }
-                  >
-                    {actionPending === action ? (
-                      "Working…"
-                    ) : action === "merge" ? (
-                      <>
-                        <GitMergeIcon className="size-3" />
-                        Merge
-                      </>
-                    ) : (
-                      pullRequestActionLabel(action)
-                    )}
-                  </Button>
-                </span>
-              ))}
-            {availableActions.includes("close") ? (
-              <Button
-                aria-label="Close pull request"
-                className="ml-auto"
-                disabled={actionPending !== null}
-                size="xs"
-                title="Close this pull request without merging"
-                variant="destructive"
-                onClick={() => void performAction("close")}
-              >
-                {actionPending === "close" ? "Working…" : "Close"}
-              </Button>
-            ) : null}
-          </div>
+                      {actionPending === action ? (
+                        "Working…"
+                      ) : action === "merge" ? (
+                        <>
+                          <GitMergeIcon className="size-3" />
+                          Merge
+                        </>
+                      ) : (
+                        pullRequestActionLabel(action)
+                      )}
+                    </Button>
+                  </span>
+                ))}
+              {availableActions.includes("close") ? (
+                <Button
+                  aria-label="Close pull request"
+                  className="ml-auto"
+                  disabled={actionPending !== null}
+                  size="xs"
+                  title="Close this pull request without merging"
+                  variant="destructive"
+                  onClick={() => void performAction("close")}
+                >
+                  {actionPending === "close" ? "Working…" : "Close"}
+                </Button>
+              ) : null}
+            </div>
+          </details>
         ) : null}
         <div
           aria-label="Pull request detail tabs"
-          className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
+          className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-6 pt-4 pb-6"
           role="tablist"
         >
-          <div className="flex min-w-0 items-center gap-0.5 rounded-md border border-border/70 bg-muted/20 p-0.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             {tabs.map((item) => {
-              const count =
-                item.value === "timeline"
-                  ? timelineCount
-                  : item.value === "code"
-                    ? detail.changedFiles
-                    : null;
               const selected = activeTab === item.value;
               return (
                 <button
                   aria-controls={selected ? "pr-panel" : undefined}
                   aria-selected={selected}
+                  tabIndex={selected ? 0 : -1}
                   className={cn(
-                    "rounded px-2 py-1 text-[11px] font-medium tabular-nums transition-colors",
-                    selected
-                      ? "bg-background text-foreground shadow-xs/5"
-                      : "text-muted-foreground hover:text-foreground",
+                    "rounded-sm py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                    selected ? "text-foreground" : "text-muted-foreground hover:text-foreground",
                   )}
                   id={`pr-tab-${item.value}`}
                   key={item.value}
@@ -1161,58 +1099,56 @@ export function PullRequestDetailPanel({
                   onFocus={item.value === "code" ? prefetchCodeDiff : undefined}
                   onPointerEnter={item.value === "code" ? prefetchCodeDiff : undefined}
                   onClick={() => setTab(item.value)}
+                  onKeyDown={(event) => {
+                    const direction =
+                      event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                    if (!direction && event.key !== "Home" && event.key !== "End") return;
+                    event.preventDefault();
+                    const index = tabs.findIndex((entry) => entry.value === item.value);
+                    const next =
+                      tabs[
+                        event.key === "Home"
+                          ? 0
+                          : event.key === "End"
+                            ? tabs.length - 1
+                            : (index + direction + tabs.length) % tabs.length
+                      ];
+                    if (!next) return;
+                    setTab(next.value);
+                    event.currentTarget
+                      .closest('[role="tablist"]')
+                      ?.querySelector<HTMLButtonElement>(`#pr-tab-${next.value}`)
+                      ?.focus();
+                  }}
                 >
                   {item.label}
-                  {count !== null ? (
-                    <span className="ml-1 text-muted-foreground">{count}</span>
-                  ) : null}
                 </button>
               );
             })}
           </div>
-          {activeTab === "summary" ? (
-            <span
-              className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
-              title={pullRequestCheckSummaryLabel(checkSummary)}
-            >
-              <CircleDotIcon className={cn("size-3.5", checkIndicatorClassName)} />
-              {detail.checks.length > 0
-                ? `${checkSummary.passing}/${detail.checks.length} checks`
-                : "No checks"}
-            </span>
-          ) : null}
-          {activeTab === "timeline" ? (
-            <div className="ml-auto flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <MessageSquareIcon className="size-3" />
-                {detail.commentCount}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <GitCommitHorizontalIcon className="size-3" />
-                {detail.commits.length}
-              </span>
-              <Button
-                aria-label={
-                  timelineOrder === "newest"
-                    ? "Show oldest activity first"
-                    : "Show newest activity first"
-                }
-                className="h-6 px-1.5 text-[10px] text-muted-foreground"
-                size="xs"
-                variant="ghost"
-                onClick={() =>
-                  setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
-                }
-              >
-                <ArrowDownUpIcon className="size-3" />
-                {timelineOrder === "newest" ? "Newest" : "Oldest"}
-              </Button>
-            </div>
-          ) : null}
+          <span
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 font-mono text-xs text-muted-foreground"
+            title={pullRequestCheckSummaryLabel(checkSummary)}
+          >
+            <CircleDotIcon className={cn("size-3.5", checkIndicatorClassName)} />
+            {detail.checks.length > 0
+              ? `${checkSummary.passing} of ${detail.checks.length} passing`
+              : "No checks"}
+          </span>
         </div>
-        {activeTab === "summary" ? (
+      </header>
+      <div
+        aria-labelledby={`pr-tab-${activeTab}`}
+        className={cn(
+          "min-h-0 flex-1 overscroll-contain",
+          activeTab === "code" ? "flex flex-col overflow-hidden" : "overflow-y-auto",
+        )}
+        id="pr-panel"
+        role="tabpanel"
+      >
+        {activeTab === "collaboration" ? (
           monitorQuery.data ? (
-            <div className="border-t border-border/70 px-4 py-3">
+            <div className="px-6 py-4">
               <PullRequestCollaborationStatusCard
                 acceptance={acceptanceStatus}
                 controls={acceptanceControls}
@@ -1225,18 +1161,16 @@ export function PullRequestDetailPanel({
               />
             </div>
           ) : monitorQuery.isError ? (
-            <div className="border-t border-border/70 px-4 py-3 text-xs text-muted-foreground">
+            <div role="alert" className="px-6 py-4 text-xs text-muted-foreground">
               Collaboration status unavailable: {errorMessage(monitorQuery.error)}
+              <Button size="xs" variant="outline" onClick={() => void monitorQuery.refetch()}>
+                Retry
+              </Button>
             </div>
-          ) : null
+          ) : (
+            <p className="p-6 text-sm text-muted-foreground">Loading collaboration…</p>
+          )
         ) : null}
-      </header>
-      <div
-        aria-labelledby={`pr-tab-${activeTab}`}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
-        id="pr-panel"
-        role="tabpanel"
-      >
         {activeTab === "summary" ? (
           <PullRequestSummaryTab
             activityError={activityQuery.error ? errorMessage(activityQuery.error) : null}
@@ -1256,120 +1190,56 @@ export function PullRequestDetailPanel({
           />
         ) : null}
         {activeTab === "timeline" ? (
-          <div className="relative px-4 pt-4 pb-5">
-            {activityQuery.isPending ? (
-              <p className="text-xs text-muted-foreground">Loading timeline…</p>
-            ) : null}
-            {activityQuery.error ? (
-              <div className="mb-4 flex items-center gap-3 rounded-lg border border-destructive/40 p-3 text-sm text-destructive">
-                <span className="min-w-0 flex-1">
-                  Could not load the full timeline: {errorMessage(activityQuery.error)}
-                </span>
-                <Button size="xs" variant="outline" onClick={() => void activityQuery.refetch()}>
-                  Retry
-                </Button>
-              </div>
-            ) : null}
-            {orderedTimelineItems.length > 0 ? (
-              <div className="relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-3 before:w-px before:bg-border/70">
-                {orderedTimelineItems.map((entry) =>
-                  entry.kind === "commit" ? (
-                    <article className="relative flex gap-3" key={entry.item.oid}>
-                      <span className="relative z-10 mt-1 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground">
-                        <GitCommitHorizontalIcon className="size-3.5" />
-                      </span>
-                      <div className="min-w-0 flex-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                          <span className="font-mono text-foreground">
-                            {entry.item.oid.slice(0, 7)}
-                          </span>
-                          <span>committed</span>
-                          <span>{formatRelativeTimeLabel(entry.item.committedDate)}</span>
-                        </div>
-                        <p className="mt-1.5 text-sm">{entry.item.messageHeadline}</p>
-                      </div>
-                    </article>
-                  ) : (
-                    <article
-                      className="relative flex gap-3 [content-visibility:auto]"
-                      key={entry.item.id}
-                    >
-                      <span className="relative z-10 mt-1 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background">
-                        <PullRequestActorLabel
-                          actor={entry.item.author}
-                          className="size-6 justify-center"
-                          labelClassName="sr-only"
-                          tooltip={false}
-                        />
-                      </span>
-                      <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-border/60 bg-background">
-                        <div className="flex flex-wrap items-center gap-2 bg-muted/25 px-3 py-2 text-[11px] text-muted-foreground">
-                          <PullRequestActorLabel
-                            actor={entry.item.author}
-                            className="font-medium text-foreground"
-                          />
-                          <span>{formatRelativeTimeLabel(entry.item.createdAt)}</span>
-                          {entry.item.kind === "review-comment" && entry.item.path ? (
-                            <span className="min-w-0 truncate font-mono text-[10px]">
-                              {entry.item.path}
-                              {typeof entry.item.reviewState === "string" && entry.item.reviewState
-                                ? ` · ${entry.item.reviewState}`
-                                : ""}
-                            </span>
-                          ) : null}
-                          {entry.item.kind === "review" ? (
-                            <ReviewVerdictBadge reviewState={entry.item.reviewState} />
-                          ) : null}
-                        </div>
-                        <div className="px-3 py-3 text-sm">
-                          <PullRequestBody
-                            body={entry.item.body}
-                            cwd={detail.workspaceRoot}
-                            onPreview={setMediaPreview}
-                          />
-                        </div>
-                      </div>
-                    </article>
-                  ),
-                )}
-              </div>
-            ) : null}
-            {detail.commentsTruncated ? (
-              <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-xs text-muted-foreground">
-                GitHub returned the most recent {detail.comments.length} of {detail.commentCount}{" "}
-                items; some line-level review comments may be missing.
-              </p>
-            ) : null}
-            {orderedTimelineItems.length === 0 ? (
-              <p className="py-4 text-sm text-muted-foreground">No conversation yet.</p>
-            ) : null}
+          <>
+            <PullRequestTimelineTab
+              newestFirst={timelineNewestFirst}
+              setNewestFirst={setTimelineNewestFirst}
+              expandedGroups={expandedTimelineGroups}
+              setExpandedGroups={setExpandedTimelineGroups}
+              detail={detail}
+              pending={activityQuery.isPending}
+              error={activityQuery.error ? errorMessage(activityQuery.error) : null}
+              onRetry={() => void activityQuery.refetch()}
+              onOpenCommit={(commit) => {
+                setSelectedCommit(commit);
+                setTab("code");
+              }}
+              onPreviewMedia={setMediaPreview}
+            />
             {detail.capabilities.comment && detail.viewerPermissions.comment ? (
-              <div className="sticky bottom-0 -mx-4 mt-4 border-t border-border bg-chat-background px-4 pt-3 pb-1">
-                <CommentComposer
-                  value={comment}
-                  disabled={postComment.isPending}
-                  onChange={setComment}
-                  onSubmit={submitComment}
-                />
-              </div>
+              <details className="mx-6 my-4" open={comment.length > 0 || undefined}>
+                <summary className="cursor-pointer text-sm text-muted-foreground">
+                  Leave a comment
+                </summary>
+                <div className="pt-3">
+                  <CommentComposer
+                    value={comment}
+                    disabled={postComment.isPending}
+                    onChange={setComment}
+                    onSubmit={submitComment}
+                  />
+                </div>
+              </details>
             ) : null}
-          </div>
+          </>
         ) : null}
         {activeTab === "code" ? (
           <Suspense fallback={<p className="p-4 text-sm text-muted-foreground">Loading code…</p>}>
             <LazyPullRequestCodeTab
               detail={detail}
               environmentId={environmentId}
-              key={reviewKey}
+              key={`${reviewKey}:${selectedCommit ?? "all"}`}
               reference={reference}
+              commit={selectedCommit}
+              onCommitChange={setSelectedCommit}
               onReply={sendReply}
               onResolve={toggleResolved}
               pending={reply.isPending || resolve.isPending}
             />
           </Suspense>
         ) : null}
-        {activeTab !== "summary" ? (
-          <div className="p-4 pt-0">
+        {activeTab === "timeline" || activeTab === "code" ? (
+          <div className="max-h-[45%] shrink-0 overflow-y-auto">
             <ReviewComposer
               detail={detail}
               reference={reference}

@@ -12,6 +12,9 @@ import {
   ChildWaitCondition,
   CommandId,
   PendingPullRequestAssociation,
+  EventId,
+  DelegationAuditAppendInput,
+  DelegationAuditBeginInput,
   EditorId,
   KeybindingRule,
   MessageId,
@@ -2571,6 +2574,9 @@ const chatNewCommand = Command.make("new", {
     Flag.withDescription("Authenticated source thread for a nested cross-thread message."),
   ),
   crossThreadCapability: Flag.string("cross-thread-capability").pipe(Flag.optional),
+  auditOperationId: Flag.string("audit-operation-id").pipe(Flag.optional),
+  auditAttemptId: Flag.string("audit-attempt-id").pipe(Flag.optional),
+  auditInitiatingMessageId: Flag.string("audit-initiating-message-id").pipe(Flag.optional),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDefault(false),
     Flag.withDescription("Validate creation without creating a thread or starting a turn."),
@@ -2579,8 +2585,43 @@ const chatNewCommand = Command.make("new", {
 }).pipe(
   Command.withDescription("Create a chat and send the first prompt."),
   Command.withHandler((flags) =>
-    withLiveOrchestrationClient(flags, ({ getSnapshot, dispatch }) =>
-      Effect.gen(function* () {
+    withLiveRpcClient(flags, (rpc) => {
+      const getSnapshot = rpc[ORCHESTRATION_WS_METHODS.getShellSnapshot]({});
+      const dispatch = (command: ClientOrchestrationCommand) =>
+        rpc[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
+      const auditSourceThreadId = delegationAuditSourceThreadId(flags.crossThreadSource);
+      const appendAudit = (
+        operationId: string,
+        attemptId: string,
+        eventType:
+          | "thread.create.requested"
+          | "thread.created"
+          | "thread.create.failed"
+          | "turn.start.requested"
+          | "turn.start.accepted"
+          | "thread.delete.requested"
+          | "thread.deletion.accepted"
+          | "thread.deletion.failed",
+        childThreadId: ThreadId,
+        payload: unknown,
+      ) => {
+        if (auditSourceThreadId === null) {
+          return Effect.fail(new Error("Delegation audit events require --cross-thread-source."));
+        }
+        return rpc[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]({
+          eventId: EventId.make(
+            `delegation-audit:${operationId}:${attemptId}:${crypto.randomUUID()}`,
+          ),
+          operationId,
+          sourceThreadId: auditSourceThreadId,
+          attemptId,
+          eventType,
+          childThreadId,
+          payload,
+          occurredAt: new Date().toISOString(),
+        });
+      };
+      return Effect.gen(function* () {
         const snapshot = yield* getSnapshot;
         const project = yield* findProjectForCli(snapshot, flags.project);
         const parent = Option.isSome(flags.parent)
@@ -2636,65 +2677,142 @@ const chatNewCommand = Command.make("new", {
         const threadId = ThreadId.make(requestedThreadId ?? crypto.randomUUID());
         const firstMessageId = MessageId.make(requestedAssignmentId ?? crypto.randomUUID());
         const createdAt = new Date().toISOString();
+        const auditContext =
+          Option.isSome(flags.auditOperationId) &&
+          Option.isSome(flags.auditAttemptId) &&
+          Option.isSome(flags.auditInitiatingMessageId)
+            ? {
+                operationId: flags.auditOperationId.value,
+                attemptId: flags.auditAttemptId.value,
+                initiatingMessageId: flags.auditInitiatingMessageId.value
+                  ? MessageId.make(flags.auditInitiatingMessageId.value)
+                  : null,
+              }
+            : null;
+        const appendAuditIfEnabled = (
+          eventType:
+            | "thread.create.requested"
+            | "thread.created"
+            | "turn.start.requested"
+            | "turn.start.accepted"
+            | "thread.delete.requested"
+            | "thread.deletion.accepted",
+          payload: unknown,
+        ) =>
+          auditContext === null
+            ? Effect.void
+            : appendAudit(
+                auditContext.operationId,
+                auditContext.attemptId,
+                eventType,
+                threadId,
+                payload,
+              );
         const outcome = yield* runNestedThreadCreationPhases(
           threadId,
           Option.isSome(flags.worktree),
           {
-            createThread: dispatch({
-              type: "thread.create",
-              commandId: CommandId.make(crypto.randomUUID()),
-              threadId,
-              projectId: project.id,
-              parentThreadId: parent?.id ?? null,
-              ...(Option.isSome(flags.followUp)
-                ? {
-                    delegation: {
-                      assignmentId: firstMessageId,
-                      dispatchId: crypto.randomUUID(),
-                      followUp: flags.followUp.value,
-                      completedAt: null,
-                    },
-                  }
-                : {}),
-              ...(parentWait !== undefined ? { parentWait } : {}),
-              title: flags.title,
-              modelSelection,
-              runtimeMode: flags.runtimeMode,
-              interactionMode: flags.interactionMode,
-              branch: Option.getOrUndefined(flags.branch) ?? null,
-              worktreePath: Option.getOrUndefined(flags.worktree) ?? null,
-              createdAt,
-            }).pipe(Effect.map((result) => result.threadUrl ?? null)),
-            startTurn: dispatch({
-              type: "thread.turn.start",
-              commandId: CommandId.make(crypto.randomUUID()),
-              threadId,
-              message: {
-                messageId: firstMessageId,
-                role: "user",
-                text: flags.prompt,
-                attachments: [],
-              },
-              ...(Option.isSome(flags.crossThreadSource)
-                ? {
-                    crossThreadSourceThreadId: ThreadId.make(flags.crossThreadSource.value),
-                    crossThreadDispatchCapability: Option.getOrUndefined(
-                      flags.crossThreadCapability,
-                    ),
-                  }
-                : {}),
-              modelSelection,
-              titleSeed: flags.title,
-              runtimeMode: flags.runtimeMode,
-              interactionMode: flags.interactionMode,
-              createdAt,
-            }).pipe(Effect.asVoid),
-            cleanupThread: dispatch({
-              type: "thread.delete",
-              commandId: CommandId.make(crypto.randomUUID()),
-              threadId,
-              cleanupWorktree: Option.isSome(flags.worktree),
-            }).pipe(Effect.asVoid),
+            createThread: Effect.gen(function* () {
+              yield* appendAuditIfEnabled("thread.create.requested", {
+                childThreadId: threadId,
+                projectId: project.id,
+                title: flags.title,
+                worktreePath: Option.getOrUndefined(flags.worktree) ?? null,
+                branch: Option.getOrUndefined(flags.branch) ?? null,
+              });
+              const result = yield* dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(crypto.randomUUID()),
+                threadId,
+                projectId: project.id,
+                parentThreadId: parent?.id ?? null,
+                ...(Option.isSome(flags.followUp)
+                  ? {
+                      delegation: {
+                        assignmentId: firstMessageId,
+                        dispatchId: crypto.randomUUID(),
+                        followUp: flags.followUp.value,
+                        completedAt: null,
+                      },
+                    }
+                  : {}),
+                ...(parentWait !== undefined ? { parentWait } : {}),
+                title: flags.title,
+                modelSelection,
+                runtimeMode: flags.runtimeMode,
+                interactionMode: flags.interactionMode,
+                branch: Option.getOrUndefined(flags.branch) ?? null,
+                worktreePath: Option.getOrUndefined(flags.worktree) ?? null,
+                createdAt,
+              });
+              yield* appendAuditIfEnabled("thread.created", {
+                childThreadId: threadId,
+                projectId: project.id,
+                title: flags.title,
+                worktreePath: Option.getOrUndefined(flags.worktree) ?? null,
+                branch: Option.getOrUndefined(flags.branch) ?? null,
+              });
+              return result.threadUrl ?? null;
+            }),
+            startTurn: Effect.gen(function* () {
+              yield* appendAuditIfEnabled("turn.start.requested", {
+                childThreadId: threadId,
+                initiatingMessageId: firstMessageId,
+              });
+              yield* dispatch({
+                type: "thread.turn.start",
+                commandId: CommandId.make(crypto.randomUUID()),
+                threadId,
+                message: {
+                  messageId: firstMessageId,
+                  role: "user",
+                  text: flags.prompt,
+                  attachments: [],
+                },
+                ...(Option.isSome(flags.crossThreadSource)
+                  ? {
+                      crossThreadSourceThreadId: ThreadId.make(flags.crossThreadSource.value),
+                      crossThreadDispatchCapability: Option.getOrUndefined(
+                        flags.crossThreadCapability,
+                      ),
+                    }
+                  : {}),
+                ...(auditContext !== null
+                  ? {
+                      delegationAudit: {
+                        operationId: auditContext.operationId,
+                        attemptId: auditContext.attemptId,
+                        initiatingMessageId: auditContext.initiatingMessageId,
+                      },
+                    }
+                  : {}),
+                modelSelection,
+                titleSeed: flags.title,
+                runtimeMode: flags.runtimeMode,
+                interactionMode: flags.interactionMode,
+                createdAt,
+              });
+              yield* appendAuditIfEnabled("turn.start.accepted", {
+                childThreadId: threadId,
+                initiatingMessageId: firstMessageId,
+              });
+            }),
+            cleanupThread: Effect.gen(function* () {
+              yield* appendAuditIfEnabled("thread.delete.requested", {
+                childThreadId: threadId,
+                cleanupWorktree: Option.isSome(flags.worktree),
+              });
+              yield* dispatch({
+                type: "thread.delete",
+                commandId: CommandId.make(crypto.randomUUID()),
+                threadId,
+                cleanupWorktree: Option.isSome(flags.worktree),
+              });
+              yield* appendAuditIfEnabled("thread.deletion.accepted", {
+                childThreadId: threadId,
+                cleanupWorktree: Option.isSome(flags.worktree),
+              });
+            }),
             classifyFailure: (error) => ({
               definitive: isDefinitiveCommandRejectionError(error),
               message: error instanceof Error ? error.message : String(error),
@@ -2709,46 +2827,46 @@ const chatNewCommand = Command.make("new", {
         if (outcome.status !== "created") {
           return yield* Effect.fail(new NestedThreadCreationCliError(outcome));
         }
-      }),
-    ).pipe(
-      Effect.catchCause((cause) =>
-        Option.match(Cause.findErrorOption(cause), {
-          onNone: () => {
-            const outcome = {
-              status: "failed",
-              threadId: null,
-              threadUrl: null,
-              retryable: false,
-              workspaceCreated: false,
-              cleanupPerformed: false,
-              errorCode: "CLI_EXECUTION_FAILED",
-              message: Cause.pretty(cause),
-            } satisfies NestedThreadCreationOutcome;
-            return printJson(outcome).pipe(
-              Effect.andThen(Effect.fail(new NestedThreadCreationCliError(outcome))),
-            );
-          },
-          onSome: (error) => {
-            if (error instanceof NestedThreadCreationCliError) {
-              return Effect.failCause(cause);
-            }
-            const outcome = {
-              status: "failed",
-              threadId: null,
-              threadUrl: null,
-              retryable: false,
-              workspaceCreated: false,
-              cleanupPerformed: false,
-              errorCode: "VALIDATION_FAILED",
-              message: error instanceof Error ? error.message : String(error),
-            } satisfies NestedThreadCreationOutcome;
-            return printJson(outcome).pipe(
-              Effect.andThen(Effect.fail(new NestedThreadCreationCliError(outcome))),
-            );
-          },
-        }),
-      ),
-    ),
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Option.match(Cause.findErrorOption(cause), {
+            onNone: () => {
+              const outcome = {
+                status: "failed",
+                threadId: null,
+                threadUrl: null,
+                retryable: false,
+                workspaceCreated: false,
+                cleanupPerformed: false,
+                errorCode: "CLI_EXECUTION_FAILED",
+                message: Cause.pretty(cause),
+              } satisfies NestedThreadCreationOutcome;
+              return printJson(outcome).pipe(
+                Effect.andThen(Effect.fail(new NestedThreadCreationCliError(outcome))),
+              );
+            },
+            onSome: (error) => {
+              if (error instanceof NestedThreadCreationCliError) {
+                return Effect.failCause(cause);
+              }
+              const outcome = {
+                status: "failed",
+                threadId: null,
+                threadUrl: null,
+                retryable: false,
+                workspaceCreated: false,
+                cleanupPerformed: false,
+                errorCode: "VALIDATION_FAILED",
+                message: error instanceof Error ? error.message : String(error),
+              } satisfies NestedThreadCreationOutcome;
+              return printJson(outcome).pipe(
+                Effect.andThen(Effect.fail(new NestedThreadCreationCliError(outcome))),
+              );
+            },
+          }),
+        ),
+      );
+    }),
   ),
 );
 
@@ -2998,6 +3116,190 @@ const chatQueueCommand = Command.make("queue").pipe(
   ]),
 );
 
+const delegationAuditSourceThreadId = (source: Option.Option<string>): ThreadId | null => {
+  const value = Option.getOrUndefined(source);
+  return value === undefined ? null : ThreadId.make(value);
+};
+
+const delegationAuditReadFilters = (
+  turn: Option.Option<string>,
+  beforeSequence: Option.Option<number>,
+  toolCallId: Option.Option<string> = Option.none(),
+) => ({
+  ...(Option.isSome(turn) ? { turnId: TurnId.make(turn.value) } : {}),
+  ...(Option.isSome(toolCallId) ? { toolCallId: toolCallId.value } : {}),
+  beforeSequence: Option.getOrNull(beforeSequence),
+});
+
+const chatAuditCommand = Command.make("audit", {
+  ...liveTargetFlags,
+  thread: Argument.string("thread").pipe(Argument.withDescription("Source thread id or title.")),
+  turn: Flag.string("turn").pipe(Flag.optional),
+  toolCallId: Flag.string("tool-call").pipe(Flag.optional),
+  beforeSequence: Flag.integer("before-sequence").pipe(Flag.optional),
+  limit: Flag.integer("limit").pipe(Flag.withDefault(50)),
+}).pipe(
+  Command.withDescription("List durable delegation audit evidence for a thread."),
+  Command.withHandler((flags) =>
+    withLiveRpcClient(flags, (client) =>
+      Effect.gen(function* () {
+        const shell = yield* client[ORCHESTRATION_WS_METHODS.getShellSnapshot]({});
+        const thread = yield* findThreadForCli(shell, flags.thread);
+        const page = yield* client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+          sourceThreadId: thread.id,
+          ...delegationAuditReadFilters(flags.turn, flags.beforeSequence, flags.toolCallId),
+          limit: flags.limit,
+        });
+        yield* printJson(page);
+      }),
+    ),
+  ),
+);
+
+const auditShowCommand = Command.make("show", {
+  ...liveTargetFlags,
+  operationId: Argument.string("operation-id").pipe(
+    Argument.withDescription("Delegation audit operation id."),
+  ),
+  beforeSequence: Flag.integer("before-sequence").pipe(Flag.optional),
+  limit: Flag.integer("limit").pipe(Flag.withDefault(50)),
+}).pipe(
+  Command.withDescription("Show one page of a delegation audit operation."),
+  Command.withHandler((flags) =>
+    withLiveRpcClient(flags, (client) =>
+      client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+        operationId: flags.operationId,
+        ...delegationAuditReadFilters(Option.none(), flags.beforeSequence),
+        limit: flags.limit,
+      }).pipe(Effect.flatMap(printJson)),
+    ),
+  ),
+);
+
+const readStdinText = () =>
+  Effect.tryPromise({
+    try: () =>
+      new Promise<string>((resolve, reject) => {
+        const chunks: Array<Buffer> = [];
+        process.stdin.on("data", (chunk: Buffer | string) =>
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+        );
+        process.stdin.on("error", reject);
+        process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      }),
+    catch: (cause) => new Error(`Failed to read audit input from stdin: ${String(cause)}`),
+  });
+
+const decodeDelegationAuditBeginInput = Schema.decodeUnknownEffect(DelegationAuditBeginInput);
+const decodeDelegationAuditAppendInput = Schema.decodeUnknownEffect(DelegationAuditAppendInput);
+
+const auditBeginInternalCommand = Command.make("begin-internal", {
+  ...liveTargetFlags,
+}).pipe(
+  Command.withDescription("Internal: persist a delegation operation before execution."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const raw = yield* readStdinText();
+      const input = yield* decodeDelegationAuditBeginInput(JSON.parse(raw) as unknown);
+      yield* withLiveRpcClient(flags, (client) =>
+        client[ORCHESTRATION_WS_METHODS.beginDelegationAudit](input).pipe(
+          Effect.flatMap(printJson),
+        ),
+      );
+    }),
+  ),
+);
+
+const auditAppendInternalCommand = Command.make("append-internal", {
+  ...liveTargetFlags,
+}).pipe(
+  Command.withDescription("Internal: append a delegation operation transition."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const raw = yield* readStdinText();
+      const input = yield* decodeDelegationAuditAppendInput(JSON.parse(raw) as unknown);
+      yield* withLiveRpcClient(flags, (client) =>
+        client[ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent](input).pipe(Effect.asVoid),
+      );
+    }),
+  ),
+);
+
+const auditExportCommand = Command.make("export", {
+  ...liveTargetFlags,
+  thread: Argument.string("thread").pipe(Argument.withDescription("Source thread id or title.")),
+  turn: Flag.string("turn").pipe(Flag.optional),
+  toolCallId: Flag.string("tool-call").pipe(Flag.optional),
+}).pipe(
+  Command.withDescription("Export all delegation audit evidence for a thread as JSON."),
+  Command.withHandler((flags) =>
+    withLiveRpcClient(flags, (client) =>
+      Effect.gen(function* () {
+        const shell = yield* client[ORCHESTRATION_WS_METHODS.getShellSnapshot]({});
+        const thread = yield* findThreadForCli(shell, flags.thread);
+        const filters = delegationAuditReadFilters(flags.turn, Option.none(), flags.toolCallId);
+        const events = [];
+        const cleanupStates = new Map<string, unknown>();
+        const warnings = new Set<string>();
+        let beforeSequence: number | null = null;
+        let hasMore = true;
+        while (hasMore) {
+          const page = yield* client[ORCHESTRATION_WS_METHODS.getDelegationAuditPage]({
+            sourceThreadId: thread.id,
+            ...filters,
+            beforeSequence,
+            limit: 100,
+          });
+          events.push(...page.events);
+          for (const cleanup of page.cleanupStates) {
+            if (!cleanupStates.has(cleanup.attemptId)) {
+              cleanupStates.set(cleanup.attemptId, cleanup);
+            }
+          }
+          for (const warning of page.warnings) warnings.add(warning);
+          hasMore = page.hasMore;
+          beforeSequence = page.nextBeforeSequence;
+        }
+        yield* printJson({
+          sourceThreadId: thread.id,
+          turnId: filters.turnId ?? null,
+          exportedAt: new Date().toISOString(),
+          evidenceIds: events.map((event) => event.eventId),
+          buildContext: [
+            ...new Map(
+              events.map((event) => [
+                event.context.buildRevision,
+                {
+                  buildRevision: event.context.buildRevision,
+                  toolName: event.context.toolName,
+                  toolVersion: event.context.toolVersion,
+                  providerInstanceId: event.context.providerInstanceId,
+                  model: event.context.model,
+                  workspaceRoot: event.context.workspaceRoot,
+                  gitRevision: event.context.gitRevision,
+                },
+              ]),
+            ).values(),
+          ],
+          events: events.toSorted((left, right) => left.sequence - right.sequence),
+          cleanupStates: [...cleanupStates.values()],
+          warnings: [...warnings],
+        });
+      }),
+    ),
+  ),
+);
+
+const auditCommand = Command.make("audit").pipe(
+  Command.withDescription("Inspect and export delegation audit evidence."),
+  Command.withSubcommands([
+    auditShowCommand,
+    auditExportCommand,
+    auditBeginInternalCommand,
+    auditAppendInternalCommand,
+  ]),
+);
+
 const chatCommand = Command.make("chat").pipe(
   Command.withDescription("Manage chats."),
   Command.withSubcommands([
@@ -3026,6 +3328,7 @@ const chatCommand = Command.make("chat").pipe(
     chatSteerCommand,
     chatStopCommand,
     chatQueueCommand,
+    chatAuditCommand,
     Command.make("wait", {
       ...liveTargetFlags,
       chat: Argument.string("chat"),
@@ -5991,6 +6294,7 @@ export const cli: Command.Command<"t3", never, {}, unknown, NetService | NodeSer
       authCommand,
       projectCommand,
       chatCommand,
+      auditCommand,
       prMonitorCommand,
       acceptanceCommand,
       reviewCommand,
@@ -6019,3 +6323,8 @@ export const cli: Command.Command<"t3", never, {}, unknown, NetService | NodeSer
       installationCommand,
     ]),
   );
+
+export const __testing = {
+  delegationAuditReadFilters,
+  delegationAuditSourceThreadId,
+};

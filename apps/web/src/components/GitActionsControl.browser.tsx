@@ -1,10 +1,11 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type GitRunStackedActionResult } from "@t3tools/contracts";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 const SHARED_THREAD_ID = ThreadId.make("thread-shared");
+const PROJECT_ID = ProjectId.make("project-shared");
 const ENVIRONMENT_A = "environment-local" as never;
 const ENVIRONMENT_B = "environment-remote" as never;
 const GIT_CWD = "/repo/project";
@@ -29,6 +30,8 @@ const {
   invalidateGitQueriesSpy,
   refreshGitStatusSpy,
   runStackedActionMutateAsyncSpy,
+  dispatchCommandSpy,
+  readEnvironmentApiSpy,
   setDraftThreadContextSpy,
   setThreadBranchSpy,
   toastAddSpy,
@@ -36,12 +39,20 @@ const {
   toastPromiseSpy,
   toastUpdateSpy,
 } = vi.hoisted(() => ({
-  activeRunStackedActionDeferredRef: { current: createDeferredPromise<never>() },
+  activeRunStackedActionDeferredRef: {
+    current: createDeferredPromise<GitRunStackedActionResult>(),
+  },
   activeDraftThreadRef: { current: null as unknown },
   hasServerThreadRef: { current: true },
   invalidateGitQueriesSpy: vi.fn(() => Promise.resolve()),
   refreshGitStatusSpy: vi.fn(() => Promise.resolve(null)),
   runStackedActionMutateAsyncSpy: vi.fn(() => activeRunStackedActionDeferredRef.current.promise),
+  dispatchCommandSpy: vi.fn(() => Promise.resolve({ sequence: 1 })),
+  readEnvironmentApiSpy: vi.fn(() => ({
+    orchestration: {
+      dispatchCommand: dispatchCommandSpy,
+    },
+  })),
   setDraftThreadContextSpy: vi.fn(),
   setThreadBranchSpy: vi.fn(),
   toastAddSpy: vi.fn(() => "toast-1"),
@@ -133,6 +144,10 @@ vi.mock("~/localApi", () => ({
   readLocalApi: vi.fn(() => null),
 }));
 
+vi.mock("~/environmentApi", () => ({
+  readEnvironmentApi: readEnvironmentApiSpy,
+}));
+
 vi.mock("~/composerDraftStore", async () => {
   const draftStoreState = {
     getDraftThreadByRef: () => activeDraftThreadRef.current,
@@ -199,6 +214,7 @@ vi.mock("~/store", () => ({
             ? {
                 [SHARED_THREAD_ID]: {
                   id: SHARED_THREAD_ID,
+                  projectId: PROJECT_ID,
                   branch: BRANCH_NAME,
                   worktreePath: null,
                 },
@@ -210,6 +226,8 @@ vi.mock("~/store", () => ({
           messageByThreadId: {},
           activityIdsByThreadId: {},
           activityByThreadId: {},
+          activityContextByThreadId: {},
+          insightActivitiesByThreadId: {},
           proposedPlanIdsByThreadId: {},
           proposedPlanByThreadId: {},
           turnDiffIdsByThreadId: {},
@@ -221,6 +239,7 @@ vi.mock("~/store", () => ({
             ? {
                 [SHARED_THREAD_ID]: {
                   id: SHARED_THREAD_ID,
+                  projectId: PROJECT_ID,
                   branch: BRANCH_NAME,
                   worktreePath: null,
                 },
@@ -232,6 +251,8 @@ vi.mock("~/store", () => ({
           messageByThreadId: {},
           activityIdsByThreadId: {},
           activityByThreadId: {},
+          activityContextByThreadId: {},
+          insightActivitiesByThreadId: {},
           proposedPlanIdsByThreadId: {},
           proposedPlanByThreadId: {},
           turnDiffIdsByThreadId: {},
@@ -252,6 +273,27 @@ function findButtonByText(text: string): HTMLButtonElement | null {
   return (Array.from(document.querySelectorAll("button")).find((button) =>
     button.textContent?.includes(text),
   ) ?? null) as HTMLButtonElement | null;
+}
+
+function pullRequestActionResult(status: "created" | "opened_existing"): GitRunStackedActionResult {
+  return {
+    action: "create_pr",
+    branch: { status: "skipped_not_requested" },
+    commit: { status: "skipped_not_requested" },
+    push: { status: "skipped_up_to_date" },
+    pr: {
+      status,
+      number: 42,
+      url: "https://github.com/acme/app/pull/42",
+      baseBranch: "main",
+      headBranch: BRANCH_NAME,
+      title: "Add the feature",
+    },
+    toast: {
+      title: status === "created" ? "Created PR #42" : "Opened PR #42",
+      cta: { kind: "none" },
+    },
+  };
 }
 
 function Harness() {
@@ -276,7 +318,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
-    activeRunStackedActionDeferredRef.current = createDeferredPromise<never>();
+    activeRunStackedActionDeferredRef.current = createDeferredPromise<GitRunStackedActionResult>();
     activeDraftThreadRef.current = null;
     hasServerThreadRef.current = true;
     document.body.innerHTML = "";
@@ -457,6 +499,116 @@ describe("GitActionsControl thread-scoped progress toast", () => {
 
       expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
       expect(setThreadBranchSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("leaves an existing thread's created PR association to the server", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(<Harness />, { container: host });
+
+    try {
+      const quickActionButton = findButtonByText("Push & create PR");
+      expect(quickActionButton).toBeTruthy();
+      quickActionButton?.click();
+
+      expect(runStackedActionMutateAsyncSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: PROJECT_ID,
+          threadId: SHARED_THREAD_ID,
+        }),
+      );
+
+      activeRunStackedActionDeferredRef.current.resolve(pullRequestActionResult("created"));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+      expect(dispatchCommandSpy).not.toHaveBeenCalled();
+      expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("keeps a created PR association on an unpromoted draft thread", async () => {
+    hasServerThreadRef.current = false;
+    activeDraftThreadRef.current = {
+      threadId: SHARED_THREAD_ID,
+      environmentId: ENVIRONMENT_A,
+      branch: BRANCH_NAME,
+      worktreePath: null,
+    };
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />,
+      { container: host },
+    );
+
+    try {
+      const quickActionButton = findButtonByText("Push & create PR");
+      expect(quickActionButton).toBeTruthy();
+      quickActionButton?.click();
+      activeRunStackedActionDeferredRef.current.resolve(pullRequestActionResult("created"));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+      expect(setDraftThreadContextSpy).toHaveBeenCalledWith(
+        scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
+        {
+          branch: BRANCH_NAME,
+          worktreePath: null,
+          pullRequest: {
+            number: 42,
+            url: "https://github.com/acme/app/pull/42",
+            title: "Add the feature",
+            baseBranch: "main",
+            headBranch: BRANCH_NAME,
+            state: "open",
+          },
+        },
+      );
+      expect(dispatchCommandSpy).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("does not mark an existing PR as newly created on a draft thread", async () => {
+    hasServerThreadRef.current = false;
+    activeDraftThreadRef.current = {
+      threadId: SHARED_THREAD_ID,
+      environmentId: ENVIRONMENT_A,
+      branch: BRANCH_NAME,
+      worktreePath: null,
+    };
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <GitActionsControl
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />,
+      { container: host },
+    );
+
+    try {
+      const quickActionButton = findButtonByText("Push & create PR");
+      expect(quickActionButton).toBeTruthy();
+      quickActionButton?.click();
+      activeRunStackedActionDeferredRef.current.resolve(pullRequestActionResult("opened_existing"));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+      expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
+      expect(dispatchCommandSpy).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
       host.remove();

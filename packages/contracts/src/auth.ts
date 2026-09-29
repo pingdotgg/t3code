@@ -89,6 +89,14 @@ export type McpAuthError = typeof McpAuthError.Type;
 export const AuthSessionRole = Schema.Literals(["owner", "client"]);
 export type AuthSessionRole = typeof AuthSessionRole.Type;
 
+export const AuthSessionUnauthenticatedReason = Schema.Literals([
+  "missing",
+  "expired",
+  "revoked",
+  "invalid",
+]);
+export type AuthSessionUnauthenticatedReason = typeof AuthSessionUnauthenticatedReason.Type;
+
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
@@ -97,6 +105,11 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+/**
+ * Narrow browser-only access for an agent-authorized T3 preview session.
+ * This scope is not part of default client or owner grants.
+ */
+export const AuthBrowserPreviewScope = "preview:browser" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -106,6 +119,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthBrowserPreviewScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -163,6 +177,17 @@ export const AuthBootstrapInput = Schema.Struct({
 });
 export type AuthBootstrapInput = typeof AuthBootstrapInput.Type;
 
+export const AuthPreviewAttestationInput = Schema.Struct({
+  challenge: TrimmedNonEmptyString,
+  origin: TrimmedNonEmptyString,
+});
+export type AuthPreviewAttestationInput = typeof AuthPreviewAttestationInput.Type;
+
+export const AuthPreviewAttestationResult = Schema.Struct({
+  signature: TrimmedNonEmptyString,
+});
+export type AuthPreviewAttestationResult = typeof AuthPreviewAttestationResult.Type;
+
 export const AuthBrowserSessionRequest = Schema.Struct({
   credential: TrimmedNonEmptyString,
 });
@@ -175,6 +200,30 @@ export const AuthBootstrapResult = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
 });
 export type AuthBootstrapResult = typeof AuthBootstrapResult.Type;
+
+export const AuthPreviewBootstrapCiphertext = Schema.Struct({
+  nonce: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+  ciphertext: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  tag: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+});
+export type AuthPreviewBootstrapCiphertext = typeof AuthPreviewBootstrapCiphertext.Type;
+
+export const AuthPreviewBootstrapInput = Schema.Struct({
+  challenge: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  origin: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  clientPublicKey: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  encryptedCredential: AuthPreviewBootstrapCiphertext,
+});
+export type AuthPreviewBootstrapInput = typeof AuthPreviewBootstrapInput.Type;
+
+export const AuthPreviewBootstrapResult = AuthPreviewBootstrapCiphertext;
+export type AuthPreviewBootstrapResult = typeof AuthPreviewBootstrapResult.Type;
+
+export const AuthPreviewBootstrapSession = Schema.Struct({
+  response: AuthBootstrapResult,
+  sessionToken: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+});
+export type AuthPreviewBootstrapSession = typeof AuthPreviewBootstrapSession.Type;
 
 export const AuthBrowserSessionResult = AuthBootstrapResult;
 export type AuthBrowserSessionResult = typeof AuthBrowserSessionResult.Type;
@@ -381,6 +430,7 @@ export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentia
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
+  unauthenticatedReason: Schema.optionalKey(AuthSessionUnauthenticatedReason),
   role: Schema.optionalKey(AuthSessionRole),
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),

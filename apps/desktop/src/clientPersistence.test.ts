@@ -78,6 +78,7 @@ const clientSettings: ClientSettings = {
   diffWordWrap: true,
   pullRequestsDefaultState: "open",
   pullRequestsCodeFontSize: 12,
+  pullRequestsBodyFontSize: 14,
   favorites: [],
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
@@ -117,6 +118,7 @@ const clientSettings: ClientSettings = {
   workflowRunsShowBadge: true,
   sidebarSearchShowShortcut: true,
   sidebarNewThreadConfirm: false,
+  localRebuildStalenessCheckMinutes: 15,
 };
 
 const savedRegistryRecord: PersistedSavedEnvironmentRecord = {

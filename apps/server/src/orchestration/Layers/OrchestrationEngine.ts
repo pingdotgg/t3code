@@ -7,7 +7,7 @@ import type {
   ThreadId,
   WorkflowRunId,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { EventId, OrchestrationCommand } from "@t3tools/contracts";
 import {
   Cause,
   Deferred,
@@ -36,6 +36,7 @@ import { runStartupPhase } from "../../startupTiming.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { WorktreeCleanupJobRepository } from "../../persistence/Services/WorktreeCleanupJobs.ts";
+import { DelegationAuditRepository } from "../../persistence/Services/DelegationAudit.ts";
 import { WorktreeCleanupJobRepositoryLive } from "../../persistence/Layers/WorktreeCleanupJobs.ts";
 import { CheckoutCoordinator, CheckoutCoordinatorLive } from "../../git/CheckoutCoordinator.ts";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
@@ -112,6 +113,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const worktreeCleanupJobs = yield* WorktreeCleanupJobRepository;
+  const maybeDelegationAuditRepository = yield* Effect.serviceOption(DelegationAuditRepository);
   const threadUrls = yield* Effect.serviceOption(ThreadUrlBuilder);
   const coordinator = yield* CheckoutCoordinator;
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
@@ -615,6 +617,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }
 
           const error = Cause.squash(exit.cause) as OrchestrationDispatchError;
+          let dispatchError = error;
           if (!isOrchestrationCommandPreviouslyRejectedError(error)) {
             const releaseFailedAdmission = Effect.gen(function* () {
               const failedThreadId = (() => {
@@ -675,6 +678,167 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             );
 
             if (isOrchestrationCommandInvariantError(error)) {
+              if (
+                envelope.command.type === "thread.turn.start" &&
+                envelope.command.crossThreadSourceThreadId !== undefined &&
+                envelope.command.delegationAudit !== undefined
+              ) {
+                const command = envelope.command;
+                const sourceThreadId = command.crossThreadSourceThreadId;
+                const auditContext = command.delegationAudit;
+                if (sourceThreadId === undefined || auditContext === undefined) {
+                  yield* Effect.logError(
+                    "delegation rejection audit context disappeared before persistence",
+                    { commandId: envelope.command.commandId },
+                  );
+                  dispatchError = new OrchestrationCommandInvariantError({
+                    commandType: command.type,
+                    detail: `${error.detail} Delegation audit context is unavailable; the rejection evidence could not be recorded.`,
+                  });
+                } else {
+                  const sourceThread = readModel.threads.find(
+                    (thread) => thread.id === sourceThreadId,
+                  );
+                  const activeTurnId = sourceThread?.session?.activeTurnId ?? null;
+                  const activeMessageId = sourceThread?.session?.activeMessageId ?? null;
+                  const rejectionCode = error.detail.includes("no authenticated active message")
+                    ? "MISSING_ACTIVE_MESSAGE"
+                    : "CROSS_THREAD_INVARIANT_REJECTED";
+                  const auditExit = Option.isSome(maybeDelegationAuditRepository)
+                    ? yield* Effect.exit(
+                        Effect.gen(function* () {
+                          type SessionTransition = {
+                            readonly sequence: number;
+                            readonly occurred_at: string;
+                            readonly command_id: string | null;
+                            readonly active_turn_id: string | null;
+                            readonly active_message_id: string | null;
+                          };
+                          const [precedingSessionTransition] = yield* sql<SessionTransition>`
+                          SELECT
+                            sequence,
+                            occurred_at,
+                            command_id,
+                            json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                            json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                          FROM orchestration_events
+                          WHERE event_type = 'thread.session-set'
+                            AND stream_id = ${sourceThreadId}
+                            AND sequence <= ${readModel.snapshotSequence}
+                          ORDER BY sequence DESC
+                            LIMIT 1
+                        `;
+                          const [lastActiveTurnTransition] = yield* sql<SessionTransition>`
+                          SELECT
+                            sequence,
+                            occurred_at,
+                            command_id,
+                            json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                            json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                          FROM orchestration_events
+                          WHERE event_type = 'thread.session-set'
+                            AND stream_id = ${sourceThreadId}
+                            AND sequence <= ${readModel.snapshotSequence}
+                            AND json_extract(payload_json, '$.session.activeTurnId') IS NOT NULL
+                          ORDER BY sequence DESC
+                          LIMIT 1
+                        `;
+                          const sameTurnTransitions =
+                            activeTurnId === null
+                              ? []
+                              : yield* sql<SessionTransition>`
+                                SELECT
+                                  sequence,
+                                  occurred_at,
+                                  command_id,
+                                  json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                                  json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                                FROM orchestration_events
+                                WHERE event_type = 'thread.session-set'
+                                  AND stream_id = ${sourceThreadId}
+                                  AND sequence <= ${readModel.snapshotSequence}
+                                  AND json_extract(payload_json, '$.session.activeTurnId') = ${activeTurnId}
+                                ORDER BY sequence DESC
+                                LIMIT 1
+                              `;
+                          const messagePreviouslyPresentTransitions =
+                            activeTurnId === null
+                              ? []
+                              : yield* sql<SessionTransition>`
+                                SELECT
+                                  sequence,
+                                  occurred_at,
+                                  command_id,
+                                  json_extract(payload_json, '$.session.activeTurnId') AS active_turn_id,
+                                  json_extract(payload_json, '$.session.activeMessageId') AS active_message_id
+                                FROM orchestration_events
+                                WHERE event_type = 'thread.session-set'
+                                  AND stream_id = ${sourceThreadId}
+                                  AND sequence <= ${readModel.snapshotSequence}
+                                  AND json_extract(payload_json, '$.session.activeTurnId') = ${activeTurnId}
+                                  AND json_extract(payload_json, '$.session.activeMessageId') IS NOT NULL
+                                ORDER BY sequence DESC
+                                LIMIT 1
+                              `;
+                          const sameTurnTransition = sameTurnTransitions[0] ?? null;
+                          const messagePreviouslyPresentTransition =
+                            messagePreviouslyPresentTransitions[0] ?? null;
+                          const evidenceState =
+                            activeTurnId === null
+                              ? lastActiveTurnTransition !== undefined
+                                ? "request-after-turn-end"
+                                : "never-populated"
+                              : activeMessageId !== null
+                                ? "active-message-present"
+                                : messagePreviouslyPresentTransition !== null
+                                  ? "cleared-by-later-update"
+                                  : sameTurnTransition !== null
+                                    ? "never-populated"
+                                    : "unknown";
+                          yield* maybeDelegationAuditRepository.value.append({
+                            eventId: EventId.make(
+                              `delegation-audit:${auditContext.operationId}:${auditContext.attemptId}:turn.start.rejected:${command.commandId}`,
+                            ),
+                            operationId: auditContext.operationId,
+                            sourceThreadId,
+                            attemptId: auditContext.attemptId,
+                            eventType: "turn.start.rejected",
+                            childThreadId: command.threadId,
+                            occurredAt: new Date().toISOString(),
+                            payload: {
+                              code: rejectionCode,
+                              failedInvariant: error.detail,
+                              expectedInitiatingMessageId: auditContext.initiatingMessageId,
+                              actualActiveTurnId: activeTurnId,
+                              actualActiveMessageId: activeMessageId,
+                              evidenceState,
+                              orchestrationSequence: readModel.snapshotSequence,
+                              precedingSessionTransition: precedingSessionTransition ?? null,
+                              lastActiveTurnTransition: lastActiveTurnTransition ?? null,
+                              messagePreviouslyPresentTransition,
+                            },
+                          });
+                        }),
+                      )
+                    : null;
+                  if (auditExit === null || Exit.isFailure(auditExit)) {
+                    const detail =
+                      auditExit === null
+                        ? "Delegation audit persistence is not available in the orchestration runtime."
+                        : Cause.pretty(auditExit.cause);
+                    yield* Effect.logError("delegation rejection audit persistence failed", {
+                      operationId: auditContext.operationId,
+                      attemptId: auditContext.attemptId,
+                      sourceThreadId,
+                      error: detail,
+                    });
+                    dispatchError = new OrchestrationCommandInvariantError({
+                      commandType: command.type,
+                      detail: `${error.detail} Delegation audit persistence is unavailable; the rejection evidence could not be recorded: ${detail}`,
+                    });
+                  }
+                }
+              }
               yield* commandReceiptRepository
                 .upsert({
                   commandId: envelope.command.commandId,
@@ -689,7 +853,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             }
           }
 
-          yield* Deferred.fail(envelope.result, error);
+          yield* Deferred.fail(envelope.result, dispatchError);
         }),
       ),
     );

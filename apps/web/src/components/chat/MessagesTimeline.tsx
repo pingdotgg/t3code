@@ -1,9 +1,12 @@
 import {
+  type DelegationAuditActivityEvidence,
+  type DelegationAuditPage,
   EnvironmentId,
+  EventId,
   type MessageId,
   ThreadId,
   type TurnDiffScope,
-  type TurnId,
+  TurnId,
 } from "@t3tools/contracts";
 import {
   createContext,
@@ -62,6 +65,7 @@ import { ChildFollowUpReceipt } from "./ChildFollowUpPanel";
 import {
   collectReviewOutputMessageIds,
   computeStableMessagesTimelineRows,
+  deriveDelegationOperationSummary,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -110,7 +114,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { selectSidebarThreadSummaryByRef, useStore, type AppState } from "../../store";
-import { readEnvironmentApi } from "~/environmentApi";
+import { ensureEnvironmentApi, readEnvironmentApi } from "~/environmentApi";
 import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -2028,6 +2032,7 @@ const WorkEntryDetails = memo(function WorkEntryDetails({
 }: {
   workEntry: TimelineWorkEntry;
 }) {
+  const { activeThreadEnvironmentId, activeThreadId } = use(TimelineRowCtx);
   const output = extractCommandOutputText(workEntry.toolData);
   const command = workEntryFullCommand(workEntry);
   const fallback =
@@ -2042,15 +2047,248 @@ const WorkEntryDetails = memo(function WorkEntryDetails({
   ]
     .filter((value, index, values) => value && values.indexOf(value) === index)
     .join("\n\n");
-  if (!detail) return null;
+  const hasAuditEvidence = workEntry.sourceActivityKind?.startsWith("tool.") === true;
+  const toolName =
+    typeof workEntry.toolData === "object" &&
+    workEntry.toolData !== null &&
+    "toolName" in workEntry.toolData &&
+    typeof workEntry.toolData.toolName === "string"
+      ? workEntry.toolData.toolName
+      : null;
+  const isDelegationTool =
+    toolName === "delegate_work" ||
+    toolName === "create_nested_thread" ||
+    toolName === "create_nested_threads";
+  if (!detail && !hasAuditEvidence) return null;
   return (
-    <div className="ml-[0.5em] border-l border-border/50 pl-[1em] py-1">
-      <pre
-        data-tool-command-details
-        className="max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[length:inherit] text-muted-foreground"
-      >
-        {detail}
-      </pre>
+    <div className="chat-work-details ml-[0.5em] border-l border-border/50 pl-[1em] py-1">
+      {detail ? (
+        <pre
+          data-tool-command-details
+          className="max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[length:inherit] text-muted-foreground"
+        >
+          {detail}
+        </pre>
+      ) : null}
+      {hasAuditEvidence ? (
+        <>
+          <ActivityEvidenceDetails
+            activityId={EventId.make(workEntry.id)}
+            environmentId={activeThreadEnvironmentId}
+            threadId={activeThreadId}
+          />
+          {isDelegationTool ? (
+            <DelegationAuditDetails
+              key={`${workEntry.id}:${workEntry.turnId ?? ""}:${workEntry.toolCallId ?? ""}`}
+              environmentId={activeThreadEnvironmentId}
+              threadId={activeThreadId}
+              turnId={workEntry.turnId ? TurnId.make(workEntry.turnId) : null}
+              toolCallId={workEntry.toolCallId ?? null}
+            />
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+});
+
+const ActivityEvidenceDetails = memo(function ActivityEvidenceDetails({
+  activityId,
+  environmentId,
+  threadId,
+}: {
+  activityId: EventId;
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+}) {
+  const [evidence, setEvidence] = useState<DelegationAuditActivityEvidence | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadEvidence = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await ensureEnvironmentApi(environmentId).orchestration.getActivityEvidence({
+        threadId,
+        activityId,
+      });
+      setEvidence(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }, [activityId, environmentId, threadId]);
+
+  return (
+    <div className="mt-2 space-y-1">
+      {evidence === null ? (
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline underline-offset-2"
+          disabled={loading}
+          onClick={() => void loadEvidence()}
+        >
+          {loading ? "Loading audit evidence…" : "Load full tool evidence"}
+        </button>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground" role="status">
+            Evidence: {evidence.evidenceStatus}
+            {evidence.redacted ? " · credentials redacted" : ""}
+          </p>
+          {evidence.warning ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">{evidence.warning}</p>
+          ) : null}
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs text-muted-foreground">
+            {JSON.stringify(evidence.payload, null, 2)}
+          </pre>
+        </>
+      )}
+      {error ? (
+        <p className="text-xs text-destructive" role="alert">
+          Audit evidence could not be loaded: {error}
+        </p>
+      ) : null}
+    </div>
+  );
+});
+
+const DelegationAuditDetails = memo(function DelegationAuditDetails({
+  environmentId,
+  threadId,
+  turnId,
+  toolCallId,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  turnId: TurnId | null;
+  toolCallId: string | null;
+}) {
+  const [page, setPage] = useState<DelegationAuditPage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadPage = useCallback(
+    async (beforeSequence: number | null) => {
+      if (turnId === null || toolCallId === null) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const nextPage = await ensureEnvironmentApi(
+          environmentId,
+        ).orchestration.getDelegationAuditPage({
+          sourceThreadId: threadId,
+          turnId,
+          toolCallId,
+          beforeSequence,
+          limit: 50,
+        });
+        setPage((current) =>
+          current === null || beforeSequence === null
+            ? nextPage
+            : {
+                ...nextPage,
+                events: [...current.events, ...nextPage.events].toSorted(
+                  (left, right) => right.sequence - left.sequence,
+                ),
+                cleanupStates: [
+                  ...new Map(
+                    [...nextPage.cleanupStates, ...current.cleanupStates].map((cleanup) => [
+                      cleanup.attemptId,
+                      cleanup,
+                    ]),
+                  ).values(),
+                ],
+                warnings: [...new Set([...current.warnings, ...nextPage.warnings])],
+              },
+        );
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [environmentId, threadId, toolCallId, turnId],
+  );
+  const operationSummary =
+    page === null ? null : deriveDelegationOperationSummary(page.events, turnId, toolCallId);
+
+  return (
+    <div className="mt-2 space-y-2">
+      {turnId === null || toolCallId === null ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400" role="status">
+          Delegation audit cannot be linked to this activity because its turn or tool-call
+          correlation is unavailable.
+        </p>
+      ) : page === null ? (
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline underline-offset-2"
+          disabled={loading}
+          onClick={() => void loadPage(null)}
+        >
+          {loading ? "Loading delegation audit…" : "Load delegation audit for this tool call"}
+        </button>
+      ) : (
+        <>
+          {operationSummary ? (
+            <p className="text-xs font-medium text-muted-foreground" role="status">
+              Delegation operation{" "}
+              {operationSummary.operationStatus === "failed-with-unresolved"
+                ? "failed with unresolved attempts"
+                : operationSummary.operationStatus}
+              {operationSummary.operationId ? ` · ${operationSummary.operationId}` : ""}
+              {" · tool transport "}
+              {operationSummary.toolTransport}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-700 dark:text-amber-400" role="status">
+              No delegation audit evidence is linked to this tool call.
+            </p>
+          )}
+          {page.warnings.map((warning) => (
+            <p key={warning} className="text-xs text-amber-700 dark:text-amber-400">
+              {warning}
+            </p>
+          ))}
+          {page.events.map((event) => (
+            <details
+              key={event.eventId}
+              className="rounded border border-border/50 px-2 py-1 text-xs"
+            >
+              <summary className="cursor-pointer">
+                {event.eventType} · operation {event.operationId}
+                {event.attemptId ? ` · attempt ${event.attemptId}` : ""}
+              </summary>
+              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs text-muted-foreground">
+                {JSON.stringify(event, null, 2)}
+              </pre>
+            </details>
+          ))}
+          {page.cleanupStates.map((cleanup) => (
+            <p key={cleanup.attemptId} className="text-xs text-muted-foreground">
+              Cleanup for child {cleanup.childThreadId}: {cleanup.status}
+              {cleanup.jobId ? ` · job ${cleanup.jobId}` : ""}
+              {cleanup.error ? ` · ${cleanup.error}` : ""}
+            </p>
+          ))}
+          {page.hasMore ? (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline underline-offset-2"
+              disabled={loading}
+              onClick={() => void loadPage(page.nextBeforeSequence)}
+            >
+              {loading ? "Loading older audit evidence…" : "Load older audit evidence"}
+            </button>
+          ) : null}
+        </>
+      )}
+      {error ? (
+        <p className="text-xs text-destructive" role="alert">
+          Delegation audit evidence could not be loaded: {error}
+        </p>
+      ) : null}
     </div>
   );
 });

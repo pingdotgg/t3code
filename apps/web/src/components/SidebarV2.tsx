@@ -85,8 +85,10 @@ import {
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
+  SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
+import { SidebarFooterActions } from "./sidebar/SidebarFooterActions";
 import { SidebarTopActions } from "./SidebarTopActions";
 import { TITLEBAR_ROW_CLASS, TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS } from "../lib/titlebar";
 import { reportClientError } from "../lib/clientLogger";
@@ -918,6 +920,8 @@ export default function SidebarV2() {
           ) : null}
         </Shelf>
       </SidebarContent>
+      <SidebarSeparator />
+      <SidebarFooterActions />
     </ThreadDetailsTooltipProvider>
   );
 }

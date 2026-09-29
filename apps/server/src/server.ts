@@ -82,12 +82,15 @@ import {
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authPreviewAttestationRouteLayer,
+  authPreviewBootstrapRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   authWebSocketTicketRouteLayer,
 } from "./auth/http.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import { ManagedPreviewAuthLive } from "./auth/Layers/ManagedPreviewAuth.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./auth/Layers/AuthControlPlane.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { CheckoutCoordinatorLive } from "./git/CheckoutCoordinator.ts";
@@ -130,9 +133,11 @@ import { layer as PullRequestServiceLive } from "./pullRequest/PullRequestServic
 import { layer as pullRequestMonitorFeedbackServiceLayer } from "./pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
 import { layer as pullRequestMonitorAssociationReactorLayer } from "./pullRequestMonitor/PullRequestMonitorAssociationReactor.ts";
 import { layer as pullRequestAssociationRecoveryLayer } from "./pullRequestMonitor/PullRequestAssociationRecovery.ts";
+import { PullRequestCreationAutomationLive } from "./pullRequestMonitor/PullRequestCreationAutomation.ts";
 import { layer as pullRequestMonitorReviewHandoffReactorLayer } from "./pullRequestMonitor/PullRequestReviewHandoffReactor.ts";
 import { layer as createdPullRequestReviewReactorLayer } from "./pullRequestMonitor/CreatedPullRequestReviewReactor.ts";
 import { ProjectionStateRepositoryLive } from "./persistence/Layers/ProjectionState.ts";
+import { PullRequestCreationIntentRepositoryLive } from "./persistence/Layers/PullRequestCreationIntents.ts";
 import { CollaborativeAcceptanceRepositoryLive } from "./persistence/Layers/CollaborativeAcceptance.ts";
 import { CollaborativeAcceptanceCoordinatorLive } from "./collaborativeAcceptance/Coordinator.ts";
 import { layer as pullRequestMonitorServiceLayer } from "./pullRequestMonitor/PullRequestMonitorService.ts";
@@ -253,7 +258,8 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
 );
 
-export const PersistenceLayerLive = CollaborativeAcceptanceRepositoryLive.pipe(
+export const PersistenceLayerLive = PullRequestCreationIntentRepositoryLive.pipe(
+  Layer.provideMerge(CollaborativeAcceptanceRepositoryLive),
   Layer.provideMerge(SqlitePersistenceLayerLive),
 );
 
@@ -293,10 +299,14 @@ const PullRequestMonitorServiceLive = pullRequestMonitorServiceLayer.pipe(
   Layer.provideMerge(GitManagerLayerLive),
 );
 
+const PullRequestAssociationRecoveryLayerLive = pullRequestAssociationRecoveryLayer.pipe(
+  Layer.provideMerge(PullRequestCreationAutomationLive),
+);
+
 // Associating a pull request with a chat is the ownership signal, so monitoring follows it.
 // provideMerge keeps one monitor service instance shared with the reactor.
 const PullRequestMonitorLayerLive = pullRequestMonitorAssociationReactorLayer.pipe(
-  Layer.provideMerge(pullRequestAssociationRecoveryLayer),
+  Layer.provideMerge(PullRequestAssociationRecoveryLayerLive),
   Layer.provideMerge(pullRequestMonitorReviewHandoffReactorLayer),
   Layer.provideMerge(ProjectionStateRepositoryLive),
   Layer.provideMerge(PullRequestMonitorServiceLive),
@@ -308,7 +318,7 @@ const PullRequestMonitorLayerLive = pullRequestMonitorAssociationReactorLayer.pi
 const PreviewAutomationLayerLive = Layer.mergeAll(
   PreviewAutomationBroker.layer,
   McpSessionRegistry.layer,
-);
+).pipe(Layer.provideMerge(ManagedPreviewAuthLive));
 
 const TerminalLayerLive = Layer.mergeAll(
   TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive)),
@@ -498,6 +508,8 @@ export const makeRoutesLayer = Layer.mergeAll(
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authPreviewAttestationRouteLayer,
+  authPreviewBootstrapRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   authWebSocketTicketRouteLayer,

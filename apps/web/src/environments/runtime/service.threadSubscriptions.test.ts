@@ -322,6 +322,83 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
+  it("reports active thread work only while a retained thread is non-idle", async () => {
+    const {
+      hasActiveThreadDetailWork,
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-work");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({ threadId, sessionStatus: "running" }),
+      environmentId,
+    );
+    expect(hasActiveThreadDetailWork()).toBe(false);
+
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+    expect(hasActiveThreadDetailWork()).toBe(true);
+
+    release();
+    expect(hasActiveThreadDetailWork()).toBe(false);
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("resubscribes retained non-idle threads on stall repair", async () => {
+    const {
+      repairActiveThreadDetailSubscriptionsAfterStall,
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const activeThreadId = ThreadId.make("thread-stall-active");
+    const idleThreadId = ThreadId.make("thread-stall-idle");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(
+      makeThreadShellSnapshot({ threadId: idleThreadId, sessionStatus: "idle" }),
+      environmentId,
+    );
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: makeThreadShellSnapshot({
+          threadId: activeThreadId,
+          sessionStatus: "running",
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    const releaseActive = retainThreadDetailSubscription(environmentId, activeThreadId);
+    const releaseIdle = retainThreadDetailSubscription(environmentId, idleThreadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(2);
+
+    // The active subscription is torn down and re-attached, the idle one untouched.
+    const repair = repairActiveThreadDetailSubscriptionsAfterStall(environmentId);
+    expect(repair).toEqual({ retained: 1, resubscribed: 1 });
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(3);
+
+    releaseActive();
+    releaseIdle();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
   it("keeps non-idle thread detail subscriptions attached until the thread becomes idle", async () => {
     const {
       retainThreadDetailSubscription,

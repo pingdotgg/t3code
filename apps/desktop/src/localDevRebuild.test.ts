@@ -6,9 +6,16 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  checkLocalDevRebuildStaleness,
+  decideRebuildStaleness,
   launchLocalDevRebuild,
+  parseLsRemoteSymrefHead,
+  pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
+  runLocalRebuildStart,
+  type GitRunner,
+  type LocalRebuildStartDeps,
 } from "./localDevRebuild.ts";
 
 function makeCheckout(): string {
@@ -141,5 +148,492 @@ describe("local Dev rebuild", () => {
     });
     child.emit("exit", 1, null);
     expect(onExit).toHaveBeenCalledOnce();
+  });
+});
+
+const BUILD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const LOCAL_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const REMOTE_SHA = "cccccccccccccccccccccccccccccccccccccccc";
+
+describe("local Dev rebuild staleness", () => {
+  it("parses ls-remote symref output for the default branch tip", () => {
+    expect(parseLsRemoteSymrefHead(`ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`)).toEqual({
+      sha: REMOTE_SHA,
+      branch: "main",
+    });
+    expect(parseLsRemoteSymrefHead(`${REMOTE_SHA}\tHEAD\n`)).toEqual({
+      sha: REMOTE_SHA,
+      branch: null,
+    });
+    expect(parseLsRemoteSymrefHead("")).toBeNull();
+    expect(parseLsRemoteSymrefHead("not-a-sha\tHEAD\n")).toBeNull();
+  });
+
+  it("decides behind only when the base is a strict ancestor of the remote tip", () => {
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: BUILD_SHA,
+        mergeBaseIsAncestor: true,
+        behindBy: 0,
+      }).behind,
+    ).toBe(false);
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: REMOTE_SHA,
+        mergeBaseIsAncestor: true,
+        behindBy: 3,
+      }),
+    ).toEqual({ behind: true, error: null });
+    // Local ahead or diverged: rebuilding the checkout would not bring main in.
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: REMOTE_SHA,
+        mergeBaseIsAncestor: false,
+        behindBy: null,
+      }).behind,
+    ).toBe(false);
+    // Comparison impossible (e.g. unknown objects): never claim behind.
+    expect(
+      decideRebuildStaleness({
+        baseSha: BUILD_SHA,
+        remoteSha: REMOTE_SHA,
+        mergeBaseIsAncestor: null,
+        behindBy: null,
+      }),
+    ).toEqual({ behind: false, error: expect.any(String) });
+  });
+
+  function stubRunner(scenarios: Record<string, { stdout: string; exitCode: number }>): {
+    runner: GitRunner;
+    calls: Array<readonly string[]>;
+  } {
+    const calls: Array<readonly string[]> = [];
+    const runner: GitRunner = async (args) => {
+      calls.push(args);
+      const key = args.join(" ");
+      const hit = scenarios[key];
+      if (!hit) throw new Error(`unexpected git invocation: ${key}`);
+      return hit;
+    };
+    return { runner, calls };
+  }
+
+  const behindScenario = (): Record<string, { stdout: string; exitCode: number }> => ({
+    "rev-parse HEAD": { stdout: `${LOCAL_SHA}\n`, exitCode: 0 },
+    "branch --show-current": { stdout: "main\n", exitCode: 0 },
+    "ls-remote --symref origin HEAD": {
+      stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+      exitCode: 0,
+    },
+    [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 0 },
+    [`rev-list --count ${BUILD_SHA}..${REMOTE_SHA}`]: { stdout: "7\n", exitCode: 0 },
+  });
+
+  it("reports behind with a count when main moved past the running build", async () => {
+    const { runner, calls } = stubRunner(behindScenario());
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({
+      available: true,
+      behind: true,
+      behindBy: 7,
+      localBranch: "main",
+      localSha: LOCAL_SHA,
+      remoteBranch: "main",
+      remoteSha: REMOTE_SHA,
+      buildSha: BUILD_SHA,
+      error: null,
+    });
+    expect(result.checkedAt).toEqual(expect.any(String));
+    expect(calls[0]?.[0]).toBe("rev-parse");
+  });
+
+  it("falls back to the checkout HEAD when the build carries no commit", async () => {
+    const scenario = behindScenario();
+    scenario[`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`] = {
+      stdout: "",
+      exitCode: 0,
+    };
+    const { runner } = stubRunner({
+      ...scenario,
+      [`merge-base --is-ancestor ${LOCAL_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 0 },
+      [`rev-list --count ${LOCAL_SHA}..${REMOTE_SHA}`]: { stdout: "2\n", exitCode: 0 },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: null,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ available: true, behind: true, behindBy: 2, buildSha: null });
+  });
+
+  it("reports up to date when the remote tip matches the running build", async () => {
+    const { runner } = stubRunner({
+      "rev-parse HEAD": { stdout: `${BUILD_SHA}\n`, exitCode: 0 },
+      "branch --show-current": { stdout: "main\n", exitCode: 0 },
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${BUILD_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ available: true, behind: false, error: null });
+  });
+
+  it("never claims behind for ahead or diverged checkouts", async () => {
+    const { runner } = stubRunner({
+      "rev-parse HEAD": { stdout: `${LOCAL_SHA}\n`, exitCode: 0 },
+      "branch --show-current": { stdout: "feature\n", exitCode: 0 },
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+      [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 1 },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ available: true, behind: false, error: null });
+  });
+
+  it("skips git entirely when rebuilds are unavailable", async () => {
+    const runner = vi.fn();
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: false,
+      sourceRoot: null,
+      buildSha: null,
+      runGit: runner as unknown as GitRunner,
+    });
+
+    expect(result).toMatchObject({ available: false, behind: false });
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("reports errors instead of behind when git or the network fails", async () => {
+    const offline: GitRunner = async (args) => {
+      if (args[0] === "ls-remote") throw new Error("Could not resolve host");
+      return { stdout: `${LOCAL_SHA}\n`, exitCode: 0 };
+    };
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: offline,
+    });
+
+    expect(result.available).toBe(true);
+    expect(result.behind).toBe(false);
+    expect(result.error).toEqual(expect.any(String));
+  });
+
+  it("reports an error when the checkout is not a git repository", async () => {
+    const { runner } = stubRunner({
+      "rev-parse HEAD": { stdout: "", exitCode: 128 },
+      "branch --show-current": { stdout: "", exitCode: 128 },
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+    });
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA,
+      runGit: runner,
+    });
+
+    expect(result.behind).toBe(false);
+    expect(result.error).toEqual(expect.any(String));
+  });
+});
+
+describe("local Dev rebuild pull", () => {
+  const onDefaultBranch = (): Record<string, { stdout: string; exitCode: number }> => ({
+    "ls-remote --symref origin HEAD": {
+      stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+      exitCode: 0,
+    },
+    "branch --show-current": { stdout: "main\n", exitCode: 0 },
+  });
+
+  function trackingRunner(
+    scenarios: Record<string, { stdout: string; exitCode: number; stderr?: string }>,
+  ): { runner: GitRunner; calls: Array<readonly string[]> } {
+    const calls: Array<readonly string[]> = [];
+    const runner: GitRunner = async (args) => {
+      calls.push(args);
+      const hit = scenarios[args.join(" ")];
+      if (!hit) throw new Error(`unexpected git invocation: ${args.join(" ")}`);
+      return { stdout: hit.stdout, stderr: hit.stderr ?? "", exitCode: hit.exitCode };
+    };
+    return { runner, calls };
+  }
+
+  const cleanTree = {
+    "status --porcelain --untracked-files=all --ignore-submodules=none": {
+      stdout: "",
+      exitCode: 0,
+    },
+  };
+
+  it("pulls the advertised remote default branch before rebuilding", async () => {
+    const { runner, calls } = trackingRunner({
+      ...onDefaultBranch(),
+      ...cleanTree,
+      "-c merge.autostash=false -c rebase.autoStash=false pull --ff-only origin main": {
+        stdout: "Already up to date.\n",
+        exitCode: 0,
+      },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result).toEqual({ ok: true, message: null });
+    expect(calls).toEqual([
+      ["ls-remote", "--symref", "origin", "HEAD"],
+      ["branch", "--show-current"],
+      ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+      [
+        "-c",
+        "merge.autostash=false",
+        "-c",
+        "rebase.autoStash=false",
+        "pull",
+        "--ff-only",
+        "origin",
+        "main",
+      ],
+    ]);
+  });
+
+  it("pulls origin/main without requiring a configured upstream", async () => {
+    const { runner, calls } = trackingRunner({
+      ...onDefaultBranch(),
+      ...cleanTree,
+      "-c merge.autostash=false -c rebase.autoStash=false pull --ff-only origin main": {
+        stdout: "Already up to date.\n",
+        exitCode: 0,
+      },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result).toEqual({ ok: true, message: null });
+    // No upstream lookup (rev-parse @{u}, branch --show-current -v, config
+    // branch.*.merge): the explicit origin/branch invocation works whether
+    // or not the local branch tracks anything.
+    expect(
+      calls.some(
+        (args) =>
+          args.join(" ").includes("@{u}") || args[0] === "config" || args.includes("@{upstream}"),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses to pull a dirty worktree, including untracked files", async () => {
+    const { runner, calls } = trackingRunner({
+      ...onDefaultBranch(),
+      "status --porcelain --untracked-files=all --ignore-submodules=none": {
+        stdout: " M src/app.ts\n?? scratch-notes.txt\n",
+        exitCode: 0,
+      },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("local changes");
+    expect(calls.some((args) => args[0] === "pull" || args.includes("pull"))).toBe(false);
+  });
+
+  it("refuses to pull when the checkout is not on the advertised branch", async () => {
+    const { runner, calls } = trackingRunner({
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+      "branch --show-current": { stdout: "feature\n", exitCode: 0 },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("switch to 'main'");
+    expect(calls.some((args) => args[0] === "pull")).toBe(false);
+  });
+
+  it("refuses to pull a detached checkout", async () => {
+    const { runner, calls } = trackingRunner({
+      "ls-remote --symref origin HEAD": {
+        stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+        exitCode: 0,
+      },
+      "branch --show-current": { stdout: "", exitCode: 0 },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("detached");
+    expect(calls.some((args) => args[0] === "pull")).toBe(false);
+  });
+
+  it("aborts when the remote default branch cannot be determined", async () => {
+    const { runner, calls } = trackingRunner({
+      "ls-remote --symref origin HEAD": { stdout: "", exitCode: 128 },
+      "branch --show-current": { stdout: "main\n", exitCode: 0 },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("remote default branch");
+    expect(calls.some((args) => args[0] === "pull")).toBe(false);
+  });
+
+  it("refuses to pull when fast-forward is impossible and reports git's reason", async () => {
+    const { runner } = trackingRunner({
+      ...onDefaultBranch(),
+      ...cleanTree,
+      "-c merge.autostash=false -c rebase.autoStash=false pull --ff-only origin main": {
+        stdout: "",
+        stderr: "error: Your local changes would be overwritten by merge.\n",
+        exitCode: 1,
+      },
+    });
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Your local changes would be overwritten");
+  });
+
+  it("reports a missing git binary instead of throwing", async () => {
+    const runner: GitRunner = async () => {
+      throw new Error("spawn git ENOENT");
+    };
+
+    const result = await pullLatestCheckoutChanges("/repo/t3code", runner);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("spawn git ENOENT");
+  });
+});
+
+describe("local Dev rebuild start", () => {
+  const enabledState = { enabled: true, sourceRoot: "/repo/t3code", reason: null };
+  const launched = { accepted: true, logPath: "/tmp/dev-rebuild.log", message: null };
+
+  function makeDeps(overrides?: {
+    readonly pull?: LocalRebuildStartDeps["pullLatest"];
+    readonly launch?: LocalRebuildStartDeps["launch"];
+  }) {
+    let started = false;
+    const pull =
+      overrides?.pull ?? (async () => ({ ok: true as const, message: null as string | null }));
+    const launch =
+      overrides?.launch ??
+      (async () => ({
+        accepted: true as const,
+        logPath: "/tmp/dev-rebuild.log",
+        message: null as string | null,
+      }));
+    return {
+      isStarted: () => started,
+      deps: {
+        isStarted: () => started,
+        setStarted: (next: boolean) => {
+          started = next;
+        },
+        getState: () => enabledState,
+        pullLatest: pull,
+        launch,
+        alreadyStartedLogPath: "/tmp/dev-rebuild.log",
+        options: undefined as { pullLatest?: unknown } | undefined,
+      },
+    };
+  }
+
+  it("serializes concurrent starts behind the guard, even during a slow pull", async () => {
+    let releasePull!: () => void;
+    const pullGate = new Promise<void>((resolve) => {
+      releasePull = resolve;
+    });
+    const pull = vi.fn(async () => {
+      await pullGate;
+      return { ok: true as const, message: null as string | null };
+    });
+    const launch = vi.fn(async () => launched);
+    const { isStarted, deps } = makeDeps({ pull, launch });
+
+    const first = runLocalRebuildStart({ ...deps, options: { pullLatest: true } });
+    // Let the first invoke reach the pull await before the second arrives.
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = runLocalRebuildStart({ ...deps, options: { pullLatest: true } });
+    const secondResult = await second;
+    releasePull();
+    const firstResult = await first;
+
+    expect(secondResult).toEqual({
+      accepted: false,
+      logPath: "/tmp/dev-rebuild.log",
+      message: "A local rebuild is already in progress.",
+    });
+    expect(firstResult).toEqual(launched);
+    expect(pull).toHaveBeenCalledOnce();
+    expect(launch).toHaveBeenCalledOnce();
+    expect(isStarted()).toBe(true);
+  });
+
+  it("clears the guard when the pull fails so a later start can proceed", async () => {
+    const pull = vi.fn(async () => ({ ok: false as const, message: "boom" }));
+    const launch = vi.fn(async () => launched);
+    const { isStarted, deps } = makeDeps({ pull, launch });
+
+    const failed = await runLocalRebuildStart({ ...deps, options: { pullLatest: true } });
+    expect(failed).toEqual({ accepted: false, logPath: null, message: "boom" });
+    expect(launch).not.toHaveBeenCalled();
+    expect(isStarted()).toBe(false);
+
+    const retried = await runLocalRebuildStart(deps);
+    expect(retried).toEqual(launched);
+    expect(launch).toHaveBeenCalledOnce();
+  });
+
+  it("rebuilds the current checkout when no pull is requested", async () => {
+    const pull = vi.fn();
+    const launch = vi.fn(async () => launched);
+    const { deps } = makeDeps({ pull, launch });
+
+    const result = await runLocalRebuildStart(deps);
+
+    expect(result).toEqual(launched);
+    expect(pull).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledOnce();
   });
 });

@@ -1817,12 +1817,24 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         );
       }
       const reference = String(input.pullRequestNumber);
+      const repository =
+        input.pullRequestRepository !== undefined && input.pullRequestRepository.trim().length > 0
+          ? input.pullRequestRepository.trim()
+          : undefined;
       // `Effect.all` is sequential by default; these are two independent network
       // round trips, so serializing them doubles the PR review's startup latency.
       const [pullRequest, trackedDiff] = yield* Effect.all(
         [
-          gitHubCli.value.getPullRequest({ cwd: input.cwd, reference }),
-          gitHubCli.value.getPullRequestPatch({ cwd: input.cwd, reference }),
+          gitHubCli.value.getPullRequest({
+            cwd: input.cwd,
+            reference,
+            ...(repository === undefined ? {} : { repository }),
+          }),
+          gitHubCli.value.getPullRequestPatch({
+            cwd: input.cwd,
+            reference,
+            ...(repository === undefined ? {} : { repository }),
+          }),
         ],
         { concurrency: "unbounded" },
       ).pipe(

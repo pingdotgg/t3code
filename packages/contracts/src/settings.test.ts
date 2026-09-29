@@ -9,6 +9,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
   DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS,
+  DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE,
   DEFAULT_PULL_REQUESTS_DEFAULT_STATE,
   DEFAULT_SIDEBAR_FONT_SIZE,
@@ -136,6 +137,10 @@ describe("ClientSettings.pullRequests", () => {
       DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE,
     );
     expect(decodeClientSettings({}).pullRequestsCodeFontSize).toBe(12);
+    expect(DEFAULT_CLIENT_SETTINGS.pullRequestsBodyFontSize).toBe(
+      DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
+    );
+    expect(decodeClientSettings({}).pullRequestsBodyFontSize).toBe(14);
   });
 
   it("accepts valid pull request patches and rejects unknown states", () => {
@@ -143,11 +148,17 @@ describe("ClientSettings.pullRequests", () => {
       decodeClientSettingsPatch({
         pullRequestsDefaultState: "merged",
         pullRequestsCodeFontSize: 14,
+        pullRequestsBodyFontSize: 15,
       }),
-    ).toEqual({ pullRequestsDefaultState: "merged", pullRequestsCodeFontSize: 14 });
+    ).toEqual({
+      pullRequestsDefaultState: "merged",
+      pullRequestsCodeFontSize: 14,
+      pullRequestsBodyFontSize: 15,
+    });
 
     expect(() => decodeClientSettingsPatch({ pullRequestsDefaultState: "draft" })).toThrow();
     expect(() => decodeClientSettingsPatch({ pullRequestsCodeFontSize: 99 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ pullRequestsBodyFontSize: 99 })).toThrow();
   });
 });
 
@@ -447,6 +458,19 @@ describe("ClientSettings.headerSidebarButtons", () => {
     expect(decodeClientSettings({}).workflowRunsShowBadge).toBe(true);
     expect(decodeClientSettings({}).sidebarSearchShowShortcut).toBe(true);
     expect(decodeClientSettings({}).sidebarNewThreadConfirm).toBe(false);
+    expect(decodeClientSettings({}).localRebuildStalenessCheckMinutes).toBe(15);
+  });
+
+  it("accepts and bounds the local rebuild staleness check interval", () => {
+    expect(decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 30 })).toEqual({
+      localRebuildStalenessCheckMinutes: 30,
+    });
+    expect(decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 0 })).toEqual({
+      localRebuildStalenessCheckMinutes: 0,
+    });
+    expect(() => decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: -1 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 1441 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ localRebuildStalenessCheckMinutes: 2.5 })).toThrow();
   });
 
   it("accepts visibility and behavior patches", () => {

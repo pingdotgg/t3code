@@ -50,6 +50,8 @@ import type {
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationManagedTargetAuth,
+  PreviewAutomationManagedTargetAuthFailure,
   type PreviewAutomationHost,
   type PreviewAutomationHostFocus,
   PreviewAutomationPressInput,
@@ -110,6 +112,15 @@ import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import type { WorkflowRunResult } from "./agentWorkflows.ts";
 import type { WorkflowRunInput } from "./workflowRuntime.ts";
+import type {
+  DelegationAuditActivityEvidence,
+  DelegationAuditActivityEvidenceInput,
+  DelegationAuditAppendInput,
+  DelegationAuditBeginInput,
+  DelegationAuditBeginResult,
+  DelegationAuditPage,
+  DelegationAuditPageInput,
+} from "./delegationAudit.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -239,6 +250,35 @@ export interface DesktopLocalRebuildResult {
   accepted: boolean;
   logPath: string | null;
   message: string | null;
+}
+
+export interface DesktopLocalRebuildOptions {
+  /** Fast-forward the checkout to its upstream before building. */
+  pullLatest?: boolean;
+}
+
+/**
+ * Whether the remote default branch has moved past the commit the running
+ * Dev build was built from. Compared with `git ls-remote` (no fetch, no
+ * local state changes) against the embedded build commit, falling back to
+ * the checkout's HEAD when the build carries no commit metadata.
+ */
+export interface DesktopLocalRebuildStaleness {
+  /** False when local rebuilds are unavailable; no check is attempted. */
+  available: boolean;
+  /** True when the remote default branch contains the base commit plus more. */
+  behind: boolean;
+  /** Best-effort commit count between base and remote tip; null when unknown. */
+  behindBy: number | null;
+  localBranch: string | null;
+  localSha: string | null;
+  remoteBranch: string | null;
+  remoteSha: string | null;
+  /** Commit the running build was made from; null when not embedded. */
+  buildSha: string | null;
+  checkedAt: string | null;
+  /** Human-readable reason when the check could not complete. */
+  error: string | null;
 }
 
 export interface DesktopEnvironmentBootstrap {
@@ -751,6 +791,26 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   profileId: Schema.optional(BrowserProfileId),
 });
 
+export const DesktopPreviewManagedSessionInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  profileId: Schema.optional(BrowserProfileId),
+  targetUrl: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+  managedTargetAuth: PreviewAutomationManagedTargetAuth,
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type DesktopPreviewManagedSessionInput = typeof DesktopPreviewManagedSessionInputSchema.Type;
+
+export const DesktopPreviewManagedSessionResultSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("authenticated") }),
+  Schema.Struct({ _tag: Schema.Literal("not-managed") }),
+  Schema.Struct({
+    _tag: Schema.Literal("failed"),
+    reason: PreviewAutomationManagedTargetAuthFailure,
+  }),
+]);
+export type DesktopPreviewManagedSessionResult =
+  typeof DesktopPreviewManagedSessionResultSchema.Type;
+
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Omit to clear every profile; otherwise only this profile's partition. */
@@ -848,6 +908,10 @@ export interface DesktopPreviewBridge {
     environmentId: EnvironmentId,
     profileId?: string,
   ) => Promise<DesktopPreviewWebviewConfig>;
+  /** Establish a restricted session in the selected preview profile for an attested local T3 target. */
+  bootstrapManagedPreviewSession: (
+    input: DesktopPreviewManagedSessionInput,
+  ) => Promise<DesktopPreviewManagedSessionResult>;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;
@@ -955,7 +1019,8 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   getLocalRebuildState?: () => Promise<DesktopLocalRebuildState>;
-  rebuildAndRestart?: () => Promise<DesktopLocalRebuildResult>;
+  rebuildAndRestart?: (options?: DesktopLocalRebuildOptions) => Promise<DesktopLocalRebuildResult>;
+  checkLocalRebuildStaleness?: () => Promise<DesktopLocalRebuildStaleness>;
   showNotification: (request: DesktopNotificationRequest) => Promise<boolean>;
   onNotificationClick: (listener: (click: DesktopNotificationClick) => void) => () => void;
 }
@@ -1200,6 +1265,12 @@ export interface EnvironmentApi {
     getThreadActivities: (
       input: OrchestrationGetThreadActivitiesInput,
     ) => Promise<OrchestrationGetThreadActivitiesResult>;
+    getDelegationAuditPage: (input: DelegationAuditPageInput) => Promise<DelegationAuditPage>;
+    beginDelegationAudit: (input: DelegationAuditBeginInput) => Promise<DelegationAuditBeginResult>;
+    appendDelegationAuditEvent: (input: DelegationAuditAppendInput) => Promise<void>;
+    getActivityEvidence: (
+      input: DelegationAuditActivityEvidenceInput,
+    ) => Promise<DelegationAuditActivityEvidence>;
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;

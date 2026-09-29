@@ -180,6 +180,8 @@ export const DEFAULT_SIDEBAR_V2_ENABLED = false;
 export const DEFAULT_PULL_REQUESTS_DEFAULT_STATE: PullRequestListState = "open";
 /** Code font size for pull request diffs, independent of the global code size. */
 export const DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE: FontSize = 12 as FontSize;
+/** Body font size for pull request descriptions and comments, independent of chat. */
+export const DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE: FontSize = 14 as FontSize;
 
 export const ThreadCompletionNotificationMode = Schema.Literals(["off", "background-only", "all"]);
 export type ThreadCompletionNotificationMode = typeof ThreadCompletionNotificationMode.Type;
@@ -224,6 +226,17 @@ export const DEFAULT_WORKFLOW_PREWARM_ON_HOVER = true;
 export const DEFAULT_WORKFLOW_RUNS_SHOW_BADGE = true;
 export const DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT = true;
 export const DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM = false;
+/** How often the desktop Dev build checks whether main moved past the running build, in minutes. 0 disables the check. */
+export const DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES = 15;
+export const MIN_LOCAL_REBUILD_STALENESS_CHECK_MINUTES = 0;
+export const MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES = 1440;
+export const LocalRebuildStalenessCheckMinutes = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+    maximum: MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+  }),
+);
+export type LocalRebuildStalenessCheckMinutes = typeof LocalRebuildStalenessCheckMinutes.Type;
 
 export const BrowserRecordingFrameRate = Schema.Literals([30, 60]);
 export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
@@ -292,6 +305,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   pullRequestsCodeFontSize: FontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE)),
+  ),
+  pullRequestsBodyFontSize: FontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE)),
   ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
@@ -419,6 +435,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarNewThreadConfirm: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM)),
+  ),
+  localRebuildStalenessCheckMinutes: LocalRebuildStalenessCheckMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES)),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -817,6 +836,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
   pullRequestsDefaultState: Schema.optionalKey(PullRequestListState),
   pullRequestsCodeFontSize: Schema.optionalKey(FontSize),
+  pullRequestsBodyFontSize: Schema.optionalKey(FontSize),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -874,6 +894,7 @@ export const ClientSettingsPatch = Schema.Struct({
   workflowRunsShowBadge: Schema.optionalKey(Schema.Boolean),
   sidebarSearchShowShortcut: Schema.optionalKey(Schema.Boolean),
   sidebarNewThreadConfirm: Schema.optionalKey(Schema.Boolean),
+  localRebuildStalenessCheckMinutes: Schema.optionalKey(LocalRebuildStalenessCheckMinutes),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
 

@@ -100,6 +100,13 @@ export interface ProjectionThreadActivityRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadActivity>, ProjectionRepositoryError>;
+  readonly getById: (input: {
+    readonly threadId: ThreadId;
+    readonly activityId: EventId;
+  }) => Effect.Effect<
+    import("effect").Option.Option<ProjectionThreadActivity>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * List only user-input lifecycle activities for a thread

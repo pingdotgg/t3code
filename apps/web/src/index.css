@@ -175,6 +175,7 @@
   --app-sidebar-legacy-row-padding-x: calc(var(--app-sidebar-font-size) * 0.545455);
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
+  --pr-body-font-size: 14px;
   --sidebar-translucency-alpha: 100%;
   --sidebar-backdrop-blur: 0px;
   --sidebar-backdrop-saturation: 1;
@@ -582,10 +583,23 @@ label:has(> select#reasoning-effort) select {
 }
 
 .pull-request-body .chat-markdown h2 {
-  font-size: 1.25rem;
-  font-weight: 700;
+  font-size: 1.375rem;
+  font-weight: 600;
   line-height: 1.35;
   margin: 1rem 0 0.5rem;
+}
+
+.pull-request-body .chat-markdown {
+  font-size: var(--pr-body-font-size);
+  line-height: 1.25;
+}
+
+.pull-request-body .chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.pull-request-body .chat-markdown h2:not(:first-child) {
+  margin-top: 2rem;
 }
 
 .pull-request-body .chat-markdown h3 {
@@ -863,6 +877,12 @@ label:has(> select#reasoning-effort) select {
 
 .chat-work-panel-body {
   contain: layout style;
+}
+
+.chat-work-details {
+  font-size: var(--app-tool-font-size);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 .chat-work-chevron {

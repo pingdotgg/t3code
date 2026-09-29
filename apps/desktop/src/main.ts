@@ -38,7 +38,6 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
-  DesktopLocalRebuildResult,
   DesktopLocalRebuildState,
 } from "@t3tools/contracts";
 import { DesktopNotificationRequest } from "@t3tools/contracts";
@@ -108,9 +107,12 @@ import {
 import { startPreviewRuntime, type PreviewRuntimeHandle } from "./preview/Runtime.ts";
 import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
+  checkLocalDevRebuildStaleness,
   launchLocalDevRebuild,
+  pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
+  runLocalRebuildStart,
 } from "./localDevRebuild.ts";
 
 const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
@@ -156,6 +158,7 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const LOCAL_REBUILD_GET_STATE_CHANNEL = "desktop:local-rebuild-get-state";
 const LOCAL_REBUILD_START_CHANNEL = "desktop:local-rebuild-start";
+const LOCAL_REBUILD_CHECK_STALENESS_CHANNEL = "desktop:local-rebuild-check-staleness";
 const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
@@ -2085,29 +2088,30 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(LOCAL_REBUILD_GET_STATE_CHANNEL);
   ipcMain.handle(LOCAL_REBUILD_GET_STATE_CHANNEL, async () => getLocalDevRebuildState());
 
-  ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
-  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async () => {
-    if (localRebuildStarted) {
-      return {
-        accepted: false,
-        logPath: Path.join(LOG_DIR, "dev-rebuild.log"),
-        message: "A local rebuild is already in progress.",
-      } satisfies DesktopLocalRebuildResult;
-    }
-    localRebuildStarted = true;
-    const result = await launchLocalDevRebuild(
-      getLocalDevRebuildState(),
-      LOG_DIR,
-      undefined,
-      () => {
-        localRebuildStarted = false;
-      },
-    );
-    if (!result.accepted) {
-      localRebuildStarted = false;
-    }
-    return result satisfies DesktopLocalRebuildResult;
+  ipcMain.removeHandler(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL);
+  ipcMain.handle(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL, async () => {
+    const state = getLocalDevRebuildState();
+    return checkLocalDevRebuildStaleness({
+      enabled: state.enabled,
+      sourceRoot: state.sourceRoot,
+      buildSha: resolveAboutCommitHash(),
+    });
   });
+
+  ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
+  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async (_event, options) =>
+    runLocalRebuildStart({
+      isStarted: () => localRebuildStarted,
+      setStarted: (started) => {
+        localRebuildStarted = started;
+      },
+      getState: getLocalDevRebuildState,
+      pullLatest: (sourceRoot) => pullLatestCheckoutChanges(sourceRoot),
+      launch: (state, onExit) => launchLocalDevRebuild(state, LOG_DIR, undefined, onExit),
+      alreadyStartedLogPath: Path.join(LOG_DIR, "dev-rebuild.log"),
+      options: options as { pullLatest?: unknown } | undefined,
+    }),
+  );
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {

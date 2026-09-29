@@ -1,5 +1,6 @@
 import {
   AuthAccessReadScope,
+  AuthBrowserPreviewScope,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -151,6 +152,10 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getThreadActivities]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_WS_METHODS.getDelegationAuditPage]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_WS_METHODS.getActivityEvidence]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_WS_METHODS.beginDelegationAudit]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_WS_METHODS.appendDelegationAuditEvent]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getTurnDiffState]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getFullThreadDiffState]: AuthOrchestrationReadScope,
@@ -164,6 +169,19 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
+
+// Automation-host RPCs are excluded: the preview session runs in the managed
+// page context and must not register as a host.
+const PREVIEW_RPC_METHODS = new Set<string>([
+  WS_METHODS.previewOpen,
+  WS_METHODS.previewNavigate,
+  WS_METHODS.previewReportStatus,
+  WS_METHODS.previewResize,
+  WS_METHODS.previewRefresh,
+  WS_METHODS.previewClose,
+  WS_METHODS.previewList,
+  WS_METHODS.subscribePreviewEvents,
+]);
 
 export const requiredScopeForRpcMethod = (method: WsRpcMethod): AuthEnvironmentScope =>
   RPC_REQUIRED_SCOPES[method];
@@ -188,7 +206,8 @@ export const authorizeRpcMethod = (
       }),
     );
   }
-  return scopes.has(requiredScope)
+  return scopes.has(requiredScope) ||
+    (PREVIEW_RPC_METHODS.has(method) && scopes.has(AuthBrowserPreviewScope))
     ? Effect.void
     : Effect.fail(
         new EnvironmentAuthorizationError({

@@ -7,6 +7,8 @@ import {
   decodeNestedThreadCreationOutcome,
   runNestedThreadCreationPhases,
 } from "./nestedThreadCreation.ts";
+import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import { isDefinitiveCommandRejectionError } from "./cli/client.ts";
 
 class PhaseError extends Error {
   readonly definitive: boolean;
@@ -167,6 +169,66 @@ describe("runNestedThreadCreationPhases", () => {
       cleanupPerformed: true,
       errorCode: "TURN_START_REJECTED",
     });
+  });
+
+  it("cleans up typed RPC command rejections but preserves transport ambiguity", async () => {
+    let cleanupCalls = 0;
+    const runRpcFailure = (error: OrchestrationDispatchCommandError) =>
+      Effect.runPromise(
+        runNestedThreadCreationPhases("child-1", true, {
+          createThread: Effect.succeed(ThreadUrl.make("https://app.example/env/child-1")),
+          startTurn: Effect.fail(error),
+          cleanupThread: Effect.sync(() => {
+            cleanupCalls += 1;
+          }),
+          classifyFailure: (failure) => ({
+            definitive: isDefinitiveCommandRejectionError(failure),
+            message: failure instanceof Error ? failure.message : String(failure),
+          }),
+        }),
+      );
+    const rejected = await runRpcFailure(
+      new OrchestrationDispatchCommandError({
+        message: "First turn rejected.",
+        cause: { _tag: "OrchestrationCommandInvariantError" },
+      }),
+    );
+
+    expect(rejected).toMatchObject({
+      status: "failed",
+      errorCode: "TURN_START_REJECTED",
+      cleanupPerformed: true,
+    });
+    expect(cleanupCalls).toBe(1);
+
+    const ambiguous = await runRpcFailure(
+      new OrchestrationDispatchCommandError({
+        message: "RPC connection was lost.",
+        cause: { _tag: "CliLiveTargetError" },
+      }),
+    );
+    expect(ambiguous).toMatchObject({
+      status: "ambiguous",
+      errorCode: "TURN_START_AMBIGUOUS",
+      cleanupPerformed: false,
+    });
+    expect(cleanupCalls).toBe(1);
+
+    const unrecordedRejection = await runRpcFailure(
+      new OrchestrationDispatchCommandError({
+        message: "Delegation rejection could not be audited.",
+        cause: {
+          _tag: "OrchestrationCommandInvariantError",
+          detail: "Delegation audit persistence is unavailable.",
+        },
+      }),
+    );
+    expect(unrecordedRejection).toMatchObject({
+      status: "ambiguous",
+      errorCode: "TURN_START_AMBIGUOUS",
+      cleanupPerformed: false,
+    });
+    expect(cleanupCalls).toBe(1);
   });
 
   it("reports a definitive cleanup rejection with the committed thread id", async () => {

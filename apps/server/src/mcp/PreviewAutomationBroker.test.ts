@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationInvalidSelectorError,
+  PreviewAutomationManagedTargetAuthError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
   PreviewAutomationNoSupportedHostError,
@@ -20,13 +21,28 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
+import { ManagedPreviewAuth } from "../auth/Services/ManagedPreviewAuth.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
-const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(NodeServices.layer));
+const ManagedPreviewAuthTest = Layer.succeed(
+  ManagedPreviewAuth,
+  ManagedPreviewAuth.of({
+    prepare: () => Effect.succeed(undefined),
+    attest: () => Effect.succeed(undefined),
+    openBootstrap: () => Effect.die("Managed preview bootstrap is unused in this test."),
+    release: () => Effect.void,
+    revokeProviderSession: () => Effect.void,
+    revokeAll: Effect.void,
+  }),
+);
+const makeBroker = PreviewAutomationBroker.make.pipe(
+  Effect.provide(Layer.merge(ManagedPreviewAuthTest, NodeServices.layer)),
+);
 
 const scope = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -122,6 +138,11 @@ it.effect("drops provider-session affinity when its credential is revoked", () =
       yield* broker.invoke({ scope, operation: "status", input: {} });
       expect(routedClientIds.at(-1)).toBe("client-1");
       yield* broker.revokeProviderSession(scope.providerSessionId);
+      const revokedError = yield* broker
+        .invoke({ scope, operation: "status", input: {} })
+        .pipe(Effect.flip);
+      expect(revokedError).toBeInstanceOf(PreviewAutomationManagedTargetAuthError);
+      expect(revokedError).toMatchObject({ reason: "authorization-revoked" });
       yield* broker.focusHost({
         clientId: "client-1",
         connectionId: connectionIds.get("client-1")!,
@@ -135,7 +156,11 @@ it.effect("drops provider-session affinity when its credential is revoked", () =
         focused: true,
       });
 
-      yield* broker.invoke({ scope, operation: "status", input: {} });
+      yield* broker.invoke({
+        scope: { ...scope, providerSessionId: "provider-session-2" },
+        operation: "status",
+        input: {},
+      });
       expect(routedClientIds.at(-1)).toBe("client-2");
     }),
   ),
