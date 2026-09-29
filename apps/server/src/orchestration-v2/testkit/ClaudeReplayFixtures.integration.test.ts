@@ -211,7 +211,8 @@ describe("Claude Agent SDK replay fixtures", () => {
           for (const toolName of claudeToolUseNamesFromTranscript(transcript)) {
             seenToolNames.add(toolName);
             const classification = classifyClaudeNativeTool(toolName);
-            if (!classification.known) {
+            // MCP tools are open-ended and deliberately become dynamic tools.
+            if (!classification.known && !toolName.startsWith("mcp__")) {
               unknownToolNames.add(`${fixture.name}:${toolName}`);
             }
           }
