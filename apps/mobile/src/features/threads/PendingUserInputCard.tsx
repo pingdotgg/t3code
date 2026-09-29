@@ -1,5 +1,6 @@
 import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
+import { splitQuestionTextLinks } from "./questionTextLinks";
 import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
@@ -20,6 +21,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -265,7 +267,21 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 {question.header}
               </Text>
               <Text className="font-sans text-base leading-snug text-foreground">
-                {question.question}
+                {splitQuestionTextLinks(question.question).map((segment, index) =>
+                  segment.kind === "link" ? (
+                    <Text
+                      key={index}
+                      className="underline"
+                      onPress={() => {
+                        void tryOpenExternalUrl(segment.href, "markdown-link");
+                      }}
+                    >
+                      {segment.text}
+                    </Text>
+                  ) : (
+                    segment.text
+                  ),
+                )}
               </Text>
               <View className="gap-2">
                 {question.options.map((option) => {
