@@ -258,6 +258,14 @@ export interface DesktopLocalRebuildResult {
   message: string | null;
 }
 
+export interface DesktopLocalRebuildLifecycle {
+  /** Monotonic within the current desktop process; fences stale renderer reads. */
+  revision: number;
+  phase: "idle" | "running" | "completed" | "failed";
+  logPath: string | null;
+  message: string | null;
+}
+
 export interface DesktopLocalRebuildOptions {
   /** Fast-forward the checkout to its upstream before building. */
   pullLatest?: boolean;
@@ -265,17 +273,22 @@ export interface DesktopLocalRebuildOptions {
 
 /**
  * Whether the remote default branch has moved past the commit the running
- * Dev build was built from. Compared with `git ls-remote` (no fetch, no
- * local state changes) against the embedded build commit, falling back to
- * the checkout's HEAD when the build carries no commit metadata.
+ * Dev build was built from, plus whether the source checkout can safely pull
+ * that branch now. Remote objects may be fetched and shallow history deepened
+ * for ancestry checks, but no local branch, worktree, or remote-tracking ref
+ * is changed.
  */
 export interface DesktopLocalRebuildStaleness {
   /** False when local rebuilds are unavailable; no check is attempted. */
   available: boolean;
-  /** True when the remote default branch contains the base commit plus more. */
+  /** True when the remote default branch contains the build commit plus more. */
   behind: boolean;
   /** Best-effort commit count between base and remote tip; null when unknown. */
   behindBy: number | null;
+  /** True only when the source checkout is clean and can fast-forward safely. */
+  readyToPull: boolean;
+  /** Human-readable reason the source checkout cannot pull the remote branch. */
+  readinessReason: string | null;
   localBranch: string | null;
   localSha: string | null;
   remoteBranch: string | null;
@@ -1027,6 +1040,10 @@ export interface DesktopBridge {
   getLocalRebuildState?: () => Promise<DesktopLocalRebuildState>;
   rebuildAndRestart?: (options?: DesktopLocalRebuildOptions) => Promise<DesktopLocalRebuildResult>;
   checkLocalRebuildStaleness?: () => Promise<DesktopLocalRebuildStaleness>;
+  getLocalRebuildLifecycle?: () => Promise<DesktopLocalRebuildLifecycle>;
+  onLocalRebuildLifecycleChanged?: (
+    listener: (state: DesktopLocalRebuildLifecycle) => void,
+  ) => () => void;
   showNotification: (request: DesktopNotificationRequest) => Promise<boolean>;
   onNotificationClick: (listener: (click: DesktopNotificationClick) => void) => () => void;
 }

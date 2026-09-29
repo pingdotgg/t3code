@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { DesktopLocalRebuildStaleness, DesktopLocalRebuildState } from "@t3tools/contracts";
+import type {
+  DesktopLocalRebuildLifecycle,
+  DesktopLocalRebuildStaleness,
+  DesktopLocalRebuildState,
+} from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 
@@ -17,13 +21,62 @@ export function useLocalRebuildState(): DesktopLocalRebuildState | null {
       .then((next) => {
         if (!cancelled) setState(next);
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not read local rebuild availability",
+            description:
+              error instanceof Error ? error.message : "Desktop rebuild status is unavailable.",
+          }),
+        );
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
   return state;
+}
+
+export function useLocalRebuildLifecycle(): DesktopLocalRebuildLifecycle | null {
+  const [lifecycle, setLifecycle] = useState<DesktopLocalRebuildLifecycle | null>(null);
+
+  useEffect(() => {
+    const bridge = window.desktopBridge;
+    const getLifecycle = bridge?.getLocalRebuildLifecycle;
+    const subscribe = bridge?.onLocalRebuildLifecycleChanged;
+    if (!getLifecycle || !subscribe) return;
+
+    let active = true;
+    const accept = (next: DesktopLocalRebuildLifecycle): void => {
+      if (!active) return;
+      setLifecycle((current) =>
+        current === null || next.revision >= current.revision ? next : current,
+      );
+    };
+    const unsubscribe = subscribe(accept);
+    void getLifecycle()
+      .then(accept)
+      .catch((error: unknown) => {
+        if (!active) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not read local rebuild status",
+            description:
+              error instanceof Error ? error.message : "Desktop rebuild status is unavailable.",
+          }),
+        );
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  return lifecycle;
 }
 
 export interface LocalRebuildStalenessPoll {
@@ -44,29 +97,40 @@ export function useLocalRebuildStaleness(input: {
   const [staleness, setStaleness] = useState<DesktopLocalRebuildStaleness | null>(null);
   const [checking, setChecking] = useState(false);
   const inFlightRef = useRef(false);
+  const generationRef = useRef(0);
+  const runRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const checkStaleness = window.desktopBridge?.checkLocalRebuildStaleness;
-    if (!enabled || !checkStaleness) return;
+    if (!enabled || !checkStaleness) {
+      runRef.current = null;
+      setChecking(false);
+      return;
+    }
 
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const run = () => {
-      // A slow check (offline origin waits out the git timeout) must not pile
-      // overlapping invocations onto the interval.
-      if (cancelled || inFlightRef.current) return;
+    const generation = ++generationRef.current;
+    const run = (): void => {
+      if (generation !== generationRef.current) return;
+      if (inFlightRef.current) {
+        setChecking(true);
+        return;
+      }
       inFlightRef.current = true;
       setChecking(true);
-      void checkStaleness()
+      let request: Promise<void>;
+      request = Promise.resolve()
+        .then(checkStaleness)
         .then((next) => {
-          if (!cancelled) setStaleness(next);
+          if (generation === generationRef.current) setStaleness(next);
         })
         .catch(() => {
-          if (!cancelled) {
+          if (generation === generationRef.current) {
             setStaleness({
               available: true,
               behind: false,
               behindBy: null,
+              readyToPull: false,
+              readinessReason: null,
               localBranch: null,
               localSha: null,
               remoteBranch: null,
@@ -79,17 +143,29 @@ export function useLocalRebuildStaleness(input: {
         })
         .finally(() => {
           inFlightRef.current = false;
-          if (!cancelled) setChecking(false);
+          if (generation === generationRef.current) {
+            setChecking(false);
+          } else if (runRef.current) {
+            queueMicrotask(() => runRef.current?.());
+          }
         });
+      void request;
     };
+    runRef.current = run;
     run();
-    if (intervalMinutes > 0) {
-      timer = setInterval(run, intervalMinutes * 60_000);
-    }
     return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
+      if (generation === generationRef.current) {
+        generationRef.current += 1;
+        runRef.current = null;
+        setChecking(false);
+      }
     };
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled || intervalMinutes <= 0) return;
+    const timer = setInterval(() => runRef.current?.(), intervalMinutes * 60_000);
+    return () => clearInterval(timer);
   }, [enabled, intervalMinutes]);
 
   return { staleness, checking };
@@ -98,11 +174,13 @@ export function useLocalRebuildStaleness(input: {
 export interface LocalRebuildRequest {
   readonly requestLocalRebuild: (options?: { readonly pullLatest?: boolean }) => void;
   readonly isStartingLocalRebuild: boolean;
+  readonly lifecycle: DesktopLocalRebuildLifecycle | null;
 }
 
 /** Confirm-then-invoke flow shared by the settings button and the footer icon. */
 export function useRequestLocalRebuild(): LocalRebuildRequest {
-  const [isStartingLocalRebuild, setIsStartingLocalRebuild] = useState(false);
+  const lifecycle = useLocalRebuildLifecycle();
+  const isStartingLocalRebuild = lifecycle?.phase === "running";
 
   const requestLocalRebuild = useCallback(
     (options?: { readonly pullLatest?: boolean }) => {
@@ -118,15 +196,9 @@ export function useRequestLocalRebuild(): LocalRebuildRequest {
       )
         return;
 
-      setIsStartingLocalRebuild(true);
       void rebuildAndRestart(pullLatest ? { pullLatest: true } : undefined)
         .then((result) => {
           if (result.accepted) {
-            toastManager.add({
-              type: "success",
-              title: "Local rebuild started",
-              description: "T3 Code will restart after the new build is ready.",
-            });
             return;
           }
           toastManager.add(
@@ -148,13 +220,10 @@ export function useRequestLocalRebuild(): LocalRebuildRequest {
                 error instanceof Error ? error.message : "Local rebuild failed to start.",
             }),
           );
-        })
-        .finally(() => {
-          setIsStartingLocalRebuild(false);
         });
     },
     [isStartingLocalRebuild],
   );
 
-  return { requestLocalRebuild, isStartingLocalRebuild };
+  return { requestLocalRebuild, isStartingLocalRebuild, lifecycle };
 }

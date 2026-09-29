@@ -813,13 +813,29 @@ function AboutVersionSection() {
   const updateStateQuery = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const localRebuildState = useLocalRebuildState();
-  const { requestLocalRebuild, isStartingLocalRebuild } = useRequestLocalRebuild();
+  const {
+    requestLocalRebuild,
+    isStartingLocalRebuild,
+    lifecycle: localRebuildLifecycle,
+  } = useRequestLocalRebuild();
   const checkMinutes = useSettings((settings) => settings.localRebuildStalenessCheckMinutes);
   const { updateSettings } = useUpdateSettings();
 
   const updateState = updateStateQuery.data ?? null;
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
+  const rebuildLifecycleMessage =
+    localRebuildLifecycle?.phase === "running"
+      ? `Build and install in progress.${localRebuildLifecycle.logPath ? ` Log: ${localRebuildLifecycle.logPath}` : ""}`
+      : localRebuildLifecycle?.phase === "failed"
+        ? `Last rebuild failed: ${localRebuildLifecycle.message ?? "Installer did not complete."}${
+            localRebuildLifecycle.logPath
+              ? ` Log: ${localRebuildLifecycle.logPath}`
+              : " No installer log was created."
+          }`
+        : localRebuildLifecycle?.phase === "completed"
+          ? "The last rebuild completed."
+          : null;
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -977,9 +993,16 @@ function AboutVersionSection() {
           title="Local source"
           description="Build and install the current checkout, then restart T3 Code."
           status={
-            <span className="block break-all font-mono text-[11px] text-foreground">
-              {localRebuildState.sourceRoot}
-            </span>
+            <div className="space-y-1">
+              <span className="block break-all font-mono text-[11px] text-foreground">
+                {localRebuildState.sourceRoot}
+              </span>
+              {rebuildLifecycleMessage ? (
+                <span className="block break-all text-[11px] text-muted-foreground" role="status">
+                  {rebuildLifecycleMessage}
+                </span>
+              ) : null}
+            </div>
           }
           control={
             <Button
@@ -989,7 +1012,7 @@ function AboutVersionSection() {
               onClick={() => requestLocalRebuild()}
             >
               <RefreshCwIcon className={isStartingLocalRebuild ? "animate-spin" : undefined} />
-              {isStartingLocalRebuild ? "Starting..." : "Rebuild and restart"}
+              {isStartingLocalRebuild ? "Building..." : "Rebuild and restart"}
             </Button>
           }
         />
@@ -997,7 +1020,7 @@ function AboutVersionSection() {
       {localRebuildState?.enabled ? (
         <SettingsRow
           title="Check for source updates"
-          description="Check whether the remote default branch moved past the running build. The sidebar refresh icon lights up when a rebuild would bring in newer changes. Set 0 to turn the check off."
+          description="Check whether the remote default branch moved past the running build. The sidebar refresh icon lights up when the source checkout is clean and can safely pull newer changes. Set 0 to disable periodic checks; an initial check still runs."
           resetAction={
             checkMinutes !== DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES ? (
               <SettingResetButton

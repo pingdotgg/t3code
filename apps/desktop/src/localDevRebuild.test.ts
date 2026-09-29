@@ -1,17 +1,22 @@
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
+import type { DesktopLocalRebuildLifecycle } from "@t3tools/contracts";
 
 import {
   checkLocalDevRebuildStaleness,
   decideRebuildStaleness,
   launchLocalDevRebuild,
   parseLsRemoteSymrefHead,
+  persistLocalDevRebuildLifecycle,
   pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
+  restoreLocalDevRebuildLifecycle,
   resolveLocalDevRebuildState,
   runLocalRebuildStart,
   type GitRunner,
@@ -148,6 +153,76 @@ describe("local Dev rebuild", () => {
     });
     child.emit("exit", 1, null);
     expect(onExit).toHaveBeenCalledOnce();
+    expect(onExit).toHaveBeenCalledWith(1, null);
+  });
+
+  it("restores installer failures and completions after an app relaunch", () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
+    const statePath = Path.join(root, "lifecycle.json");
+    const logPath = Path.join(root, "dev-rebuild.log");
+    const running: DesktopLocalRebuildLifecycle = {
+      revision: 7,
+      phase: "running",
+      logPath,
+      message: null,
+    };
+    try {
+      persistLocalDevRebuildLifecycle(statePath, running, process.pid);
+      FS.writeFileSync(`${logPath}.exit-code`, "19\n");
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toEqual({
+        lifecycle: {
+          revision: 8,
+          phase: "failed",
+          logPath,
+          message: "The installer exited with code 19.",
+        },
+        processId: null,
+        error: null,
+      });
+
+      FS.writeFileSync(`${logPath}.exit-code`, "0\n");
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toMatchObject({
+        lifecycle: { revision: 8, phase: "completed", logPath, message: null },
+        processId: null,
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a live installer busy across relaunch and surfaces a missing result for a dead process", () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
+    const statePath = Path.join(root, "lifecycle.json");
+    const logPath = Path.join(root, "dev-rebuild.log");
+    const running: DesktopLocalRebuildLifecycle = {
+      revision: 3,
+      phase: "running",
+      logPath,
+      message: null,
+    };
+    try {
+      persistLocalDevRebuildLifecycle(statePath, running, process.pid);
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toEqual({
+        lifecycle: running,
+        processId: process.pid,
+        error: null,
+      });
+
+      persistLocalDevRebuildLifecycle(statePath, running, Number.MAX_SAFE_INTEGER);
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toMatchObject({
+        lifecycle: {
+          revision: 4,
+          phase: "failed",
+          logPath,
+          message: expect.stringContaining("stopped before reporting its result"),
+        },
+        processId: null,
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -215,8 +290,14 @@ describe("local Dev rebuild staleness", () => {
       calls.push(args);
       const key = args.join(" ");
       const hit = scenarios[key];
-      if (!hit) throw new Error(`unexpected git invocation: ${key}`);
-      return hit;
+      if (hit) return hit;
+      if (args[0] === "status") return { stdout: "", exitCode: 0 };
+      if (args[0] === "fetch") return { stdout: "", exitCode: 0 };
+      if (args[0] === "update-ref") return { stdout: "", exitCode: 0 };
+      if (args[0] === "rev-parse" && args[1] === "--is-shallow-repository") {
+        return { stdout: "false\n", exitCode: 0 };
+      }
+      throw new Error(`unexpected git invocation: ${key}`);
     };
     return { runner, calls };
   }
@@ -369,7 +450,211 @@ describe("local Dev rebuild staleness", () => {
     expect(result.behind).toBe(false);
     expect(result.error).toEqual(expect.any(String));
   });
+
+  it("compares abbreviated build metadata and detects unfetched remote commits without moving local refs", async () => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      for (const buildSha of [initialSha, initialSha.slice(0, 12)]) {
+        const unchanged = await checkLocalDevRebuildStaleness({
+          enabled: true,
+          sourceRoot,
+          buildSha,
+        });
+        expect(unchanged).toMatchObject({ behind: false, error: null });
+      }
+
+      const trackingRefBefore = git(sourceRoot, ["rev-parse", "refs/remotes/origin/main"]);
+      const fetchHeadPath = Path.join(sourceRoot, ".git", "FETCH_HEAD");
+      const fetchHeadBefore = FS.existsSync(fetchHeadPath)
+        ? FS.readFileSync(fetchHeadPath, "utf8")
+        : null;
+      pushRemoteCommit(root);
+
+      const updated = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+
+      expect(updated).toMatchObject({
+        behind: true,
+        behindBy: 1,
+        readyToPull: true,
+        readinessReason: null,
+        error: null,
+      });
+      expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
+      expect(git(sourceRoot, ["rev-parse", "refs/remotes/origin/main"])).toBe(trackingRefBefore);
+      expect(FS.existsSync(fetchHeadPath) ? FS.readFileSync(fetchHeadPath, "utf8") : null).toBe(
+        fetchHeadBefore,
+      );
+      expect(git(sourceRoot, ["for-each-ref", "--format=%(refname)", "refs/t3code"])).toBe("");
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps update availability separate from source checkout pull readiness", async () => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(root);
+      git(sourceRoot, ["switch", "-c", "feature"]);
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("switch to 'main'"),
+      });
+      expect(git(sourceRoot, ["branch", "--show-current"])).toBe("feature");
+      expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deepens a shallow checkout to compare a missing build commit", async () => {
+    const { root, initialSha } = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(root);
+      const shallowRoot = Path.join(root, "shallow-source");
+      execFileSync("git", [
+        "clone",
+        "--depth=1",
+        pathToFileURL(Path.join(root, "origin.git")).href,
+        shallowRoot,
+      ]);
+      expect(git(shallowRoot, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: shallowRoot,
+        buildSha: initialSha,
+      });
+
+      expect(result).toMatchObject({ behind: true, behindBy: 1, readyToPull: true, error: null });
+      expect(git(shallowRoot, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+      expect(git(shallowRoot, ["branch", "--show-current"])).toBe("main");
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("explains dirty, detached, and diverged source checkouts without changing them", async () => {
+    const dirty = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(dirty.root);
+      FS.writeFileSync(Path.join(dirty.sourceRoot, "untracked.txt"), "local data\n");
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: dirty.sourceRoot,
+        buildSha: dirty.initialSha,
+      });
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("local changes"),
+      });
+      expect(FS.readFileSync(Path.join(dirty.sourceRoot, "untracked.txt"), "utf8")).toBe(
+        "local data\n",
+      );
+    } finally {
+      FS.rmSync(dirty.root, { recursive: true, force: true });
+    }
+
+    const detached = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(detached.root);
+      git(detached.sourceRoot, ["checkout", "--detach", "HEAD"]);
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: detached.sourceRoot,
+        buildSha: detached.initialSha,
+      });
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("detached"),
+      });
+      expect(git(detached.sourceRoot, ["branch", "--show-current"])).toBe("");
+    } finally {
+      FS.rmSync(detached.root, { recursive: true, force: true });
+    }
+
+    const diverged = makeRealRemoteCheckout();
+    try {
+      git(diverged.sourceRoot, ["config", "user.name", "Rebuild Test"]);
+      git(diverged.sourceRoot, ["config", "user.email", "rebuild-test@example.invalid"]);
+      FS.writeFileSync(Path.join(diverged.sourceRoot, "local.txt"), "local\n");
+      git(diverged.sourceRoot, ["add", "local.txt"]);
+      git(diverged.sourceRoot, ["commit", "-m", "local-only"]);
+      pushRemoteCommit(diverged.root);
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: diverged.sourceRoot,
+        buildSha: diverged.initialSha,
+      });
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("diverged"),
+      });
+      expect(git(diverged.sourceRoot, ["log", "-1", "--format=%s"])).toBe("local-only");
+    } finally {
+      FS.rmSync(diverged.root, { recursive: true, force: true });
+    }
+  });
 });
+
+function makeRealRemoteCheckout(): {
+  root: string;
+  sourceRoot: string;
+  initialSha: string;
+} {
+  const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-git-"));
+  const remoteRoot = Path.join(root, "origin.git");
+  const seedRoot = Path.join(root, "seed");
+  const sourceRoot = Path.join(root, "source");
+  FS.mkdirSync(seedRoot, { recursive: true });
+  execFileSync("git", ["init", "--bare", "--initial-branch=main", remoteRoot]);
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: seedRoot });
+  git(seedRoot, ["config", "user.name", "Rebuild Test"]);
+  git(seedRoot, ["config", "user.email", "rebuild-test@example.invalid"]);
+  FS.writeFileSync(Path.join(seedRoot, "README"), "initial\n");
+  git(seedRoot, ["add", "README"]);
+  git(seedRoot, ["commit", "-m", "initial"]);
+  const initialSha = git(seedRoot, ["rev-parse", "HEAD"]);
+  git(seedRoot, ["remote", "add", "origin", remoteRoot]);
+  git(seedRoot, ["push", "-u", "origin", "main"]);
+  execFileSync("git", ["clone", remoteRoot, sourceRoot]);
+  return { root, sourceRoot, initialSha };
+}
+
+function pushRemoteCommit(root: string): void {
+  const remoteRoot = Path.join(root, "origin.git");
+  const writerRoot = Path.join(root, `writer-${Math.random().toString(16).slice(2)}`);
+  execFileSync("git", ["clone", remoteRoot, writerRoot]);
+  git(writerRoot, ["config", "user.name", "Rebuild Test"]);
+  git(writerRoot, ["config", "user.email", "rebuild-test@example.invalid"]);
+  FS.writeFileSync(Path.join(writerRoot, "remote.txt"), "remote update\n");
+  git(writerRoot, ["add", "remote.txt"]);
+  git(writerRoot, ["commit", "-m", "remote-update"]);
+  git(writerRoot, ["push", "origin", "main"]);
+}
+
+function git(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", [...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  }).trim();
+}
 
 describe("local Dev rebuild pull", () => {
   const onDefaultBranch = (): Record<string, { stdout: string; exitCode: number }> => ({
