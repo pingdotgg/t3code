@@ -27,15 +27,38 @@ if [[ ! -f "$source_dir/scripts/build-desktop-artifact.ts" ]]; then
 fi
 source_dir=$(cd "$source_dir" && pwd -P)
 
-if [[ -f "$HOME/.nvm/nvm.sh" ]]; then
-  export NVM_DIR="$HOME/.nvm"
-  # shellcheck disable=SC1091
-  . "$NVM_DIR/nvm.sh"
-  nvm use --silent 24 >/dev/null
+node24_dir=""
+brew_node24_dir=""
+if command -v brew >/dev/null 2>&1; then
+  brew_node24_dir="$(brew --prefix node@24 2>/dev/null || true)/bin"
 fi
-if [[ $(node -p 'process.versions.node.split(".")[0]') != 24 ]]; then
-  echo "T3 Code requires Node 24 for this build." >&2
+for candidate in "$brew_node24_dir" "$HOME"/.nvm/versions/node/v24.*/bin; do
+  if [[ -x "$candidate/node" ]] && [[ $("$candidate/node" -p 'process.versions.node.split(".")[0]') == 24 ]]; then
+    node24_dir=$candidate
+    break
+  fi
+done
+if [[ -z "$node24_dir" ]] && command -v node >/dev/null 2>&1 &&
+  [[ $(node -p 'process.versions.node.split(".")[0]') == 24 ]]; then
+  node24_dir=$(dirname "$(command -v node)")
+fi
+if [[ -z "$node24_dir" ]] && command -v brew >/dev/null 2>&1; then
+  brew install node@24
+  node24_dir="$(brew --prefix node@24)/bin"
+fi
+if [[ ! -x "$node24_dir/node" ]]; then
+  echo "Could not find or install Node 24." >&2
   exit 1
+fi
+export PATH="$node24_dir:$PATH"
+hash -r
+if ! command -v pnpm >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then
+    brew install pnpm
+  else
+    echo "pnpm is required to build T3 Code." >&2
+    exit 1
+  fi
 fi
 
 export PATH="$HOME/.cargo/bin:$source_dir/node_modules/.bin:$PATH"
