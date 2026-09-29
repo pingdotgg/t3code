@@ -16,9 +16,12 @@ export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): str
  * How this client reaches a machine, printed first in every environment row so
  * T3 Connect, SSH, WSL, and plain remote links are told apart without a legend.
  */
-export function environmentTransportLabel(environment: EnvironmentPresentation): string {
+export function environmentTransportLabel(
+  environment: EnvironmentPresentation,
+  labels: { readonly thisMachine: string; readonly remoteLink: string; readonly ssh: string },
+): string {
   const { entry } = environment;
-  if (entry.target._tag === "PrimaryConnectionTarget") return "This machine";
+  if (entry.target._tag === "PrimaryConnectionTarget") return labels.thisMachine;
   if (environment.relayManaged) return "T3 Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
   if (
@@ -26,9 +29,9 @@ export function environmentTransportLabel(environment: EnvironmentPresentation):
     Option.isSome(entry.profile) &&
     entry.profile.value._tag === "SshConnectionProfile"
   ) {
-    return `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`;
+    return `${labels.ssh} ${formatDesktopSshTarget(entry.profile.value.target)}`;
   }
-  return environment.displayUrl ?? "Remote link";
+  return environment.displayUrl ?? labels.remoteLink;
 }
 
 /**

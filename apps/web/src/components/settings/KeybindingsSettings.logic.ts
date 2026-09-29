@@ -6,6 +6,7 @@ import {
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import type { KeybindingsTranslationKey, TFunction } from "@t3tools/i18n";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingWhenExpression,
@@ -41,6 +42,7 @@ export interface KeybindingRow {
 
 export type WhenVariableOption = string;
 export type KeybindingCommandOption = KeybindingCommand;
+type KeybindingsT = TFunction<"keybindings">;
 
 const CORE_WHEN_VARIABLES = [
   "terminalFocus",
@@ -87,12 +89,16 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
   }
 }
 
-export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
-  if (depth === 0) return "Clear all conditions";
+export function whenNodeRemoveLabel(
+  node: KeybindingWhenNode,
+  depth: number,
+  t?: KeybindingsT,
+): string {
+  if (depth === 0) return t ? t("clearAllConditions") : "Clear all conditions";
   if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
-    return "Remove condition";
+    return t ? t("removeCondition") : "Remove condition";
   }
-  return "Remove group and its conditions";
+  return t ? t("removeGroupConditions") : "Remove group and its conditions";
 }
 
 function wrapWhenExpression(node: KeybindingWhenNode): string {
@@ -102,6 +108,7 @@ function wrapWhenExpression(node: KeybindingWhenNode): string {
 
 export function parseWhenExpressionDraft(
   expression: string,
+  t?: KeybindingsT,
 ): { ok: true; value: KeybindingWhenNode | undefined } | { ok: false; message: string } {
   const trimmed = expression.trim();
   if (trimmed.length === 0) return { ok: true, value: undefined };
@@ -110,7 +117,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: t ? t("invalidWhenExpression") : "Use variables with !, &&, ||, and parentheses.",
     };
   }
 
@@ -166,6 +173,7 @@ function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
 export function keybindingConflictLabels(
   rows: ReadonlyArray<KeybindingRow>,
   input: { readonly rowId: string; readonly key: string; readonly when: string },
+  t?: KeybindingsT,
 ): ReadonlyArray<string> {
   if (input.key.trim().length === 0) return [];
   const conflicts: Array<string> = [];
@@ -175,7 +183,7 @@ export function keybindingConflictLabels(
       candidate.key === input.key &&
       conflictsWithWhen(candidate.when, input.when)
     ) {
-      conflicts.push(commandLabel(candidate.command));
+      conflicts.push(commandLabel(candidate.command, t));
     }
   }
   return [...new Set(conflicts)].toSorted();
@@ -184,6 +192,7 @@ export function keybindingConflictLabels(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   query: string,
+  t?: KeybindingsT,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   const rows = keybindings.map((binding, index) => {
@@ -204,11 +213,15 @@ export function buildKeybindingRows(
   });
 
   const rowsWithConflicts = rows.map((row) => {
-    const conflicts = keybindingConflictLabels(rows, {
-      rowId: row.id,
-      key: row.key,
-      when: row.when,
-    });
+    const conflicts = keybindingConflictLabels(
+      rows,
+      {
+        rowId: row.id,
+        key: row.key,
+        when: row.when,
+      },
+      t,
+    );
     return conflicts.length > 0
       ? Object.assign({}, row, { conflicts: [...new Set(conflicts)].toSorted() })
       : row;
@@ -229,10 +242,10 @@ export function buildKeybindingRows(
   return rowsWithConflicts.filter((row) => {
     return (
       row.command.toLowerCase().includes(normalizedQuery) ||
-      commandLabel(row.command).toLowerCase().includes(normalizedQuery) ||
+      commandLabel(row.command, t).toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
-      row.source.toLowerCase().includes(normalizedQuery)
+      keybindingSourceLabel(row.source, t).toLowerCase().includes(normalizedQuery)
     );
   });
 }
@@ -285,6 +298,7 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  t?: KeybindingsT,
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
   for (const binding of keybindings) {
@@ -292,21 +306,36 @@ export function buildKeybindingCommandOptions(
   }
   return [...commands].toSorted(
     (left, right) =>
-      compareUsageCommands(left, right) ?? commandLabel(left).localeCompare(commandLabel(right)),
+      compareUsageCommands(left, right) ??
+      commandLabel(left, t).localeCompare(commandLabel(right, t)),
   );
 }
 
-export function commandLabel(command: KeybindingCommand): string {
+export function commandLabel(command: KeybindingCommand, t?: KeybindingsT): string {
+  const raw = String(command);
+  if (raw.startsWith("script.") && raw.endsWith(".run")) {
+    const name = titleCaseCommandSegment(raw.slice("script.".length, -".run".length));
+    return t ? t("runScript", { name }) : `Run Script: ${name}`;
+  }
+
+  if (t) {
+    const key = `command_${raw.replaceAll(".", "_")}` as KeybindingsTranslationKey;
+    const localized = t(key, { defaultValue: "" });
+    if (localized.length > 0) return localized;
+  }
+
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread ID";
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
   if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
-  const raw = String(command);
-  if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
-  }
   return raw.split(".").map(titleCaseCommandSegment).join(": ");
+}
+
+export function keybindingSourceLabel(source: KeybindingSource, t?: KeybindingsT): string {
+  if (source === "Default") return t ? t("sourceDefault") : source;
+  if (source === "Custom") return t ? t("sourceCustom") : source;
+  return t ? t("sourceProject") : source;
 }
 
 function titleCaseCommandSegment(segment: string): string {

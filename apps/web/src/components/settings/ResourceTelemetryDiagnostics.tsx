@@ -29,6 +29,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -116,28 +117,31 @@ function formatProcessName(process: Pick<ResourceTelemetryProcess, "command" | "
   return normalized.split(/[\\/]/).findLast((segment) => segment.length > 0) ?? normalized;
 }
 
-function categoryLabel(category: ResourceTelemetryProcessCategory): string {
+function categoryLabel(
+  category: ResourceTelemetryProcessCategory,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
   switch (category) {
     case "server":
-      return "Server";
+      return t("telemetryServer");
     case "server-child":
-      return "Backend child";
+      return t("telemetryBackendChild");
     case "provider-root":
-      return "Provider";
+      return t("telemetryProvider");
     case "terminal-root":
-      return "Terminal";
+      return t("telemetryTerminal");
     case "electron-main":
-      return "Electron main";
+      return t("telemetryElectronMain");
     case "electron-renderer":
-      return "Renderer";
+      return t("telemetryRenderer");
     case "electron-gpu":
-      return "GPU";
+      return t("telemetryGpu");
     case "electron-utility":
-      return "Electron utility";
+      return t("telemetryElectronUtility");
     case "resource-monitor":
-      return "Monitor";
+      return t("telemetryMonitor");
     case "unknown-t3":
-      return "T3 process";
+      return t("telemetryT3Process");
   }
 }
 
@@ -148,26 +152,30 @@ function categoryDotClass(category: ResourceTelemetryProcessCategory): string {
   return "bg-success";
 }
 
-function ioSemanticsLabel(semantics: ResourceTelemetryIoSemantics): string {
+function ioSemanticsLabel(
+  semantics: ResourceTelemetryIoSemantics,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
   switch (semantics) {
     case "storage":
-      return "Storage bytes";
+      return t("telemetryStorageBytes");
     case "logical":
-      return "Logical bytes";
+      return t("telemetryLogicalBytes");
     case "all-io":
-      return "All I/O bytes";
+      return t("telemetryAllIoBytes");
     case "unavailable":
-      return "Unavailable";
+      return t("unavailable");
   }
 }
 
 function booleanStateLabel(
   value: BackgroundBooleanState,
   labels: { readonly true: string; readonly false: string },
+  t: ReturnType<typeof useTranslation>["t"],
 ): string {
   if (value === "true") return labels.true;
   if (value === "false") return labels.false;
-  return "Unknown";
+  return t("telemetryUnknown");
 }
 
 function sourceStatusTone(status: ResourceTelemetrySourceStatus): "default" | "warning" | "danger" {
@@ -216,17 +224,22 @@ function SourceStatusBadge({
 }
 
 function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
+  const { t } = useTranslation();
   useRelativeTimeTick();
   if (!sampledAt) {
-    return <span className="text-2xs text-muted-foreground/55">Waiting for sample</span>;
+    return (
+      <span className="text-2xs text-muted-foreground/55">{t("telemetryWaitingForSample")}</span>
+    );
   }
   const relative = formatRelativeTime(DateTime.formatIso(sampledAt));
   if (!relative) {
-    return <span className="text-2xs text-muted-foreground/55">Waiting for sample</span>;
+    return (
+      <span className="text-2xs text-muted-foreground/55">{t("telemetryWaitingForSample")}</span>
+    );
   }
   return (
     <span className="text-2xs text-muted-foreground/60">
-      Updated <span className="font-mono tabular-nums">{relative.value}</span>
+      {t("telemetryUpdated")} <span className="font-mono tabular-nums">{relative.value}</span>
       {relative.suffix ? ` ${relative.suffix}` : ""}
     </span>
   );
@@ -546,6 +559,7 @@ function ProcessTable({
   signalingKeys: ReadonlySet<string>;
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
+  const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const visible = useMemo(
     () => visibleResourceTelemetryProcesses(processes, collapsed),
@@ -588,24 +602,24 @@ function ProcessTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-3xs uppercase tracking-widest text-muted-foreground/65">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
-              <th className="px-3 py-2 font-semibold">Category</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
-              <th className="px-3 py-2 text-right font-semibold">Memory</th>
-              <th className="px-3 py-2 text-right font-semibold">Read/s</th>
-              <th className="px-3 py-2 text-right font-semibold">Write/s</th>
-              <th className="px-3 py-2 text-right font-semibold">Read Total</th>
-              <th className="px-3 py-2 text-right font-semibold">Write Total</th>
-              <th className="px-3 py-2 text-right font-semibold">PID</th>
-              <th className="px-2 py-2 text-right font-semibold sm:pr-4">Kill</th>
+              <th className="px-4 py-2 font-semibold sm:pl-5">{t("telemetryProcess")}</th>
+              <th className="px-3 py-2 font-semibold">{t("telemetryCategory")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryCpu")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryCpuTime")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryMemory")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryReadRate")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryWriteRate")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryReadTotal")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryWriteTotal")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryPid")}</th>
+              <th className="px-2 py-2 text-right font-semibold sm:pr-4">{t("telemetryKill")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
             {visible.length === 0 ? (
               <tr>
                 <td colSpan={11} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
-                  Waiting for the native process monitor.
+                  {t("telemetryWaitingForProcessMonitor")}
                 </td>
               </tr>
             ) : null}
@@ -619,7 +633,7 @@ function ProcessTable({
                   />
                 </td>
                 <td className="truncate px-3 py-2 text-2xs text-muted-foreground">
-                  {categoryLabel(process.category)}
+                  {categoryLabel(process.category, t)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {process.cpuPercent.toFixed(1)}%
@@ -642,7 +656,9 @@ function ProcessTable({
                 <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
                   <Tooltip>
                     <TooltipTrigger render={<span>{formatBytes(process.ioWriteBytes)}</span>} />
-                    <TooltipPopup side="top">{ioSemanticsLabel(process.ioSemantics)}</TooltipPopup>
+                    <TooltipPopup side="top">
+                      {ioSemanticsLabel(process.ioSemantics, t)}
+                    </TooltipPopup>
                   </Tooltip>
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
@@ -669,6 +685,7 @@ function HistoryProcessTable({
 }: {
   processes: ReadonlyArray<ResourceTelemetryProcessSummary>;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="border-t border-border/60">
       <ScrollArea
@@ -691,22 +708,22 @@ function HistoryProcessTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-3xs uppercase tracking-widest text-muted-foreground/65">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
-              <th className="px-3 py-2 font-semibold">Category</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
-              <th className="px-3 py-2 text-right font-semibold">Peak CPU</th>
-              <th className="px-3 py-2 text-right font-semibold">Peak Mem</th>
-              <th className="px-3 py-2 text-right font-semibold">Read</th>
-              <th className="px-3 py-2 text-right font-semibold">Write</th>
-              <th className="px-3 py-2 text-right font-semibold">Samples</th>
-              <th className="px-3 py-2 text-right font-semibold sm:pr-5">PID</th>
+              <th className="px-4 py-2 font-semibold sm:pl-5">{t("telemetryProcess")}</th>
+              <th className="px-3 py-2 font-semibold">{t("telemetryCategory")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryCpuTime")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryPeakCpu")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryPeakMemory")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryRead")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryWrite")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetrySamples")}</th>
+              <th className="px-3 py-2 text-right font-semibold sm:pr-5">{t("telemetryPid")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
             {processes.length === 0 ? (
               <tr>
                 <td colSpan={9} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
-                  No retained process samples in this window.
+                  {t("telemetryNoRetainedSamples")}
                 </td>
               </tr>
             ) : null}
@@ -727,7 +744,7 @@ function HistoryProcessTable({
                   </Tooltip>
                 </td>
                 <td className="truncate px-3 py-2 text-2xs text-muted-foreground">
-                  {categoryLabel(process.category)}
+                  {categoryLabel(process.category, t)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {formatCpuTime(process.cpuTimeMs)}
@@ -760,6 +777,7 @@ function HistoryProcessTable({
 }
 
 function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttributionEntry> }) {
+  const { t } = useTranslation();
   return (
     <div className="overflow-x-auto border-t border-border/60">
       <table className="w-full min-w-[720px] table-fixed text-left text-xs">
@@ -773,19 +791,19 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
         </colgroup>
         <thead className="border-b border-border/60 text-3xs uppercase tracking-widest text-muted-foreground/65">
           <tr>
-            <th className="px-4 py-2 font-semibold sm:pl-5">Component</th>
-            <th className="px-3 py-2 font-semibold">Operation</th>
-            <th className="px-3 py-2 text-right font-semibold">Logical Read</th>
-            <th className="px-3 py-2 text-right font-semibold">Logical Write</th>
-            <th className="px-3 py-2 text-right font-semibold">Count</th>
-            <th className="px-3 py-2 text-right font-semibold sm:pr-5">Time</th>
+            <th className="px-4 py-2 font-semibold sm:pl-5">{t("telemetryComponent")}</th>
+            <th className="px-3 py-2 font-semibold">{t("telemetryOperation")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("telemetryLogicalRead")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("telemetryLogicalWrite")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("telemetryCount")}</th>
+            <th className="px-3 py-2 text-right font-semibold sm:pr-5">{t("telemetryTime")}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border/50">
           {entries.length === 0 ? (
             <tr>
               <td colSpan={6} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
-                No instrumented application I/O has been recorded yet.
+                {t("telemetryNoInstrumentedIo")}
               </td>
             </tr>
           ) : null}
@@ -818,6 +836,7 @@ export function ResourceTelemetryDiagnostics({
 }: {
   environmentId: EnvironmentId | null;
 }) {
+  const { t } = useTranslation();
   const [windowMs, setWindowMs] = useState(15 * 60_000);
   const selectedWindow =
     HISTORY_WINDOWS.find((option) => option.windowMs === windowMs) ?? HISTORY_WINDOWS[1];
@@ -978,7 +997,7 @@ export function ResourceTelemetryDiagnostics({
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Refresh telemetry snapshot</TooltipPopup>
+              <TooltipPopup side="top">{t("refreshTelemetrySnapshot")}</TooltipPopup>
             </Tooltip>
           </div>
         }
@@ -1086,7 +1105,7 @@ export function ResourceTelemetryDiagnostics({
           collectorNeedsRetry ? (
             <Button size="xs" variant="outline" disabled={isRetrying} onClick={retryCollector}>
               <RefreshIcon size="xs" refreshing={isRetrying} />
-              Retry monitor
+              {t("telemetryRetryMonitor")}
             </Button>
           ) : null
         }
@@ -1097,48 +1116,64 @@ export function ResourceTelemetryDiagnostics({
               <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
                 <BatteryIcon className="size-3.5" />
               </span>
-              Host state
+              {t("telemetryHostState")}
             </div>
             {hasHostPowerSignal && snapshot ? (
               <>
                 <DetailRow
-                  label="Power source"
-                  value={booleanStateLabel(snapshot.power.onBattery, {
-                    true: "Battery",
-                    false: "External power",
-                  })}
+                  label={t("telemetryPowerSource")}
+                  value={booleanStateLabel(
+                    snapshot.power.onBattery,
+                    {
+                      true: t("telemetryBattery"),
+                      false: t("telemetryExternalPower"),
+                    },
+                    t,
+                  )}
                 />
                 <DetailRow
-                  label="Low power mode"
-                  value={booleanStateLabel(snapshot.power.lowPowerMode, {
-                    true: "Enabled",
-                    false: "Disabled",
-                  })}
+                  label={t("telemetryLowPowerMode")}
+                  value={booleanStateLabel(
+                    snapshot.power.lowPowerMode,
+                    {
+                      true: t("telemetryEnabled"),
+                      false: t("telemetryDisabled"),
+                    },
+                    t,
+                  )}
                 />
                 <DetailRow
-                  label="Idle"
-                  value={`${booleanStateLabel(snapshot.power.idle, {
-                    true: "Idle",
-                    false: "Active",
-                  })}${
+                  label={t("telemetryIdle")}
+                  value={`${booleanStateLabel(
+                    snapshot.power.idle,
+                    {
+                      true: t("telemetryIdle"),
+                      false: t("telemetryActive"),
+                    },
+                    t,
+                  )}${
                     snapshot.power.idleSeconds === null
                       ? ""
                       : ` · ${Math.round(snapshot.power.idleSeconds)}s`
                   }`}
                 />
                 <DetailRow
-                  label="Session"
+                  label={t("telemetrySession")}
                   value={
                     snapshot.power.suspended
-                      ? "Suspended"
-                      : booleanStateLabel(snapshot.power.locked, {
-                          true: "Locked",
-                          false: "Unlocked",
-                        })
+                      ? t("telemetrySuspended")
+                      : booleanStateLabel(
+                          snapshot.power.locked,
+                          {
+                            true: t("telemetryLocked"),
+                            false: t("telemetryUnlocked"),
+                          },
+                          t,
+                        )
                   }
                 />
                 <DetailRow
-                  label="Thermal"
+                  label={t("telemetryThermal")}
                   value={snapshot.power.thermalState}
                   valueClassName={
                     snapshot.power.thermalState === "serious" ||
@@ -1241,12 +1276,13 @@ export function ResourceTelemetryDiagnostics({
       </SettingsSection>
 
       <SettingsSection
-        title="Live process tree"
+        title={t("telemetryLiveProcessTree")}
         icon={<CpuIcon className="size-4 text-muted-foreground" />}
         headerAction={
           snapshot ? (
             <span className="text-3xs text-muted-foreground/55">
-              Identity: <span className="font-mono">PID + start time</span>
+              {t("telemetryIdentityLabel")}:{" "}
+              <span className="font-mono">{t("telemetryPidStartTime")}</span>
             </span>
           ) : null
         }
@@ -1264,7 +1300,9 @@ export function ResourceTelemetryDiagnostics({
         title="Instrumented application I/O"
         icon={<DatabaseIcon className="size-4 text-muted-foreground" />}
         headerAction={
-          <span className="text-3xs text-muted-foreground/55">Logical bytes by operation</span>
+          <span className="text-3xs text-muted-foreground/55">
+            {t("telemetryLogicalBytesByOperation")}
+          </span>
         }
       >
         <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">

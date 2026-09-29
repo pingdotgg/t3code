@@ -2,6 +2,11 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+vi.mock("@t3tools/i18n/react", async () => {
+  const { useTranslation } = await import("../../test/settingsI18nMock");
+  return { useTranslation };
+});
+
 vi.mock("../ui/button", () => ({
   Button: ({ children }: { readonly children?: ReactNode }) => <button>{children}</button>,
 }));

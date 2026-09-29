@@ -7,9 +7,12 @@ import {
   formatRelativeTime,
   formatRelativeTimeLabel,
   formatShortTimestamp,
+  formatUpcomingTimestamp,
   getRelativeTimeState,
   resolveTimestampLocale,
 } from "./timestampFormat";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("resolveTimestampLocale", () => {
   it("defers to the runtime default when the host reports no locale", () => {
@@ -84,7 +87,9 @@ describe("formatChatTimestampTooltip", () => {
     vi.resetModules();
   });
 
-  it.each(["de-DE", "it-IT"])("keeps the English date label in a %s runtime", async (locale) => {
+  it.each(["de-DE", "it-IT"])("follows the selected language in a %s runtime", async (locale) => {
+    const documentElement = { lang: "en" };
+    vi.stubGlobal("document", { documentElement });
     const DateTimeFormat = Intl.DateTimeFormat;
     vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (locales, options) {
       return new DateTimeFormat(locales ?? locale, options);
@@ -93,7 +98,11 @@ describe("formatChatTimestampTooltip", () => {
     const { formatChatTimestampTooltip: format } = await import("./timestampFormat");
     const date = new Date(2026, 5, 4, 14, 4).toISOString();
 
-    expect(format(date, "24-hour")).toBe("14:04, 4th June 2026");
+    expect(format(date, "24-hour")).toBe("14:04, June 4, 2026");
+    documentElement.lang = "zh-CN";
+    expect(format(date, "24-hour")).toBe("14:04, 2026年6月4日");
+    documentElement.lang = "en";
+    expect(format(date, "24-hour")).toBe("14:04, June 4, 2026");
   });
 });
 
@@ -113,6 +122,20 @@ describe("formatExpiresInLabel", () => {
 
   it("uses sub-minute second count", () => {
     expect(formatExpiresInLabel("2026-04-07T12:00:45.000Z")).toBe("Expires in 45s");
+  });
+
+  it.each([
+    [0, "Expired", "已过期"],
+    [4, "Expires in a moment", "即将过期"],
+    [5, "Expires in 5s", "将在 5秒后过期"],
+    [45, "Expires in 45s", "将在 45秒后过期"],
+    [60, "Expires in 1m", "将在 1分钟后过期"],
+    [252, "Expires in 4m 12s", "将在 4分钟 12秒后过期"],
+  ])("formats the %i-second expiry in either language", (seconds, english, chinese) => {
+    const now = Date.now();
+    const expiry = new Date(now + seconds * 1000).toISOString();
+    expect(formatExpiresInLabel(expiry, now, "en")).toBe(english);
+    expect(formatExpiresInLabel(expiry, now, "zh-CN")).toBe(chinese);
   });
 
   it("uses minutes and seconds under one hour", () => {
@@ -140,11 +163,46 @@ describe("formatDayAwareTimestamp", () => {
   });
 
   it("labels the previous calendar day as yesterday even when under 24h old", () => {
+    vi.stubGlobal("document", { documentElement: { lang: "en" } });
     const messageAt = iso(2026, 7, 13, 23, 30);
     const justPastMidnight = new Date(2026, 7, 14, 0, 30).getTime();
     expect(formatDayAwareTimestamp(messageAt, "12-hour", justPastMidnight)).toBe(
       `yesterday at ${time(messageAt)}`,
     );
+  });
+
+  it("switches relative-day labels and separators with the interface language", () => {
+    const documentElement = { lang: "en" };
+    vi.stubGlobal("document", { documentElement });
+    const yesterday = iso(2026, 7, 13, 15, 30);
+    const tomorrow = iso(2026, 7, 15, 15, 30);
+    expect(formatDayAwareTimestamp(yesterday, "12-hour", now)).toBe(
+      `yesterday at ${time(yesterday)}`,
+    );
+    expect(formatUpcomingTimestamp(tomorrow, "12-hour", now)).toBe(`tomorrow at ${time(tomorrow)}`);
+    documentElement.lang = "zh-CN";
+    expect(formatDayAwareTimestamp(yesterday, "12-hour", now)).toBe(`昨天 ${time(yesterday)}`);
+    expect(formatUpcomingTimestamp(tomorrow, "12-hour", now)).toBe(`明天 ${time(tomorrow)}`);
+  });
+
+  it("uses the resolved runtime language for relative-day separators", async () => {
+    const RelativeTimeFormat = Intl.RelativeTimeFormat;
+    const spy = vi
+      .spyOn(Intl, "RelativeTimeFormat")
+      .mockImplementation(function (locales, options) {
+        return new RelativeTimeFormat(locales ?? "zh-CN", options);
+      });
+    vi.resetModules();
+    try {
+      const format = await import("./timestampFormat");
+      const yesterday = iso(2026, 7, 13, 15, 30);
+      expect(format.formatDayAwareTimestamp(yesterday, "12-hour", now)).toBe(
+        `昨天 ${format.formatShortTimestamp(yesterday, "12-hour")}`,
+      );
+    } finally {
+      spy.mockRestore();
+      vi.resetModules();
+    }
   });
 
   it("prefixes older same-year messages with the numeric date", () => {

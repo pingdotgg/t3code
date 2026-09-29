@@ -13,6 +13,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
@@ -311,6 +312,7 @@ function ProcessDiagnosticsTable({
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
   emptyLabel?: string;
 }) {
+  const { t } = useTranslation();
   const [collapsedPids, setCollapsedPids] = useState<ReadonlySet<number>>(() => new Set());
   const visibleProcesses = useMemo(() => {
     const visible: ServerProcessDiagnosticsEntry[] = [];
@@ -364,20 +366,20 @@ function ProcessDiagnosticsTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Name</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU</th>
-              <th className="px-3 py-2 text-right font-semibold">Memory</th>
-              <th className="px-3 py-2 font-semibold">Command</th>
-              <th className="px-3 py-2 text-right font-semibold">PID</th>
-              <th className="px-3 py-2 font-semibold">Type</th>
-              <th className="p-2 text-right font-semibold sm:pr-4">Kill</th>
+              <th className="px-4 py-2 font-semibold sm:pl-5">{t("diagnosticsName")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryCpu")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryMemory")}</th>
+              <th className="px-3 py-2 font-semibold">{t("diagnosticsCommand")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryPid")}</th>
+              <th className="px-3 py-2 font-semibold">{t("diagnosticsType")}</th>
+              <th className="p-2 text-right font-semibold sm:pr-4">{t("telemetryKill")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
             {visibleProcesses.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
-                  {emptyLabel ?? "No live descendant processes found."}
+                  {emptyLabel ?? t("diagnosticsNoLiveDescendants")}
                 </td>
               </tr>
             ) : null}
@@ -564,6 +566,7 @@ function ProcessResourceHistoryTable({
   processes: ReadonlyArray<ServerProcessResourceHistorySummary>;
   emptyLabel: string;
 }) {
+  const { t } = useTranslation();
   const shallowestChildDepth = processes.reduce<number | null>((minDepth, process) => {
     if (process.isServerRoot) return minDepth;
     return minDepth === null ? process.depth : Math.min(minDepth, process.depth);
@@ -590,14 +593,14 @@ function ProcessResourceHistoryTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
-              <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
-              <th className="px-3 py-2 text-right font-semibold">Current</th>
-              <th className="px-3 py-2 text-right font-semibold">Average</th>
-              <th className="px-3 py-2 text-right font-semibold">Peak</th>
-              <th className="px-3 py-2 text-right font-semibold">Max Mem</th>
-              <th className="px-3 py-2 font-semibold">Command</th>
-              <th className="px-3 py-2 text-right font-semibold sm:pr-5">PID</th>
+              <th className="px-4 py-2 font-semibold sm:pl-5">{t("telemetryProcess")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("telemetryCpuTime")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("diagnosticsCurrent")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("diagnosticsAverage")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("diagnosticsPeak")}</th>
+              <th className="px-3 py-2 text-right font-semibold">{t("diagnosticsMaxMemory")}</th>
+              <th className="px-3 py-2 font-semibold">{t("diagnosticsCommand")}</th>
+              <th className="px-3 py-2 text-right font-semibold sm:pr-5">{t("telemetryPid")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
@@ -658,25 +661,33 @@ function ProcessResourceHistoryTable({
 }
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
+  const { t } = useTranslation();
   useRelativeTimeTick();
   const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
   if (relative.status === "missing") {
-    return <span className="text-2xs text-muted-foreground/50">Checking</span>;
+    return <span className="text-2xs text-muted-foreground/50">{t("diagnosticsChecking")}</span>;
   }
 
   if (relative.status === "invalid") {
-    return <span className="text-2xs text-muted-foreground/50">Checked unavailable</span>;
+    return (
+      <span className="text-2xs text-muted-foreground/50">
+        {t("diagnosticsCheckedUnavailable")}
+      </span>
+    );
   }
 
   return (
     <span className="text-2xs text-muted-foreground/60">
       {relative.suffix ? (
         <>
-          Checked <span className="font-mono tabular-nums">{relative.value}</span> {relative.suffix}
+          {t("diagnosticsChecked")} <span className="font-mono tabular-nums">{relative.value}</span>{" "}
+          {relative.suffix}
         </>
       ) : (
-        <>Checked {relative.value}</>
+        <>
+          {t("diagnosticsChecked")} {relative.value}
+        </>
       )}
     </span>
   );
@@ -712,6 +723,7 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
+  const { t } = useTranslation();
   const { environment } = useSettingsScope();
   // The boundary only mounts this page when the selection resolves to one
   // connected environment, so the representative is the one to inspect.
@@ -1049,17 +1061,17 @@ export function DiagnosticsSettingsPanel() {
                     variant="ghost-muted"
                     disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
                     onClick={openLogsDirectory}
-                    aria-label="Open logs folder"
+                    aria-label={t("diagnosticsOpenLogsFolder")}
                   >
                     <FolderOpenIcon />
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Open logs folder</TooltipPopup>
+              <TooltipPopup side="top">{t("diagnosticsOpenLogsFolder")}</TooltipPopup>
             </Tooltip>
             <DiagnosticsRefreshButton
               isPending={isPending}
-              label="Refresh trace diagnostics"
+              label={t("diagnosticsRefreshTraces")}
               onClick={refresh}
             />
           </div>
@@ -1224,11 +1236,21 @@ export function DiagnosticsSettingsPanel() {
               </colgroup>
               <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">Time</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Level</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Span</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">Message</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">Trace</th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">
+                    {t("telemetryTime")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    {t("diagnosticsLevel")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    {t("diagnosticsSpan")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
+                    {t("diagnosticsMessage")}
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">
+                    {t("diagnosticsTrace")}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">

@@ -192,23 +192,49 @@ export function descriptorsFromCapabilities(
  * Validate the draft before saving. Returns the first problem in reading
  * order so the message is actionable, or `null` when the draft is sound.
  */
-export function validateDraft(draft: CustomModelDraft): string | null {
+export type DraftValidationMessageKey =
+  | "needsId"
+  | "duplicateId"
+  | "needsLabel"
+  | "needsChoice"
+  | "choiceNeedsValue"
+  | "duplicateChoiceId";
+
+export function validateDraft(
+  draft: CustomModelDraft,
+  translate?: (
+    key: DraftValidationMessageKey,
+    values: { readonly option: number; readonly id?: string },
+  ) => string,
+): string | null {
   const seenIds = new Set<string>();
   for (const [index, descriptor] of draft.descriptors.entries()) {
-    const position = `Option ${index + 1}`;
+    const option = index + 1;
+    const message = (key: DraftValidationMessageKey, fallback: string, id?: string) =>
+      translate?.(key, { option, ...(id === undefined ? {} : { id }) }) ?? fallback;
     const id = descriptor.id.trim();
-    if (!id) return `${position} needs an id.`;
-    if (seenIds.has(id)) return `${position}: id "${id}" is used twice.`;
+    if (!id) return message("needsId", `Option ${option} needs an id.`);
+    if (seenIds.has(id)) {
+      return message("duplicateId", `Option ${option}: id "${id}" is used twice.`, id);
+    }
     seenIds.add(id);
-    if (!descriptor.label.trim()) return `${position} needs a label.`;
+    if (!descriptor.label.trim()) return message("needsLabel", `Option ${option} needs a label.`);
     if (descriptor.type !== "select") continue;
-    if (descriptor.choices.length === 0) return `${position} needs at least one choice.`;
+    if (descriptor.choices.length === 0) {
+      return message("needsChoice", `Option ${option} needs at least one choice.`);
+    }
     const seenChoices = new Set<string>();
     for (const choice of descriptor.choices) {
       const choiceId = choice.id.trim();
-      if (!choiceId) return `${position} has a choice without a value.`;
+      if (!choiceId) {
+        return message("choiceNeedsValue", `Option ${option} has a choice without a value.`);
+      }
       if (seenChoices.has(choiceId)) {
-        return `${position}: choice "${choiceId}" is used twice.`;
+        return message(
+          "duplicateChoiceId",
+          `Option ${option}: choice "${choiceId}" is used twice.`,
+          choiceId,
+        );
       }
       seenChoices.add(choiceId);
     }

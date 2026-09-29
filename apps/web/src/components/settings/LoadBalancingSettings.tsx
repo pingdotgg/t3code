@@ -1,4 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import {
   useClientSettings,
@@ -12,14 +13,17 @@ import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
-const preferences = [
-  { value: 100, label: "Prefer" },
-  { value: 50, label: "Normal" },
-  { value: 25, label: "Less often" },
-  { value: 0, label: "Manual only" },
-] as const;
+const preferences = [{ value: 100 }, { value: 50 }, { value: 25 }, { value: 0 }] as const;
 
 type LoadPreference = (typeof preferences)[number]["value"];
+type LoadPreferenceLabels = Readonly<Record<LoadPreference, string>>;
+
+const fallbackPreferenceLabels: LoadPreferenceLabels = {
+  100: "Prefer",
+  50: "Normal",
+  25: "Less often",
+  0: "Manual only",
+};
 
 /** Snaps a saved weight (older builds stored a slider value) onto the four preferences. */
 export function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
@@ -28,8 +32,11 @@ export function loadPreferenceForWeight(weight: number | undefined): LoadPrefere
   return weight < 50 ? 25 : 100;
 }
 
-function preferenceLabel(preference: LoadPreference): string {
-  return preferences.find((entry) => entry.value === preference)!.label;
+function preferenceLabel(
+  preference: LoadPreference,
+  labels: LoadPreferenceLabels = fallbackPreferenceLabels,
+): string {
+  return labels[preference];
 }
 
 /**
@@ -39,12 +46,13 @@ function preferenceLabel(preference: LoadPreference): string {
 export function summarizeLoadPreferences(
   environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
   weights: Readonly<Record<string, number>>,
+  labels: LoadPreferenceLabels = fallbackPreferenceLabels,
 ): string | null {
   const parts = environments.flatMap((environment) => {
     const preference = loadPreferenceForWeight(weights[environment.environmentId]);
     return preference === 50
       ? []
-      : [`${environment.label} ${preferenceLabel(preference).toLowerCase()}`];
+      : [`${environment.label} ${preferenceLabel(preference, labels).toLowerCase()}`];
   });
   return parts.length === 0 ? null : parts.join(" · ");
 }
@@ -60,9 +68,20 @@ export function LoadBalancingSettings({
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const { t } = useTranslation("connections");
   const settings = useClientSettings();
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdateClientSettings();
+  const preferenceLabels: LoadPreferenceLabels = {
+    100: t("prefer"),
+    50: t("normal"),
+    25: t("lessOften"),
+    0: t("manualOnly"),
+  };
+  const localizedPreferences = preferences.map(({ value }) => ({
+    value,
+    label: preferenceLabels[value],
+  }));
 
   if (environments.length < 2) return null;
 
@@ -73,12 +92,12 @@ export function LoadBalancingSettings({
       title={title}
       summary={
         settings.loadBalancingEnabled
-          ? summarizeLoadPreferences(environments, settings.loadBalancingWeights)
-          : "Off"
+          ? summarizeLoadPreferences(environments, settings.loadBalancingWeights, preferenceLabels)
+          : t("off")
       }
       control={
         <Switch
-          aria-label="Automatically balance load"
+          aria-label={t("automaticallyBalanceLoad")}
           checked={settings.loadBalancingEnabled}
           disabled={!settingsHydrated}
           onCheckedChange={(loadBalancingEnabled) => updateSettings({ loadBalancingEnabled })}
@@ -86,18 +105,21 @@ export function LoadBalancingSettings({
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        New threads in shared projects start on the machine with the most free CPU and memory,
-        weighted by each machine's preference.
+        {t("newThreadsBalanceDescription")}
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}
           kind={resolveEnvironmentMachineKind(environment.serverConfig)}
           label={environment.label}
-          subtitle={environmentTransportLabel(environment)}
+          subtitle={environmentTransportLabel(environment, {
+            thisMachine: t("thisMachine"),
+            remoteLink: t("remoteLink"),
+            ssh: t("ssh"),
+          })}
         >
           <Select
-            items={preferences}
+            items={localizedPreferences}
             value={loadPreferenceForWeight(
               settings.loadBalancingWeights[environment.environmentId],
             )}
@@ -115,12 +137,12 @@ export function LoadBalancingSettings({
             <SelectTrigger
               size="xs"
               className="w-32"
-              aria-label={`${environment.label} load preference`}
+              aria-label={t("environmentLoadPreference", { environment: environment.label })}
             >
               <SelectValue />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {preferences.map(({ value, label }) => (
+              {localizedPreferences.map(({ value, label }) => (
                 <SelectItem key={value} value={value}>
                   {label}
                 </SelectItem>

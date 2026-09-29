@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -9,6 +9,11 @@ import {
 } from "@t3tools/contracts";
 
 import { deriveProviderModelsForDisplay, ProviderInstanceCard } from "./ProviderInstanceCard";
+
+vi.mock("@t3tools/i18n/react", async () => {
+  const { useTranslation } = await import("../../test/settingsI18nMock");
+  return { useTranslation };
+});
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {

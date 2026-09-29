@@ -20,6 +20,9 @@ const { listBrowserImportSources } = vi.hoisted(() => ({
 vi.mock("../preview/previewBridge", () => ({
   previewBridge: { listBrowserImportSources },
 }));
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [], isReady: true }),

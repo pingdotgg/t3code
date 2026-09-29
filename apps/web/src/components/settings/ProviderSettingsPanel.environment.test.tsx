@@ -37,6 +37,11 @@ const settingsSearchState = vi.hoisted(() => ({
   effects: [] as Array<() => void>,
 }));
 
+vi.mock("@t3tools/i18n/react", async () => {
+  const { useTranslation } = await import("../../test/settingsI18nMock");
+  return { useTranslation };
+});
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");

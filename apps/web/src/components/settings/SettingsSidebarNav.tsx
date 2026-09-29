@@ -49,6 +49,8 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useTranslation } from "@t3tools/i18n/react";
+import { resources } from "@t3tools/i18n";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -89,6 +91,20 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
+const SETTINGS_SECTION_TRANSLATION_KEYS = {
+  "/settings/projects": "project",
+  "/settings/general": "general",
+  "/settings/appearance": "appearance",
+  "/settings/keybindings": "keybindings",
+  "/settings/snap-shot": "snapshots",
+  "/settings/providers": "providers",
+  "/settings/integrations": "integrations",
+  "/settings/source-control": "sourceControl",
+  "/settings/storage": "storage",
+  "/settings/connections": "connections",
+  "/settings/archived": "archived",
+} as const satisfies Readonly<Record<SettingsPath, keyof typeof resources.en.settings>>;
+
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
   to: SettingsPath;
@@ -105,13 +121,17 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const { t } = useTranslation("settings");
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
-  );
+  ).map((item) => ({
+    ...item,
+    label: String(t(SETTINGS_SECTION_TRANSLATION_KEYS[item.to])),
+  }));
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -248,8 +268,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   setActiveResultIndex(0);
                 }}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Search"
-                aria-label="Search settings"
+                placeholder={t("search")}
+                aria-label={t("searchSettings")}
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded={isSearching && hasResults}
@@ -267,7 +287,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear settings search"
+                  aria-label={t("clearSettingsSearch")}
                   onClick={() => {
                     clearSearch();
                     searchInputRef.current?.focus();
@@ -284,14 +304,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                No settings found
+                {t("noSettingsFound")}
               </p>
             ) : null}
             {isSearching ? (
               <SidebarMenu
                 id={hasResults ? "settings-search-results" : undefined}
                 role={hasResults ? "listbox" : undefined}
-                aria-label={hasResults ? "Settings search results" : undefined}
+                aria-label={hasResults ? t("settingsSearchResults") : undefined}
               >
                 {results.map((item, index) => (
                   <SidebarMenuItem key={item.id} role="presentation">
@@ -312,7 +332,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {item.title}
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {t(SETTINGS_SECTION_TRANSLATION_KEYS[item.to])}
                         </span>
                       </span>
                     </SidebarMenuButton>
