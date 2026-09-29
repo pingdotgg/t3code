@@ -228,7 +228,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [instanceEntries],
   );
 
-  // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
     let result = flatModels;
 

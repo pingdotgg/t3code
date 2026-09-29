@@ -94,21 +94,16 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
 }
 
 export interface ServerSettingsShape {
-  /** Start the settings runtime and attach file watching. */
   readonly start: Effect.Effect<void, ServerSettingsError>;
 
-  /** Await settings runtime readiness. */
   readonly ready: Effect.Effect<void, ServerSettingsError>;
 
-  /** Read the current settings. */
   readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
-  /** Patch settings and persist. Returns the new full settings object. */
   readonly updateSettings: (
     patch: ServerSettingsPatch,
   ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
-  /** Stream of settings change events. */
   readonly streamChanges: Stream.Stream<ServerSettings>;
 }
 
