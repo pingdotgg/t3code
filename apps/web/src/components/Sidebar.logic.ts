@@ -958,6 +958,111 @@ export function resolveSidebarScopeSelection(
   return selectedIds.filter((id) => id !== "all");
 }
 
+export function orderSidebarProjectScopeItems<
+  TItem extends { readonly environmentId: string | null },
+>(items: readonly TItem[], environmentIds: readonly string[]): TItem[] {
+  const order = new Map(environmentIds.map((id, index) => [id, index] as const));
+  const rank = (item: TItem) =>
+    item.environmentId === null ? -1 : (order.get(item.environmentId) ?? environmentIds.length);
+  return [...items].sort((left, right) => rank(left) - rank(right));
+}
+
+export interface SidebarProjectScopeItem<TEnvironmentId extends string = string> {
+  readonly value: string;
+  readonly label: string;
+  readonly environmentId: TEnvironmentId | null;
+  readonly projectKey: string | null;
+}
+
+export function sidebarProjectEnvironmentScopeKey(
+  projectKey: string,
+  environmentId: string,
+): string {
+  return `project-environment:${JSON.stringify([projectKey, environmentId])}`;
+}
+
+export function buildSidebarProjectScopeItems<TEnvironmentId extends string>(
+  groups: readonly {
+    readonly projectKey: string;
+    readonly displayName: string;
+    readonly memberProjects: readonly { readonly environmentId: TEnvironmentId }[];
+  }[],
+  environmentIds: readonly TEnvironmentId[],
+): SidebarProjectScopeItem<TEnvironmentId>[] {
+  const items: SidebarProjectScopeItem<TEnvironmentId>[] = [
+    { value: "all", label: "All projects", environmentId: null, projectKey: null },
+  ];
+  for (const group of groups) {
+    const memberEnvironmentIds = new Set(
+      group.memberProjects.map((member) => member.environmentId),
+    );
+    for (const environmentId of memberEnvironmentIds) {
+      items.push({
+        value: sidebarProjectEnvironmentScopeKey(group.projectKey, environmentId),
+        label: group.displayName,
+        environmentId,
+        projectKey: group.projectKey,
+      });
+    }
+  }
+  return orderSidebarProjectScopeItems(items, environmentIds);
+}
+
+export function resolveSidebarProjectScopeKeys(
+  selectedKeys: readonly string[],
+  items: readonly SidebarProjectScopeItem[],
+): string[] {
+  const available = new Set(
+    items.filter((item) => item.projectKey !== null).map((item) => item.value),
+  );
+  const byLogicalProject = new Map<string, string[]>();
+  for (const item of items) {
+    if (item.projectKey === null) continue;
+    const keys = byLogicalProject.get(item.projectKey) ?? [];
+    keys.push(item.value);
+    byLogicalProject.set(item.projectKey, keys);
+  }
+  return [
+    ...new Set(
+      selectedKeys.flatMap((key) =>
+        available.has(key) ? [key] : (byLogicalProject.get(key) ?? []),
+      ),
+    ),
+  ];
+}
+
+export function selectedSidebarProjectRefKeys(
+  selectedItems: readonly SidebarProjectScopeItem[],
+  groupsByScopeKey: ReadonlyMap<
+    string,
+    {
+      readonly memberProjectRefs: readonly {
+        readonly environmentId: string;
+        readonly projectId: string;
+      }[];
+    }
+  >,
+): ReadonlySet<string> | null {
+  if (selectedItems.length === 0) return null;
+  return new Set(
+    selectedItems.flatMap((item) =>
+      (groupsByScopeKey.get(item.value)?.memberProjectRefs ?? [])
+        .filter((ref) => ref.environmentId === item.environmentId)
+        .map((ref) => `${ref.environmentId}:${ref.projectId}`),
+    ),
+  );
+}
+
+export function sidebarProjectScopeHeader(
+  visibleItems: readonly { readonly environmentId: string | null }[],
+  index: number,
+): string | null {
+  const environmentId = visibleItems[index]?.environmentId ?? null;
+  return environmentId !== null && visibleItems[index - 1]?.environmentId !== environmentId
+    ? environmentId
+    : null;
+}
+
 export function sidebarItemMatchesScope(
   item: { readonly environmentId: string; readonly projectId: string },
   environmentScopeIds: ReadonlySet<string> | null,

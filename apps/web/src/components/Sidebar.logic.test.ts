@@ -23,6 +23,12 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  orderSidebarProjectScopeItems,
+  buildSidebarProjectScopeItems,
+  resolveSidebarProjectScopeKeys,
+  sidebarProjectEnvironmentScopeKey,
+  sidebarProjectScopeHeader,
+  selectedSidebarProjectRefKeys,
   resolveProjectStatusIndicator,
   resolveSidebarRowAccessibility,
   resolveSidebarThreadStatus,
@@ -981,6 +987,87 @@ describe("resolveSidebarScopeSelection", () => {
     ).toEqual(["environment-a", "environment-b"]);
     expect(resolveSidebarScopeSelection(["environment-a"], ["environment-a", "all"])).toEqual([]);
     expect(resolveSidebarScopeSelection(["environment-a"], [])).toEqual([]);
+  });
+});
+
+describe("orderSidebarProjectScopeItems", () => {
+  it("keeps All first and groups projects by environment without changing their relative order", () => {
+    const items = [
+      { value: "all", environmentId: null },
+      { value: "b-one", environmentId: "environment-b" },
+      { value: "a-one", environmentId: "environment-a" },
+      { value: "b-two", environmentId: "environment-b" },
+      { value: "a-two", environmentId: "environment-a" },
+    ];
+    expect(
+      orderSidebarProjectScopeItems(items, ["environment-a", "environment-b"]).map(
+        (item) => item.value,
+      ),
+    ).toEqual(["all", "a-one", "a-two", "b-one", "b-two"]);
+  });
+});
+
+describe("buildSidebarProjectScopeItems", () => {
+  const groups = [
+    {
+      projectKey: "shared-project",
+      displayName: "Shared",
+      memberProjects: [{ environmentId: "environment-b" }, { environmentId: "environment-a" }],
+    },
+  ];
+
+  it("repeats a logical project once under each environment", () => {
+    const items = buildSidebarProjectScopeItems(groups, ["environment-a", "environment-b"]);
+    expect(items.map((item) => item.value)).toEqual([
+      "all",
+      sidebarProjectEnvironmentScopeKey("shared-project", "environment-a"),
+      sidebarProjectEnvironmentScopeKey("shared-project", "environment-b"),
+    ]);
+  });
+
+  it("expands a saved logical selection and removes unavailable rows", () => {
+    const items = buildSidebarProjectScopeItems(groups, ["environment-a", "environment-b"]);
+    expect(resolveSidebarProjectScopeKeys(["shared-project"], items)).toEqual([
+      sidebarProjectEnvironmentScopeKey("shared-project", "environment-a"),
+      sidebarProjectEnvironmentScopeKey("shared-project", "environment-b"),
+    ]);
+    expect(resolveSidebarProjectScopeKeys(["missing-project"], items)).toEqual([]);
+  });
+
+  it("filters only the selected environment's copy of a shared project", () => {
+    const items = buildSidebarProjectScopeItems(groups, ["environment-a", "environment-b"]);
+    const shared = {
+      memberProjectRefs: [
+        { environmentId: "environment-a", projectId: "project-a" },
+        { environmentId: "environment-b", projectId: "project-b" },
+      ],
+    };
+    expect(
+      selectedSidebarProjectRefKeys(
+        [items[1]!],
+        new Map(items.slice(1).map((item) => [item.value, shared])),
+      ),
+    ).toEqual(new Set(["environment-a:project-a"]));
+  });
+});
+
+describe("sidebarProjectScopeHeader", () => {
+  it("shows one header per visible environment, including after a search narrows the list", () => {
+    const items = [
+      { environmentId: null },
+      { environmentId: "environment-a" },
+      { environmentId: "environment-a" },
+      { environmentId: "environment-b" },
+    ];
+    expect(items.map((_, index) => sidebarProjectScopeHeader(items, index))).toEqual([
+      null,
+      "environment-a",
+      null,
+      "environment-b",
+    ]);
+    expect(sidebarProjectScopeHeader([{ environmentId: "environment-b" }], 0)).toBe(
+      "environment-b",
+    );
   });
 });
 

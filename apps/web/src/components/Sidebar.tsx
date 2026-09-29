@@ -70,6 +70,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -174,6 +175,11 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  buildSidebarProjectScopeItems,
+  resolveSidebarProjectScopeKeys,
+  sidebarProjectEnvironmentScopeKey,
+  sidebarProjectScopeHeader,
+  selectedSidebarProjectRefKeys,
   planSidebarThreadDrop,
   reduceSidebarScopeMenuState,
   resolveSidebarScopeSelection,
@@ -2486,14 +2492,12 @@ export default function Sidebar() {
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
-    () => [
-      { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
-        value: project.projectKey,
-        label: project.displayName,
-      })),
-    ],
-    [projectGroups],
+    () =>
+      buildSidebarProjectScopeItems(
+        projectGroups,
+        environments.map((environment) => environment.environmentId),
+      ),
+    [environments, projectGroups],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -2502,13 +2506,24 @@ export default function Sidebar() {
     () => projectGroupsSpanEnvironments(projectGroups),
     [projectGroups],
   );
-  const projectGroupByScopeKey = useMemo(
-    () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
-    [projectGroups],
+  const projectGroupByScopeKey = useMemo(() => {
+    const byLogicalKey = new Map(
+      projectGroups.map((project) => [project.projectKey, project] as const),
+    );
+    return new Map(
+      projectScopeItems.flatMap((item) => {
+        const group = item.projectKey === null ? null : byLogicalKey.get(item.projectKey);
+        return group ? [[item.value, group] as const] : [];
+      }),
+    );
+  }, [projectGroups, projectScopeItems]);
+  const effectiveProjectScopeKeys = useMemo(
+    () => resolveSidebarProjectScopeKeys(projectScopeKeys, projectScopeItems),
+    [projectScopeItems, projectScopeKeys],
   );
   const selectedProjectScopeItems = useMemo(
-    () => projectScopeItems.filter((item) => projectScopeKeys.includes(item.value)),
-    [projectScopeItems, projectScopeKeys],
+    () => projectScopeItems.filter((item) => effectiveProjectScopeKeys.includes(item.value)),
+    [effectiveProjectScopeKeys, projectScopeItems],
   );
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarScopeMenuState,
@@ -2532,19 +2547,16 @@ export default function Sidebar() {
     [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
   );
   const scopedProjectGroups = useMemo(
-    () => projectGroups.filter((project) => projectScopeKeys.includes(project.projectKey)),
-    [projectGroups, projectScopeKeys],
+    () =>
+      selectedProjectScopeItems.flatMap((item) => {
+        const group = projectGroupByScopeKey.get(item.value);
+        return group ? [group] : [];
+      }),
+    [projectGroupByScopeKey, selectedProjectScopeItems],
   );
   const scopedProjectKeys = useMemo(
-    () =>
-      scopedProjectGroups.length === 0
-        ? null
-        : new Set(
-            scopedProjectGroups
-              .flatMap((group) => group.memberProjectRefs)
-              .map((projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`),
-          ),
-    [scopedProjectGroups],
+    () => selectedSidebarProjectRefKeys(selectedProjectScopeItems, projectGroupByScopeKey),
+    [projectGroupByScopeKey, selectedProjectScopeItems],
   );
   // A persisted scope whose project is gone falls back to all projects, but
   // only after every catalog environment has a live project snapshot. Cached
@@ -2552,10 +2564,13 @@ export default function Sidebar() {
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   useEffect(() => {
     if (!allProjectSnapshotsReady || projectScopeKeys.length === 0) return;
-    const available = new Set(projectGroups.map((project) => project.projectKey));
-    const remaining = projectScopeKeys.filter((key) => available.has(key));
-    if (remaining.length !== projectScopeKeys.length) setProjectScopeKeys(remaining);
-  }, [allProjectSnapshotsReady, projectGroups, projectScopeKeys, setProjectScopeKeys]);
+    if (
+      effectiveProjectScopeKeys.length !== projectScopeKeys.length ||
+      effectiveProjectScopeKeys.some((key, index) => key !== projectScopeKeys[index])
+    ) {
+      setProjectScopeKeys(effectiveProjectScopeKeys);
+    }
+  }, [allProjectSnapshotsReady, effectiveProjectScopeKeys, projectScopeKeys, setProjectScopeKeys]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -4181,7 +4196,12 @@ export default function Sidebar() {
               projectFilter: threadProjectGroup
                 ? {
                     label: threadProjectGroup.displayName,
-                    isActive: projectScopeKeys.includes(threadProjectGroup.projectKey),
+                    isActive: effectiveProjectScopeKeys.includes(
+                      sidebarProjectEnvironmentScopeKey(
+                        threadProjectGroup.projectKey,
+                        thread.environmentId,
+                      ),
+                    ),
                   }
                 : null,
               isPinned,
@@ -4217,7 +4237,13 @@ export default function Sidebar() {
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(
-                toggleSidebarScopeSelection(projectScopeKeys, threadProjectGroup.projectKey),
+                toggleSidebarScopeSelection(
+                  effectiveProjectScopeKeys,
+                  sidebarProjectEnvironmentScopeKey(
+                    threadProjectGroup.projectKey,
+                    thread.environmentId,
+                  ),
+                ),
               );
             }
             return;
@@ -4402,7 +4428,7 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
-      projectScopeKeys,
+      effectiveProjectScopeKeys,
       projectByKey,
       serverConfigs,
       setProjectScopeKeys,
@@ -4645,7 +4671,7 @@ export default function Sidebar() {
                     highlightedProjectScopeKeyRef.current = item?.value ?? null;
                   }}
                   value={
-                    projectScopeKeys.length === 0
+                    effectiveProjectScopeKeys.length === 0
                       ? [projectScopeItems[0]!]
                       : selectedProjectScopeItems
                   }
@@ -4656,7 +4682,7 @@ export default function Sidebar() {
                     }
                     setProjectScopeKeys(
                       resolveSidebarScopeSelection(
-                        projectScopeKeys,
+                        effectiveProjectScopeKeys,
                         items.map((item) => item.value),
                       ),
                     );
@@ -4665,20 +4691,29 @@ export default function Sidebar() {
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        badge={projectScopeKeys.length > 0}
+                        badge={effectiveProjectScopeKeys.length > 0}
                         label={
-                          projectScopeKeys.length === 0
+                          effectiveProjectScopeKeys.length === 0
                             ? "Filter threads by project"
                             : `Filter threads by project: ${selectedProjectScopeItems.map((item) => item.label).join(", ")}`
                         }
                       />
                     }
                   >
-                    {scopedProjectGroups.length === 1 ? (
+                    {selectedProjectScopeItems.length === 1 ? (
                       // Wrapped so the button's direct-child svg color rule cannot override
                       // a project's own icon color.
                       <span className="flex shrink-0">
-                        <ProjectFavicon project={scopedProjectGroups[0]!} className="size-4" />
+                        <ProjectFavicon
+                          project={
+                            scopedProjectGroups[0]!.memberProjects.find(
+                              (member) =>
+                                member.environmentId ===
+                                selectedProjectScopeItems[0]!.environmentId,
+                            ) ?? scopedProjectGroups[0]!
+                          }
+                          className="size-4"
+                        />
                       </span>
                     ) : (
                       <FolderIcon className="size-4" />
@@ -4723,54 +4758,83 @@ export default function Sidebar() {
                     />
                     <ComboboxEmpty>No matching projects.</ComboboxEmpty>
                     <ComboboxList>
-                      {(item: (typeof projectScopeItems)[number]) => {
+                      {(item: (typeof projectScopeItems)[number], index: number) => {
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
                         return (
-                          <ComboboxItem
-                            key={item.value}
-                            hideIndicator
-                            value={item}
-                            onContextMenu={(event) => {
-                              if (project) handleProjectSettings(event, project);
-                            }}
-                          >
-                            <SidebarScopeCheckbox
-                              checked={
-                                item.value === "all"
-                                  ? projectScopeKeys.length === 0
-                                  : projectScopeKeys.includes(item.value)
-                              }
-                            />
-                            {project ? (
-                              <ProjectFavicon project={project} className="size-4 shrink-0" />
-                            ) : (
-                              <FolderIcon className="size-4 shrink-0" />
-                            )}
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
-                            {project ? (
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                tabIndex={-1}
-                                aria-hidden="true"
-                                title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onClick={(event) => {
-                                  void handleProjectSettings(event, project);
-                                }}
+                          <Fragment key={item.value}>
+                            {environments.length > 1 &&
+                            item.environmentId !== null &&
+                            sidebarProjectScopeHeader(filteredProjectScopeItems, index) !== null ? (
+                              <div
+                                role="presentation"
+                                className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground"
                               >
-                                <SettingsIcon className="size-3.5" />
-                              </Button>
+                                <EnvironmentMachineIcon
+                                  kind={environmentMachineById.get(item.environmentId) ?? "server"}
+                                  className="size-3.5"
+                                />
+                                <span className="min-w-0 truncate">
+                                  {environmentLabelById.get(item.environmentId) ?? "Environment"}
+                                </span>
+                              </div>
                             ) : null}
-                          </ComboboxItem>
+                            <ComboboxItem
+                              hideIndicator
+                              value={item}
+                              aria-label={
+                                item.environmentId === null
+                                  ? undefined
+                                  : `${item.label}, ${environmentLabelById.get(item.environmentId) ?? "Environment"}`
+                              }
+                              onContextMenu={(event) => {
+                                if (project) handleProjectSettings(event, project);
+                              }}
+                            >
+                              <SidebarScopeCheckbox
+                                checked={
+                                  item.value === "all"
+                                    ? effectiveProjectScopeKeys.length === 0
+                                    : effectiveProjectScopeKeys.includes(item.value)
+                                }
+                              />
+                              {project ? (
+                                <ProjectFavicon
+                                  project={
+                                    project.memberProjects.find(
+                                      (member) => member.environmentId === item.environmentId,
+                                    ) ?? project
+                                  }
+                                  className="size-4 shrink-0"
+                                />
+                              ) : (
+                                <FolderIcon className="size-4 shrink-0" />
+                              )}
+                              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                              {project && showProjectEnvironments ? (
+                                <ProjectEnvironmentBadge
+                                  group={project}
+                                  primaryEnvironmentId={item.environmentId ?? project.environmentId}
+                                  machineByEnvironmentId={environmentMachineById}
+                                />
+                              ) : null}
+                              {project ? (
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost-muted"
+                                  tabIndex={-1}
+                                  aria-hidden="true"
+                                  title={`Project settings for ${project.displayName}`}
+                                  className="ml-auto"
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => {
+                                    void handleProjectSettings(event, project);
+                                  }}
+                                >
+                                  <SettingsIcon className="size-3.5" />
+                                </Button>
+                              ) : null}
+                            </ComboboxItem>
+                          </Fragment>
                         );
                       }}
                     </ComboboxList>
