@@ -10,6 +10,24 @@ const testState = vi.hoisted(() => ({
   canGoBack: true,
 }));
 
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, string | number>) => {
+      const message =
+        {
+          pageTitle: "Usage",
+          allEnvironments: "All environments",
+          metricLabel: "Usage metric",
+          periodLabel: "Usage period",
+          refreshLimits: "Refresh limits",
+          refreshUsage: "Refresh usage",
+        }[key] ?? key;
+      return message.replace(/\{\{(\w+)\}\}/gu, (_match, name: string) =>
+        String(values?.[name] ?? ""),
+      );
+    },
+  }),
+}));
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => testState.navigate,

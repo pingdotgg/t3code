@@ -8,6 +8,8 @@ import {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useTranslation } from "@t3tools/i18n/react";
+import type { TFunction } from "@t3tools/i18n";
 import {
   elapsedShare,
   formatDuration,
@@ -38,11 +40,37 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
-const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
-  on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
+const PACE: Record<
+  LimitPace,
+  { readonly labelKey: "paceAhead" | "paceOn" | "paceUnder"; readonly icon: typeof GaugeIcon }
+> = {
+  ahead: { labelKey: "paceAhead", icon: TrendingUpIcon },
+  on: { labelKey: "paceOn", icon: GaugeIcon },
+  under: { labelKey: "paceUnder", icon: TrendingDownIcon },
 };
+
+export function localizedUsageDuration(rawDuration: string, t: TFunction<"usage">): string {
+  const durationMatch = /^(?:(\d+)d )?(?:(\d+)h )?(\d+)m$/u.exec(rawDuration);
+  if (!durationMatch) return rawDuration;
+  const [, days, hours, minutes] = durationMatch;
+  return days
+    ? t("durationDaysHours", { days, hours: hours ?? "0" })
+    : hours
+      ? t("durationHoursMinutes", { hours: hours ?? "0", minutes: minutes ?? "0" })
+      : t("durationMinutes", { minutes: minutes ?? "0" });
+}
+
+export function localizedResetCountdown(
+  value: string | null,
+  t: TFunction<"usage">,
+  compact = false,
+): string | null {
+  if (value === null) return null;
+  if (value === "resets now") return t("resetsNow");
+  const rawDuration = value.replace(/^resets in /u, "");
+  const duration = localizedUsageDuration(rawDuration, t);
+  return compact ? t("compactResetsIn", { duration }) : t("resetsIn", { duration });
+}
 
 /** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
@@ -53,21 +81,19 @@ export function barColor(driver: ServerProvider["driver"]): string {
 
 /** Pace as a glyph with the words on hover. */
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
+  const { t } = useTranslation("usage");
   const Icon = PACE[pace].icon;
+  const label = t(PACE[pace].labelKey);
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <span
-            role="img"
-            aria-label={PACE[pace].label}
-            className="inline-flex text-muted-foreground"
-          />
+          <span role="img" aria-label={label} className="inline-flex text-muted-foreground" />
         }
       >
         <Icon className="size-3.5" aria-hidden />
       </TooltipTrigger>
-      <TooltipPopup side="top">{PACE[pace].label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -87,18 +113,24 @@ function WindowBar({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const { t } = useTranslation("usage");
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
   // The fill is quota left, so the even-spending mark is the time left.
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
-  const resetsIn = formatResetsIn(window, now);
+  const resetsIn = localizedResetCountdown(formatResetsIn(window, now), t);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
-  }${resetsIn ? `, ${resetsIn}` : ""}`;
+  const summary = [
+    window.label,
+    t("percentLeft", { percent: remaining }),
+    timeLeft === null ? null : t("percentWindowLeft", { percent: timeLeft }),
+    resetsIn,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <Tooltip>
@@ -130,14 +162,15 @@ function WindowBar({
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {t("percentLeft", { percent: remaining })}
+            {timeLeft !== null ? ` · ${t("percentWindowLeft", { percent: timeLeft })}` : ""}
           </span>
           {timeLeft !== null ? (
-            <span className="text-muted-foreground">The line is where even spending would be.</span>
+            <span className="text-muted-foreground">{t("evenSpendingLine")}</span>
           ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
-              Resets {resetsAt}
+              {t("resetsAt", { time: resetsAt })}
               {resetsIn ? ` · ${resetsIn}` : ""}
             </span>
           ) : null}
@@ -162,6 +195,7 @@ export function LimitWindows({
   readonly now: number;
   readonly compact?: boolean;
 }) {
+  const { t } = useTranslation("usage");
   const color = barColor(driver);
   return (
     <div
@@ -173,13 +207,13 @@ export function LimitWindows({
     >
       {windows.map((window) => {
         const pace = paceOf(window, now);
-        const resetsIn = formatResetsIn(window, now);
+        const resetsIn = localizedResetCountdown(formatResetsIn(window, now), t, true);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {t("percentLeft", { percent: remainingPercent(window) })}
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
@@ -194,11 +228,14 @@ export function LimitWindows({
   );
 }
 
-const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
-  nothingToReset: "Nothing to reset right now.",
-  noCredit: "No reset credit left.",
-  alreadyRedeemed: "That credit was already redeemed.",
+const OUTCOME_KEY: Record<
+  ProviderConsumeResetCreditOutcome,
+  "resetApplied" | "nothingToReset" | "noResetCreditLeft" | "resetCreditAlreadyRedeemed"
+> = {
+  reset: "resetApplied",
+  nothingToReset: "nothingToReset",
+  noCredit: "noResetCreditLeft",
+  alreadyRedeemed: "resetCreditAlreadyRedeemed",
 };
 
 /** Everything a redeem needs: where to send it and what to say afterwards. */
@@ -206,6 +243,7 @@ export function useResetCredit(
   environmentId: EnvironmentId,
   input: ProviderConsumeResetCreditInput,
 ) {
+  const { t } = useTranslation("usage");
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -218,13 +256,13 @@ export function useResetCredit(
     const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? t(OUTCOME_KEY[result.value.outcome]));
       return;
     }
     setStatus(
       "error" in result.cause && result.cause.error instanceof Error
         ? result.cause.error.message
-        : "Could not use the reset credit.",
+        : t("couldNotUseResetCredit"),
     );
   };
 
@@ -246,19 +284,17 @@ export function ResetCreditDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onConfirm: () => void;
 }) {
+  const { t } = useTranslation("usage");
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This redeems one credit on your account and clears the current rate-limit windows. It
-            cannot be undone.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t("useResetCreditQuestion")}</AlertDialogTitle>
+          <AlertDialogDescription>{t("useResetCreditDescription")}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button onClick={onConfirm}>Use credit</Button>
+          <AlertDialogClose render={<Button variant="outline" />}>{t("cancel")}</AlertDialogClose>
+          <Button onClick={onConfirm}>{t("useCredit")}</Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
@@ -269,17 +305,18 @@ export function ResetCreditDialog({
 export function resetCreditsSummary(
   credits: ServerProviderResetCredits,
   now: number,
+  t: TFunction<"usage">,
   compact = false,
 ): string {
   const expiresIn = credits.nextExpiresAt
-    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
+    ? localizedUsageDuration(formatDuration(Date.parse(credits.nextExpiresAt) - now), t)
     : null;
-  if (credits.availableCount === 0) return "No reset credits banked";
+  if (credits.availableCount === 0) return t("noResetCreditsBanked");
   if (compact)
-    return `${credits.availableCount} banked${expiresIn ? ` · expires in ${expiresIn}` : ""}`;
-  return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-    expiresIn ? ` · next expires in ${expiresIn}` : ""
-  }`;
+    return `${t("compactCreditsBanked", { count: credits.availableCount })}${expiresIn ? ` · ${t("expiresIn", { duration: expiresIn })}` : ""}`;
+  return `${t(credits.availableCount === 1 ? "resetCreditBanked" : "resetCreditsBanked", {
+    count: credits.availableCount,
+  })}${expiresIn ? ` · ${t("nextExpiresIn", { duration: expiresIn })}` : ""}`;
 }
 
 /** Banked reset credits with the redeem button and its confirm, self-contained. */
@@ -294,14 +331,15 @@ export function ResetCredits({
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
 }) {
+  const { t } = useTranslation("usage");
   const { confirming, setConfirming, busy, status, redeem } = useResetCredit(environmentId, input);
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
+      <span className="tabular-nums">{resetCreditsSummary(credits, now, t)}</span>
       {credits.availableCount > 0 ? (
         <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
-          {busy ? "Using…" : "Use reset"}
+          {busy ? t("using") : t("useReset")}
         </Button>
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}

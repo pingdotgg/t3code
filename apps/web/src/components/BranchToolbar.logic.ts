@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
+import type { TFunction } from "@t3tools/i18n";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
@@ -90,7 +91,10 @@ export function resolveContextStripLabelsCompact(input: {
     : input.neededWidth > input.availableWidth;
 }
 
-export function resolveEnvModeLabel(mode: EnvMode): string {
+type BranchToolbarTranslate = TFunction<"branchToolbar">;
+
+export function resolveEnvModeLabel(mode: EnvMode, t?: BranchToolbarTranslate): string {
+  if (t) return mode === "worktree" ? t("newWorktree") : t("currentCheckout");
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
@@ -100,8 +104,12 @@ export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
   none: "Skip",
 };
 
-export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+export function resolveCurrentWorkspaceLabel(
+  activeWorktreePath: string | null,
+  t?: BranchToolbarTranslate,
+): string {
+  if (activeWorktreePath) return t ? t("currentWorktree") : "Current worktree";
+  return resolveEnvModeLabel("local", t);
 }
 
 // A locked thread in worktree mode with no path is still creating its
@@ -109,9 +117,14 @@ export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null):
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
+  t?: BranchToolbarTranslate,
 ): string {
-  if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  if (activeWorktreePath) return t ? t("worktree") : "Worktree";
+  return effectiveEnvMode === "worktree"
+    ? resolveEnvModeLabel("worktree", t)
+    : t
+      ? t("localCheckout")
+      : "Local checkout";
 }
 
 export interface PreviousWorktreeSeed {
@@ -157,7 +170,15 @@ export function resolvePreviousWorktreeSeed(input: {
   return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
 }
 
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
+export function resolvePreviousWorktreeLabel(
+  seed: PreviousWorktreeSeed,
+  t?: BranchToolbarTranslate,
+): string {
+  if (t) {
+    return seed.branch
+      ? t("previousWorktreeNamed", { branch: seed.branch })
+      : t("previousWorktree");
+  }
   return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
 }
 
@@ -209,13 +230,16 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
-export function resolveBranchTriggerLabel(input: {
-  activeWorktreePath: string | null;
-  effectiveEnvMode: EnvMode;
-  resolvedActiveBranch: string | null;
-  resolvedActiveBranchIsRemote: boolean | null;
-  startFromOrigin: boolean;
-}): string {
+export function resolveBranchTriggerLabel(
+  input: {
+    activeWorktreePath: string | null;
+    effectiveEnvMode: EnvMode;
+    resolvedActiveBranch: string | null;
+    resolvedActiveBranchIsRemote: boolean | null;
+    startFromOrigin: boolean;
+  },
+  t?: BranchToolbarTranslate,
+): string {
   const {
     activeWorktreePath,
     effectiveEnvMode,
@@ -224,14 +248,14 @@ export function resolveBranchTriggerLabel(input: {
     startFromOrigin,
   } = input;
   if (!resolvedActiveBranch) {
-    return "Select ref";
+    return t ? t("selectRef") : "Select ref";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     const baseRef =
       startFromOrigin && resolvedActiveBranchIsRemote === false
         ? `origin/${resolvedActiveBranch}`
         : resolvedActiveBranch;
-    return `From ${baseRef}`;
+    return t ? t("fromBranch", { branch: baseRef }) : `From ${baseRef}`;
   }
   return resolvedActiveBranch;
 }

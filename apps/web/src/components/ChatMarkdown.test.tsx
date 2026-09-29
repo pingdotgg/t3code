@@ -9,6 +9,37 @@ import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => {
+      const messages: Record<string, string> = {
+        templateNamed: "{{template}} template",
+        useTemplate: "Use template",
+        details: "Details",
+        copied: "Copied",
+        copyCode: "Copy code",
+        wrapLines: "Wrap lines",
+        disableLineWrap: "Disable line wrap",
+        runInTerminal: "Run in terminal",
+        codeBlockActions: "Code block actions",
+        note: "Note",
+        tip: "Tip",
+        important: "Important",
+        warning: "Warning",
+        caution: "Caution",
+        toggleTask: "Toggle task",
+        image: "image",
+        previewNamed: "Preview {{name}}",
+        loadingImage: "Loading image",
+        imageUnavailable: "Image unavailable",
+        videoUnavailable: "Video unavailable",
+      };
+      return (messages[key] ?? key).replace(/\{\{(\w+)\}\}/gu, (placeholder, name: string) =>
+        String(values?.[name] ?? placeholder),
+      );
+    },
+  }),
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {

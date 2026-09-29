@@ -6,6 +6,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { CircleArrowUpIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
+import { serverUpdateStageTranslationKey } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -31,8 +33,8 @@ export function serverUpdateStageLabel(stage: ServerUpdateStage): string {
   return UPDATE_STAGE_LABELS[stage];
 }
 
-function updateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+function updateFailureMessage(error: unknown, fallbackMessage: string): string {
+  return error instanceof Error ? error.message : fallbackMessage;
 }
 
 export interface ServerUpdateTarget {
@@ -52,8 +54,12 @@ type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" 
 };
 
 function useServerUpdate() {
+  const { t } = useTranslation("serverUpdate");
   const updateServer = useAtomCommand(serverEnvironment.updateServer, { reportFailure: false });
-  return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
+  return async (
+    target: ServerUpdateTarget,
+    failureTitle = t("serverUpdateFailedForServer", { server: target.serverLabel }),
+  ) => {
     const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
     if (pendingUpdateEnvironmentIds.has(environmentId)) return;
     pendingUpdateEnvironmentIds.add(environmentId);
@@ -73,17 +79,17 @@ function useServerUpdate() {
       }
       toastManager.add({
         type: "success",
-        title: `${serverLabel} updated`,
+        title: t("serverUpdated", { server: serverLabel }),
         description:
           selfUpdate === "desktop-managed"
-            ? `Desktop app relaunched on ${result.value.targetVersion}.`
-            : `Reconnected on t3@${result.value.targetVersion}.`,
+            ? t("desktopAppRelaunchedOnVersion", { version: result.value.targetVersion })
+            : t("reconnectedOnVersion", { version: result.value.targetVersion }),
       });
     } catch (error) {
       toastManager.add({
         type: "error",
         title: failureTitle,
-        description: updateFailureMessage(error),
+        description: updateFailureMessage(error, t("serverUpdateFailed")),
       });
     } finally {
       pendingUpdateEnvironmentIds.delete(environmentId);
@@ -94,13 +100,14 @@ function useServerUpdate() {
 /** Updates eligible machines independently; manual paths remain in the machine list. */
 export function ServerUpdatesAction({
   targets,
-  label = "Update all",
+  label,
   variant = "outline",
   size = "xs",
   className,
 }: UpdateButtonProps & {
   readonly targets: ReadonlyArray<ServerUpdateTarget>;
 }) {
+  const { t } = useTranslation("serverUpdate");
   const update = useServerUpdate();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
@@ -121,12 +128,16 @@ export function ServerUpdatesAction({
       if (desktopTargets.length > 0) {
         const confirmed =
           (await requestConfirmDialog(
-            `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
+            t("confirmDesktopAppsUpdate", {
+              servers: desktopTargets.map((target) => target.serverLabel).join(", "),
+            }),
           )) ?? true;
         if (!confirmed) return;
       }
       await Promise.all(
-        available.map((target) => update(target, `${target.serverLabel} update failed`)),
+        available.map((target) =>
+          update(target, t("serverUpdateFailedForServer", { server: target.serverLabel })),
+        ),
       );
     } finally {
       pending.current = false;
@@ -141,7 +152,7 @@ export function ServerUpdatesAction({
       disabled={isPending || eligible.length === 0}
       onClick={() => void handleUpdate()}
     >
-      {label}
+      {label ?? t("updateAll")}
     </Button>
   );
 }
@@ -157,6 +168,7 @@ export function ServerUpdateProgress({
 }: {
   readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
 }) {
+  const { t } = useTranslation("serverUpdate");
   if (state.status === "failed") {
     return (
       <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
@@ -174,7 +186,7 @@ export function ServerUpdateProgress({
         className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-foreground"
         aria-hidden="true"
       />
-      <span>{serverUpdateStageLabel(state.stage)}</span>
+      <span>{t(serverUpdateStageTranslationKey(state.stage))}</span>
     </div>
   );
 }
@@ -191,12 +203,13 @@ export function ServerUpdateAction({
   desktopAppUpdate = false,
   threadContinuation = false,
   targetVersion,
-  label = "Update",
+  label,
   variant = "outline",
   size = "xs",
   className,
   appearance = "button",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
+  const { t } = useTranslation("serverUpdate");
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
     environmentId,
@@ -208,14 +221,14 @@ export function ServerUpdateAction({
     onCopy: ({ command }) => {
       toastManager.add({
         type: "success",
-        title: "Update command copied",
-        description: `Run \`${command}\` on ${serverLabel} to update it.`,
+        title: t("updateCommandCopied"),
+        description: t("runUpdateCommandOnServer", { command, server: serverLabel }),
       });
     },
     onError: (error) => {
       toastManager.add({
         type: "error",
-        title: "Could not copy update command",
+        title: t("couldNotCopyUpdateCommand"),
         description: error.message,
       });
     },
@@ -230,34 +243,31 @@ export function ServerUpdateAction({
       // was the request. This is the only confirmation in the flow; the
       // remote machine installs without asking anyone there.
       const confirmed =
-        (await requestConfirmDialog(
-          `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
-        )) ?? true;
+        (await requestConfirmDialog(t("confirmDesktopAppUpdate", { server: serverLabel }))) ?? true;
       if (!confirmed) {
         return;
       }
     }
-    await update({
-      environmentId,
-      serverLabel,
-      selfUpdate,
-      desktopAppUpdate,
-      threadContinuation,
-      targetVersion,
-      continueThreadsAfterServerUpdate,
-    });
+    await update(
+      {
+        environmentId,
+        serverLabel,
+        selfUpdate,
+        desktopAppUpdate,
+        threadContinuation,
+        targetVersion,
+        continueThreadsAfterServerUpdate,
+      },
+      t("serverUpdateFailedForServer", { server: serverLabel }),
+    );
   };
 
   if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
-    return (
-      <span className="text-muted-foreground text-xs">
-        Update the desktop app on that machine to update this server.
-      </span>
-    );
+    return <span className="text-muted-foreground text-xs">{t("updateDesktopAppOnMachine")}</span>;
   }
 
   const manualCommand = selfUpdate === null ? manualServerUpdateCommand(targetVersion) : null;
-  const actionLabel = manualCommand !== null ? "Copy update command" : label;
+  const actionLabel = manualCommand !== null ? t("copyUpdateCommand") : (label ?? t("update"));
   const onClick =
     manualCommand !== null
       ? () => copyToClipboard(manualCommand, { command: manualCommand })
@@ -272,7 +282,7 @@ export function ServerUpdateAction({
               size="icon-xs"
               variant="ghost-muted"
               className={className}
-              aria-label={`${actionLabel} for ${serverLabel}`}
+              aria-label={t("actionForServer", { action: actionLabel, server: serverLabel })}
               onClick={onClick}
             />
           }

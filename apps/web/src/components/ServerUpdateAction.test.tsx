@@ -11,6 +11,42 @@ const testState = vi.hoisted(() => ({
   toast: vi.fn(),
   continueThreadsAfterServerUpdate: false,
 }));
+const i18nMock = vi.hoisted(() => {
+  const messages: Readonly<Record<string, string>> = {
+    downloading: "Downloading…",
+    restarting: "Restarting…",
+    serverUpdateFailed: "Server update failed.",
+    serverUpdateFailedForServer: "{{server}} update failed",
+    serverUpdated: "{{server}} updated",
+    desktopAppRelaunchedOnVersion: "Desktop app relaunched on {{version}}.",
+    reconnectedOnVersion: "Reconnected on t3@{{version}}.",
+    updateAll: "Update all",
+    confirmDesktopAppsUpdate:
+      "Update the T3 Code desktop apps on {{servers}}? They will close and relaunch on those machines.",
+    update: "Update",
+    copyUpdateCommand: "Copy update command",
+    actionForServer: "{{action}} for {{server}}",
+    updateCommandCopied: "Update command copied",
+    runUpdateCommandOnServer: "Run `{{command}}` on {{server}} to update it.",
+    couldNotCopyUpdateCommand: "Could not copy update command",
+    confirmDesktopAppUpdate:
+      "Update the T3 Code desktop app that runs on {{server}}? It will close and relaunch on that machine.",
+    updateDesktopAppOnMachine: "Update the desktop app on that machine to update this server.",
+    couldNotUpdateServer: "Could not update {{server}}",
+    updatingServer: "Updating {{server}}",
+  };
+  return {
+    t: (key: string, options?: Readonly<Record<string, unknown>>) =>
+      Object.entries(options ?? {}).reduce(
+        (message, [name, value]) => message.replaceAll(`{{${name}}}`, String(value)),
+        messages[key] ?? key,
+      ),
+  };
+});
+
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({ t: i18nMock.t }),
+}));
 
 vi.mock("~/hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn() }),

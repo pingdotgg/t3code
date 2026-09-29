@@ -1,5 +1,6 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -64,6 +65,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance: () => void;
   onDismiss: (requestId: ApprovalRequestId) => void;
 }) {
+  const { t } = useTranslation();
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
@@ -208,8 +210,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             // the disclosure. Dismiss closes the question without a reply.
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
+              aria-label={t("dismissQuestionWithoutAnswering")}
+              title={t("dismissQuestionWithoutAnswering")}
               disabled={isResponding}
               data-pending-user-input-dismiss
               onClick={(event) => {
@@ -232,7 +234,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
             <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
             {activeQuestion.multiSelect ? (
-              <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
+              <p className="mt-1 text-secondary-label text-xs">{t("selectOneOrMoreOptions")}</p>
             ) : null}
             <div className="mt-2 space-y-0.5">
               {activeQuestion.options.map((option, index) => {

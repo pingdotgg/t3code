@@ -10,6 +10,28 @@ const state = vi.hoisted(() => ({
   refreshProviders: vi.fn(async () => undefined),
   metric: "limits",
 }));
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, string | number>) => {
+      const message =
+        {
+          pageTitle: "Usage",
+          allEnvironments: "All environments",
+          metricLabel: "Usage metric",
+          periodLabel: "Usage period",
+          refreshLimits: "Refresh limits",
+          refreshUsage: "Refresh usage",
+          compactResetsIn: "↻ {{duration}}",
+          durationDaysHours: "{{days}}d {{hours}}h",
+          durationHoursMinutes: "{{hours}}h {{minutes}}m",
+          durationMinutes: "{{minutes}}m",
+        }[key] ?? key;
+      return message.replace(/\{\{(\w+)\}\}/gu, (_match, name: string) =>
+        String(values?.[name] ?? ""),
+      );
+    },
+  }),
+}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === "keybindings" ? DEFAULT_RESOLVED_KEYBINDINGS : state.presentations,
@@ -157,7 +179,7 @@ it.each([0, 1])(
     });
     expect(
       JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-    ).toContain("in 2h 0m");
+    ).toContain("2h 0m");
     vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-11T12:30:00Z"));
     await act(async () => {
       renderer.root
@@ -172,10 +194,10 @@ it.each([0, 1])(
     });
     expect(
       JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-    ).toContain("in 1h 30m");
+    ).toContain("1h 30m");
     expect(
       JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-    ).not.toContain("in 2h 0m");
+    ).not.toContain("2h 0m");
   },
 );
 
@@ -193,7 +215,7 @@ it("uses the current time when returning to limits from tokens", async () => {
   await act(() => selectMetric("limits"));
   expect(
     JSON.stringify(renderer.toJSON(), (key, value) => (key === "props" ? undefined : value)),
-  ).toContain("in 1h 0m");
+  ).toContain("1h 0m");
   expect(state.refreshProviders).toHaveBeenCalledTimes(2);
 });
 

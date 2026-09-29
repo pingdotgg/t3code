@@ -13,6 +13,30 @@ const mocks = vi.hoisted(() => ({
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
 }));
 vi.mock("../../state/agentSessions", () => ({ agentSessionImport: "import" }));
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => {
+      const messages: Record<string, string> = {
+        continue: "Continue",
+        importOneProject: "Import 1 project",
+        doNotImportProjects: "Do not import projects",
+        someHistoryNotImported: "Some history was not imported",
+        importedOneThread: "Imported 1 thread",
+        importedManyThreads: "Imported {{count}} threads",
+        importedOneThreadPeriod: "Imported 1 thread.",
+        importedManyThreadsPeriod: "Imported {{count}} threads.",
+        oneThreadCouldNotBeImported: "1 thread could not be imported.",
+        threadsCouldNotBeImported: "{{count}} threads could not be imported.",
+        someThreadHistoryCouldNotBeImported: "Some thread history could not be imported.",
+        couldNotFinishSetup: "Could not finish setup",
+        settingsCouldNotBeSaved: "Your settings could not be saved. Try again.",
+      };
+      return (messages[key] ?? key).replace(/\{\{(\w+)\}\}/gu, (placeholder, name: string) =>
+        String(values?.[name] ?? placeholder),
+      );
+    },
+  }),
+}));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "create" } }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>

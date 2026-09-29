@@ -1,5 +1,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
+import { getActiveLocale } from "@t3tools/i18n";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
@@ -180,6 +182,8 @@ export function UsageProviderChart({
   resolution,
   timeZone,
 }: UsageProviderChartProps) {
+  const { t } = useTranslation("usage");
+  const locale = getActiveLocale();
   const periods = resolution === "hour" ? hours : days;
   const byPeriod = useMemo(
     () =>
@@ -247,7 +251,8 @@ export function UsageProviderChart({
     };
   }, [byPeriod, metric, periods, providers]);
 
-  const format = metric === "tokens" ? formatTokens : formatUsd;
+  const format = (value: number) =>
+    metric === "tokens" ? formatTokens(value, locale) : formatUsd(value, locale);
 
   const positionTooltip = useCallback(() => {
     const plot = plotRef.current;
@@ -308,10 +313,12 @@ export function UsageProviderChart({
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
   const formatPeriod = (period: string) =>
-    resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
+    resolution === "hour"
+      ? formatHourShort(period, timeZone, locale)
+      : formatDayShort(period, locale);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
-      ? formatRelativeHourShort(period, referenceTime, timeZone)
+      ? formatRelativeHourShort(period, referenceTime, timeZone, locale)
       : formatPeriod(period);
 
   return (
@@ -344,7 +351,17 @@ export function UsageProviderChart({
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+            aria-label={t("chartByProvider", {
+              title: t(
+                resolution === "hour"
+                  ? metric === "tokens"
+                    ? "hourlyProcessedTokens"
+                    : "hourlyCost"
+                  : metric === "tokens"
+                    ? "dailyProcessedTokens"
+                    : "dailyCost",
+              ),
+            })}
           >
             {ticks.map((tick) => {
               const y = toY(tick);
@@ -424,7 +441,7 @@ export function UsageProviderChart({
                 );
               })}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-                <span className="text-muted-foreground">Total</span>
+                <span className="text-muted-foreground">{t("total")}</span>
                 <span className="text-foreground tabular-nums">
                   {format(hoveredColumn?.total ?? 0)}
                 </span>

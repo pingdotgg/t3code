@@ -8,6 +8,23 @@ const testState = vi.hoisted(() => ({
   imageDimensions: undefined as { width: number; height: number } | undefined,
 }));
 
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => {
+      const messages: Record<string, string> = {
+        image: "image",
+        video: "video",
+        previewNamed: "Preview {{name}}",
+        loadingImage: "Loading image",
+        imageUnavailable: "Image unavailable",
+        videoUnavailable: "Video unavailable",
+      };
+      return (messages[key] ?? key).replace(/\{\{(\w+)\}\}/gu, (placeholder, name: string) =>
+        String(values?.[name] ?? placeholder),
+      );
+    },
+  }),
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../assets/assetUrls", () => ({
   useAssetUrlRefresh: () => vi.fn(),

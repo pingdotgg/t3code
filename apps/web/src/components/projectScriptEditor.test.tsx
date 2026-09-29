@@ -33,6 +33,9 @@ vi.mock("./ui/popover", () => ({
 }));
 vi.mock("./ui/switch", () => ({ Switch: "input" }));
 vi.mock("./ui/textarea", () => ({ Textarea: "textarea" }));
+vi.mock("@t3tools/i18n/react", () => ({
+  useTranslation: () => ({ t: (key: string) => (key === "cancel" ? "Cancel" : key) }),
+}));
 
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,

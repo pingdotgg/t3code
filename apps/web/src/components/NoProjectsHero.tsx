@@ -1,5 +1,6 @@
 import { PlusIcon } from "lucide-react";
 import { useCallback } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
@@ -9,6 +10,7 @@ import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
 export function NoProjectsHero() {
+  const { t } = useTranslation();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   return (
@@ -19,12 +21,12 @@ export function NoProjectsHero() {
         <Empty size="hero" className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle>What should we work on?</EmptyTitle>
-              <EmptyDescription>Add a project to start your first thread.</EmptyDescription>
+              <EmptyTitle>{t("whatShouldWeWorkOn")}</EmptyTitle>
+              <EmptyDescription>{t("addProjectToStartThread")}</EmptyDescription>
               <div className="mt-6 flex justify-center">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
-                  Add project
+                  {t("addProject")}
                 </Button>
               </div>
             </EmptyHeader>
