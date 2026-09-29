@@ -79,16 +79,26 @@ export type LimitPresentations = ReadonlyMap<
   }
 >;
 
-function accountKey(driver: ServerProvider["driver"], email: string | undefined): string | null {
+function accountKey(
+  driver: ServerProvider["driver"],
+  email: string | undefined,
+  organization?: string,
+): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
-  return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
+  if (!normalizedEmail) return null;
+  const normalizedOrganization = organization?.trim().toLowerCase();
+  return normalizedOrganization
+    ? `${driver}:${normalizedEmail}:${normalizedOrganization}`
+    : `${driver}:${normalizedEmail}`;
 }
 
 /**
  * One subscription account as the pooled views see it, whichever way it was
- * reported. The same email signed in natively on two environments, or reported
- * by a hub as well as natively, is one account: its quota is one bucket, so
- * counting it twice would misstate what is left.
+ * reported. The same login (email and, when the provider reports it,
+ * organization) signed in natively on two environments, or reported by a hub
+ * as well as natively, is one account: its quota is one bucket, so counting it
+ * twice would misstate what is left. One email in two organizations is two
+ * accounts with separate quotas.
  */
 export interface LimitAccount {
   readonly key: string;
@@ -181,26 +191,32 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
+  // Hubs report accounts by email alone, so a hub account joins the native
+  // account with that email only when the email names a single organization.
+  const nativeKeysByEmail = new Map<string, Set<string>>();
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(
-        accountKey(provider.driver, provider.auth.email) ??
-          `${environmentId}:${provider.instanceId}`,
-        {
-          key: `${environmentId}:${provider.instanceId}`,
-          driver: provider.driver,
-          displayName: provider.displayName?.trim() || null,
-          email: provider.auth.email,
-          plan: provider.auth.label,
-          accentColor: provider.accentColor,
-          environments: [{ environmentId, label }],
-          sourceLabel: null,
-          redeem: { environmentId, input: { instanceId: provider.instanceId } },
-          limits: provider.usageLimits,
-        },
-      );
+      const key = accountKey(provider.driver, provider.auth.email, provider.auth.organization);
+      const emailKey = accountKey(provider.driver, provider.auth.email);
+      if (key && emailKey) {
+        const keys = nativeKeysByEmail.get(emailKey) ?? new Set<string>();
+        keys.add(key);
+        nativeKeysByEmail.set(emailKey, keys);
+      }
+      merge(key ?? `${environmentId}:${provider.instanceId}`, {
+        key: `${environmentId}:${provider.instanceId}`,
+        driver: provider.driver,
+        displayName: provider.displayName?.trim() || null,
+        email: provider.auth.email,
+        plan: provider.auth.label,
+        accentColor: provider.accentColor,
+        environments: [{ environmentId, label }],
+        sourceLabel: null,
+        redeem: { environmentId, input: { instanceId: provider.instanceId } },
+        limits: provider.usageLimits,
+      });
     }
   }
   // Every hub account, including those a native instance also knows: the hub
@@ -214,7 +230,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
+        const emailKey = accountKey(account.driver, account.email);
+        const nativeKeys = emailKey ? nativeKeysByEmail.get(emailKey) : undefined;
+        const nativeKey = nativeKeys?.size === 1 ? [...nativeKeys][0] : undefined;
+        merge(nativeKey ?? emailKey ?? `${source.id}:${account.id}`, {
           key: `${source.id}:${account.id}`,
           driver: account.driver,
           displayName: account.email ? null : account.id.replace(/\.json$/i, ""),

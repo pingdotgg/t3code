@@ -63,6 +63,8 @@ export const ServerProviderAuth = Schema.Struct({
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  /** The organization the login acts for; one email can belong to several. */
+  organization: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 

@@ -447,6 +447,70 @@ describe("pools", () => {
     ]);
   });
 
+  it("keeps one email in two organizations as two accounts, and a hub read of it apart", () => {
+    const personal = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "dev@example.com", organization: "Personal" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 20 }] },
+    });
+    const team = {
+      ...personal,
+      instanceId: ProviderInstanceId.make("claude_team"),
+      auth: { status: "authenticated", email: "dev@example.com", organization: "Team" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 80 }] },
+    } as const;
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "claude-dev@example.com.json",
+          driver: claude,
+          email: "dev@example.com",
+          usageLimits: { checkedAt, windows: [window] },
+        },
+      ],
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [personal, team], usageLimitSources: [hub] } },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "env-a:claude_team",
+      "hub:claude-dev@example.com.json",
+    ]);
+  });
+
+  it("joins a hub account to the one organization its email signs into", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "dev@example.com", organization: "Team" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "claude-dev@example.com.json",
+          driver: claude,
+          email: "dev@example.com",
+          usageLimits: { checkedAt, windows: [window] },
+        },
+      ],
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [hub] } },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual(["env-a:claude"]);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",
