@@ -50,7 +50,7 @@ const serverReplying = (reply: {
 const verify = (httpClient: Layer.Layer<HttpClient.HttpClient>, url = "http://127.0.0.1:4096") =>
   Effect.gen(function* () {
     const opencode = yield* OpenCode2Client.OpenCode2Client;
-    const client = yield* opencode.connect({ baseUrl: url, password: "secret" });
+    const { client } = yield* opencode.connect({ baseUrl: url, password: "secret" });
     return yield* OpenCode2Server.verifyServer(client);
   }).pipe(Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(httpClient))));
 

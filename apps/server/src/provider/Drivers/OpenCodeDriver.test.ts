@@ -13,8 +13,7 @@ import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import { OPENCODE_2_UNSUPPORTED_MESSAGE } from "../opencodeVersionProbe.ts";
-import { OpenCodeDriver } from "./OpenCodeDriver.ts";
+import { OPENCODE_2_TEXT_GENERATION_UNSUPPORTED, OpenCodeDriver } from "./OpenCodeDriver.ts";
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -59,16 +58,14 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
-  it.effect("refuses OpenCode 2 on every path that would start a 1.x server", () =>
+  it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
       const instance = yield* create({}, noHttp);
 
-      const workspace = yield* Effect.flip(instance.snapshotForCwd!(process.cwd()));
-      assert.strictEqual(
-        (workspace.cause as { readonly detail?: string }).detail,
-        OPENCODE_2_UNSUPPORTED_MESSAGE,
-      );
+      // The workspace snapshot falls back to the machine snapshot.
+      const workspace = yield* instance.snapshotForCwd!(process.cwd());
+      assert.strictEqual(workspace.instanceId, instance.instanceId);
       const title = yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
           cwd: process.cwd(),
@@ -76,7 +73,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
         }),
       );
-      assert.strictEqual(title.detail, OPENCODE_2_UNSUPPORTED_MESSAGE);
+      assert.strictEqual(title.detail, OPENCODE_2_TEXT_GENERATION_UNSUPPORTED);
       assert.deepStrictEqual(serverStarts, []);
     }).pipe(Effect.scoped),
   );

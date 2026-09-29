@@ -26,7 +26,7 @@ const authorizationFor = (password: string | Redacted.Redacted) => {
   );
   return Effect.gen(function* () {
     const opencode = yield* OpenCode2Client.OpenCode2Client;
-    const client = yield* opencode.connect({ baseUrl: "http://127.0.0.1:4096", password });
+    const { client } = yield* opencode.connect({ baseUrl: "http://127.0.0.1:4096", password });
     yield* client.server.info();
     return seen[0];
   }).pipe(Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(capturing))));

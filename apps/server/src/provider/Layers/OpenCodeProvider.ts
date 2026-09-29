@@ -20,7 +20,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
-import { OPENCODE_2_UNSUPPORTED_MESSAGE, type ProbedOpenCode } from "../opencodeVersionProbe.ts";
+import type { ProbedOpenCode } from "../opencodeVersionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 
@@ -378,6 +378,16 @@ export const makePendingOpenCodeProvider = (
   });
 
 /**
+ * OpenCode 2 only runs in Full access until approvals map onto its permission
+ * rules, so the snapshot offers that mode alone. Its models come from the
+ * user's custom models until the 2.x model list lands.
+ */
+const OPENCODE_2_PRESENTATION = {
+  ...OPENCODE_PRESENTATION,
+  supportedRuntimeModes: ["full-access"],
+} as const;
+
+/**
  * `probeRuntime` is the driver's memoized version probe: `opencode --version` for a local binary,
  * the version endpoints for a configured server. The status check refreshes it, so an in-place
  * upgrade re-routes the instance.
@@ -454,19 +464,18 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   );
   if (probedExit._tag === "Failure") return fallback(Cause.squash(probedExit.cause));
   const probed = probedExit.value;
-  // Temporary until the OpenCode 2 runtime lands: 2.x must never reach the 1.x server path.
   if (probed.generation === "v2") {
     return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
+      presentation: OPENCODE_2_PRESENTATION,
       enabled: true,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
       probe: {
         installed: true,
         version: probed.version,
-        status: "error",
+        status: "ready",
         auth: { status: "unknown" },
-        message: OPENCODE_2_UNSUPPORTED_MESSAGE,
+        message: `OpenCode ${probed.version} is available.`,
       },
     });
   }

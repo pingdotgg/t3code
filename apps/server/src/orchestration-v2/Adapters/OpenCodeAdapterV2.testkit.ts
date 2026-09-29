@@ -1,4 +1,4 @@
-import type { Event as OpenCodeEvent, OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderReplayEntry, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -126,14 +126,19 @@ function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, s
   );
 }
 
-class OpenCodeReplayController {
+/**
+ * Replays one transcript at a client boundary: each outbound call must match the
+ * next `expect_outbound`, then answers with its `sdk.response`; `sdk.event`
+ * frames feed the event stream. Shared by the 1.x SDK and 2.x HTTP transports.
+ */
+export class OpenCodeReplayController {
   private cursor = 0;
   private readonly waiters = new Set<() => void>();
   private failure: unknown = null;
-  private readonly transcript: OpenCodeSdkReplayTranscript;
+  private readonly transcript: ProviderReplayTranscript;
   private messageIds = new Map<string, string>();
 
-  constructor(transcript: OpenCodeSdkReplayTranscript) {
+  constructor(transcript: ProviderReplayTranscript) {
     this.transcript = transcript;
   }
 
@@ -214,7 +219,7 @@ class OpenCodeReplayController {
     }
   }
 
-  async *events(signal?: AbortSignal): AsyncIterable<OpenCodeEvent> {
+  async *events(signal?: AbortSignal): AsyncIterable<unknown> {
     while (true) {
       if (signal?.aborted === true) return;
       this.throwFailure();
@@ -225,7 +230,7 @@ class OpenCodeReplayController {
           if (entry.afterMs !== undefined && entry.afterMs > 0) {
             await Effect.runPromise(Effect.sleep(Duration.millis(entry.afterMs)));
           }
-          const event = materializeMessageIds(frame.event, this.messageIds) as OpenCodeEvent;
+          const event = materializeMessageIds(frame.event, this.messageIds);
           this.advance();
           yield event;
           continue;

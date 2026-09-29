@@ -11,6 +11,10 @@ import { CursorOrchestratorReplayHarness } from "../Adapters/CursorAdapterV2.tes
 import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAdapterV2.testkit.ts";
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
 import { OpenCodeOrchestratorReplayHarness } from "../Adapters/OpenCodeAdapterV2.testkit.ts";
+import {
+  OPENCODE2_HTTP_PROTOCOL,
+  OpenCode2OrchestratorReplayHarness,
+} from "../Adapters/OpenCode2AdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
@@ -187,10 +191,16 @@ function runFixtureProviderWithRegisteredHarness(input: {
         harness: AcpRegistryOrchestratorReplayHarness,
       }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
     case "opencode":
-      return runFixtureProvider({
-        ...input,
-        harness: OpenCodeOrchestratorReplayHarness,
-      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+      // One driver, two runtimes: the transcript's protocol says which one recorded it.
+      return readTranscript(input.driver.transcriptFile).pipe(
+        Effect.flatMap((transcript) =>
+          transcript.protocol === OPENCODE2_HTTP_PROTOCOL
+            ? runFixtureProvider({ ...input, harness: OpenCode2OrchestratorReplayHarness })
+            : runFixtureProvider({ ...input, harness: OpenCodeOrchestratorReplayHarness }),
+        ),
+        Effect.mapError(normalizeTestError),
+        Effect.scoped,
+      );
     case "pi":
       return runFixtureProvider({
         ...input,

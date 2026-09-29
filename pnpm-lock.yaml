@@ -533,6 +533,9 @@ importers:
       '@opencode/client':
         specifier: 2.0.18
         version: 2.0.18(effect@4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5))
+      '@opencode/protocol':
+        specifier: 2.0.18
+        version: 2.0.18
       diff:
         specifier: 8.0.3
         version: 8.0.3

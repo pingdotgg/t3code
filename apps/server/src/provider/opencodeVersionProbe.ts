@@ -16,10 +16,6 @@ export interface ProbedOpenCode {
   readonly version: string;
 }
 
-// Temporary: the OpenCode 2 runtime replaces this refusal.
-export const OPENCODE_2_UNSUPPORTED_MESSAGE =
-  "OpenCode 2 is not supported yet. Use OpenCode 1.x until T3 Code adds OpenCode 2 support.";
-
 const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
 const OPENCODE_SERVER_PROBE_TIMEOUT = "5 seconds";
 // 2.x's own CLI decodes `{version, pid}` from `/api/info`; requiring both keeps unrelated JSON out.

@@ -9,7 +9,6 @@ import type {
   Todo as OpenCodeTodo,
   ToolPart,
 } from "@opencode-ai/sdk/v2";
-import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -110,6 +109,9 @@ import {
   type ProviderAdapterDriverCreateInput,
 } from "../ProviderAdapterDriver.ts";
 import { makeSubagentChildThread, subagentThreadTitle } from "../SubagentProjection.ts";
+import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
+
+export { openCodeToolProjectionKind } from "./OpenCodeToolItems.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
@@ -570,23 +572,6 @@ function recordString(input: unknown, ...keys: ReadonlyArray<string>): string | 
   return undefined;
 }
 
-function recordNumber(input: unknown, ...keys: ReadonlyArray<string>): number | undefined {
-  for (const key of keys) {
-    const value = recordValue(input, key);
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-  }
-  return undefined;
-}
-
-function stableJson(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 function sdkResponseForRawLog(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
   if ("data" in value) return { data: (value as { readonly data?: unknown }).data ?? null };
@@ -631,36 +616,6 @@ export function openCodePermissionRequestKind(
     return "file-read";
   }
   return "command";
-}
-
-export function openCodeToolProjectionKind(
-  toolName: string,
-): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
-  const normalized = toolName.toLowerCase();
-  if (normalized === "todowrite") {
-    return "dynamic_tool";
-  }
-  if (normalized.includes("bash") || normalized.includes("shell")) {
-    return "command_execution";
-  }
-  if (normalized.includes("edit") || normalized.includes("write") || normalized.includes("patch")) {
-    return "file_change";
-  }
-  if (normalized.includes("web") || normalized === "codesearch" || normalized === "code_search") {
-    return "web_search";
-  }
-  if (normalized === "read") {
-    return "dynamic_tool";
-  }
-  if (
-    normalized.includes("glob") ||
-    normalized.includes("grep") ||
-    normalized.includes("search") ||
-    normalized.includes("lsp")
-  ) {
-    return "file_search";
-  }
-  return "dynamic_tool";
 }
 
 const OPENCODE_ALWAYS_ALLOWED_PERMISSIONS = [
@@ -1664,86 +1619,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             | "completedAt"
             | "updatedAt"
           >;
-          const input = toolInput(part);
-          const output = toolOutput(part);
-          const projectionKind = openCodeToolProjectionKind(part.tool);
-          let turnItem: OrchestrationV2TurnItem;
-          if (projectionKind === "command_execution") {
-            turnItem = {
-              ...base,
-              type: "command_execution",
-              input: recordString(input, "command", "cmd") ?? stableJson(input),
-              ...(output === undefined ? {} : { output }),
-              ...(recordNumber(
-                part.state.status === "completed" ? part.state.metadata : undefined,
-                "exit",
-                "exitCode",
-              ) === undefined
-                ? {}
-                : {
-                    exitCode: recordNumber(
-                      part.state.status === "completed" ? part.state.metadata : undefined,
-                      "exit",
-                      "exitCode",
-                    )!,
-                  }),
-            };
-          } else if (projectionKind === "file_change") {
-            turnItem = {
-              ...base,
-              type: "file_change",
-              fileName: recordString(input, "filePath", "path", "file") ?? part.tool,
-              ...(recordString(input, "oldString", "oldText") === undefined
-                ? {}
-                : { oldStr: recordString(input, "oldString", "oldText")! }),
-              ...(recordString(input, "newString", "content", "newText") === undefined
-                ? {}
-                : { newStr: recordString(input, "newString", "content", "newText")! }),
-              ...(recordString(
-                part.state.status === "completed" ? part.state.metadata : undefined,
-                "diff",
-                "patch",
-              ) === undefined
-                ? {}
-                : {
-                    diffStr: recordString(
-                      part.state.status === "completed" ? part.state.metadata : undefined,
-                      "diff",
-                      "patch",
-                    )!,
-                  }),
-            };
-          } else if (projectionKind === "file_search") {
-            const pattern = recordString(input, "pattern", "query", "path", "filePath");
-            turnItem = {
-              ...base,
-              title:
-                formatSearchToolLabel({ input, ...(pattern === undefined ? {} : { pattern }) }) ??
-                base.title,
-              type: "file_search",
-              ...(pattern === undefined ? {} : { pattern }),
-            };
-          } else if (projectionKind === "web_search") {
-            const pattern = recordString(input, "query", "url", "pattern");
-            turnItem = {
-              ...base,
-              type: "web_search",
-              ...(pattern === undefined ? {} : { patterns: [pattern] }),
-            };
-          } else {
-            const readPath = recordString(input, "filePath", "path", "file");
-            turnItem = {
-              ...base,
-              title:
-                part.tool.toLowerCase() === "read" && readPath !== undefined
-                  ? formatReadToolLabel(readPath)
-                  : base.title,
-              type: "dynamic_tool",
-              toolName: part.tool,
-              input,
-              ...(output === undefined ? {} : { output }),
-            };
-          }
+          const turnItem = openCodeToolTurnItem(base, {
+            name: part.tool,
+            input: toolInput(part),
+            output: toolOutput(part),
+            completedMetadata: part.state.status === "completed" ? part.state.metadata : undefined,
+          });
           yield* emitProviderEvent({
             type: "node.updated",
             driver: OPENCODE_PROVIDER,

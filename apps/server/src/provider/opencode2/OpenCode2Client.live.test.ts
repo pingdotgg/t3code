@@ -83,7 +83,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
       Effect.gen(function* () {
         const server = yield* startServer(binaryPath!);
         const opencode = yield* OpenCode2Client.OpenCode2Client;
-        const client = yield* opencode.connect({
+        const { client, events } = yield* opencode.connect({
           baseUrl: server.baseUrl,
           password: server.password,
         });
@@ -100,7 +100,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
             id: Model.ID.make("big-pickle"),
           }),
         });
-        const finished = yield* client.event.subscribe().pipe(
+        const finished = yield* (yield* events).pipe(
           Stream.filter(
             (event) =>
               (event.data as { readonly sessionID?: string }).sessionID === session.id &&

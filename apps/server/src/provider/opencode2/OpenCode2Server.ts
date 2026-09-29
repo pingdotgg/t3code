@@ -21,9 +21,8 @@ import * as OpenCode2Client from "./OpenCode2Client.ts";
 
 const INFO_TIMEOUT = "5 seconds";
 
-export interface OpenCode2Connection {
+export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
-  readonly client: OpenCodeClient;
   readonly version: string;
   readonly external: boolean;
 }
@@ -152,9 +151,9 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   const opencode = yield* OpenCode2Client.OpenCode2Client;
   const connectTo = (url: string, password: Redacted.Redacted, external: boolean) =>
     Effect.gen(function* () {
-      const client = yield* opencode.connect({ baseUrl: url, password });
-      const version = yield* verifyServer(client);
-      return { url, client, version, external } satisfies OpenCode2Connection;
+      const api = yield* opencode.connect({ baseUrl: url, password });
+      const version = yield* verifyServer(api.client);
+      return { ...api, url, version, external } satisfies OpenCode2Connection;
     });
   let latest: OpenCode2Connection | undefined;
   const remember = (connection: OpenCode2Connection) =>

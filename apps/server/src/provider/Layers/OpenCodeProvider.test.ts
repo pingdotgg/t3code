@@ -21,7 +21,7 @@ import {
   openCodeCommandsToServerProviderSlashCommands,
 } from "./OpenCodeProvider.ts";
 import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
-import { OPENCODE_2_UNSUPPORTED_MESSAGE, probeOpenCodeRuntime } from "../opencodeVersionProbe.ts";
+import { probeOpenCodeRuntime } from "../opencodeVersionProbe.ts";
 import {
   OPENCODE_1_RESPONSES,
   OPENCODE_2_RESPONSES,
@@ -529,14 +529,14 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("refuses a local OpenCode 2 binary before starting a 1.x server for it", () =>
+  it.effect("offers a local OpenCode 2 binary in Full access only, never via 1.x", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";
       const snapshot = yield* checkProvider(makeOpenCodeSettings());
 
-      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.status, "ready");
       NodeAssert.equal(snapshot.version, "2.0.18");
-      NodeAssert.equal(snapshot.message, OPENCODE_2_UNSUPPORTED_MESSAGE);
+      NodeAssert.deepEqual(snapshot.supportedRuntimeModes, ["full-access"]);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );
@@ -604,7 +604,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
-  it.effect("refuses a configured OpenCode 2 server before speaking 1.x to it", () =>
+  it.effect("routes a configured OpenCode 2 server to the 2.x check, never via 1.x", () =>
     Effect.gen(function* () {
       const settings = makeOpenCodeSettings({
         serverUrl: "http://127.0.0.1:9999",
@@ -617,9 +617,9 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret-password"),
       );
 
-      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.status, "ready");
       NodeAssert.equal(snapshot.version, "2.0.18");
-      NodeAssert.equal(snapshot.message, OPENCODE_2_UNSUPPORTED_MESSAGE);
+      NodeAssert.deepEqual(snapshot.supportedRuntimeModes, ["full-access"]);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );
