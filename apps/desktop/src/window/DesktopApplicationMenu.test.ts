@@ -12,6 +12,11 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopLifecycle from "../app/DesktopLifecycle.ts";
+import * as DesktopShutdown from "../app/DesktopShutdown.ts";
+import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
@@ -103,6 +108,10 @@ const makeElectronMenuLayer = (
 const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
+  options?: {
+    readonly localRendererUrl?: string;
+    readonly relaunchReason?: Deferred.Deferred<string>;
+  },
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -113,6 +122,23 @@ const configureMenu = (
         Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
         Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
         Layer.provideMerge(desktopUpdatesLayer),
+        Layer.provideMerge(
+          DesktopAppSettings.layerTest({
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localRendererUrl: options?.localRendererUrl ?? null,
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.mock(DesktopLifecycle.DesktopLifecycle, {
+            relaunch: (reason) =>
+              options?.relaunchReason
+                ? Deferred.succeed(options.relaunchReason, reason).pipe(Effect.asVoid)
+                : Effect.void,
+          }),
+        ),
+        Layer.provideMerge(Layer.mock(DesktopShutdown.DesktopShutdown, {})),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(Layer.mock(ElectronTheme.ElectronTheme, {})),
         Layer.provideMerge(electronDialogLayer),
         Layer.provideMerge(electronAppLayer),
         Layer.provideMerge(
@@ -125,6 +151,27 @@ const configureMenu = (
   );
 
 describe("DesktopApplicationMenu", () => {
+  it.effect("offers a native way back to bundled UI when local Vite is selected", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const templateResult = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const relaunchReason = yield* Deferred.make<string>();
+      yield* configureMenu(selectedAction, templateResult, {
+        localRendererUrl: "http://localhost:6233/",
+        relaunchReason,
+      });
+      const template = yield* Deferred.await(templateResult);
+      const view = template.find((item) => item.label === "View");
+      assert.isDefined(view);
+      if (!Array.isArray(view.submenu)) throw new Error("Expected View submenu.");
+      const fallback = view.submenu.find((item) => item.label === "Use Built-in UI");
+      assert.isDefined(fallback);
+      assert.isFunction(fallback.click);
+      fallback.click!({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(relaunchReason), "localRendererUrl=bundled");
+    }),
+  );
+
   it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();

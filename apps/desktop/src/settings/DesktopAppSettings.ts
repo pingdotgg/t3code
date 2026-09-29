@@ -26,6 +26,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
+  readonly localRendererUrl: string | null;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
@@ -75,6 +76,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
+  localRendererUrl: null,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
@@ -97,6 +99,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 
 const DesktopSettingsDocument = Schema.Struct({
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
+  localRendererUrl: Schema.optionalKey(Schema.String),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
@@ -150,6 +153,46 @@ export class DesktopSettingsWriteError extends Schema.TaggedError<DesktopSetting
   }
 }
 
+export class InvalidLocalRendererUrlError extends Schema.TaggedError<InvalidLocalRendererUrlError>()(
+  "InvalidLocalRendererUrlError",
+  { url: Schema.String },
+) {
+  override get message(): string {
+    return "Local UI URL must be an HTTP loopback address with an explicit port.";
+  }
+}
+
+export function normalizeLocalRendererUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw.trim());
+    if (
+      url.protocol !== "http:" ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+      url.port === "" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== ""
+    ) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+const parseLocalRendererUrl = (
+  url: string | null,
+): Effect.Effect<string | null, InvalidLocalRendererUrlError> => {
+  if (url === null) return Effect.succeed(null);
+  const normalized = normalizeLocalRendererUrl(url);
+  return normalized === null
+    ? Effect.fail(new InvalidLocalRendererUrlError({ url }))
+    : Effect.succeed(normalized);
+};
+
 export class DesktopAppSettings extends Context.Service<
   DesktopAppSettings,
   {
@@ -158,6 +201,12 @@ export class DesktopAppSettings extends Context.Service<
     readonly setLocalEnvironmentEnabled: (
       enabled: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setLocalRendererUrl: (
+      url: string | null,
+    ) => Effect.Effect<
+      DesktopSettingsChange,
+      DesktopSettingsWriteError | InvalidLocalRendererUrlError
+    >;
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
@@ -231,6 +280,10 @@ function normalizeDesktopSettingsDocument(
 
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
+    localRendererUrl:
+      parsed.localRendererUrl === undefined
+        ? null
+        : normalizeLocalRendererUrl(parsed.localRendererUrl),
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
@@ -256,6 +309,9 @@ function toDesktopSettingsDocument(
 
   if (settings.localEnvironmentEnabled !== defaults.localEnvironmentEnabled) {
     document.localEnvironmentEnabled = settings.localEnvironmentEnabled;
+  }
+  if (settings.localRendererUrl !== null) {
+    document.localRendererUrl = settings.localRendererUrl;
   }
 
   if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
@@ -385,6 +441,10 @@ function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean)
   return settings.localEnvironmentEnabled === enabled
     ? settings
     : { ...settings, localEnvironmentEnabled: enabled };
+}
+
+function setLocalRendererUrl(settings: DesktopSettings, url: string | null): DesktopSettings {
+  return settings.localRendererUrl === url ? settings : { ...settings, localRendererUrl: url };
 }
 
 function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
@@ -566,6 +626,13 @@ export const make = Effect.gen(function* () {
       persist((settings) => setLocalEnvironmentEnabled(settings, enabled)).pipe(
         Effect.withSpan("desktop.settings.setLocalEnvironmentEnabled", { attributes: { enabled } }),
       ),
+    setLocalRendererUrl: (url) =>
+      parseLocalRendererUrl(url).pipe(
+        Effect.flatMap((normalized) =>
+          persist((settings) => setLocalRendererUrl(settings, normalized)),
+        ),
+        Effect.withSpan("desktop.settings.setLocalRendererUrl"),
+      ),
     applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
       Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
     ),
@@ -609,6 +676,12 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setWslOnly: (enabled) => update((settings) => setWslOnly(settings, enabled)),
         setLocalEnvironmentEnabled: (enabled) =>
           update((settings) => setLocalEnvironmentEnabled(settings, enabled)),
+        setLocalRendererUrl: (url) =>
+          parseLocalRendererUrl(url).pipe(
+            Effect.flatMap((normalized) =>
+              update((settings) => setLocalRendererUrl(settings, normalized)),
+            ),
+          ),
         applyWslWindowsFallback: update(applyWslWindowsFallback),
         applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });

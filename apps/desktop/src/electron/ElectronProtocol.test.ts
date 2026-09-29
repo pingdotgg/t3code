@@ -68,6 +68,29 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(Layer.merge(protocolLayer, NodeServices.layer)), Effect.scoped),
   );
 
+  it.effect("falls back to bundled assets when the local renderer server is unavailable", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped();
+      yield* fileSystem.writeFileString(`${directory}/index.html`, "<html>bundled</html>");
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock.mockRejectedValue(new Error("Vite is down"));
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      yield* protocol.registerDesktopProtocol({
+        scheme: "t3code",
+        targetOrigin: new URL("http://localhost:6233/"),
+        fallbackAssetDirectory: directory,
+        clerkFrontendApiHostname: undefined,
+      });
+      const response = yield* Effect.promise(() => handler!(new Request("t3code://app/")));
+      assert.equal(yield* Effect.promise(() => response.text()), "<html>bundled</html>");
+    }).pipe(Effect.provide(Layer.merge(protocolLayer, NodeServices.layer)), Effect.scoped),
+  );
+
   it.effect("proxies the stable renderer origin to the current app server", () =>
     Effect.gen(function* () {
       let handler: ((request: Request) => Promise<Response>) | undefined;

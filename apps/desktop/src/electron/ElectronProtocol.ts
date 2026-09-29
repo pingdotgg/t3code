@@ -57,7 +57,10 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
   readonly clerkFrontendApiHostname: string | undefined;
-} & ({ readonly targetOrigin: URL } | { readonly assetDirectory: string });
+} & (
+  | { readonly targetOrigin: URL; readonly fallbackAssetDirectory?: string }
+  | { readonly assetDirectory: string }
+);
 
 export class ElectronProtocol extends Context.Service<
   ElectronProtocol,
@@ -278,7 +281,15 @@ export const make = Effect.gen(function* () {
                   contentSecurityPolicy,
                 );
               }
-              return proxyRequest(request, input.targetOrigin, contentSecurityPolicy);
+              try {
+                return await proxyRequest(request, input.targetOrigin, contentSecurityPolicy);
+              } catch (cause) {
+                if (input.fallbackAssetDirectory === undefined) throw cause;
+                return withContentSecurityPolicy(
+                  await runPromise(serveDesktopAsset(request, input.fallbackAssetDirectory)),
+                  contentSecurityPolicy,
+                );
+              }
             });
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),

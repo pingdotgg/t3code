@@ -91,6 +91,35 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
+  it("accepts only local HTTP origins for renderer code", () => {
+    assert.equal(
+      DesktopAppSettings.normalizeLocalRendererUrl("http://127.0.0.1:6233"),
+      "http://127.0.0.1:6233/",
+    );
+    assert.isNull(DesktopAppSettings.normalizeLocalRendererUrl("http://example.com:6233"));
+    assert.isNull(DesktopAppSettings.normalizeLocalRendererUrl("http://localhost:6233/other"));
+  });
+
+  it.effect("persists a local renderer URL without changing backend settings", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setLocalRendererUrl("http://localhost:6233");
+        assert.equal((yield* settings.load).localRendererUrl, "http://localhost:6233/");
+        assert.isTrue((yield* settings.get).localEnvironmentEnabled);
+
+        const invalid = yield* settings
+          .setLocalRendererUrl("https://example.com")
+          .pipe(Effect.flip);
+        assert.instanceOf(invalid, DesktopAppSettings.InvalidLocalRendererUrlError);
+        assert.equal((yield* settings.get).localRendererUrl, "http://localhost:6233/");
+
+        yield* settings.setLocalRendererUrl(null);
+        assert.isNull((yield* settings.load).localRendererUrl);
+      }),
+    ),
+  );
+
   it.effect(
     "persists disabling and re-enabling local execution without clearing backend settings",
     () =>
@@ -125,6 +154,7 @@ describe("DesktopSettings", () => {
       {
         linuxPasswordStore: "auto",
         localEnvironmentEnabled: true,
+        localRendererUrl: null,
         mainWindowBounds: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
@@ -155,6 +185,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "gnome-libsecret",
           localEnvironmentEnabled: true,
+          localRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -263,6 +294,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localRendererUrl: null,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
@@ -320,6 +352,7 @@ describe("DesktopSettings", () => {
           assert.deepEqual(yield* settings.load, {
             linuxPasswordStore: "auto",
             localEnvironmentEnabled: true,
+            localRendererUrl: null,
             mainWindowBounds: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
@@ -369,6 +402,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -398,6 +432,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
@@ -426,6 +461,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
+          localRendererUrl: null,
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",

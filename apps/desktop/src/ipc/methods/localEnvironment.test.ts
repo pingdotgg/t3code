@@ -11,6 +11,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { getLocalEnvironmentEnabled, setLocalEnvironmentEnabled } from "./localEnvironment.ts";
+import { getLocalRendererUrl, setLocalRendererUrl } from "./rendererSource.ts";
 
 // `relaunch` declares the lifecycle runtime services as requirements even
 // though the mocked relaunch never touches them.
@@ -29,6 +30,30 @@ const unusedLifecycleRuntimeLayer = Layer.mergeAll(
 );
 
 describe("local environment IPC", () => {
+  it.effect("switches renderer source without changing the local backend setting", () => {
+    const relaunchReasons: string[] = [];
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest(),
+      Layer.mock(DesktopLifecycle.DesktopLifecycle, {
+        relaunch: (reason) =>
+          Effect.sync(() => {
+            relaunchReasons.push(reason);
+          }),
+      }),
+      unusedLifecycleRuntimeLayer,
+    );
+    return Effect.gen(function* () {
+      yield* setLocalRendererUrl.handler("http://localhost:6233");
+      assert.equal(yield* getLocalRendererUrl.handler(), "http://localhost:6233/");
+      assert.isTrue(yield* getLocalEnvironmentEnabled.handler());
+      yield* setLocalRendererUrl.handler("http://localhost:6233/");
+      assert.deepEqual(relaunchReasons, ["localRendererUrl=local"]);
+      yield* setLocalRendererUrl.handler(null);
+      assert.isNull(yield* getLocalRendererUrl.handler());
+      assert.deepEqual(relaunchReasons, ["localRendererUrl=local", "localRendererUrl=bundled"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("relaunches only when the setting changes and keeps other settings", () => {
     const relaunchReasons: Array<string> = [];
     const layer = Layer.mergeAll(

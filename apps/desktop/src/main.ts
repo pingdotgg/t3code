@@ -193,7 +193,7 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   desktopAppActivationLayer,
-  DesktopApplicationMenu.layer,
+  DesktopApplicationMenu.layer.pipe(Layer.provideMerge(DesktopLifecycle.layer)),
   DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,

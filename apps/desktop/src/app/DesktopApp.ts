@@ -167,13 +167,24 @@ const bootstrap = Effect.gen(function* () {
   yield* logBootstrapInfo("bootstrap start");
 
   const settings = yield* desktopSettings.get;
-  // The renderer is served from the bundled client (or Vite in development)
-  // rather than through the local backend, so the window can open without one.
+  // Renderer source is independent of the backend and state directory. A
+  // production desktop can use local Vite assets while keeping its usual
+  // connections and server ownership.
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const rendererUrl = environment.isDevelopment
+    ? Option.getOrThrow(environment.devServerUrl)
+    : settings.localRendererUrl === null
+      ? null
+      : new URL(settings.localRendererUrl);
   yield* electronProtocol.registerDesktopProtocol({
     scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
-    ...(environment.isDevelopment
-      ? { targetOrigin: Option.getOrThrow(environment.devServerUrl) }
+    ...(rendererUrl !== null
+      ? {
+          targetOrigin: rendererUrl,
+          ...(environment.isDevelopment
+            ? {}
+            : { fallbackAssetDirectory: environment.clientAssetsDir }),
+        }
       : { assetDirectory: environment.clientAssetsDir }),
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
