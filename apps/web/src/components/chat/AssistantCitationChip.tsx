@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -114,7 +115,13 @@ export function AssistantCitationChip({
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
-      aria-label={`View cited assistant text: ${label}`}
+      aria-label={translate(
+        "common:uiViewCitedAssistantText",
+        "View cited assistant text: {{label}}",
+        {
+          label,
+        },
+      )}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
@@ -124,7 +131,13 @@ export function AssistantCitationChip({
     <Link
       {...sourceLinkProps}
       className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-(--context-chip-accent)/17 focus-visible:outline-2 focus-visible:outline-foreground"
-      aria-label={`View cited assistant text: ${label}`}
+      aria-label={translate(
+        "common:uiViewCitedAssistantText",
+        "View cited assistant text: {{label}}",
+        {
+          label,
+        },
+      )}
     >
       <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
@@ -142,7 +155,7 @@ export function AssistantCitationChip({
       ) : (
         <Tooltip>
           <TooltipTrigger render={chatSourceLink} />
-          <TooltipPopup side="top">View source</TooltipPopup>
+          <TooltipPopup side="top">{translate("chatView:viewSource", "View source")}</TooltipPopup>
         </Tooltip>
       )}
       {commentEditor ? (
@@ -157,7 +170,11 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={
+              citation.comment
+                ? translate("common:uiEditCitationComment", "Edit citation comment")
+                : translate("common:uiAddCommentToCitation", "Add comment to citation")
+            }
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
@@ -189,7 +206,7 @@ export function AssistantCitationChip({
                   : undefined
               }
               ref={commentPopupRef}
-              aria-label="Edit citation comment"
+              aria-label={translate("chatView:editCitationComment", "Edit citation comment")}
               width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}

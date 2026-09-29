@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   isModifierPairShortcut,
   type SnapShotModifier,
@@ -125,8 +126,12 @@ export function useSnapShotShortcutRecorder({
         disabled={disabled}
         aria-label={
           displayShortcut
-            ? `Record snapshot shortcut, currently ${formatSnapShotShortcutLabel(displayShortcut)}`
-            : "Change snapshot shortcut"
+            ? translate(
+                "common:uiSnapshotShortcutCurrent",
+                "Record snapshot shortcut, currently {{shortcut}}",
+                { shortcut: formatSnapShotShortcutLabel(displayShortcut) },
+              )
+            : translate("common:uiChangeSnapshotShortcut", "Change snapshot shortcut")
         }
         aria-pressed={recording}
         data-keybinding-capture=""
@@ -136,11 +141,11 @@ export function useSnapShotShortcutRecorder({
         onBlur={stopRecording}
       >
         {recording ? (
-          "Press shortcut…"
+          translate("common:uiPressShortcut", "Press shortcut…")
         ) : !displayShortcut ? (
-          "Change shortcut"
+          translate("common:uiChangeSnapshotShortcut", "Change shortcut")
         ) : !allowModifierPairs && isModifierPairShortcut(displayShortcut) ? (
-          "Choose shortcut"
+          translate("common:uiChooseShortcut", "Choose shortcut")
         ) : (
           <SnapShotShortcutKeys shortcut={displayShortcut} />
         )}

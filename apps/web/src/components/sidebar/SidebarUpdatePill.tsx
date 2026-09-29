@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
@@ -102,7 +103,9 @@ function SidebarUpdateArchitectureWarningContent() {
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>
+        {translate("sidebar:intelBuildAppleSilicon", "Intel build on Apple Silicon")}
+      </AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -392,7 +395,10 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Nightly update release notes"
+            aria-label={translate(
+              "common:uiNightlyUpdateReleaseNotes",
+              "Nightly update release notes",
+            )}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

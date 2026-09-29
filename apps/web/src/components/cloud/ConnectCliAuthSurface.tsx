@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAuth, useClerk } from "@clerk/react";
 import { readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -93,18 +94,24 @@ export function ConnectCliAuthorizeSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
-        eyebrow="Browser authorization"
-        title="Connecting your terminal"
+        eyebrow={translate("common:uiBrowserAuthorization", "Browser authorization")}
+        title={translate("common:uiConnectingYourTerminal", "Connecting your terminal")}
         description={
           isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
+            ? translate(
+                "common:uiRedirectingToAuthorizeT3ConnectForCli",
+                "Redirecting to authorize T3 Connect for your CLI…",
+              )
+            : translate(
+                "common:uiSignInToAuthorizeT3ConnectForCli",
+                "Sign in to continue authorizing T3 Connect for your CLI.",
+              )
         }
       />
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            {translate("common:signIn", "Sign in")}
           </Button>
         </div>
       ) : null}

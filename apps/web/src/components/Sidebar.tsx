@@ -81,6 +81,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "@t3tools/i18n/react";
+import { translate } from "@t3tools/i18n";
 import { useParams, useRouter } from "@tanstack/react-router";
 
 import { useRightPanelStore } from "../rightPanelStore";
@@ -941,35 +942,35 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 // Verb and icon on the lifted row while it hovers over another section. Uses
 // the same icons as the row actions and context menu so the drop reads as the
 // action it performs.
-const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
-  pin: (
+const dropVerbBadge: Record<SidebarDropVerb, () => ReactNode> = {
+  pin: () => (
     <>
       <PinIcon aria-hidden className="size-3" />
-      Pin
+      {translate("chatView:dropVerbPin", "Pin")}
     </>
   ),
-  unpin: (
+  unpin: () => (
     <>
       <PinOffIcon aria-hidden className="size-3" />
-      Unpin
+      {translate("chatView:dropVerbUnpin", "Unpin")}
     </>
   ),
-  settle: (
+  settle: () => (
     <>
       <CircleCheckIcon aria-hidden className="size-3" />
-      Settle
+      {translate("chatView:dropVerbSettle", "Settle")}
     </>
   ),
-  unsettle: (
+  unsettle: () => (
     <>
       <Undo2Icon aria-hidden className="size-3" />
-      Un-settle
+      {translate("chatView:dropVerbUnsettle", "Un-settle")}
     </>
   ),
-  wake: (
+  wake: () => (
     <>
       <AlarmClockOffIcon aria-hidden className="size-3" />
-      Wake
+      {translate("chatView:dropVerbWake", "Wake")}
     </>
   ),
 };
@@ -1468,7 +1469,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         role="status"
         className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
       >
-        {dropVerbBadge[props.dropVerb]}
+        {dropVerbBadge[props.dropVerb]()}
       </span>
     ) : null;
 
@@ -1657,7 +1658,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
-                Regenerating title
+                {translate("chatView:regeneratingTitle", "Regenerating title")}
               </span>
             ) : null}
             {/* The PR badge stays outside the hover-fading slot: it must
@@ -1941,7 +1942,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             }
                           >
                             <CheckIcon className="size-3.5" />
-                            Settle
+                            {translate("chatView:dropVerbSettle", "Settle")}
                           </TooltipTrigger>
                           <TooltipPopup>{t("settleThread")}</TooltipPopup>
                         </Tooltip>
@@ -1955,7 +1956,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
-                  Regenerating title
+                  {translate("chatView:regeneratingTitle", "Regenerating title")}
                 </span>
               ) : null}
             </div>
@@ -4871,7 +4872,7 @@ export default function Sidebar() {
                               <SidebarDragBoundary
                                 key="pinned-header"
                                 marker="pinned-header"
-                                label="Pinned"
+                                label={translate("common:pinned", "Pinned")}
                                 visible={from !== null}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
@@ -4882,7 +4883,7 @@ export default function Sidebar() {
                               <SidebarDragBoundary
                                 key="pinned-divider"
                                 marker="pinned-divider"
-                                label="Active"
+                                label={translate("common:active", "Active")}
                                 visible={from !== null}
                                 isDropTarget={dragTargetSection === "active"}
                               />,
@@ -4893,7 +4894,7 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="active-placeholder"
                                 marker="active-placeholder"
-                                label="Active"
+                                label={t("active")}
                                 showHint={
                                   from !== null &&
                                   (activeThreads.length === 0 ||
@@ -4915,7 +4916,7 @@ export default function Sidebar() {
                                 label={
                                   snoozedShelfExpanded
                                     ? t("snoozed")
-                                    : `Snoozed (${snoozedThreads.length})`
+                                    : t("snoozedCount", { count: snoozedThreads.length })
                                 }
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
@@ -4932,8 +4933,8 @@ export default function Sidebar() {
                                 className={cn(snoozedThreads.length === 0 && "mt-auto")}
                                 label={
                                   settledShelfExpanded
-                                    ? "Settled"
-                                    : `Settled (${settledThreads.length})`
+                                    ? t("settled")
+                                    : t("settledCount", { count: settledThreads.length })
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
@@ -4949,7 +4950,7 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
-                                label="Settled"
+                                label={t("settled")}
                                 showHint={
                                   from !== null &&
                                   (renderedSettledThreads.length === 0 ||
@@ -4974,7 +4975,9 @@ export default function Sidebar() {
                           className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                         >
                           <PlusIcon aria-hidden className="size-4 shrink-0" />
-                          Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                          {t("showMoreCount", {
+                            count: Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT),
+                          })}
                         </button>
                       </li>
                     ) : null}

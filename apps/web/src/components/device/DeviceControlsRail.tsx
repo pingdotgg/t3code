@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { DevicePlatform } from "@t3tools/contracts";
 import {
   Camera,
@@ -55,14 +56,14 @@ export function DeviceControlsRail(props: {
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
   return (
     <aside
-      aria-label="Device controls"
+      aria-label={translate("chatView:deviceControls", "Device controls")}
       data-layout="rail"
       className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
     >
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
         <RailButton
           tooltipSide={popupSide}
-          label="Home"
+          label={translate("chatView:deviceHome", "Home")}
           disabled={inputDisabled}
           onClick={() => handle?.pressButton("home")}
         >
@@ -72,7 +73,7 @@ export function DeviceControlsRail(props: {
           <>
             <RailButton
               tooltipSide={popupSide}
-              label="Back"
+              label={translate("chatView:deviceBack", "Back")}
               disabled={inputDisabled}
               onClick={() => handle?.pressButton("back")}
             >
@@ -80,7 +81,7 @@ export function DeviceControlsRail(props: {
             </RailButton>
             <RailButton
               tooltipSide={popupSide}
-              label="Recents"
+              label={translate("chatView:deviceRecents", "Recents")}
               disabled={inputDisabled}
               onClick={() => handle?.pressButton("recents")}
             >
@@ -92,7 +93,7 @@ export function DeviceControlsRail(props: {
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    aria-label="Rotate device"
+                    aria-label={translate("chatView:deviceRotate", "Rotate device")}
                     disabled={controls.disabled}
                   />
                 }
@@ -103,14 +104,14 @@ export function DeviceControlsRail(props: {
                 <MenuItem
                   onClick={() => void controls.act({ type: "setOrientation", value: "portrait" })}
                 >
-                  Portrait
+                  {translate("chatView:portrait", "Portrait")}
                 </MenuItem>
                 <MenuItem
                   onClick={() =>
                     void controls.act({ type: "setOrientation", value: "landscape_left" })
                   }
                 >
-                  Landscape
+                  {translate("chatView:landscape", "Landscape")}
                 </MenuItem>
               </MenuPopup>
             </Menu>
@@ -118,7 +119,7 @@ export function DeviceControlsRail(props: {
         ) : (
           <RailButton
             tooltipSide={popupSide}
-            label="Rotate device"
+            label={translate("chatView:deviceRotate", "Rotate device")}
             disabled={inputDisabled || !!view.keyboard?.attached}
             onClick={() => handle?.rotate()}
           >
@@ -128,7 +129,16 @@ export function DeviceControlsRail(props: {
         <RailDivider />
         <RailButton
           tooltipSide={popupSide}
-          label={`Switch device to ${nextAppearance} mode`}
+          label={translate(
+            "common:uiSwitchDeviceAppearance",
+            "Switch device to {{appearance}} mode",
+            {
+              appearance: translate(
+                nextAppearance === "dark" ? "common:uiDarkAppearance" : "common:uiLightAppearance",
+                nextAppearance,
+              ),
+            },
+          )}
           disabled={controls.disabled || !settings?.appearance}
           onClick={() => void controls.act({ type: "setAppearance", value: nextAppearance })}
         >
@@ -140,8 +150,8 @@ export function DeviceControlsRail(props: {
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="Device text size"
-                title="Device text size"
+                aria-label={translate("chatView:deviceTextSize", "Device text size")}
+                title={translate("chatView:deviceTextSize", "Device text size")}
                 disabled={controls.disabled || !settings?.textSize}
               />
             }
@@ -166,7 +176,7 @@ export function DeviceControlsRail(props: {
                   ["small", "Small"],
                   ["default", "Default"],
                   ["large", "Large"],
-                  ["extra-large", "Extra large"],
+                  ["extra-large", translate("common:uiDeviceExtraLarge", "Extra large")],
                 ] as const
               ).map(([value, label]) => (
                 <MenuRadioItem key={value} value={value}>
@@ -181,7 +191,7 @@ export function DeviceControlsRail(props: {
         </Menu>
         <RailButton
           tooltipSide={popupSide}
-          label="Device tools"
+          label={translate("chatView:deviceTools", "Device tools")}
           pressed={props.toolsOpen}
           onClick={props.onTools}
         >
@@ -189,7 +199,11 @@ export function DeviceControlsRail(props: {
         </RailButton>
         <RailButton
           tooltipSide={popupSide}
-          label={props.screenshotPending ? "Capturing screenshot" : "Save screenshot"}
+          label={
+            props.screenshotPending
+              ? translate("common:uiCapturingScreenshot", "Capturing screenshot")
+              : translate("common:uiSaveScreenshot", "Save screenshot")
+          }
           disabled={!view.streaming || props.screenshotPending}
           onClick={props.onScreenshot}
         >
@@ -201,8 +215,8 @@ export function DeviceControlsRail(props: {
               <Button
                 size="icon-sm"
                 variant="ghost"
-                aria-label="More device actions"
-                title="More device actions"
+                aria-label={translate("chatView:moreDeviceActions", "More device actions")}
+                title={translate("chatView:moreDeviceActions", "More device actions")}
               />
             }
           >
@@ -211,23 +225,23 @@ export function DeviceControlsRail(props: {
           <MenuPopup side={popupSide} align="end">
             <MenuItem onClick={props.onFloat}>
               <PictureInPicture2 />
-              Float device over chat
+              {translate("chatView:floatDeviceOverChat", "Float device over chat")}
             </MenuItem>
             <MenuItem onClick={props.onClose}>
               <X />
-              Close device panel
+              {translate("chatView:closeDevicePanel", "Close device panel")}
             </MenuItem>
             <MenuSeparator />
             <MenuItem variant="destructive" onClick={props.onPowerOff}>
               <Power />
-              Power off device
+              {translate("chatView:powerOffDevice", "Power off device")}
             </MenuItem>
           </MenuPopup>
         </Menu>
         <RailDivider />
         <RailButton
           tooltipSide={popupSide}
-          label="3D view"
+          label={translate("common:uiDevice3dView", "3D view")}
           pressed={view.phone}
           disabled={!view.streaming || !!view.phoneUnavailableReason}
           description={view.phoneUnavailableReason ?? undefined}
@@ -237,7 +251,7 @@ export function DeviceControlsRail(props: {
         </RailButton>
         <RailButton
           tooltipSide={popupSide}
-          label="Flat view"
+          label={translate("chatView:flatView", "Flat view")}
           pressed={!view.phone}
           disabled={!view.streaming}
           onClick={view.showFlat}
@@ -247,7 +261,11 @@ export function DeviceControlsRail(props: {
         {view.keyboard ? (
           <RailButton
             tooltipSide={popupSide}
-            label={view.keyboard.attached ? "Detach Magic Keyboard" : "Attach Magic Keyboard"}
+            label={
+              view.keyboard.attached
+                ? translate("common:uiDetachMagicKeyboard", "Detach Magic Keyboard")
+                : translate("common:uiAttachMagicKeyboard", "Attach Magic Keyboard")
+            }
             pressed={view.keyboard.attached}
             onClick={view.keyboard.toggle}
           >
@@ -255,7 +273,11 @@ export function DeviceControlsRail(props: {
           </RailButton>
         ) : null}
         {view.phone ? (
-          <RailButton tooltipSide={popupSide} label="Restore 3D view" onClick={view.resetView}>
+          <RailButton
+            tooltipSide={popupSide}
+            label={translate("chatView:restore3dView", "Restore 3D view")}
+            onClick={view.resetView}
+          >
             <Maximize />
           </RailButton>
         ) : null}

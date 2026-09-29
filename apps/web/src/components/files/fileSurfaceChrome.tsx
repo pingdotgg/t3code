@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { ReactNode } from "react";
 
 import { Spinner } from "~/components/ui/spinner";
@@ -128,7 +129,7 @@ export function FileSurfaceLoading(props: { readonly className?: string }) {
   return (
     <div
       role="status"
-      aria-label="Loading file"
+      aria-label={translate("chatView:loadingFile", "Loading file")}
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center text-muted-foreground",
         props.className,
@@ -155,7 +156,7 @@ export function FileSurfaceFailure(props: {
           onClick={props.onRetry}
           className="rounded-md border border-input px-2.5 py-1 text-xs text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
         >
-          Try again
+          {translate("chatView:tryAgainShort", "Try again")}
         </button>
       ) : null}
     </div>

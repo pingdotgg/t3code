@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   isAtomCommandInterrupted,
   mapAtomCommandResult,
@@ -131,15 +132,21 @@ export function ProjectSettingsPanel({
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
         {groups.length === 0
-          ? "Add a project from the sidebar to configure it here."
-          : "This project is no longer available."}
+          ? translate(
+              "common:uiAddProjectFromSidebar",
+              "Add a project from the sidebar to configure it here.",
+            )
+          : translate("common:uiProjectNoLongerAvailable", "This project is no longer available.")}
       </div>
     );
   }
   if (members.length === 0)
     return (
       <p className="p-8 text-sm text-muted-foreground">
-        This checkout is no longer available in the selected project and environment.
+        {translate(
+          "common:uiCheckoutUnavailable",
+          "This checkout is no longer available in the selected project and environment.",
+        )}
       </p>
     );
   const scopedGroup = {
@@ -385,20 +392,22 @@ function ProjectDetail({
   );
 
   const checkoutChoices = (
-    <SettingsSection title="Checkouts">
+    <SettingsSection title={translate("common:mobileCheckouts", "Checkouts")}>
       {group.memberProjects.map((member) => (
         <SettingsRow
           key={member.physicalProjectKey}
-          title={member.environmentLabel ?? "Environment"}
+          title={member.environmentLabel ?? translate("common:uiEnvironmentLabel", "Environment")}
           description={member.workspaceRoot}
           control={
             <Button
               size="sm"
               variant="outline"
               onClick={() => void removeMembers([member])}
-              aria-label={`Remove checkout ${member.workspaceRoot}`}
+              aria-label={translate("common:uiRemoveCheckout", "Remove checkout {{path}}", {
+                path: member.workspaceRoot,
+              })}
             >
-              Remove
+              {translate("sidebar:remove", "Remove")}
             </Button>
           }
         />
@@ -412,19 +421,29 @@ function ProjectDetail({
         <Alert variant="info">
           <InfoIcon aria-hidden />
           <AlertDescription>
-            Can't find a setting? Keep this project picked above and hop to any other settings page.
+            {translate(
+              "common:uiFindSettingHint",
+              "Can't find a setting? Keep this project picked above and hop to any other settings page.",
+            )}
           </AlertDescription>
         </Alert>
-        <SettingsSection id="project-overview" title="Project" hideTitle>
+        <SettingsSection
+          id="project-overview"
+          title={translate("common:project", "Project")}
+          hideTitle
+        >
           <SettingsRow
-            title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
+            title={translate("common:projectName", "Name")}
+            description={translate(
+              "common:uiTheSharedNameForThisProjectGroup",
+              "The shared name for this project group in the sidebar and thread lists.",
+            )}
             control={
               <Input
                 key={`${group.projectKey}:${group.displayName}`}
                 size="sm"
                 className="w-full sm:w-64"
-                aria-label="Project name"
+                aria-label={translate("common:mobileProjectName", "Project name")}
                 defaultValue={group.displayName}
                 onChange={() => {
                   projectNameEditedRef.current = true;
@@ -441,7 +460,7 @@ function ProjectDetail({
             }
           />
           <SettingsRow
-            title="Project icon"
+            title={translate("common:uiProjectIcon", "Project icon")}
             description={
               projectIcon?.kind === "lucide"
                 ? `${projectIcon.name} · ${projectIcon.color}`
@@ -449,14 +468,14 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+                    : (faviconPath ?? translate("common:uiAutomaticValue", "Automatic"))
             }
             resetAction={
               group.memberProjects.some(
                 (member) => member.faviconPath != null || member.projectIcon != null,
               ) ? (
                 <SettingResetButton
-                  label="project icon"
+                  label={translate("common:uiProjectIcon", "Project icon")}
                   disabled={isSavingFavicon}
                   onClick={() => void setProjectIcon({ faviconPath: null, projectIcon: null })}
                 />
@@ -469,21 +488,24 @@ function ProjectDetail({
                   size="sm"
                   variant="outline"
                   type="button"
-                  aria-label="Choose a project icon"
+                  aria-label={translate("common:uiChooseAProjectIcon", "Choose a project icon")}
                   disabled={isSavingFavicon}
                   onClick={() => setIconPickerOpen(true)}
                 >
-                  Choose icon
+                  {translate("settings:chooseIcon", "Choose icon")}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   type="button"
-                  aria-label="Choose a project icon file"
+                  aria-label={translate(
+                    "common:uiChooseAProjectIconFile",
+                    "Choose a project icon file",
+                  )}
                   disabled={isSavingFavicon}
                   onClick={() => setFaviconPickerOpen(true)}
                 >
-                  Choose file
+                  {translate("settings:chooseFile", "Choose file")}
                 </Button>
               </div>
             }
@@ -492,21 +514,31 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
-        <SettingsSection title="Danger">
+        <SettingsSection title={translate("common:uiDanger", "Danger")}>
           <SettingsRow
             title={
               hasOtherMembers
-                ? "Remove checkout"
+                ? translate("common:uiRemoveCheckoutTitle", "Remove checkout")
                 : group.memberProjects.length > 1
-                  ? "Remove this project everywhere"
-                  : "Remove project"
+                  ? translate("common:uiRemoveProjectEverywhere", "Remove this project everywhere")
+                  : translate("common:uiRemoveProjectEntry", "Remove project")
             }
             description={
               hasOtherMembers
-                ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+                ? translate(
+                    "common:uiDeleteSelectedCheckoutDescription",
+                    "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
+                  )
                 : group.memberProjects.length > 1
-                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                  : "Deletes the project entry and its threads. Files on disk are not touched."
+                  ? translate(
+                      "common:uiDeleteAllCheckoutsDescription",
+                      "Deletes all {{count}} checkout entries and their threads on every machine. Files on disk are not touched.",
+                      { count: group.memberProjects.length },
+                    )
+                  : translate(
+                      "common:uiDeleteProjectDescription",
+                      "Deletes the project entry and its threads. Files on disk are not touched.",
+                    )
             }
             control={
               <Button
@@ -516,10 +548,10 @@ function ProjectDetail({
               >
                 <Trash2Icon />
                 {hasOtherMembers
-                  ? "Remove checkout"
+                  ? translate("common:uiRemoveCheckout", "Remove checkout")
                   : group.memberProjects.length > 1
-                    ? "Remove all entries"
-                    : "Remove project"}
+                    ? translate("common:uiRemoveAllProjectEntries", "Remove all entries")
+                    : translate("common:uiRemoveProjectEntry", "Remove project")}
               </Button>
             }
           />

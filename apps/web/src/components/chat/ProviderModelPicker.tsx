@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -270,7 +271,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           </Tooltip>
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
-              Unavailable
+              {translate("common:unavailable", "Unavailable")}
             </Badge>
           ) : null}
         </span>

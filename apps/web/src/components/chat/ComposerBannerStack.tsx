@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { InfoIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -180,7 +181,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               <ComposerBanner.Peek
                 ref={peekRef}
                 variant={firstStackedItem.variant}
-                aria-label="Show other notices"
+                aria-label={translate("common:uiShowOtherNotices", "Show other notices")}
                 aria-expanded={stackExpanded}
                 aria-controls={expandedItemsId}
                 aria-hidden={stackExpanded || undefined}
@@ -197,7 +198,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               id={expandedItemsId}
               ref={expandedItemsRef}
               role="group"
-              aria-label="Other notices"
+              aria-label={translate("common:uiOtherNotices", "Other notices")}
               tabIndex={-1}
               data-composer-banner-stack-expanded-items="true"
               className={cn(
@@ -295,7 +296,7 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
                 ref={detailsRef}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Show notice details"
+                aria-label={translate("common:uiShowNoticeDetails", "Show notice details")}
                 className="flex-none"
               />
             }
@@ -303,7 +304,7 @@ function NoticeDescription({ children, compact }: { children: ReactNode; compact
             <InfoIcon />
           </PopoverTrigger>
           <PopoverPopup
-            aria-label="Notice details"
+            aria-label={translate("common:uiNoticeDetails", "Notice details")}
             tooltipStyle
             side="top"
             className="max-w-80 whitespace-normal wrap-anywhere"
@@ -364,7 +365,9 @@ function ComposerBannerStackAlert({
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
-                aria-label={item.dismissLabel ?? "Dismiss warning"}
+                aria-label={
+                  item.dismissLabel ?? translate("common:uiDismissWarning", "Dismiss warning")
+                }
                 disabled={exiting}
                 onClick={onDismissRequest}
               />

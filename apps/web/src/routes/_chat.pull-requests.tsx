@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -2619,7 +2620,7 @@ function PullRequestsColumn({
               {sortMenu}
               {filtersMenu}
               <CompactFilterMenu
-                label="Filter by provider"
+                label={translate("common:uiFilterByProvider", "Filter by provider")}
                 outlined
                 iconOnly={host !== undefined}
                 triggerIcon={<Plug2Icon aria-hidden className="size-4" />}

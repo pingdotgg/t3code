@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -251,8 +252,10 @@ function Sidebar({
             }
           >
             <SheetHeader className="sr-only">
-              <SheetTitle>Sidebar</SheetTitle>
-              <SheetDescription>Displays the mobile sidebar.</SheetDescription>
+              <SheetTitle>{translate("chatView:mobileSidebarTitle", "Sidebar")}</SheetTitle>
+              <SheetDescription>
+                {translate("chatView:mobileSidebarDescription", "Displays the mobile sidebar.")}
+              </SheetDescription>
             </SheetHeader>
             <div
               className={cn(
@@ -343,7 +346,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">{translate("chatView:toggleSidebarLabel", "Toggle Sidebar")}</span>
     </Button>
   );
 }
@@ -372,8 +375,12 @@ function SidebarRail({
     latestResizable.current = resolvedResizable;
   }, [resolvedResizable]);
   const canResize = resolvedResizable !== null && open;
-  const railLabel = canResize ? "Resize Sidebar" : "Toggle Sidebar";
-  const railTitle = canResize ? "Drag to resize sidebar" : "Toggle Sidebar";
+  const railLabel = canResize
+    ? translate("chatView:resizeSidebarLabel", "Resize Sidebar")
+    : translate("chatView:toggleSidebarLabel", "Toggle Sidebar");
+  const railTitle = canResize
+    ? translate("chatView:dragToResizeSidebar", "Drag to resize sidebar")
+    : translate("chatView:toggleSidebarLabel", "Toggle Sidebar");
   const resize = useResizeDrag<HTMLButtonElement>((event) => {
     if (!resolvedResizable || !open) return null;
     const rail = event.currentTarget;

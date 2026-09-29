@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -31,8 +32,11 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
       <div className="py-10 text-center text-sm text-muted-foreground">
         {props.emptyStateMessage ??
           (props.isActionsOnly
-            ? "No matching actions."
-            : "No matching commands, projects, or threads.")}
+            ? translate("chatView:noMatchingActions", "No matching actions.")
+            : translate(
+                "chatView:noMatchingCommands",
+                "No matching commands, projects, or threads.",
+              ))}
       </div>
     );
   }

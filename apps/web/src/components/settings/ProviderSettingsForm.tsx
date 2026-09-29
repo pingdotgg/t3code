@@ -16,6 +16,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
+import { translate } from "@t3tools/i18n";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
 import { SettingsRow } from "./settingsLayout";
 
@@ -74,6 +75,14 @@ function readFieldBooleanDefault(
   return Option.isSome(decoded) && typeof decoded.value === "boolean" ? decoded.value : undefined;
 }
 
+/**
+ * Field labels and descriptions come from schema annotations shared with the
+ * server, so they translate by driver + field key rather than by literal.
+ */
+function providerFieldText(driver: string, key: string, fallback: string): string {
+  return translate(`settings:providerForm.${driver}.${key}`, fallback);
+}
+
 export function deriveProviderSettingsFields(
   definition: ProviderClientDefinition,
 ): ReadonlyArray<ProviderSettingsFieldModel> {
@@ -102,8 +111,16 @@ export function deriveProviderSettingsFields(
         {
           key,
           control: formAnnotation.control ?? "text",
-          label: annotatedTitle ?? titleizeFieldKey(key),
-          ...(annotatedDescription !== undefined ? { description: annotatedDescription } : {}),
+          label: providerFieldText(definition.value, key, annotatedTitle ?? titleizeFieldKey(key)),
+          ...(annotatedDescription !== undefined
+            ? {
+                description: providerFieldText(
+                  definition.value,
+                  `${key}Description`,
+                  annotatedDescription,
+                ),
+              }
+            : {}),
           ...(formAnnotation.placeholder !== undefined
             ? { placeholder: formAnnotation.placeholder }
             : {}),

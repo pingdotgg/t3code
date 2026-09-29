@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   CheckIcon,
   CopyIcon,
@@ -191,7 +192,12 @@ function ThemeLibraryCard({
                     const modeLabel = mode === "light" ? t("lightAppearance") : t("darkAppearance");
                     return (
                       <div className="contents" key={mode}>
-                        <ThemeVariantTooltip label={`${modeLabel}: ${selected.option.label}`}>
+                        <ThemeVariantTooltip
+                          label={translate("common:uiModeSelectionLabel", "{{mode}}: {{value}}", {
+                            mode: modeLabel,
+                            value: selected.option.label,
+                          })}
+                        >
                           <button
                             aria-label={
                               options.length > 1
@@ -570,8 +576,8 @@ export function ThemeLibrary({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Couldn’t save theme selection",
-        description: "Try again.",
+        title: translate("common:uiCouldNotSaveThemeSelection", "Couldn’t save theme selection"),
+        description: translate("common:uiTryAgain", "Try again."),
       }),
     );
   }, []);
@@ -580,8 +586,8 @@ export function ThemeLibrary({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Couldn’t remove theme",
-        description: "Try again.",
+        title: translate("common:uiCouldNotRemoveTheme", "Couldn’t remove theme"),
+        description: translate("common:uiTryAgain", "Try again."),
       }),
     );
   }, []);
@@ -999,13 +1005,25 @@ export function ThemeLibrary({
           <AlertDialogHeader>
             <AlertDialogTitle>
               {canRemoveCollection
-                ? `Remove themes from “${removeDialogCollectionLabel}”?`
-                : `Remove “${removeDialogTheme?.label}”?`}
+                ? translate(
+                    "common:uiRemoveThemesFromCollectionTitle",
+                    "Remove themes from “{{name}}”?",
+                    { name: removeDialogCollectionLabel ?? "" },
+                  )
+                : translate("common:uiRemoveNamedThemeTitle", "Remove “{{name}}”?", {
+                    name: removeDialogTheme?.label ?? "",
+                  })}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {canRemoveCollection
-                ? "Select the variants you want to remove. You can restore them by importing the extension again."
-                : "You can bring it back anytime by importing its JSON file."}
+                ? translate(
+                    "common:uiRemoveThemeVariantsDescription",
+                    "Select the variants you want to remove. You can restore them by importing the extension again.",
+                  )
+                : translate(
+                    "common:uiRestoreThemeDescription",
+                    "You can bring it back anytime by importing its JSON file.",
+                  )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {canRemoveCollection ? (
@@ -1059,15 +1077,19 @@ export function ThemeLibrary({
             </div>
           ) : null}
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {translate("chatView:cancel", "Cancel")}
+            </AlertDialogClose>
             <Button
               disabled={themeIdsToRemove.length === 0}
               variant="destructive"
               onClick={handleConfirmRemoveTheme}
             >
               {canRemoveCollection
-                ? `Remove selected${themeIdsToRemove.length > 0 ? ` (${themeIdsToRemove.length})` : ""}`
-                : "Remove theme"}
+                ? translate("common:uiRemoveSelectedThemes", "Remove selected ({{count}})", {
+                    count: themeIdsToRemove.length,
+                  })
+                : translate("common:uiRemoveTheme", "Remove theme")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

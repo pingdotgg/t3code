@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { translate } from "@t3tools/i18n";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
@@ -16,8 +17,15 @@ function SettingsProvidersRoute() {
     return (
       <p className="p-8 text-sm text-muted-foreground">
         {scope.kind === "environment"
-          ? `Reconnect ${scope.label} to set up its providers.`
-          : "Connect an environment to set up its providers."}
+          ? translate(
+              "common:uiReconnectNamedEnvironmentToSetUpProviders",
+              "Reconnect {{name}} to set up its providers.",
+              { name: scope.label },
+            )
+          : translate(
+              "common:uiConnectEnvironmentToSetUpProviders",
+              "Connect an environment to set up its providers.",
+            )}
       </p>
     );
   }

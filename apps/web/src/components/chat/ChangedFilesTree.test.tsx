@@ -1,8 +1,13 @@
 import { TurnId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { ChangedFilesCard, ChangedFilesTree } from "./ChangedFilesTree";
+
+vi.mock("@t3tools/i18n/react", async () => {
+  const { useTranslation } = await import("../../test/settingsI18nMock");
+  return { useTranslation };
+});
 
 describe("ChangedFilesCard", () => {
   it("keeps its compact header sticky while preserving singular labels", () => {

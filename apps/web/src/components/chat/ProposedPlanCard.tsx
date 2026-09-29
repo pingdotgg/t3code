@@ -1,4 +1,6 @@
+import { translate } from "@t3tools/i18n";
 import { memo, useState, useId } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -46,6 +48,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
 }) {
+  const { t } = useTranslation("chatView");
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [savePath, setSavePath] = useState("");
@@ -59,8 +62,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy plan",
-          description: error instanceof Error ? error.message : "An error occurred while copying.",
+          title: t("couldNotCopyPlan"),
+          description: error instanceof Error ? error.message : t("errorWhileCopying"),
         }),
       );
     },
@@ -149,24 +152,28 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     <div className="rounded-3xl border border-border/80 bg-card/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="secondary">Plan</Badge>
+          <Badge variant="secondary">{t("planBadge")}</Badge>
           {/* Same heading level as the message author headings in the timeline,
               so a plan's own headings nest beneath it in the outline. */}
           <h3 className="truncate text-sm font-medium text-foreground">{title}</h3>
         </div>
         <Menu>
           <MenuTrigger
-            render={<Button aria-label="Plan actions" size="icon-xs" variant="outline" />}
+            render={
+              <Button
+                aria-label={translate("common:uiPlanActions", "Plan actions")}
+                size="icon-xs"
+                variant="outline"
+              />
+            }
           >
             <EllipsisIcon aria-hidden="true" className="size-4" />
           </MenuTrigger>
           <MenuPopup align="end">
-            <MenuItem onClick={handleCopyPlan}>
-              {isCopied ? "Copied!" : "Copy to clipboard"}
-            </MenuItem>
-            <MenuItem onClick={handleDownload}>Download as markdown</MenuItem>
+            <MenuItem onClick={handleCopyPlan}>{isCopied ? t("copied") : t("copyPlan")}</MenuItem>
+            <MenuItem onClick={handleDownload}>{t("downloadAsMarkdown")}</MenuItem>
             <MenuItem onClick={openSaveDialog} disabled={!workspaceRoot || isSavingToWorkspace}>
-              Save to workspace
+              {t("saveToWorkspace")}
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -202,7 +209,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
             >
-              {expanded ? "Collapse plan" : "Expand plan"}
+              {expanded
+                ? translate("common:uiCollapsePlan", "Collapse plan")
+                : translate("common:uiExpandPlan", "Expand plan")}
             </Button>
           </div>
         ) : null}
@@ -218,14 +227,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       >
         <DialogPopup className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Save plan to workspace</DialogTitle>
+            <DialogTitle>{t("savePlanToWorkspace")}</DialogTitle>
             <DialogDescription>
-              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+              {t("enterPathRelativeTo")} <code>{workspaceRoot ?? t("theWorkspace")}</code>.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <label htmlFor={savePathInputId} className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Workspace path</span>
+              <span className="text-xs font-medium text-foreground">{t("workspacePath")}</span>
               <Input
                 id={savePathInputId}
                 value={savePath}
@@ -243,14 +252,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               onClick={() => setIsSaveDialogOpen(false)}
               disabled={isSavingToWorkspace}
             >
-              Cancel
+              {t("cancel")}
             </Button>
             <Button
               size="sm"
               onClick={() => void handleSaveToWorkspace()}
               disabled={isSavingToWorkspace}
             >
-              {isSavingToWorkspace ? "Saving..." : "Save"}
+              {isSavingToWorkspace ? t("saving") : t("save")}
             </Button>
           </DialogFooter>
         </DialogPopup>

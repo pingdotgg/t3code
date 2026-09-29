@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
@@ -150,7 +151,7 @@ function WorkspaceImagePreview(props: {
     return (
       <MediaActions source={actionsSource}>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-          Unable to load workspace image.
+          {translate("chatView:unableToLoadWorkspaceImage", "Unable to load workspace image.")}
         </div>
       </MediaActions>
     );
@@ -207,7 +208,7 @@ function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
+        {translate("chatView:unableToLoadFilePreview", "Unable to load file preview.")}
       </div>
     );
   }
@@ -1144,7 +1145,11 @@ export default function FilePreviewPanel({
           ) : null}
           {showsRawText ? (
             <FileSurfaceAction
-              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              label={
+                wordWrap
+                  ? translate("common:uiDisableWordWrap", "Disable word wrap")
+                  : translate("common:uiEnableWordWrap", "Enable word wrap")
+              }
               pressed={wordWrap}
               onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
             >
@@ -1152,13 +1157,20 @@ export default function FilePreviewPanel({
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
-            <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
+            <FileSurfaceAction
+              label={translate("chatView:openFileInPreviewBrowser", "Open file in preview browser")}
+              onPress={handleOpenInBrowser}
+            >
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction
-              label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
+              label={
+                explorerOpen
+                  ? translate("common:uiHideFileExplorer", "Hide file explorer")
+                  : translate("common:uiShowFileExplorer", "Show file explorer")
+              }
               pressed={explorerOpen}
               onPress={toggleExplorer}
             >
@@ -1173,7 +1185,11 @@ export default function FilePreviewPanel({
       !renderBrowserFile &&
       file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
-          Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
+          {translate(
+            "common:uiPreviewFirstMegabyte",
+            "Preview limited to the first 1 MB of a {{size}} byte file.",
+            { size: file.data.byteLength.toLocaleString() },
+          )}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">

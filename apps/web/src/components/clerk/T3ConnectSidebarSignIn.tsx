@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { UserButton, useAuth } from "@clerk/react";
 import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 
@@ -34,7 +35,7 @@ function ConfiguredT3ConnectSidebarAvatar() {
       }}
     >
       <UserButton.UserProfilePage
-        label="Mobile clients"
+        label={translate("common:uiMobileClients", "Mobile clients")}
         labelIcon={<SmartphoneIcon className="size-4" />}
         url="mobile-clients"
       >
@@ -63,7 +64,7 @@ function ConfiguredT3ConnectSidebarSignIn() {
         <SidebarMenuItem>
           <SidebarMenuButton onClick={openAuthPrompt}>
             <LogInIcon />
-            <span>Sign in to T3 Connect</span>
+            <span>{translate("chatView:signInToT3Connect", "Sign in to T3 Connect")}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

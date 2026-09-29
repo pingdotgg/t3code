@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { type ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
@@ -118,13 +119,17 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           </Tooltip>
           {onOpenProviderSetup && hasProviderSetup(status) ? (
             <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
+              {translate("chatView:openProviderSetup", "Open provider setup")}
             </InlineButton>
           ) : null}
         </AlertDescription>
         <AlertAction>
           <Button
-            aria-label={`Dismiss ${providerName} provider ${status.status}`}
+            aria-label={translate(
+              "common:uiProviderStatusDismiss",
+              "Dismiss {{provider}} provider {{status}}",
+              { provider: providerName, status: status.status },
+            )}
             onClick={onDismiss}
             size="icon-xs"
             variant="ghost-muted"

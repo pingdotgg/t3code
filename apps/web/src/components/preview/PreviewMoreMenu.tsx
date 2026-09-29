@@ -1,4 +1,5 @@
-"use client";
+import { translate } from "@t3tools/i18n";
+("use client");
 
 import type { DesktopPreviewColorScheme, EnvironmentId } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
@@ -99,32 +100,41 @@ export function PreviewMoreMenu({
           render={
             <MenuTrigger
               render={
-                <Button variant="ghost" size="icon-xs" type="button" aria-label="Preview menu" />
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  aria-label={translate("chatView:previewMenu", "Preview menu")}
+                />
               }
             />
           }
         >
           <MoreVertical />
         </TooltipTrigger>
-        <TooltipPopup>More</TooltipPopup>
+        <TooltipPopup>{translate("chatView:previewMore", "More")}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" sideOffset={6}>
         <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
-          Hard reload
+          {translate("chatView:hardReload", "Hard reload")}
         </MenuItem>
         <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
-          Open DevTools
+          {translate("common:uiOpenDevTools", "Open DevTools")}
         </MenuItem>
         <MenuItem onClick={onNativePictureInPicture} disabled={tabDisabled}>
           {nativePictureInPicture
-            ? "Close separate preview window"
-            : "Open separate preview window"}
+            ? translate("common:uiCloseSeparatePreviewWindow", "Close separate preview window")
+            : translate("common:uiOpenSeparatePreviewWindow", "Open separate preview window")}
         </MenuItem>
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
-          {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
+          {deviceToolbarVisible
+            ? translate("common:uiHideDeviceToolbar", "Hide device toolbar")
+            : translate("common:uiShowDeviceToolbar", "Show device toolbar")}
         </MenuItem>
         <MenuSub>
-          <MenuSubTrigger disabled={tabDisabled}>Appearance</MenuSubTrigger>
+          <MenuSubTrigger disabled={tabDisabled}>
+            {translate("chatView:previewAppearance", "Appearance")}
+          </MenuSubTrigger>
           <MenuSubPopup>
             <MenuRadioGroup
               value={colorScheme}
@@ -154,14 +164,14 @@ export function PreviewMoreMenu({
           className="justify-between"
           disabled={tabDisabled}
         >
-          <span>Zoom</span>
+          <span>{translate("chatView:previewZoom", "Zoom")}</span>
           <span className="flex items-center gap-1">
             <Button
               variant="outline"
               size="icon-xs"
               type="button"
               onClick={callTab(bridge.zoomOut)}
-              aria-label="Zoom out"
+              aria-label={translate("chatView:zoomOut", "Zoom out")}
               disabled={tabDisabled}
             >
               <Minus />
@@ -174,7 +184,7 @@ export function PreviewMoreMenu({
               size="icon-xs"
               type="button"
               onClick={callTab(bridge.zoomIn)}
-              aria-label="Zoom in"
+              aria-label={translate("chatView:zoomIn", "Zoom in")}
               disabled={tabDisabled}
             >
               <PlusIcon />
@@ -184,7 +194,7 @@ export function PreviewMoreMenu({
               size="icon-xs"
               type="button"
               onClick={callTab(bridge.resetZoom)}
-              aria-label="Reset zoom"
+              aria-label={translate("chatView:resetZoom", "Reset zoom")}
               disabled={tabDisabled}
             >
               <RotateCcw />
@@ -208,7 +218,9 @@ export function PreviewMoreMenu({
             // Truncation needs a block box: `text-overflow` on an inline child
             // never applies and a long name would push the popup past its width.
             <MenuGroupLabel className="max-w-64">
-              <span className="block truncate">Profile: {profileName}</span>
+              <span className="block truncate">
+                {translate("common:uiProfileName", "Profile: {{name}}", { name: profileName })}
+              </span>
             </MenuGroupLabel>
           ) : null}
           <MenuItem
@@ -216,12 +228,12 @@ export function PreviewMoreMenu({
               void bridge.clearCookies(environmentId, profileId).catch(() => undefined)
             }
           >
-            Clear cookies
+            {translate("chatView:clearCookies", "Clear cookies")}
           </MenuItem>
           <MenuItem
             onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
           >
-            Clear cache
+            {translate("chatView:clearCache", "Clear cache")}
           </MenuItem>
         </MenuGroup>
       </MenuPopup>

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
   type EnvironmentConnectionPresentation,
@@ -281,7 +282,10 @@ export function CloudEnvironmentConnectRows({
       return (
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-sm font-medium text-destructive">
-            Could not load T3 Connect environments
+            {translate(
+              "common:mobileCouldNotLoadT3ConnectEnvironments",
+              "Could not load T3 Connect environments",
+            )}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{discoveryProblem}</p>
           <Button
@@ -290,7 +294,7 @@ export function CloudEnvironmentConnectRows({
             className="mt-3"
             onClick={() => void refreshRelayEnvironments()}
           >
-            Try again
+            {translate("chatView:tryAgainShort", "Try again")}
           </Button>
         </div>
       );
@@ -383,15 +387,15 @@ export function CloudEnvironmentConnectRows({
               )}
             >
               {connectingEnvironmentIds.has(environment.environmentId)
-                ? "Connecting…"
+                ? translate("connections:connecting", "Connecting…")
                 : (savedConnection?.buttonLabel ??
                   (availability === "online"
-                    ? "Available"
+                    ? translate("common:uiAvailableStatus", "Available")
                     : availability === "offline"
-                      ? "Offline"
+                      ? translate("common:uiOfflineStatus", "Offline")
                       : availability === "error"
-                        ? "Unavailable"
-                        : "Checking…"))}
+                        ? translate("common:unavailable", "Unavailable")
+                        : translate("common:checking", "Checking…")))}
             </TooltipTrigger>
             <TooltipPopup>{unsupportedDetail ?? statusText}</TooltipPopup>
           </Tooltip>
@@ -449,10 +453,13 @@ export function CloudEnvironmentConnectRows({
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
                 <Button size="sm" disabled>
-                  Add
+                  {translate("settings:addButton", "Add")}
                 </Button>
               </TooltipTrigger>
-              <TooltipPopup>{unsupportedDetail ?? "Client not supported"}</TooltipPopup>
+              <TooltipPopup>
+                {unsupportedDetail ??
+                  translate("connections:clientNotSupported", "Client not supported")}
+              </TooltipPopup>
             </Tooltip>
           ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>
@@ -464,7 +471,9 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId) ? "Adding…" : "Add"}
+              {connectingEnvironmentIds.has(environment.environmentId)
+                ? translate("common:uiAdding", "Adding…")
+                : translate("settings:addButton", "Add")}
             </Button>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -5,6 +6,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useAtomValue } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
@@ -190,6 +192,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onInstanceModelChange,
     onToggleModel,
   } = props;
+  const { t } = useTranslation("chatView");
   const [searchQuery, setSearchQuery] = useState("");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
   const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
@@ -884,7 +887,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           >
             <ComboboxSearchInput
               ref={searchInputRef}
-              placeholder="Search models..."
+              placeholder={translate("common:uiSearchModels", "Search models...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -958,9 +961,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           className="group w-full cursor-pointer"
                         >
                           <div className="min-w-0 flex-1 text-left">
-                            <div className="text-xs font-medium leading-snug">Legacy models</div>
+                            <div className="text-xs font-medium leading-snug">
+                              {t("legacyModels")}
+                            </div>
                             <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
-                              {legacySection.legacyModels.length} models
+                              {t("modelsCount", { count: legacySection.legacyModels.length })}
                             </div>
                           </div>
                           <ChevronRightIcon
@@ -1039,14 +1044,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       }}
                     >
                       {providerSetupEntries.length > 1
-                        ? `Set up ${entry.displayName}`
-                        : "Open provider setup"}
+                        ? translate("common:uiSetUpProvider", "Set up {{name}}", {
+                            name: entry.displayName,
+                          })
+                        : translate("chatView:openProviderSetup", "Open provider setup")}
                     </InlineButton>
                   </div>
                 ))}
               </div>
             ) : (
-              <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
+              <ComboboxEmpty className="empty:h-0">{t("noModelsFound")}</ComboboxEmpty>
             )}
           </div>
         </Combobox>

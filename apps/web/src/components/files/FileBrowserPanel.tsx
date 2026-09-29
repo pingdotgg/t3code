@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
@@ -54,14 +55,18 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Refresh workspace files"
+            aria-label={translate("chatView:refreshWorkspaceFiles", "Refresh workspace files")}
             onClick={props.onRefresh}
           />
         }
       >
         <RefreshIcon refreshing={props.isPending} />
       </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
+      <TooltipPopup>
+        {props.isPending
+          ? translate("common:uiRefreshing", "Refreshing…")
+          : translate("common:uiRefreshFiles", "Refresh files")}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -81,7 +86,7 @@ function FileSearchField(props: {
         size="sm"
         value={props.value}
         aria-label={props.ariaLabel}
-        placeholder="Search files"
+        placeholder={translate("chatView:searchFiles", "Search files")}
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -509,8 +514,8 @@ export default function FileBrowserPanel({
                   variant="ghost"
                   aria-label={
                     expandAll || allDirectoriesExpanded
-                      ? "Collapse all folders"
-                      : "Expand all folders"
+                      ? translate("common:uiCollapseAllFolders", "Collapse all folders")
+                      : translate("common:uiExpandAllFolders", "Expand all folders")
                   }
                   onClick={toggleAllDirectories}
                 />
@@ -523,7 +528,9 @@ export default function FileBrowserPanel({
               )}
             </TooltipTrigger>
             <TooltipPopup>
-              {expandAll || allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+              {expandAll || allDirectoriesExpanded
+                ? translate("common:uiCollapseAllFolders", "Collapse all folders")
+                : translate("common:uiExpandAllFolders", "Expand all folders")}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -534,22 +541,22 @@ export default function FileBrowserPanel({
           onClick={handleRefresh}
           className="p-4 text-left text-xs leading-relaxed text-destructive"
         >
-          {error ?? pathSearch.error} Click to retry.
+          {error ?? pathSearch.error} {translate("common:uiClickToRetry", "Click to retry.")}
         </button>
       ) : null}
       {query.trim() && pathSearch.truncated && !pathSearch.isPending ? (
         <div className="px-3 py-1 text-xs text-muted-foreground">
-          More matches available. Refine your search.
+          {translate("common:uiMoreSearchMatches", "More matches available. Refine your search.")}
         </div>
       ) : null}
       {(isPending || pathSearch.isPending) && (
         <div role="status" className="px-3 py-1 text-xs text-muted-foreground">
-          Loading files…
+          {translate("common:uiLoadingFiles", "Loading files…")}
         </div>
       )}
       <FileTree
         model={model}
-        aria-label={`${projectName} files`}
+        aria-label={translate("common:uiProjectFiles", "{{name}} files", { name: projectName })}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
       />

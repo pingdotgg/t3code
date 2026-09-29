@@ -1,7 +1,11 @@
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
+import {
+  runtimeModeConfig,
+  runtimeModeOptions,
+  runtimeModeTranslationKeys,
+} from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -66,6 +70,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import {
   clampCollapsedComposerCursor,
@@ -1084,15 +1089,17 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const { t } = useTranslation();
+  const { t: tChat } = useTranslation("chatView");
   const size = props.size ?? "sm";
   const composerFloatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(props.hidden);
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
+  const runtimeModeKeys = runtimeModeTranslationKeys[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
-      ? "Plan mode — click to return to normal build mode"
-      : "Default mode — click to enter plan mode";
+      ? tChat("interactionModePlanTooltip")
+      : tChat("interactionModeBuildTooltip");
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <>
@@ -1124,7 +1131,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             />
           )}
           <span data-composer-control-label className="sr-only sm:not-sr-only">
-            {props.interactionMode === "plan" ? "Plan" : "Build"}
+            {props.interactionMode === "plan" ? t("planMode") : t("buildMode")}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
@@ -1153,7 +1160,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             }
           >
             <ComposerControlIcon icon={RuntimeModeIcon} size={size} />
-            <SelectValue data-composer-control-label>{runtimeModeOption.label}</SelectValue>
+            <SelectValue data-composer-control-label>{tChat(runtimeModeKeys.label)}</SelectValue>
           </TooltipTrigger>
           <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
             {runtimeModeOptions.map((mode) => {
@@ -1165,10 +1172,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                     <div className="grid min-w-0 flex-1 gap-0.5">
                       <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                         <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        {option.label}
+                        {tChat(runtimeModeTranslationKeys[mode].label)}
                       </span>
                       <span className="text-muted-foreground text-xs leading-4">
-                        {option.description}
+                        {tChat(runtimeModeTranslationKeys[mode].description)}
                       </span>
                     </div>
                   </div>
@@ -1177,7 +1184,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             })}
           </SelectPopup>
         </Select>
-        <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
+        <TooltipPopup side="top">{tChat(runtimeModeKeys.description)}</TooltipPopup>
       </Tooltip>
 
       {interactionModeToggle}
@@ -4775,7 +4782,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             key={image.id}
             type="button"
             className="relative size-7 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/70 bg-muted/60"
-            aria-label={`Preview ${image.name}`}
+            aria-label={translate("common:uiPreviewNamedItem", "Preview {{name}}", {
+              name: image.name,
+            })}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
               const preview = buildExpandedImagePreview(composerImages, image.id);
@@ -4810,7 +4819,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <button
             type="button"
             className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            aria-label={`Show ${String(restingImagePreviewCounts.overflowCount)} more image attachments`}
+            aria-label={translate(
+              "common:uiMoreImageAttachments",
+              "Show {{count}} more image attachments",
+              { count: restingImagePreviewCounts.overflowCount },
+            )}
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => {
               if (isComposerCollapsedMobile) {
@@ -6290,7 +6303,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               onClick={expandMobileComposer}
                               aria-label={t("writeCustomAnswer")}
                             >
-                              {activePendingProgress?.customAnswer || "Write custom answer"}
+                              {activePendingProgress?.customAnswer ||
+                                translate("common:writeCustomAnswer", "Write custom answer")}
                             </button>
                           ) : null}
                           {activePendingProgress?.activeQuestion?.multiSelect ? (
@@ -6520,7 +6534,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               <button
                                 type="button"
                                 className="h-full w-full cursor-zoom-in"
-                                aria-label={`Preview ${image.name}`}
+                                aria-label={translate(
+                                  "common:uiPreviewNamedItem",
+                                  "Preview {{name}}",
+                                  {
+                                    name: image.name,
+                                  },
+                                )}
                                 onClick={() => {
                                   const preview = buildExpandedImagePreview(
                                     composerImages,
@@ -6593,7 +6613,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                           draftTarget: attachmentDraftTarget,
                                         })
                                       }
-                                      aria-label={`Retry upload for ${image.name}`}
+                                      aria-label={translate(
+                                        "common:uiRetryUploadFor",
+                                        "Retry upload for {{name}}",
+                                        {
+                                          name: image.name,
+                                        },
+                                      )}
                                     />
                                   }
                                 >
@@ -6614,7 +6640,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 variant="media-close"
                                 size="icon-xs"
                                 onClick={() => removeComposerImage(image.id)}
-                                aria-label={`Remove ${image.name}`}
+                                aria-label={translate(
+                                  "common:uiRemoveNamedItem",
+                                  "Remove {{name}}",
+                                  {
+                                    name: image.name,
+                                  },
+                                )}
                               >
                                 <XIcon />
                               </Button>
@@ -6653,7 +6685,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           <button
                             type="button"
                             className="flex h-full w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-1 text-white"
-                            aria-label={`Play ${file.name}`}
+                            aria-label={translate("common:uiPlayNamedMedia", "Play {{name}}", {
+                              name: file.name,
+                            })}
                             onClick={() => {
                               if (file.file !== null) {
                                 const preview = buildExpandedImagePreview([file], file.id);
@@ -6692,7 +6726,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                         draftTarget: attachmentDraftTarget,
                                       })
                                     }
-                                    aria-label={`Retry upload for ${file.name}`}
+                                    aria-label={translate(
+                                      "common:uiRetryUploadFor",
+                                      "Retry upload for {{name}}",
+                                      {
+                                        name: file.name,
+                                      },
+                                    )}
                                   />
                                 }
                               >
@@ -6706,7 +6746,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             size="icon-xs"
                             className="absolute right-1 top-1"
                             onClick={() => removeComposerFileFromDraft(file.id)}
-                            aria-label={`Remove ${file.name}`}
+                            aria-label={translate("common:uiRemoveNamedItem", "Remove {{name}}", {
+                              name: file.name,
+                            })}
                           >
                             <XIcon />
                           </Button>
@@ -6770,7 +6812,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                         draftTarget: attachmentDraftTarget,
                                       })
                                     }
-                                    aria-label={`Retry upload for ${file.name}`}
+                                    aria-label={translate(
+                                      "common:uiRetryUploadFor",
+                                      "Retry upload for {{name}}",
+                                      {
+                                        name: file.name,
+                                      },
+                                    )}
                                   />
                                 }
                               >
@@ -6783,7 +6831,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             variant="ghost"
                             size="icon-xs"
                             onClick={() => removeComposerFileFromDraft(file.id)}
-                            aria-label={`Remove ${file.name}`}
+                            aria-label={translate("common:uiRemoveNamedItem", "Remove {{name}}", {
+                              name: file.name,
+                            })}
                           >
                             <XIcon />
                           </Button>

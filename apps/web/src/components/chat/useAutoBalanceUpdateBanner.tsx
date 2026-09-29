@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { Atom } from "effect/unstable/reactivity";
@@ -98,7 +99,7 @@ export function useAutoBalanceUpdateBanner(
         <PopoverTrigger
           render={<InlineButton />}
           className="max-w-full"
-          aria-label={`${title}. View machines`}
+          aria-label={translate("common:uiViewMachines", "{{title}}. View machines", { title })}
         >
           <span className="min-w-0 truncate">{title}</span>
         </PopoverTrigger>
@@ -111,14 +112,23 @@ export function useAutoBalanceUpdateBanner(
                   <ServerUpdateProgress state={machine.state} />
                 ) : !machine.remoteUpdate ? (
                   <>
-                    <div className="text-muted-foreground">Manual update required</div>
+                    <div className="text-muted-foreground">
+                      {translate("chatView:manualUpdateRequired", "Manual update required")}
+                    </div>
                     <ServerUpdateAction {...machine} />
                   </>
                 ) : (
                   <div className="text-muted-foreground">
                     {machine.connected
-                      ? `Ready to update to ${machine.targetVersion}`
-                      : "Reconnect this machine to update"}
+                      ? translate(
+                          "common:uiReadyToUpdateVersion",
+                          "Ready to update to {{version}}",
+                          { version: machine.targetVersion },
+                        )
+                      : translate(
+                          "common:uiReconnectMachineToUpdate",
+                          "Reconnect this machine to update",
+                        )}
                   </div>
                 )}
               </div>
@@ -128,7 +138,15 @@ export function useAutoBalanceUpdateBanner(
       </Popover>
     ),
     description:
-      manual > 0 ? `${manual} ${manual === 1 ? "needs" : "need"} a manual update` : undefined,
+      manual > 0
+        ? translate(
+            manual === 1 ? "common:uiManualUpdateNeededOne" : "common:uiManualUpdateNeededMany",
+            manual === 1
+              ? "{{count}} machine needs a manual update"
+              : "{{count}} machines need a manual update",
+            { count: manual },
+          )
+        : undefined,
     actions:
       running === 0 && targets.length > 0 ? (
         <ServerUpdatesAction
@@ -136,14 +154,18 @@ export function useAutoBalanceUpdateBanner(
           variant="ghost"
           label={
             failed > 0
-              ? "Retry"
+              ? translate("common:uiRetryUpdate", "Retry")
               : targets.length === machines.length
-                ? "Update all"
-                : `Update ${targets.length} ${targets.length === 1 ? "machine" : "machines"}`
+                ? translate("common:uiUpdateAllMachines", "Update all")
+                : translate(
+                    targets.length === 1 ? "common:uiUpdateMachine" : "common:uiUpdateMachines",
+                    targets.length === 1 ? "Update {{count}} machine" : "Update {{count}} machines",
+                    { count: targets.length },
+                  )
           }
         />
       ) : undefined,
-    dismissLabel: "Dismiss update notice",
+    dismissLabel: translate("common:uiDismissServerUpdateNotice", "Dismiss server update notice"),
     ...(running
       ? {}
       : {

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
@@ -266,7 +267,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
     <div
       ref={mountRef}
       className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
-      aria-label="Terminal font preview"
+      aria-label={translate("common:uiTerminalFontPreview", "Terminal font preview")}
     />
   );
 }

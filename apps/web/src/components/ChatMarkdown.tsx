@@ -34,6 +34,7 @@ import type {
   ServerProviderSkill,
   ThreadPullRequestKey,
 } from "@t3tools/contracts";
+import { translate } from "@t3tools/i18n";
 import type { TFunction } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
@@ -1579,7 +1580,9 @@ function ChatMarkdownImage(props: {
         id={props.imageProps?.id}
         data-markdown-copy={props.copyMarkdown}
         role="status"
-        aria-label={props.t?.("loadingImage") ?? "Loading image"}
+        aria-label={
+          props.t?.("loadingImage") ?? translate("markdown:loadingImage", "Loading image")
+        }
         className={CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME}
       />
     );
@@ -1599,7 +1602,8 @@ function ChatMarkdownImage(props: {
           ? { role: "alert" as const }
           : {
               role: "status" as const,
-              "aria-label": props.t?.("loadingImage") ?? "Loading image",
+              "aria-label":
+                props.t?.("loadingImage") ?? translate("markdown:loadingImage", "Loading image"),
             })}
       >
         {failed ? (

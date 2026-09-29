@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
@@ -288,7 +289,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       descriptionParts.push(`#${thread.branch}`);
     }
     if (thread.id === input.activeThreadId) {
-      descriptionParts.push("Current thread");
+      descriptionParts.push(translate("chatView:paletteCurrentThread", "Current thread"));
     }
 
     const leadingContent = input.renderLeadingContent?.(thread);
@@ -425,7 +426,7 @@ export function filterCommandPaletteGroups(input: {
     if (input.threadSearchItems.length > 0) {
       searchableGroups.push({
         value: "threads-search",
-        label: "Threads",
+        label: translate("chatView:threadsGroup", "Threads"),
         items: input.threadSearchItems,
       });
     }
@@ -433,7 +434,11 @@ export function filterCommandPaletteGroups(input: {
 
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
-      const haystack = normalizeSearchText(item.searchTerms.join(" "));
+      // Titles render in the active locale, so a query in that language has to
+      // match the visible label too — search terms alone stay English.
+      const haystack = normalizeSearchText(
+        [typeof item.title === "string" ? item.title : "", ...item.searchTerms].join(" "),
+      );
       if (!queryTokens.every((token) => haystack.includes(token))) {
         return Result.failVoid;
       }
@@ -538,12 +543,16 @@ export function buildRootGroups(input: {
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
   if (input.actionItems.length > 0) {
-    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
+    groups.push({
+      value: "actions",
+      label: translate("chatView:paletteActions", "Actions"),
+      items: input.actionItems,
+    });
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({
       value: "recent-threads",
-      label: "Recent Threads",
+      label: translate("chatView:paletteRecentThreads", "Recent Threads"),
       items: input.recentThreadItems,
     });
   }

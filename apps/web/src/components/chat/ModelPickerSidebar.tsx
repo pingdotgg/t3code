@@ -1,6 +1,7 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef, useState } from "react";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -201,7 +202,9 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   isUnavailable || isContextDisabled
                     ? tooltip
                     : showNewBadge
-                      ? `${entry.displayName}, new`
+                      ? translate("common:uiProviderNewLabel", "{{label}}, new", {
+                          label: entry.displayName,
+                        })
                       : entry.displayName
                 }
               >

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { SettingsGroup } from "./SettingsGroup";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
@@ -147,7 +148,11 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={translate("common:uiBackgroundPolicyDetails", "Background policy details")}
+          >
             <InfoIcon className="size-3.5" />
           </Button>
         }
@@ -341,7 +346,7 @@ export function SettingsRow({
     source === "project" || source === "mixed" ? (
       <SettingResetButton
         label={typeof title === "string" ? title : "override"}
-        tooltip="Reset to inherited value"
+        tooltip={translate("common:uiResetInherited", "Reset to inherited value")}
         onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
       />
     ) : null
@@ -489,7 +494,13 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={translate(
+              "common:uiResetNamedSettingToDefault",
+              "Reset {{name}} to default",
+              {
+                name: label,
+              },
+            )}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();

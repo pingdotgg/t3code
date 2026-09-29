@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { ServerProcessSignal } from "@t3tools/contracts";
 
 import { InlineButton } from "../ui/button";
@@ -18,7 +19,7 @@ export function ProcessSignalActions({
           render={
             <InlineButton
               disabled={disabled}
-              aria-label="Send SIGINT"
+              aria-label={translate("settings:sendSigint", "Send SIGINT")}
               tone="muted"
               onClick={() => onSignal("SIGINT")}
             >
@@ -26,14 +27,14 @@ export function ProcessSignalActions({
             </InlineButton>
           }
         />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
+        <TooltipPopup side="top">{translate("settings:sendSigint", "Send SIGINT")}</TooltipPopup>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger
           render={
             <InlineButton
               disabled={disabled}
-              aria-label="Send SIGKILL"
+              aria-label={translate("settings:sendSigkill", "Send SIGKILL")}
               tone="destructive"
               onClick={() => onSignal("SIGKILL")}
             >
@@ -41,7 +42,7 @@ export function ProcessSignalActions({
             </InlineButton>
           }
         />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
+        <TooltipPopup side="top">{translate("settings:sendSigkill", "Send SIGKILL")}</TooltipPopup>
       </Tooltip>
     </div>
   );

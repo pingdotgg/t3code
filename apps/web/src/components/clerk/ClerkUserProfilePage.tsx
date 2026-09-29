@@ -57,7 +57,7 @@ export function ClerkUserProfileRefreshButton({
       onClick={onClick}
     >
       <RefreshIcon aria-hidden="true" size="sm" refreshing={isPending} />
-      Refresh
+      {translate("common:uiRefresh", "Refresh")}
     </Button>
   );
 }
@@ -85,3 +85,4 @@ export function ClerkUserProfileRow({
     </li>
   );
 }
+import { translate } from "@t3tools/i18n";

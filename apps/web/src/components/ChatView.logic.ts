@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AssetCreateUrlInput,
@@ -475,7 +476,7 @@ export function buildLocalDraftThread(
     id: threadId,
     environmentId: draftThread.environmentId,
     projectId: draftThread.projectId,
-    title: "New thread",
+    title: translate("chatView:newThread", "New thread"),
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,

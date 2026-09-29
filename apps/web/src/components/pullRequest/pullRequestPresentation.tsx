@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { Spinner } from "~/components/ui/spinner";
 import type { TFunction } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -557,7 +558,9 @@ export function PullRequestActorLabel({
                   href={profileUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Open ${login}'s profile`}
+                  aria-label={translate("common:uiOpenUserProfile", "Open {{login}}'s profile", {
+                    login,
+                  })}
                 />
               }
             />

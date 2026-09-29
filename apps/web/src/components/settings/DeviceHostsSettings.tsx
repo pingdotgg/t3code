@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
@@ -77,10 +78,13 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   return (
     <SettingsRow
       id="device-hosts"
-      title="Device hosts"
+      title={translate("common:uiDeviceHosts", "Device hosts")}
       serverScoped
       settingKeys={["deviceHosts"]}
-      description="Add remote machines with simulator or emulator runtimes installed, and the selected environments will connect over SSH and set up device tools automatically."
+      description={translate(
+        "common:uiAddRemoteMachinesWithSimulatorOrEmulator",
+        "Add remote machines with simulator or emulator runtimes installed, and the selected environments will connect over SSH and set up device tools automatically.",
+      )}
       control={
         <Button
           size="sm"
@@ -91,14 +95,17 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
             setEditing({ id: randomUUID(), label: "", target: "" });
           }}
         >
-          <PlusIcon className="size-3.5" /> Add host
+          <PlusIcon className="size-3.5" /> {translate("common:uiAddHostAction", "Add host")}
         </Button>
       }
     >
       <div className="pt-3 pb-2">
         {!props.environmentId ? (
           <p className="text-sm text-muted-foreground">
-            Connect a selected environment to manage device hosts.
+            {translate(
+              "settings:connectEnvironmentForDeviceHosts",
+              "Connect a selected environment to manage device hosts.",
+            )}
           </p>
         ) : (
           <>
@@ -127,8 +134,15 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                         ? `${host.label}: ${failed.length} of ${targets.length} environments failed`
                         : `${host.label}: connection checks passed`,
                       description: failed.length
-                        ? `Could not connect from ${failed.map((target) => target.label).join(", ")}.`
-                        : "Connected or already available locally on each selected environment.",
+                        ? translate(
+                            "common:uiCouldNotConnectFrom",
+                            "Could not connect from {{targets}}.",
+                            { targets: failed.map((target) => target.label).join(", ") },
+                          )
+                        : translate(
+                            "common:uiConnectedOrAvailableLocally",
+                            "Connected or already available locally on each selected environment.",
+                          ),
                     });
                     return results;
                   }}
@@ -183,7 +197,9 @@ function DeviceHostList({
   return (
     <>
       {hosts.length === 0 ? (
-        <p className="py-2 text-sm text-muted-foreground">No device hosts.</p>
+        <p className="py-2 text-sm text-muted-foreground">
+          {translate("settings:noDeviceHosts", "No device hosts.")}
+        </p>
       ) : null}
       {hosts.map((host) => {
         const status = state.hostStatuses[host.id];
@@ -222,9 +238,13 @@ function DeviceHostList({
                           <span
                             tabIndex={0}
                             role="img"
-                            aria-label={
-                              platform.platform === "ios" ? "iOS available" : "Android available"
-                            }
+                            aria-label={translate(
+                              "common:uiPlatformAvailable",
+                              "{{platform}} available",
+                              {
+                                platform: platform.platform === "ios" ? "iOS" : "Android",
+                              },
+                            )}
                             className="shrink-0 text-muted-foreground"
                           />
                         }
@@ -236,7 +256,9 @@ function DeviceHostList({
                         )}
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {platform.platform === "ios" ? "iOS available" : "Android available"}
+                        {translate("common:uiPlatformAvailable", "{{platform}} available", {
+                          platform: platform.platform === "ios" ? "iOS" : "Android",
+                        })}
                       </TooltipPopup>
                     </Tooltip>
                   ))}
@@ -251,12 +273,14 @@ function DeviceHostList({
                 }
               />
               {check?.status === "local" ? (
-                <p className="mt-1 text-xs text-muted-foreground">Already available locally</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {translate("settings:availableLocally", "Already available locally")}
+                </p>
               ) : null}
               {error ? (
                 <div className="mt-1" role="status">
                   <details className="text-xs text-destructive">
-                    <summary>Connection failed</summary>
+                    <summary>{translate("settings:connectionFailed", "Connection failed")}</summary>
                     <p className="mt-1 whitespace-pre-wrap break-words">{error}</p>
                   </details>
                 </div>
@@ -290,10 +314,10 @@ function DeviceHostList({
                     onEdit(host);
                   }}
                 >
-                  Edit
+                  {translate("settings:editButton", "Edit")}
                 </MenuItem>
                 <MenuItem variant="destructive" onClick={() => onRemove(host)}>
-                  Remove
+                  {translate("sidebar:remove", "Remove")}
                 </MenuItem>
               </MenuPopup>
             </Menu>
@@ -311,7 +335,9 @@ function DeviceHostList({
                   );
                 }}
               >
-                {retrying === host.id ? "Retrying…" : "Retry"}
+                {retrying === host.id
+                  ? translate("common:uiRetrying", "Retrying…")
+                  : translate("settings:retry", "Retry")}
               </Button>
             ) : (
               <Button
@@ -320,7 +346,7 @@ function DeviceHostList({
                 disabled={busy || progress !== null}
                 onClick={() => void testConnection(host)}
               >
-                Test connection
+                {translate("settings:testConnection", "Test connection")}
               </Button>
             )}
           </div>

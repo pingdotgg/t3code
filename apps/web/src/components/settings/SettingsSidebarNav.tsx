@@ -91,7 +91,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
-const SETTINGS_SECTION_TRANSLATION_KEYS = {
+export const SETTINGS_SECTION_TRANSLATION_KEYS = {
   "/settings/projects": "project",
   "/settings/general": "general",
   "/settings/appearance": "appearance",

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -227,7 +228,9 @@ export function tabMuteMenuItem(input: {
 }): { label: string; disabled: boolean } {
   const muted = input.overlay?.audioMuted ?? false;
   return {
-    label: muted ? "Unmute tab" : "Mute tab",
+    label: muted
+      ? translate("common:uiUnmuteTab", "Unmute tab")
+      : translate("common:uiMuteTab", "Mute tab"),
     disabled: input.overlay === null || !input.canResolveRuntimeTabId,
   };
 }
@@ -502,7 +505,7 @@ function RightPanelEmptyState(props: {
       ref={focusOnMount}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      aria-label="Open a surface"
+      aria-label={translate("chatView:openASurface", "Open a surface")}
       data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 outline-none",
@@ -512,7 +515,9 @@ function RightPanelEmptyState(props: {
       )}
     >
       <div className="w-full max-w-xs py-6">
-        <h3 className="mb-3 text-center font-medium text-foreground text-sm">Open a surface</h3>
+        <h3 className="mb-3 text-center font-medium text-foreground text-sm">
+          {translate("chatView:openASurface", "Open a surface")}
+        </h3>
         <div className="flex flex-col gap-0.5">
           {actions.map((action) =>
             action.available ? (
@@ -559,7 +564,10 @@ function RightPanelEmptyState(props: {
                     <MenuTrigger
                       render={
                         <Button
-                          aria-label="Open browser in a profile"
+                          aria-label={translate(
+                            "chatView:openBrowserInProfile",
+                            "Open browser in a profile",
+                          )}
                           className="absolute top-1/2 right-8 -translate-y-1/2"
                           size="icon-xs"
                           variant="ghost-muted"
@@ -1157,7 +1165,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   )}
                 >
                   <PanelTabCloseButton
-                    label={`Close ${title}`}
+                    label={translate("common:uiCloseNamedPanel", "Close {{name}}", { name: title })}
                     onClick={() => props.onCloseSurface(surface)}
                   >
                     <SurfaceIcon
@@ -1182,7 +1190,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           <button
                             type="button"
                             className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                            aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                            aria-label={translate(
+                              audio === "muted"
+                                ? "common:uiUnmuteNamedPanel"
+                                : "common:uiMuteNamedPanel",
+                              audio === "muted" ? "Unmute {{name}}" : "Mute {{name}}",
+                              { name: title },
+                            )}
                             onClick={(event) => {
                               // Sibling of the close button, inside a tab that
                               // activates on click: keep this to the toggle.
@@ -1200,12 +1214,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           </button>
                         }
                       />
-                      <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+                      <TooltipPopup>
+                        {audio === "muted"
+                          ? translate("common:uiUnmuteTab", "Unmute tab")
+                          : translate("common:uiMuteTab", "Mute tab")}
+                      </TooltipPopup>
                     </Tooltip>
                   )}
                   {renamingDevice === surface.id ? (
                     <input
-                      aria-label="Device tab name"
+                      aria-label={translate("chatView:deviceTabName", "Device tab name")}
                       className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-ring"
                       defaultValue={title}
                       ref={(element) => {
@@ -1263,7 +1281,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <MenuTrigger
                   render={
                     <Button
-                      aria-label="Add panel surface"
+                      aria-label={translate("chatView:addPanelSurface", "Add panel surface")}
                       className="shrink-0"
                       size="icon-xs"
                       variant="ghost-muted"
@@ -1351,14 +1369,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
-            aria-label="Scroll panel tabs"
+            aria-label={translate("chatView:scrollPanelTabs", "Scroll panel tabs")}
           >
             <Tooltip>
               <TooltipTrigger
                 render={
                   <span className="inline-flex">
                     <Button
-                      aria-label="Scroll tabs left"
+                      aria-label={translate("chatView:scrollTabsLeft", "Scroll tabs left")}
                       disabled={!tabScrollState.canScrollLeft}
                       onClick={() => scrollTabs(-1)}
                       size="icon-xs"
@@ -1369,14 +1387,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   </span>
                 }
               />
-              <TooltipPopup>Scroll tabs left</TooltipPopup>
+              <TooltipPopup>
+                {translate("chatView:scrollTabsLeft", "Scroll tabs left")}
+              </TooltipPopup>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
                   <span className="inline-flex">
                     <Button
-                      aria-label="Scroll tabs right"
+                      aria-label={translate("chatView:scrollTabsRight", "Scroll tabs right")}
                       disabled={!tabScrollState.canScrollRight}
                       onClick={() => scrollTabs(1)}
                       size="icon-xs"
@@ -1387,7 +1407,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   </span>
                 }
               />
-              <TooltipPopup>Scroll tabs right</TooltipPopup>
+              <TooltipPopup>
+                {translate("chatView:scrollTabsRight", "Scroll tabs right")}
+              </TooltipPopup>
             </Tooltip>
           </div>
         ) : null}

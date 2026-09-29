@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -9845,7 +9846,7 @@ export default function ChatView(props: ChatViewProps) {
                   className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
                 >
                   <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
-                  Drop files to attach
+                  {translate("chatView:dropFilesToAttach", "Drop files to attach")}
                 </div>
               </div>
             ) : null}
@@ -10236,19 +10237,18 @@ export default function ChatView(props: ChatViewProps) {
               <AlertDialogPopup>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Switch to{" "}
+                    {translate("common:uiSwitchBranchPrefix", "Switch to")}{" "}
                     <code className="font-medium">
                       {localCheckoutBranchMismatch?.threadBranch ?? ""}
                     </code>
-                    ?
+                    {translate("common:uiSwitchBranchSuffix", "?")}
                   </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    You have uncommitted changes. They'll carry over to the other branch, or block
-                    the switch if they conflict.
-                  </AlertDialogDescription>
+                  <AlertDialogDescription>{t("uncommittedChangesWarning")}</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <AlertDialogClose render={<Button variant="outline" />}>
+                    {t("cancel")}
+                  </AlertDialogClose>
                   <Button
                     variant="default"
                     onClick={() => {
@@ -10256,7 +10256,7 @@ export default function ChatView(props: ChatViewProps) {
                       void handleSwitchCheckoutToThread();
                     }}
                   >
-                    Switch branch
+                    {translate("chatView:switchBranch", "Switch branch")}
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogPopup>
@@ -10416,17 +10416,19 @@ export default function ChatView(props: ChatViewProps) {
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Edit from here?</AlertDialogTitle>
+            <AlertDialogTitle>{t("editFromHereQuestion")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Rewind chat to before this message. Your prompt and attachments return to the
-              composer.
+              {translate(
+                "common:uiRewindChatDescription",
+                "Rewind chat to before this message. Your prompt and attachments return to the composer.",
+              )}
               {activeWorktreePath === null
-                ? " Files stay as they are because this thread shares the project directory."
+                ? ` ${translate("common:uiRewindSharedProjectFiles", "Files stay as they are because this thread shares the project directory.")}`
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>{t("cancel")}</AlertDialogClose>
             {activeWorktreePath !== null ? (
               <Button
                 variant="destructive"
@@ -10436,7 +10438,7 @@ export default function ChatView(props: ChatViewProps) {
                   void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, true);
                 }}
               >
-                Revert files too
+                {translate("chatView:revertFilesToo", "Revert files too")}
               </Button>
             ) : null}
             <Button
@@ -10446,7 +10448,7 @@ export default function ChatView(props: ChatViewProps) {
                 void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, false);
               }}
             >
-              Revert and keep changes
+              {translate("chatView:revertAndKeepChanges", "Revert and keep changes")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

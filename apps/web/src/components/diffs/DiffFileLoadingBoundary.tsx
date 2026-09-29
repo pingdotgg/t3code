@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useEffect, useRef } from "react";
 import { DiffFileHeaderSkeleton } from "../DiffPanelShell";
 
@@ -16,7 +17,7 @@ export function DiffFileLoadingBoundary({ load, count }: { load: () => void; cou
     return () => observer.disconnect();
   }, [load]);
   return (
-    <div ref={ref} role="status" aria-label="Loading diff…">
+    <div ref={ref} role="status" aria-label={translate("common:uiLoadingDiff", "Loading diff…")}>
       {Array.from({ length: Math.min(count, 4) }, (_, index) => (
         <div key={index} aria-hidden className="border-b border-border/40">
           <DiffFileHeaderSkeleton titleWidth="medium" />

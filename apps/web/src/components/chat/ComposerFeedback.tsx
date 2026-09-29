@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   codexFeedbackNotice,
   type CodexFeedbackSubmission,
@@ -39,7 +40,7 @@ export function feedbackBannerItem(
             );
           }}
         >
-          Copy ID
+          {translate("chatView:copyId", "Copy ID")}
         </Button>
       ) : undefined,
     ...(submission.status !== "uploading"

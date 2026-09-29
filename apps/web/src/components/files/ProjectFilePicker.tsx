@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -46,23 +47,32 @@ function HighlightedFuzzyText(props: {
 function getEmptyStateMessage(query: string, error: string | null, isPending: boolean): string {
   if (error) return error;
   const isSearching = query.trim().length > 0;
-  if (isPending) return isSearching ? "Searching workspace files…" : "Indexing workspace files…";
-  return isSearching ? "No matching files." : "No files found.";
+  if (isPending) {
+    return isSearching
+      ? translate("common:uiSearchingWorkspaceFiles", "Searching workspace files…")
+      : translate("common:uiIndexingWorkspaceFiles", "Indexing workspace files…");
+  }
+  return isSearching
+    ? translate("common:uiNoMatchingWorkspaceFiles", "No matching files.")
+    : translate("common:noFilesFound", "No files found");
 }
 
 function EmptyProjectFilePicker() {
   return (
     <CommandPaletteContent
-      aria-label="File picker"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search files…" }}
+      aria-label={translate("chatView:filePicker", "File picker")}
+      escapeLabel={translate("common:back", "Back")}
+      footerActionLabel={translate("common:uiOpenFile", "Open file")}
+      inputProps={{
+        disabled: true,
+        placeholder: translate("chatView:searchFiles", "Search files"),
+      }}
       mode="none"
       testId="project-file-picker"
       value=""
     >
       <div className="py-10 text-center text-sm text-muted-foreground">
-        Open a project to search its files.
+        {translate("chatView:openProjectToSearchFiles", "Open a project to search its files.")}
       </div>
     </CommandPaletteContent>
   );
@@ -117,11 +127,11 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
 
   return (
     <CommandPaletteContent
-      aria-label="File picker"
+      aria-label={translate("chatView:filePicker", "File picker")}
       autoHighlight="always"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ placeholder: "Search files…" }}
+      escapeLabel={translate("common:back", "Back")}
+      footerActionLabel={translate("common:uiOpenFile", "Open file")}
+      inputProps={{ placeholder: translate("chatView:searchFiles", "Search files") }}
       mode="none"
       onItemHighlighted={(value) => {
         setHighlightedItemValue(typeof value === "string" ? value : null);

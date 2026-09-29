@@ -1,4 +1,5 @@
-"use client";
+import { translate } from "@t3tools/i18n";
+("use client");
 
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -49,8 +50,9 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
         descriptor.type === "select" &&
         descriptor.options.some((option) => option.id === "fast" || option.label === "Fast")),
   );
-  if (hasFastMode) labels.push("Fast mode");
-  if (descriptors.some((descriptor) => descriptor.id === "thinking")) labels.push("Thinking");
+  if (hasFastMode) labels.push(translate("settings:traitFastMode", "Fast mode"));
+  if (descriptors.some((descriptor) => descriptor.id === "thinking"))
+    labels.push(translate("settings:traitThinking", "Thinking"));
   if (
     descriptors.some(
       (descriptor) =>
@@ -61,7 +63,7 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
           descriptor.id === "variant"),
     )
   ) {
-    labels.push("Reasoning");
+    labels.push(translate("settings:traitReasoning", "Reasoning"));
   }
   return labels;
 }
@@ -314,16 +316,20 @@ export function ProviderModelsSection({
             size="icon-micro"
             variant="ghost-muted"
             onClick={() => handleToggleFavorite(model.slug)}
-            aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${
-              isFavorite ? "from" : "to"
-            } favorites`}
+            aria-label={translate(
+              isFavorite ? "common:uiRemoveModelFavorite" : "common:uiAddModelFavorite",
+              isFavorite ? "Remove {{name}} from favorites" : "Add {{name}} to favorites",
+              { name: model.name },
+            )}
           />
         }
       >
         <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning")} />
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {isFavorite ? "Remove from favorites" : "Add to favorites"}
+        {isFavorite
+          ? translate("common:uiRemoveFromFavorites", "Remove from favorites")
+          : translate("common:uiAddToFavorites", "Add to favorites")}
       </TooltipPopup>
     </Tooltip>
   );
@@ -349,13 +355,15 @@ export function ProviderModelsSection({
                   variant="ghost-muted"
                   disabled={!options.canMoveUp}
                   onClick={() => handleMove(model.slug, -1)}
-                  aria-label={`Move ${model.name} up`}
+                  aria-label={translate("common:uiMoveNamedModelUp", "Move {{name}} up", {
+                    name: model.name,
+                  })}
                 />
               }
             >
               <ArrowUpIcon className="size-3" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Move up</TooltipPopup>
+            <TooltipPopup side="top">{translate("settings:moveUp", "Move up")}</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -365,13 +373,15 @@ export function ProviderModelsSection({
                   variant="ghost-muted"
                   disabled={!options.canMoveDown}
                   onClick={() => handleMove(model.slug, 1)}
-                  aria-label={`Move ${model.name} down`}
+                  aria-label={translate("common:uiMoveNamedModelDown", "Move {{name}} down", {
+                    name: model.name,
+                  })}
                 />
               }
             >
               <ArrowDownIcon className="size-3" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Move down</TooltipPopup>
+            <TooltipPopup side="top">{translate("settings:moveDown", "Move down")}</TooltipPopup>
           </Tooltip>
         </>
       ) : null}
@@ -383,7 +393,9 @@ export function ProviderModelsSection({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`Edit ${model.slug}`}
+                  aria-label={translate("common:uiEditNamedModel", "Edit {{name}}", {
+                    name: model.slug,
+                  })}
                   onClick={() =>
                     setEditingSlug((current) => (current === model.slug ? null : model.slug))
                   }
@@ -392,7 +404,9 @@ export function ProviderModelsSection({
             >
               <PencilIcon className="size-3" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Edit name and options</TooltipPopup>
+            <TooltipPopup side="top">
+              {translate("settings:editNameAndOptions", "Edit name and options")}
+            </TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -400,14 +414,18 @@ export function ProviderModelsSection({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`Remove ${model.slug}`}
+                  aria-label={translate("common:uiRemoveNamedModel", "Remove {{name}}", {
+                    name: model.slug,
+                  })}
                   onClick={() => handleRemove(model.slug)}
                 />
               }
             >
               <XIcon className="size-3" />
             </TooltipTrigger>
-            <TooltipPopup side="top">Remove custom model</TooltipPopup>
+            <TooltipPopup side="top">
+              {translate("settings:removeCustomModel", "Remove custom model")}
+            </TooltipPopup>
           </Tooltip>
         </>
       ) : null}
@@ -416,10 +434,13 @@ export function ProviderModelsSection({
 
   const pickerTooltip = (model: DisplayModel, isHidden: boolean) =>
     model.isCustom
-      ? "Custom models are always shown in the picker"
+      ? translate(
+          "settings:customModelsAlwaysShown",
+          "Custom models are always shown in the picker",
+        )
       : isHidden
-        ? "Hidden from picker"
-        : "Shown in picker";
+        ? translate("settings:hiddenFromPicker", "Hidden from picker")
+        : translate("settings:shownInPicker", "Shown in picker");
 
   // The trigger is a wrapper span: a disabled switch gets no pointer events,
   // so it could not open the tooltip itself.
@@ -431,7 +452,13 @@ export function ProviderModelsSection({
           checked={!isHidden}
           disabled={model.isCustom}
           onCheckedChange={(checked) => setHidden(model.slug, !checked)}
-          aria-label={`Show ${model.name} in the model picker`}
+          aria-label={translate(
+            "settings:showModelInPicker",
+            "Show {{model}} in the model picker",
+            {
+              model: model.name,
+            },
+          )}
         />
       </TooltipTrigger>
       <TooltipPopup side="top">{pickerTooltip(model, isHidden)}</TooltipPopup>
@@ -475,7 +502,9 @@ export function ProviderModelsSection({
             </code>
           ) : null}
           {model.isCustom ? (
-            <span className="text-2xs text-muted-foreground/70">custom</span>
+            <span className="text-2xs text-muted-foreground/70">
+              {translate("settings:customBadge", "custom")}
+            </span>
           ) : null}
         </span>
         {/*
@@ -506,11 +535,11 @@ export function ProviderModelsSection({
           <Input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter models"
+            placeholder={translate("settings:filterModels", "Filter models")}
             size="sm"
             className="w-56 max-w-full"
             spellCheck={false}
-            aria-label="Filter models"
+            aria-label={translate("settings:filterModels", "Filter models")}
           />
         ) : null}
         <div className="flex items-center gap-2">
@@ -523,15 +552,27 @@ export function ProviderModelsSection({
                 onHiddenModelsChange(nextHiddenModelsForBulkToggle(models, hiddenModels))
               }
             >
-              {allBuiltInModelsHidden ? "Enable all" : "Disable all"}
+              {allBuiltInModelsHidden
+                ? translate("settings:enableAll", "Enable all")
+                : translate("settings:disableAll", "Disable all")}
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">
-            {models.length} model{models.length === 1 ? "" : "s"}
+            {models.length === 1
+              ? translate("settings:modelCountOne", "1 model")
+              : translate("settings:modelsCount", "{{count}} models", { count: models.length })}
             {favoriteCount > 0
-              ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
+              ? ` · ${
+                  favoriteCount === 1
+                    ? translate("settings:favoriteCountOne", "1 favorite")
+                    : translate("settings:favoritesCount", "{{count}} favorites", {
+                        count: favoriteCount,
+                      })
+                }`
               : ""}
-            {hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+            {hiddenCount > 0
+              ? ` · ${translate("settings:hiddenCount", "{{count}} hidden", { count: hiddenCount })}`
+              : ""}
           </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
@@ -543,7 +584,7 @@ export function ProviderModelsSection({
             onClick={() => setIsAdding(true)}
           >
             <PlusIcon className="size-3" />
-            Add custom model
+            {translate("settings:addCustomModel", "Add custom model")}
           </Button>
         ) : null}
       </div>
@@ -553,7 +594,9 @@ export function ProviderModelsSection({
       >
         {visibleModels.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">
-            {isFiltering ? "No models match." : "No models reported for this provider yet."}
+            {isFiltering
+              ? translate("settings:noModelsMatch", "No models match.")
+              : translate("settings:noModelsReported", "No models reported for this provider yet.")}
           </p>
         ) : null}
         {visibleModels.map((model, index) => {
@@ -567,13 +610,16 @@ export function ProviderModelsSection({
           return (
             <div key={`${instanceId}:${model.slug}:group`}>
               {startsGroup && favoriteCount > 0 && group === "favorite"
-                ? groupLabel("Favorites", index === 0)
+                ? groupLabel(translate("settings:favoritesGroup", "Favorites"), index === 0)
                 : null}
               {startsGroup && favoriteCount > 0 && group === "visible"
-                ? groupLabel("All", index === 0)
+                ? groupLabel(translate("settings:allGroup", "All"), index === 0)
                 : null}
               {startsGroup && group === "hidden"
-                ? groupLabel("Hidden from picker", index === 0)
+                ? groupLabel(
+                    translate("settings:hiddenFromPicker", "Hidden from picker"),
+                    index === 0,
+                  )
                 : null}
               {renderRow(model)}
               {editingEntry ? (
@@ -618,10 +664,10 @@ export function ProviderModelsSection({
           />
           <div className="flex shrink-0 gap-2">
             <Button size="sm" variant="outline" onClick={handleAdd}>
-              Add
+              {translate("settings:addButton", "Add")}
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
-              Cancel
+              {translate("chatView:cancel", "Cancel")}
             </Button>
           </div>
         </div>

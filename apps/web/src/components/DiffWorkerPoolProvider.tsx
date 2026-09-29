@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { WorkerPoolContext, useWorkerPool } from "@pierre/diffs/react";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
@@ -123,7 +124,7 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
       role="status"
       className="flex min-h-0 flex-1 items-center justify-center p-4 text-xs text-muted-foreground"
     >
-      Loading code...
+      {translate("common:uiLoadingCode", "Loading code...")}
     </div>
   );
 }

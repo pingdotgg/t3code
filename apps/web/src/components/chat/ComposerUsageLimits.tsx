@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
@@ -29,9 +30,12 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
         <RedactedSensitiveText
           key={label}
           value={label}
-          ariaLabel="Toggle account label visibility"
-          revealTooltip="Click to reveal account"
-          hideTooltip="Click to hide account"
+          ariaLabel={translate(
+            "common:uiAccountLabelVisibility",
+            "Toggle account label visibility",
+          )}
+          revealTooltip={translate("common:uiRevealAccount", "Click to reveal account")}
+          hideTooltip={translate("common:uiHideAccount", "Click to hide account")}
           className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
         />
       ) : (

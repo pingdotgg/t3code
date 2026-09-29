@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import ChatMarkdown from "./ChatMarkdown";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
@@ -294,12 +295,12 @@ function ComposerPreviewAnnotationDetails({
       {annotation.screenshot?.dataUrl ? (
         <img
           src={annotation.screenshot.dataUrl}
-          alt="Annotated preview crop"
+          alt={translate("common:uiAnnotatedPreviewCrop", "Annotated preview crop")}
           className="max-h-64 w-full border-border/70 border-b bg-muted object-contain"
         />
       ) : (
         <div className="border-border/70 border-b bg-muted/40 px-3 py-2 text-secondary-label text-xs">
-          Screenshot unavailable
+          {translate("chatView:screenshotUnavailable", "Screenshot unavailable")}
         </div>
       )}
       <div className="whitespace-pre-wrap wrap-break-word px-3 py-2.5 text-sm text-foreground">
@@ -313,7 +314,10 @@ function UnresolvedContextChip(props: { label: string }) {
   return (
     <UnresolvedChip
       label={props.label}
-      tooltip="This context is no longer available. Remove it or attach it again."
+      tooltip={translate(
+        "common:uiUnresolvedContextTooltip",
+        "This context is no longer available. Remove it or attach it again.",
+      )}
     />
   );
 }

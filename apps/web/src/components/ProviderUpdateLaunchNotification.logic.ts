@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
@@ -244,8 +245,15 @@ export function getProviderUpdateInitialToastView(input: {
     title: getProviderUpdateInitialToastTitle(input.updateProviders),
     description:
       input.oneClickProviders.length > 0
-        ? "Install the update now or review provider settings."
-        : `${formatProviderList(input.updateProviders)} can be updated from provider settings.`,
+        ? translate(
+            "common:providerUpdateInstallNow",
+            "Install the update now or review provider settings.",
+          )
+        : translate(
+            "common:providerUpdateFromSettings",
+            "{{providers}} can be updated from provider settings.",
+            { providers: formatProviderList(input.updateProviders) },
+          ),
   };
 }
 
@@ -526,9 +534,18 @@ function getProviderUpdateInitialToastTitle(
   if (providers.length === 1) {
     const provider = providers[0]!;
     const providerName = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
-    return `Update Available: ${providerName} ${formatVersion(provider.versionAdvisory.latestVersion)}`;
+    return translate(
+      "common:providerUpdateAvailable",
+      "Update Available: {{provider}} {{version}}",
+      {
+        provider: providerName,
+        version: formatVersion(provider.versionAdvisory.latestVersion),
+      },
+    );
   }
-  return `Updates Available: ${providers.length} providers`;
+  return translate("common:providerUpdatesAvailable", "Updates Available: {{count}} providers", {
+    count: providers.length,
+  });
 }
 
 function getFailedProviderUpdateDescription(providers: ReadonlyArray<ServerProvider>): string {

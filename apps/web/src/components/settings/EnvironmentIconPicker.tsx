@@ -97,7 +97,7 @@ export function EnvironmentIconMenu({
     <MenuSub>
       <MenuSubTrigger>
         <EnvironmentMachineIcon kind={resolved} />
-        Icon
+        {translate("common:uiIcon", "Icon")}
       </MenuSubTrigger>
       <MenuSubPopup>
         {lock !== null ? (
@@ -135,3 +135,4 @@ export function EnvironmentIconMenu({
     </MenuSub>
   );
 }
+import { translate } from "@t3tools/i18n";

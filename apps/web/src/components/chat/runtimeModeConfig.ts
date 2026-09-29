@@ -28,3 +28,19 @@ export const runtimeModeConfig: Record<
 };
 
 export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+
+export const runtimeModeTranslationKeys = {
+  "approval-required": {
+    label: "runtimeSupervised",
+    description: "runtimeSupervisedDescription",
+  },
+  "auto-accept-edits": {
+    label: "runtimeAutoAcceptEdits",
+    description: "runtimeAutoAcceptEditsDescription",
+  },
+  auto: { label: "runtimeAuto", description: "runtimeAutoDescription" },
+  "full-access": {
+    label: "runtimeFullAccess",
+    description: "runtimeFullAccessDescription",
+  },
+} as const satisfies Record<RuntimeMode, { label: string; description: string }>;

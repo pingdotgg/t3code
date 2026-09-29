@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
 import { Check, CircleAlert } from "lucide-react";
@@ -78,8 +79,11 @@ export function DeviceSetup(props: {
   return (
     <>
       <WizardHeader
-        title="Set up devices"
-        description="Review what runs on this environment before using simulators and emulators."
+        title={translate("chatView:setUpDevices", "Set up devices")}
+        description={translate(
+          "common:uiReviewWhatRunsOnThisEnvironmentBefore",
+          "Review what runs on this environment before using simulators and emulators.",
+        )}
       >
         <WizardSteps
           steps={["Device hub", "Simulators", "Agent access"]}
@@ -93,13 +97,15 @@ export function DeviceSetup(props: {
         <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
         {step === 0 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Enable the device hub</h3>
+            <h3 className="font-medium">
+              {translate("chatView:deviceHubEnable", "Enable the device hub")}
+            </h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{deviceHubDescription}</p>
               <Switch
                 checked={enabled}
                 disabled={busy || pending !== null}
-                aria-label="Enable device hub"
+                aria-label={translate("chatView:deviceHubEnable", "Enable device hub")}
                 onCheckedChange={(checked) =>
                   void update("hub", {
                     enabled: Boolean(checked),
@@ -117,7 +123,9 @@ export function DeviceSetup(props: {
 
         {step === 1 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Check simulator support</h3>
+            <h3 className="font-medium">
+              {translate("chatView:checkSimulatorSupport", "Check simulator support")}
+            </h3>
             <DevicePlatformSetup
               state={props.state}
               checking={pending === "check"}
@@ -134,13 +142,18 @@ export function DeviceSetup(props: {
 
         {step === 2 ? (
           <section className="space-y-3 text-sm">
-            <h3 className="font-medium">Allow agent control</h3>
+            <h3 className="font-medium">
+              {translate("chatView:allowAgentControl", "Allow agent control")}
+            </h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{agentDeviceDescription}</p>
               <Switch
                 checked={props.state.agentAccessEnabled}
                 disabled={!enabled || busy || pending !== null}
-                aria-label="Allow agents to control devices"
+                aria-label={translate(
+                  "chatView:allowAgentsControlDevices",
+                  "Allow agents to control devices",
+                )}
                 onCheckedChange={(checked) =>
                   void update("agent", { agentAccessEnabled: Boolean(checked) })
                 }
@@ -148,7 +161,10 @@ export function DeviceSetup(props: {
             </div>
             <AgentDeviceSetupStatus state={props.state} pending={pending === "agent"} />
             <p className="text-xs text-muted-foreground">
-              Leave this off to keep manual device controls without giving agents access.
+              {translate(
+                "common:uiDeviceSetupManualAccessNote",
+                "Leave this off to keep manual device controls without giving agents access.",
+              )}
             </p>
           </section>
         ) : null}
@@ -161,14 +177,16 @@ export function DeviceSetup(props: {
 
       <WizardFooter>
         {step === 0 ? (
-          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <DialogClose render={<Button variant="outline" />}>
+            {translate("chatView:cancel", "Cancel")}
+          </DialogClose>
         ) : (
           <Button
             variant="outline"
             disabled={busy || pending !== null}
             onClick={() => setStep(step - 1)}
           >
-            Back
+            {translate("chatView:back", "Back")}
           </Button>
         )}
         {step < 2 ? (
@@ -176,14 +194,16 @@ export function DeviceSetup(props: {
             disabled={props.state.hostStatus !== "ready" || pending !== null}
             onClick={() => setStep(step + 1)}
           >
-            Continue
+            {translate("settings:continueButton", "Continue")}
           </Button>
         ) : (
           <Button
             disabled={props.state.hostStatus !== "ready" || pending !== null}
             onClick={() => void update("complete", { onboardingCompleted: true })}
           >
-            {pending === "complete" ? "Saving…" : "Done"}
+            {pending === "complete"
+              ? translate("common:uiSaving", "Saving…")
+              : translate("common:uiDone", "Done")}
           </Button>
         )}
       </WizardFooter>
@@ -208,15 +228,15 @@ export function DeviceHubSetupStatus({
         ? state.hostStatus === "installing"
           ? compact
             ? "Installing…"
-            : "Installing device hub…"
+            : translate("common:uiInstallingDeviceHub", "Installing device hub…")
           : state.hostStatus === "starting"
             ? compact
               ? "Starting…"
-              : "Starting device hub…"
+              : translate("common:uiStartingDeviceHub", "Starting device hub…")
             : compact
               ? "Updating…"
-              : "Updating device hub…"
-        : "Device hub is ready."}
+              : translate("common:uiUpdatingDeviceHub", "Updating device hub…")
+        : translate("common:uiDeviceHubReady", "Device hub is ready.")}
     </p>
   );
 }
@@ -232,11 +252,16 @@ function DevicePlatformSetup(props: {
       <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
       <p className="text-xs text-muted-foreground">
-        You can use either platform. Fixing a missing platform does not block the other one.
+        {translate(
+          "common:uiDevicePlatformsIndependent",
+          "You can use either platform. Fixing a missing platform does not block the other one.",
+        )}
       </p>
       <Button size="compact" variant="outline" disabled={props.disabled} onClick={props.onCheck}>
         {props.checking ? <Spinner size="xs" /> : null}
-        {props.checking ? "Checking…" : "Check again"}
+        {props.checking
+          ? translate("common:uiChecking", "Checking…")
+          : translate("common:uiCheckAgain", "Check again")}
       </Button>
     </div>
   );
@@ -275,7 +300,7 @@ export function AgentDeviceSetupStatus(props: {
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
         <Check className="size-3 text-success" />
-        Agent tools are ready.
+        {translate("chatView:agentToolsReady", "Agent tools are ready.")}
       </p>
     );
   }
@@ -301,7 +326,9 @@ export function PlatformStatus(props: {
       <div className={cn(props.compact && props.status.ready && "flex items-center gap-2")}>
         <p className="font-medium">{props.platform}</p>
         <p className="text-xs text-muted-foreground">
-          {props.compact && props.status.ready ? "Ready" : props.status.message}
+          {props.compact && props.status.ready
+            ? translate("common:uiReadyStatus", "Ready")
+            : props.status.message}
         </p>
       </div>
     </div>

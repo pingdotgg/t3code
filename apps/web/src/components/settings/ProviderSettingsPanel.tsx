@@ -28,6 +28,7 @@ import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import type { TFunction } from "@t3tools/i18n";
 
@@ -989,7 +990,9 @@ export function EnvironmentProviderSettings({
         headerAction={
           mode === "editor" && row.isDefault && row.isDirty ? (
             <SettingResetButton
-              label={`${resetLabel} provider settings`}
+              label={translate("common:uiProviderSettingsForLabel", "{{label}} provider settings", {
+                label: resetLabel,
+              })}
               onClick={() => resetDefaultInstance(row.driver)}
             />
           ) : null

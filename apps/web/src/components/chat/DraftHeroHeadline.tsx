@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { DraftId } from "~/composerDraftStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
@@ -147,7 +148,9 @@ export function DraftHeroHeadline({
             />
           }
         >
-          <span className="min-w-0 truncate">{activeProjectDisplayName ?? "Choose a project"}</span>
+          <span className="min-w-0 truncate">
+            {activeProjectDisplayName ?? translate("common:chooseProject", "Choose project")}
+          </span>
         </TooltipTrigger>
         {activeProjectDisplayName ? (
           <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
@@ -217,7 +220,7 @@ export function DraftHeroHeadline({
         <MenuSeparator />
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
-          New project
+          {translate("common:newProject", "New project")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -227,7 +230,7 @@ export function DraftHeroHeadline({
       onClick={openAddProject}
       className="pointer-events-auto inline cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {activeProjectTitle ?? "Add a project"}
+      {activeProjectTitle ?? translate("common:addProject", "Add project")}
     </button>
   );
 
@@ -247,11 +250,18 @@ export function DraftHeroHeadline({
       className="mx-auto w-full max-w-5xl text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
     >
       {hasResolvedProject ? (
-        <>What should we build in {projectSelector}?</>
+        <>
+          {translate("common:uiBuildQuestionPrefix", "What should we build in ")}
+          {projectSelector}
+          {translate("common:uiBuildQuestionSuffix", "?")}
+        </>
       ) : canChooseProject ? (
-        <>{projectSelector} to start</>
+        <>
+          {projectSelector}
+          {translate("common:uiProjectSelectorToStart", " to start")}
+        </>
       ) : (
-        <>Add a project to start</>
+        <>{translate("chatView:addProjectToStart", "Add a project to start")}</>
       )}
     </h1>
   );

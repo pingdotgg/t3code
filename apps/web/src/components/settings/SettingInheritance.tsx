@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROJECT_FILE_BACKED_SETTINGS,
@@ -207,7 +208,11 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={translate(
+                    "common:uiShowValueOrigin",
+                    "{{label}}. Show where this value comes from",
+                    { label: overrideSummary },
+                  )}
                 />
               }
             />
@@ -280,10 +285,13 @@ export function SettingInheritance({
                 return (
                   <div className="mt-2 border-t border-border/60 pt-2">
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
-                      <span>Overridden by</span>
+                      <span>{translate("settings:overriddenBy", "Overridden by")}</span>
                       {onClearOverrides ? (
                         <InlineButton onClick={() => onClearOverrides(overriding)}>
-                          Reset {overriding.length === 1 ? "it" : "all"}
+                          {translate(
+                            overriding.length === 1 ? "common:uiResetOne" : "common:uiResetAll",
+                            overriding.length === 1 ? "Reset it" : "Reset all",
+                          )}
                         </InlineButton>
                       ) : null}
                     </div>

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useState } from "react";
 import * as Option from "effect/Option";
 import type { SshDeviceHostConfig } from "@t3tools/contracts";
@@ -64,17 +65,31 @@ export function DeviceHostEditor({
         }
       >
         <DialogHeader>
-          <DialogTitle>{isNew ? "Add device host" : "Edit device host"}</DialogTitle>
+          <DialogTitle>
+            {translate(
+              isNew ? "common:uiAddDeviceHostTitle" : "common:uiEditDeviceHostTitle",
+              isNew ? "Add device host" : "Edit device host",
+            )}
+          </DialogTitle>
           <DialogDescription>
             {targets.length === 1
-              ? `Connect from ${targets[0]?.label}.`
-              : `Connect from ${targets.length} selected environments.`}{" "}
-            Hosts on the same machine are skipped.
+              ? translate("common:uiConnectFromTarget", "Connect from {{target}}.", {
+                  target: targets[0]?.label ?? "",
+                })
+              : translate(
+                  "common:uiConnectFromSelectedEnvironments",
+                  "Connect from {{count}} selected environments.",
+                  { count: targets.length },
+                )}{" "}
+            {translate(
+              "settings:hostsSameMachineSkipped",
+              "Hosts on the same machine are skipped.",
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <label className="block space-y-1.5 text-sm">
-            <span>Name</span>
+            <span>{translate("settings:hostName", "Name")}</span>
             <Input
               autoFocus
               required
@@ -85,23 +100,25 @@ export function DeviceHostEditor({
             />
           </label>
           <label className="block space-y-1.5 text-sm">
-            <span>SSH target</span>
+            <span>{translate("settings:sshTarget", "SSH target")}</span>
             <Input
               required
               value={draft.target}
               disabled={busy}
               onChange={(event) => setDraft({ ...draft, target: event.target.value })}
-              placeholder="user@host or SSH alias"
+              placeholder={translate("common:uiSSHUserHostPlaceholder", "user@host or SSH alias")}
             />
           </label>
           <details
             open={host.port !== undefined || host.identityFile !== undefined || undefined}
             className="text-sm"
           >
-            <summary className="cursor-pointer text-muted-foreground">SSH options</summary>
+            <summary className="cursor-pointer text-muted-foreground">
+              {translate("settings:sshOptions", "SSH options")}
+            </summary>
             <div className="mt-3 grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
               <label className="block space-y-1.5">
-                <span>Identity file</span>
+                <span>{translate("settings:identityFile", "Identity file")}</span>
                 <Input
                   value={draft.identityFile ?? ""}
                   disabled={busy}
@@ -111,11 +128,11 @@ export function DeviceHostEditor({
                       event.target.value ? { ...rest, identityFile: event.target.value } : rest,
                     );
                   }}
-                  placeholder="SSH config default"
+                  placeholder={translate("common:uiSSHConfigDefault", "SSH config default")}
                 />
               </label>
               <label className="block space-y-1.5">
-                <span>Port</span>
+                <span>{translate("settings:portField", "Port")}</span>
                 <Input
                   type="number"
                   min={1}
@@ -128,24 +145,30 @@ export function DeviceHostEditor({
                       event.target.value ? { ...rest, port: Number(event.target.value) } : rest,
                     );
                   }}
-                  placeholder="Default"
+                  placeholder={translate("common:defaultValue", "Default")}
                 />
               </label>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Optional. Resolved separately on each environment.
+              {translate(
+                "common:uiOptionalResolvedPerEnvironment",
+                "Optional. Resolved separately on each environment.",
+              )}
             </p>
           </details>
           <div className="rounded-lg border border-border/60">
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
               <p role="status" className="text-xs text-muted-foreground">
                 {checking
-                  ? "Checking environments…"
+                  ? translate("common:uiCheckingEnvironments", "Checking environments…")
                   : results
                     ? failed
-                      ? `${failed} of ${targets.length} failed`
-                      : "Connection checks passed"
-                    : "Check access before saving"}
+                      ? translate("common:uiFailedOfTotal", "{{failed}} of {{total}} failed", {
+                          failed,
+                          total: targets.length,
+                        })
+                      : translate("common:uiConnectionChecksPassed", "Connection checks passed")
+                    : translate("common:uiCheckAccessBeforeSaving", "Check access before saving")}
               </p>
               <Button
                 type="button"
@@ -156,7 +179,8 @@ export function DeviceHostEditor({
                   if (Option.isSome(input)) void testConnection(input.value);
                 }}
               >
-                {checking ? <Spinner size="xs" /> : null} Test connection
+                {checking ? <Spinner size="xs" /> : null}{" "}
+                {translate("common:uiTestConnection", "Test connection")}
               </Button>
             </div>
             {results ? (
@@ -173,19 +197,24 @@ export function DeviceHostEditor({
                         >
                           {result.status === "pending" ? (
                             <>
-                              <Spinner size="xs" /> Checking…
+                              <Spinner size="xs" /> {translate("common:checking", "Checking…")}
                             </>
                           ) : result.status === "local" ? (
                             <>
-                              <MonitorIcon className="size-3" /> Already available locally
+                              <MonitorIcon className="size-3" />
+                              {translate(
+                                "common:uiAlreadyAvailableLocally",
+                                "Already available locally",
+                              )}
                             </>
                           ) : result.status === "failed" ? (
                             <>
-                              <XIcon className="size-3" /> Failed
+                              <XIcon className="size-3" /> {translate("common:uiFailed", "Failed")}
                             </>
                           ) : (
                             <>
-                              <CheckIcon className="size-3" /> Connected
+                              <CheckIcon className="size-3" />
+                              {translate("common:uiConnected", "Connected")}
                             </>
                           )}
                         </span>
@@ -197,7 +226,9 @@ export function DeviceHostEditor({
                       ) : null}
                       {result.status === "failed" ? (
                         <details className="mt-1.5 text-muted-foreground">
-                          <summary className="cursor-pointer">Show error</summary>
+                          <summary className="cursor-pointer">
+                            {translate("settings:showError", "Show error")}
+                          </summary>
                           <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words">
                             {result.error}
                           </p>
@@ -212,10 +243,10 @@ export function DeviceHostEditor({
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="ghost" disabled={busy} onClick={onClose}>
-            Cancel
+            {translate("chatView:cancel", "Cancel")}
           </Button>
           <Button type="submit" disabled={busy || checking || !valid || !draft.label.trim()}>
-            {busy ? <Spinner size="xs" /> : null} Save host
+            {busy ? <Spinner size="xs" /> : null} {translate("common:uiSaveHost", "Save host")}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { DownloadIcon } from "lucide-react";
@@ -84,7 +85,7 @@ function addProviderUpdateToast(input: {
       description: input.view.description,
       timeout: 0,
       actionProps: {
-        children: "Settings",
+        children: translate("common:settings", "Settings"),
         onClick: () => input.openSettings(toastId),
       },
       actionVariant: "outline",
@@ -274,11 +275,11 @@ export function ProviderUpdatePrimaryNotification() {
         actionProps:
           oneClickProviders.length > 0
             ? {
-                children: "Update",
+                children: translate("chatView:update", "Update"),
                 onClick: runUpdates,
               }
             : {
-                children: "Settings",
+                children: translate("common:settings", "Settings"),
                 onClick: openSettings,
               },
         actionVariant: "outline",
@@ -292,7 +293,7 @@ export function ProviderUpdatePrimaryNotification() {
           ...(oneClickProviders.length > 0
             ? {
                 secondaryActionProps: {
-                  children: "Settings",
+                  children: translate("common:settings", "Settings"),
                   onClick: openSettings,
                 },
                 secondaryActionVariant: "outline" as const,

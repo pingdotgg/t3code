@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
@@ -800,7 +801,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             {!credential ? null : canCopyToClipboard ? (
               shareablePairingUrl ? null : (
                 <Button size="xs" variant="outline" onClick={handleCopyCode}>
-                  Copy code
+                  {translate("settings:copyCode", "Copy code")}
                 </Button>
               )
             ) : (

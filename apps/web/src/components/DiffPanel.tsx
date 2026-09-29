@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
@@ -935,16 +936,22 @@ export default function DiffPanel({
             <TextWrapIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+            {translate(
+              wordWrap ? "diffs:disableLineWrapping" : "diffs:enableLineWrapping",
+              wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping",
+            )}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={
-                  diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
-                }
+                aria-label={translate(
+                  diffIgnoreWhitespace
+                    ? "diffs:showWhitespaceChanges"
+                    : "diffs:hideWhitespaceChanges",
+                  diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes",
+                )}
                 variant="ghost"
                 size="sm"
                 pressed={diffIgnoreWhitespace}
@@ -957,7 +964,10 @@ export default function DiffPanel({
             <PilcrowIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+            {translate(
+              diffIgnoreWhitespace ? "diffs:showWhitespaceChanges" : "diffs:hideWhitespaceChanges",
+              diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes",
+            )}
           </TooltipPopup>
         </Tooltip>
         {diffFileKeys.length > 0 && (
@@ -965,7 +975,10 @@ export default function DiffPanel({
             <TooltipTrigger
               render={
                 <Toggle
-                  aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+                  aria-label={translate(
+                    fileTreeOpen ? "diffs:hideFileTree" : "diffs:showFileTree",
+                    fileTreeOpen ? "Hide file tree" : "Show file tree",
+                  )}
                   variant="ghost"
                   size="sm"
                   pressed={fileTreeOpen}
@@ -976,7 +989,10 @@ export default function DiffPanel({
               <FolderTreeIcon className="size-3.5" />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {fileTreeOpen ? "Hide file tree" : "Show file tree"}
+              {translate(
+                fileTreeOpen ? "diffs:hideFileTree" : "diffs:showFileTree",
+                fileTreeOpen ? "Hide file tree" : "Show file tree",
+              )}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -988,23 +1004,31 @@ export default function DiffPanel({
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Select a thread to inspect turn diffs.
+          {translate("chatView:selectThreadForDiffs", "Select a thread to inspect turn diffs.")}
         </div>
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
+          {translate(
+            "common:uiTurnDiffsRequireGit",
+            "Turn diffs are unavailable because this project is not a git repository.",
+          )}
         </div>
       ) : selectedTurnId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          No completed turns yet.
+          {translate("chatView:noCompletedTurns", "No completed turns yet.")}
         </div>
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
-                This preview exceeds the size limit. Changes shown are incomplete.
-                {selectedGitSource?.files ? " Totals include all changes." : ""}
+                {translate(
+                  "common:uiDiffPreviewSizeLimit",
+                  "This preview exceeds the size limit. Changes shown are incomplete.",
+                )}
+                {selectedGitSource?.files
+                  ? ` ${translate("common:uiDiffTotalsIncludeAllChanges", "Totals include all changes.")}`
+                  : ""}
               </p>
             )}
             {selectedPatchError && !renderablePatch && (
@@ -1017,18 +1041,26 @@ export default function DiffPanel({
                 <DiffPanelLoadingState
                   label={
                     selectedTurn
-                      ? "Loading checkpoint diff..."
+                      ? translate("common:uiLoadingCheckpointDiff", "Loading checkpoint diff...")
                       : selectedGitScope === "unstaged"
-                        ? "Loading working tree diff..."
-                        : "Loading branch diff..."
+                        ? translate(
+                            "common:uiLoadingWorkingTreeDiff",
+                            "Loading working tree diff...",
+                          )
+                        : translate("common:uiLoadingBranchDiff", "Loading branch diff...")
                   }
                 />
               ) : (
                 <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
                   <p>
-                    {hasNoNetChanges
-                      ? "No net changes in this selection."
-                      : "No patch available for this selection."}
+                    {translate(
+                      hasNoNetChanges
+                        ? "diffs:noNetChangesSelection"
+                        : "diffs:noPatchAvailableSelection",
+                      hasNoNetChanges
+                        ? "No net changes in this selection."
+                        : "No patch available for this selection.",
+                    )}
                   </p>
                 </div>
               )
@@ -1136,9 +1168,13 @@ export default function DiffPanel({
                                 size="icon-micro"
                                 variant="ghost"
                                 className="-ms-0.5"
-                                aria-label={
-                                  collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
-                                }
+                                aria-label={translate(
+                                  collapsed
+                                    ? "common:uiExpandNamedFile"
+                                    : "common:uiCollapseNamedFile",
+                                  collapsed ? "Expand {{name}}" : "Collapse {{name}}",
+                                  { name: filePath },
+                                )}
                                 aria-expanded={!collapsed}
                                 disabled={unavailable}
                                 onClick={(event) => {
@@ -1159,7 +1195,10 @@ export default function DiffPanel({
                             )}
                           </TooltipTrigger>
                           <TooltipPopup side="top">
-                            {collapsed ? "Expand diff" : "Collapse diff"}
+                            {translate(
+                              collapsed ? "diffs:expandDiff" : "diffs:collapseDiff",
+                              collapsed ? "Expand diff" : "Collapse diff",
+                            )}
                           </TooltipPopup>
                         </Tooltip>
                       );

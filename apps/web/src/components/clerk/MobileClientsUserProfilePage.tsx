@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
 import { SmartphoneIcon } from "lucide-react";
 
@@ -28,7 +29,7 @@ function MobileClientStatusBadge({
 }) {
   return (
     <Badge variant={enabled ? "success" : "outline"}>
-      {label}: {enabled ? "On" : "Off"}
+      {label}: {translate(enabled ? "common:on" : "common:off", enabled ? "On" : "Off")}
     </Badge>
   );
 }
@@ -52,9 +53,12 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
       <div className="mt-2 flex flex-wrap gap-1.5">
         <MobileClientStatusBadge
           enabled={device.notifications.enabled}
-          label="Push notifications"
+          label={translate("common:uiPushNotifications", "Push notifications")}
         />
-        <MobileClientStatusBadge enabled={device.liveActivities.enabled} label="Live Activities" />
+        <MobileClientStatusBadge
+          enabled={device.liveActivities.enabled}
+          label={translate("common:uiLiveActivities", "Live Activities")}
+        />
       </div>
       <p className="mt-1.5 text-xs leading-4.5 text-muted-foreground/80">
         {mobileClientNotificationDetail(device)}
@@ -65,7 +69,11 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
 
 function MobileClientsSkeleton() {
   return (
-    <div aria-label="Loading mobile clients" className="divide-y border-t" role="status">
+    <div
+      aria-label={translate("common:uiLoadingMobileClients", "Loading mobile clients")}
+      className="divide-y border-t"
+      role="status"
+    >
       {MOBILE_CLIENT_SKELETON_ROWS.map((row) => (
         <div key={row} className="py-4">
           <div className="flex gap-3">
@@ -92,10 +100,12 @@ function EmptyMobileClients() {
         <SmartphoneIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No mobile clients</EmptyTitle>
+        <EmptyTitle>{translate("chatView:noMobileClients", "No mobile clients")}</EmptyTitle>
         <EmptyDescription>
-          Sign in to T3 Code on your iPhone to register it for push notifications and Live
-          Activities.
+          {translate(
+            "common:uiMobileClientPushDescription",
+            "Sign in to T3 Code on your iPhone to register it for push notifications and Live Activities.",
+          )}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -111,8 +121,11 @@ export function MobileClientsUserProfilePage() {
 
   return (
     <ClerkUserProfilePage
-      title="Mobile clients"
-      description="Devices registered to receive T3 Connect activity from your environments."
+      title={translate("common:uiMobileClients", "Mobile clients")}
+      description={translate(
+        "common:uiDevicesRegisteredToReceiveT3ConnectActivity",
+        "Devices registered to receive T3 Connect activity from your environments.",
+      )}
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}
@@ -128,12 +141,12 @@ export function MobileClientsUserProfilePage() {
           >
             <div>
               <p className="font-medium text-destructive-foreground">
-                Could not load mobile clients
+                {translate("settings:couldNotLoadMobileClients", "Could not load mobile clients")}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">{devicesState.error}</p>
             </div>
             <Button size="xs" variant="outline" onClick={devicesState.refresh}>
-              Try again
+              {translate("chatView:tryAgainShort", "Try again")}
             </Button>
           </div>
         ) : null}

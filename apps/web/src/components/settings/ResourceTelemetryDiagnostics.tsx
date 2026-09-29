@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -299,14 +300,30 @@ function AggregateCard({
           {label}
         </div>
         <div className="rounded-md bg-muted/55 px-1.5 py-0.5 font-mono text-3xs tabular-nums text-muted-foreground/70">
-          {aggregate.processCount} {aggregate.processCount === 1 ? "process" : "processes"}
+          {translate(
+            aggregate.processCount === 1 ? "common:uiProcessCountOne" : "common:uiProcessCountMany",
+            aggregate.processCount === 1 ? "{{count}} process" : "{{count}} processes",
+            { count: aggregate.processCount },
+          )}
         </div>
       </div>
       <div className="mt-3.5 grid grid-cols-2 gap-x-4 gap-y-2.5">
-        <MetricPair label="CPU" value={`${aggregate.currentCpuPercent.toFixed(1)}%`} />
-        <MetricPair label="Memory" value={formatBytes(aggregate.currentRssBytes)} />
-        <MetricPair label="Read" value={formatRate(aggregate.ioReadBytesPerSecond)} />
-        <MetricPair label="Write" value={formatRate(aggregate.ioWriteBytesPerSecond)} />
+        <MetricPair
+          label={translate("common:telemetryCpu", "CPU")}
+          value={`${aggregate.currentCpuPercent.toFixed(1)}%`}
+        />
+        <MetricPair
+          label={translate("common:telemetryMemory", "Memory")}
+          value={formatBytes(aggregate.currentRssBytes)}
+        />
+        <MetricPair
+          label={translate("common:telemetryRead", "Read")}
+          value={formatRate(aggregate.ioReadBytesPerSecond)}
+        />
+        <MetricPair
+          label={translate("common:telemetryWrite", "Write")}
+          value={formatRate(aggregate.ioWriteBytesPerSecond)}
+        />
       </div>
     </div>
   );
@@ -335,9 +352,12 @@ function HealthSource({ label, health }: { label: string; health: ResourceTeleme
         <div className="text-sm font-medium text-foreground">{label}</div>
         <div className="mt-1 text-2xs leading-relaxed text-muted-foreground/65">
           {expectedInBrowser
-            ? "Available when this page runs inside the desktop app."
+            ? translate(
+                "common:uiResourceDiagnosticsDesktopOnly",
+                "Available when this page runs inside the desktop app.",
+              )
             : Option.match(health.lastError, {
-                onNone: () => "No reported errors",
+                onNone: () => translate("common:uiNoReportedErrors", "No reported errors"),
                 onSome: (error) => error,
               })}
         </div>
@@ -348,7 +368,7 @@ function HealthSource({ label, health }: { label: string; health: ResourceTeleme
         presentation={
           expectedInBrowser
             ? {
-                label: "Desktop only",
+                label: translate("common:uiDesktopOnly", "Desktop only"),
                 tone: "neutral",
               }
             : undefined
@@ -391,7 +411,7 @@ function HistoryWindowSelector({
 }) {
   return (
     <ToggleGroup
-      aria-label="Resource history period"
+      aria-label={translate("common:uiResourceHistoryPeriod", "Resource history period")}
       variant="segmented"
       value={[String(selectedWindowMs)]}
       onValueChange={(next) => {
@@ -420,13 +440,16 @@ function ResourceHistoryChart({
     <div className="border-t border-border/60 px-4 py-4 sm:px-5">
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-3xs text-muted-foreground/65">
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-3 rounded-full bg-foreground/70" /> CPU average
+          <span className="h-1.5 w-3 rounded-full bg-foreground/70" />{" "}
+          {translate("common:uiCpuAverage", "CPU average")}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-3 rounded-full bg-info/70" /> I/O reads
+          <span className="h-1.5 w-3 rounded-full bg-info/70" />{" "}
+          {translate("common:uiIoReads", "I/O reads")}
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-3 rounded-full bg-warning/80" /> I/O writes
+          <span className="h-1.5 w-3 rounded-full bg-warning/80" />{" "}
+          {translate("common:uiIoWrites", "I/O writes")}
         </span>
       </div>
       <div className="flex h-32 items-end gap-1 overflow-hidden rounded-lg border border-border/40 bg-muted/8 px-2 pt-3 pb-2">
@@ -468,10 +491,26 @@ function ResourceHistoryChart({
               />
               <TooltipPopup side="top" className="text-left">
                 <div className="space-y-0.5">
-                  <div>CPU avg {bucket.avgCpuPercent.toFixed(1)}%</div>
-                  <div>CPU peak {bucket.maxCpuPercent.toFixed(1)}%</div>
-                  <div>Read {formatBytes(bucket.ioReadBytes)}</div>
-                  <div>Write {formatBytes(bucket.ioWriteBytes)}</div>
+                  <div>
+                    {translate("common:uiCpuAveragePercent", "CPU avg {{percent}}%", {
+                      percent: bucket.avgCpuPercent.toFixed(1),
+                    })}
+                  </div>
+                  <div>
+                    {translate("common:uiCpuPeakPercent", "CPU peak {{percent}}%", {
+                      percent: bucket.maxCpuPercent.toFixed(1),
+                    })}
+                  </div>
+                  <div>
+                    {translate("common:uiReadBytes", "Read {{bytes}}", {
+                      bytes: formatBytes(bucket.ioReadBytes),
+                    })}
+                  </div>
+                  <div>
+                    {translate("common:uiWriteBytes", "Write {{bytes}}", {
+                      bytes: formatBytes(bucket.ioWriteBytes),
+                    })}
+                  </div>
                 </div>
               </TooltipPopup>
             </Tooltip>
@@ -504,7 +543,11 @@ function ProcessTreeName({
           size="icon-micro"
           variant="ghost-muted"
           onClick={() => onToggle(process)}
-          aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
+          aria-label={translate(
+            collapsed ? "common:uiExpandNamedFile" : "common:uiCollapseNamedFile",
+            collapsed ? "Expand {{name}}" : "Collapse {{name}}",
+            { name },
+          )}
         >
           <ChevronIcon className="size-3.5" />
         </Button>
@@ -975,12 +1018,15 @@ export function ResourceTelemetryDiagnostics({
   return (
     <>
       <SettingsSection
-        title="Resource monitor"
+        title={translate("common:uiResourceMonitor", "Resource monitor")}
         icon={<ActivityIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <div className="flex items-center gap-2">
             {snapshot ? (
-              <SourceStatusBadge label="Native" status={snapshot.health.native.status} />
+              <SourceStatusBadge
+                label={translate("common:uiNative", "Native")}
+                status={snapshot.health.native.status}
+              />
             ) : null}
             <LastSampleLabel sampledAt={snapshot?.readAt ?? null} />
             <Tooltip>
@@ -991,7 +1037,10 @@ export function ResourceTelemetryDiagnostics({
                     variant="ghost"
                     disabled={telemetry.isPending}
                     onClick={telemetry.refresh}
-                    aria-label="Refresh resource telemetry"
+                    aria-label={translate(
+                      "common:uiRefreshResourceTelemetry",
+                      "Refresh resource telemetry",
+                    )}
                   >
                     <RefreshIcon size="xs" refreshing={telemetry.isPending} />
                   </Button>
@@ -1006,28 +1055,32 @@ export function ResourceTelemetryDiagnostics({
           <div className="flex flex-col gap-3 border-b border-border/60 bg-linear-to-r from-muted/45 via-muted/20 to-transparent px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div>
               <div className="text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70">
-                T3 system footprint
+                {translate("settings:footprintTitle", "T3 system footprint")}
               </div>
               <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
-                Live native counters for the server, providers, terminals, desktop processes, and
-                the monitor itself.
+                {translate(
+                  "settings:footprintDescription",
+                  "Live native counters for the server, providers, terminals, desktop processes, and the monitor itself.",
+                )}
               </p>
             </div>
             <div className="flex items-center gap-2 text-3xs text-muted-foreground/65">
               <span className="size-1.5 rounded-full bg-success" />
-              Sampling every {snapshot ? formatSampleInterval(snapshot.sampleIntervalMs) : "..."}
+              {translate("common:uiSamplingEvery", "Sampling every {{interval}}", {
+                interval: snapshot ? formatSampleInterval(snapshot.sampleIntervalMs) : "...",
+              })}
             </div>
           </div>
           <div className="grid grid-cols-2 divide-x divide-y divide-border/55 md:grid-cols-3">
             <IconStat
               icon={<CpuIcon className="size-3.5" />}
-              label="Current CPU"
+              label={translate("common:uiCurrentCPU", "Current CPU")}
               value={allT3 ? `${allT3.currentCpuPercent.toFixed(1)}%` : "..."}
               detail={allT3 ? `${formatCpuTime(allT3.cpuTimeMs)} observed CPU time` : undefined}
             />
             <IconStat
               icon={<MemoryStickIcon className="size-3.5" />}
-              label="Resident memory"
+              label={translate("common:uiResidentMemory", "Resident memory")}
               value={allT3 ? formatBytes(allT3.currentRssBytes) : "..."}
               detail={
                 allT3 ? `${formatBytes(allT3.peakRssBytes)} combined process peaks` : undefined
@@ -1035,7 +1088,7 @@ export function ResourceTelemetryDiagnostics({
             />
             <IconStat
               icon={<ActivityIcon className="size-3.5" />}
-              label="Process count"
+              label={translate("common:uiProcessCount", "Process count")}
               value={allT3 ? String(allT3.processCount) : "..."}
               detail={
                 allT3 ? `${allT3.processStarts} starts · ${allT3.processExits} exits` : undefined
@@ -1043,13 +1096,13 @@ export function ResourceTelemetryDiagnostics({
             />
             <IconStat
               icon={<HardDriveIcon className="size-3.5" />}
-              label="Read throughput"
+              label={translate("common:uiReadThroughput", "Read throughput")}
               value={allT3 ? formatRate(allT3.ioReadBytesPerSecond) : "..."}
               detail={allT3 ? `${formatBytes(allT3.ioReadBytes)} observed` : undefined}
             />
             <IconStat
               icon={<DatabaseIcon className="size-3.5" />}
-              label="Write throughput"
+              label={translate("common:uiWriteThroughput", "Write throughput")}
               value={allT3 ? formatRate(allT3.ioWriteBytesPerSecond) : "..."}
               detail={allT3 ? `${formatBytes(allT3.ioWriteBytes)} observed` : undefined}
               tone={
@@ -1062,7 +1115,7 @@ export function ResourceTelemetryDiagnostics({
             />
             <IconStat
               icon={<GaugeIcon className="size-3.5" />}
-              label="CPU speed limit"
+              label={translate("common:uiCPUSpeedLimit", "CPU speed limit")}
               value={
                 snapshot ? (speedLimit === null ? "Unknown" : `${speedLimit.toFixed(0)}%`) : "..."
               }
@@ -1079,17 +1132,17 @@ export function ResourceTelemetryDiagnostics({
           {snapshot ? (
             <div className="grid border-t border-border/60 bg-muted/10 md:grid-cols-3">
               <AggregateCard
-                label="Backend + agents"
+                label={translate("common:uiBackendPlusAgents", "Backend + agents")}
                 accentClass="bg-success/80"
                 aggregate={snapshot.groups.backend}
               />
               <AggregateCard
-                label="Desktop"
+                label={translate("common:uiDesktop", "Desktop")}
                 accentClass="bg-info/80"
                 aggregate={snapshot.groups.electron}
               />
               <AggregateCard
-                label="Monitor overhead"
+                label={translate("common:uiMonitorOverhead", "Monitor overhead")}
                 accentClass="bg-warning/80"
                 aggregate={snapshot.groups.monitor}
               />
@@ -1099,7 +1152,7 @@ export function ResourceTelemetryDiagnostics({
       </SettingsSection>
 
       <SettingsSection
-        title="Host & collection"
+        title={translate("common:uiHostAndCollection", "Host & collection")}
         icon={<GaugeIcon className="size-4 text-muted-foreground" />}
         headerAction={
           collectorNeedsRetry ? (
@@ -1186,11 +1239,16 @@ export function ResourceTelemetryDiagnostics({
             ) : (
               <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-5">
                 <div className="text-sm font-medium text-foreground">
-                  Desktop host signals not connected
+                  {translate(
+                    "settings:desktopHostSignalsNotConnected",
+                    "Desktop host signals not connected",
+                  )}
                 </div>
                 <p className="mt-1.5 max-w-sm text-2xs leading-relaxed text-muted-foreground/70">
-                  Power, idle, lock, and thermal state are supplied by the desktop host. Process
-                  telemetry remains fully active in this browser session.
+                  {translate(
+                    "settings:desktopHostSignalsNote",
+                    "Power, idle, lock, and thermal state are supplied by the desktop host. Process telemetry remains fully active in this browser session.",
+                  )}
                 </p>
               </div>
             )}
@@ -1200,22 +1258,28 @@ export function ResourceTelemetryDiagnostics({
               <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
                 <GaugeIcon className="size-3.5" />
               </span>
-              Collection health
+              {translate("settings:collectionHealth", "Collection health")}
             </div>
             {snapshot ? (
               <>
-                <HealthSource label="Native process monitor" health={snapshot.health.native} />
-                <HealthSource label="Electron main process" health={snapshot.health.desktop} />
+                <HealthSource
+                  label={translate("common:uiNativeProcessMonitor", "Native process monitor")}
+                  health={snapshot.health.native}
+                />
+                <HealthSource
+                  label={translate("common:uiElectronMainProcess", "Electron main process")}
+                  health={snapshot.health.desktop}
+                />
                 <DetailRow
-                  label="Collection time"
+                  label={translate("common:uiCollectionTime", "Collection time")}
                   value={formatDurationMicros(snapshot.health.collectionDurationMicros)}
                 />
                 <DetailRow
-                  label="Process scan"
+                  label={translate("common:uiProcessScan", "Process scan")}
                   value={`${snapshot.health.retainedProcessCount}/${snapshot.health.scannedProcessCount} retained`}
                 />
                 <DetailRow
-                  label="Inaccessible"
+                  label={translate("common:uiInaccessible", "Inaccessible")}
                   value={String(snapshot.health.inaccessibleProcessCount)}
                   valueClassName={
                     snapshot.health.inaccessibleProcessCount > 0
@@ -1224,7 +1288,7 @@ export function ResourceTelemetryDiagnostics({
                   }
                 />
                 <DetailRow
-                  label="Sidecar"
+                  label={translate("common:uiSidecar", "Sidecar")}
                   value={Option.match(snapshot.health.sidecarVersion, {
                     onNone: () => "Unavailable",
                     onSome: (version) =>
@@ -1234,11 +1298,14 @@ export function ResourceTelemetryDiagnostics({
                       })}`,
                   })}
                 />
-                <DetailRow label="Restarts" value={String(snapshot.health.restartCount)} />
+                <DetailRow
+                  label={translate("common:uiRestarts", "Restarts")}
+                  value={String(snapshot.health.restartCount)}
+                />
               </>
             ) : (
               <div className="py-4 text-xs text-muted-foreground">
-                Waiting for collector health.
+                {translate("settings:waitingForCollectorHealth", "Waiting for collector health.")}
               </div>
             )}
           </div>
@@ -1246,7 +1313,7 @@ export function ResourceTelemetryDiagnostics({
       </SettingsSection>
 
       <SettingsSection
-        title="Resource timeline"
+        title={translate("common:uiResourceTimeline", "Resource timeline")}
         icon={<HardDriveIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <div className="flex items-center gap-2">
@@ -1256,7 +1323,7 @@ export function ResourceTelemetryDiagnostics({
               variant="ghost"
               disabled={history.isPending}
               onClick={history.refresh}
-              aria-label="Refresh resource history"
+              aria-label={translate("common:uiRefreshResourceHistory", "Refresh resource history")}
             >
               <RefreshIcon size="xs" refreshing={history.isPending} />
             </Button>
@@ -1297,7 +1364,7 @@ export function ResourceTelemetryDiagnostics({
       </SettingsSection>
 
       <SettingsSection
-        title="Instrumented application I/O"
+        title={translate("common:uiInstrumentedAppIo", "Instrumented application I/O")}
         icon={<DatabaseIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <span className="text-3xs text-muted-foreground/55">
@@ -1307,9 +1374,10 @@ export function ResourceTelemetryDiagnostics({
       >
         <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs/5">
           <div className="bg-muted/15 px-4 py-3 text-2xs leading-relaxed text-muted-foreground sm:px-5">
-            Native counters identify which process is reading or writing. These application-level
-            counters identify known T3 operations so process spikes can be correlated with specific
-            persistence and logging paths.
+            {translate(
+              "settings:operationCountersNote",
+              "Native counters identify which process is reading or writing. These application-level counters identify known T3 operations so process spikes can be correlated with specific persistence and logging paths.",
+            )}
           </div>
           <AttributionTable entries={snapshot?.attribution.entries ?? []} />
         </div>

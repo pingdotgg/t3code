@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useEffect, useId, useRef, useState, type ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -53,7 +54,9 @@ export function PullRequestCommentBody({
             setExpanded(!expanded);
           }}
         >
-          {expanded ? "Show less" : "Show full comment"}
+          {expanded
+            ? translate("common:uiShowLess", "Show less")
+            : translate("common:uiShowFullComment", "Show full comment")}
         </Button>
       ) : null}
     </div>

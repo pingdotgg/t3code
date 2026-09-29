@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -104,7 +105,7 @@ function StatBlock({
                 <button
                   type="button"
                   className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
-                  aria-label={`${label} details`}
+                  aria-label={translate("common:uiDetailsForLabel", "{{label}} details", { label })}
                 >
                   <InfoIcon className="size-3" />
                 </button>
@@ -231,14 +232,22 @@ function TraceIdCell({ traceId }: { traceId: string }) {
             <Button
               size="icon-micro"
               variant="ghost-muted"
-              aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
+              aria-label={
+                copied
+                  ? translate("common:uiCopiedTraceId", "Copied trace ID")
+                  : translate("common:uiCopyTraceId", "Copy trace ID")
+              }
               onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
             </Button>
           }
         />
-        <TooltipPopup side="top">{copied ? "Copied" : "Copy full trace ID"}</TooltipPopup>
+        <TooltipPopup side="top">
+          {copied
+            ? translate("common:uiCopied", "Copied")
+            : translate("common:uiCopyFullTraceId", "Copy full trace ID")}
+        </TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -280,7 +289,11 @@ function ProcessNameCell({
         <Button
           size="icon-micro"
           variant="ghost-muted"
-          aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
+          aria-label={translate(
+            isExpanded ? "common:uiCollapseNamedFile" : "common:uiExpandNamedFile",
+            isExpanded ? "Collapse {{name}}" : "Expand {{name}}",
+            { name },
+          )}
           onClick={() => onToggle(process.pid)}
         >
           <ChevronIcon className="size-3.5" />
@@ -461,7 +474,13 @@ function ResourceHistoryProcessNameCell({
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
       style={{ paddingLeft: `${Math.min(visualDepth, 6) * 10}px` }}
-      aria-label={`${process.isServerRoot ? "Root" : "Child"} process ${name}`}
+      aria-label={translate("common:uiNamedProcess", "{{kind}} process {{name}}", {
+        kind: translate(
+          process.isServerRoot ? "common:uiRootProcess" : "common:uiChildProcess",
+          process.isServerRoot ? "Root" : "Child",
+        ),
+        name,
+      })}
     >
       <span className="size-5 shrink-0" aria-hidden="true" />
       <span
@@ -506,7 +525,14 @@ function ProcessResourceHistoryChart({
                   <div className="flex h-full min-w-1 flex-1 items-end">
                     <div
                       className="relative h-full w-full"
-                      aria-label={`Average CPU ${bucket.avgCpuPercent.toFixed(1)}%, peak CPU ${bucket.maxCpuPercent.toFixed(1)}%`}
+                      aria-label={translate(
+                        "common:uiAveragePeakCpuLabel",
+                        "Average CPU {{average}}%, peak CPU {{peak}}%",
+                        {
+                          average: bucket.avgCpuPercent.toFixed(1),
+                          peak: bucket.maxCpuPercent.toFixed(1),
+                        },
+                      )}
                     >
                       <div
                         className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
@@ -521,7 +547,10 @@ function ProcessResourceHistoryChart({
                 }
               />
               <TooltipPopup side="top">
-                Avg {bucket.avgCpuPercent.toFixed(1)}%, peak {bucket.maxCpuPercent.toFixed(1)}%
+                {translate("common:uiAverageAndPeakCpu", "Average {{average}}%, peak {{peak}}%", {
+                  average: bucket.avgCpuPercent.toFixed(1),
+                  peak: bucket.maxCpuPercent.toFixed(1),
+                })}
               </TooltipPopup>
             </Tooltip>
           );
@@ -540,7 +569,7 @@ function ResourceHistoryWindowSelector({
 }) {
   return (
     <ToggleGroup
-      aria-label="Process history period"
+      aria-label={translate("common:uiProcessHistoryPeriod", "Process history period")}
       variant="segmented"
       value={[String(selectedWindowMs)]}
       onValueChange={(next) => {
@@ -924,13 +953,13 @@ export function DiagnosticsSettingsPanel() {
       <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
-        title="Live Processes"
+        title={translate("common:uiLiveProcesses", "Live Processes")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={processData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isProcessPending}
-              label="Refresh process diagnostics"
+              label={translate("common:uiRefreshProcessDiagnostics", "Refresh process diagnostics")}
               onClick={refreshProcesses}
             />
           </div>
@@ -938,21 +967,27 @@ export function DiagnosticsSettingsPanel() {
       >
         <StatsGrid>
           <StatBlock
-            label="Child Processes"
+            label={translate("common:uiChildProcesses", "Child Processes")}
             value={processData ? formatCount(processData.processCount) : "..."}
           />
           <StatBlock
-            label="CPU"
+            label={translate("common:telemetryCpu", "CPU")}
             value={processData ? `${processData.totalCpuPercent.toFixed(1)}%` : "..."}
-            tooltip="Total CPU across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            tooltip={translate(
+              "common:uiDiagnosticsLiveChildrenCpu",
+              "Total CPU across live child processes of the current server process. The desktop shell and other parent processes are not included.",
+            )}
           />
           <StatBlock
-            label="Memory"
+            label={translate("common:telemetryMemory", "Memory")}
             value={processData ? formatBytes(processData.totalRssBytes) : "..."}
-            tooltip="Total resident memory across live child processes of the current server process. The desktop shell and other parent processes are not included."
+            tooltip={translate(
+              "common:uiDiagnosticsLiveChildrenMemory",
+              "Total resident memory across live child processes of the current server process. The desktop shell and other parent processes are not included.",
+            )}
           />
           <StatBlock
-            label="Server PID"
+            label={translate("common:uiServerPID", "Server PID")}
             value={processData ? String(processData.serverPid) : "..."}
           />
         </StatsGrid>
@@ -978,14 +1013,14 @@ export function DiagnosticsSettingsPanel() {
           onSignal={signalProcess}
           emptyLabel={
             isProcessInitialLoading
-              ? "Loading live processes..."
-              : "No live descendant processes found."
+              ? translate("common:uiLoadingLiveProcesses", "Loading live processes...")
+              : translate("common:uiNoLiveDescendants", "No live descendant processes found.")
           }
         />
       </SettingsSection>
 
       <SettingsSection
-        title="Resource History"
+        title={translate("common:uiResourceHistory", "Resource History")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <ResourceHistoryWindowSelector
@@ -995,7 +1030,7 @@ export function DiagnosticsSettingsPanel() {
             <DiagnosticsLastChecked checkedAt={resourceData?.readAt ?? null} />
             <DiagnosticsRefreshButton
               isPending={isResourcePending}
-              label="Refresh resource history"
+              label={translate("common:uiRefreshResourceHistory", "Refresh resource history")}
               onClick={refreshResources}
             />
           </div>
@@ -1003,21 +1038,27 @@ export function DiagnosticsSettingsPanel() {
       >
         <StatsGrid>
           <StatBlock
-            label="CPU Time"
+            label={translate("common:telemetryCpuTime", "CPU Time")}
             value={resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox) : "..."}
-            tooltip="Approximate active CPU time for the T3 server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves."
+            tooltip={translate(
+              "common:uiDiagnosticsActiveCpuTime",
+              "Approximate active CPU time for the T3 server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves.",
+            )}
           />
           <StatBlock
-            label="Samples"
+            label={translate("common:telemetrySamples", "Samples")}
             value={resourceData ? formatCount(resourceData.retainedSampleCount) : "..."}
-            tooltip="In-memory process samples retained by the server. This resets when the server restarts."
+            tooltip={translate(
+              "common:uiDiagnosticsInMemorySamples",
+              "In-memory process samples retained by the server. This resets when the server restarts.",
+            )}
           />
           <StatBlock
-            label="Interval"
+            label={translate("common:uiInterval", "Interval")}
             value={resourceData ? formatDuration(resourceData.sampleIntervalMs) : "..."}
           />
           <StatBlock
-            label="Processes"
+            label={translate("common:uiProcesses", "Processes")}
             value={resourceData ? formatCount(resourceData.topProcesses.length) : "..."}
           />
         </StatsGrid>
@@ -1042,14 +1083,20 @@ export function DiagnosticsSettingsPanel() {
           processes={resourceData?.topProcesses ?? []}
           emptyLabel={
             isResourcePending && resourceData === null
-              ? "Collecting process resource samples..."
-              : "No process resource samples found for this window."
+              ? translate(
+                  "common:uiCollectingProcessResourceSamples",
+                  "Collecting process resource samples...",
+                )
+              : translate(
+                  "common:uiNoProcessResourceSamplesForWindow",
+                  "No process resource samples found for this window.",
+                )
           }
         />
       </SettingsSection>
 
       <SettingsSection
-        title="Trace Diagnostics"
+        title={translate("common:uiTraceDiagnostics", "Trace Diagnostics")}
         headerAction={
           <div className="flex items-center gap-1.5">
             <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
@@ -1078,24 +1125,34 @@ export function DiagnosticsSettingsPanel() {
         }
       >
         <StatsGrid>
-          <StatBlock label="Spans" value={data ? formatCount(data.recordCount) : "..."} />
           <StatBlock
-            label="Failures"
+            label={translate("common:uiSpans", "Spans")}
+            value={data ? formatCount(data.recordCount) : "..."}
+          />
+          <StatBlock
+            label={translate("common:uiFailures", "Failures")}
             value={data ? formatCount(data.failureCount) : "..."}
             tone={data && data.failureCount > 0 ? "danger" : "default"}
           />
           <StatBlock
-            label="Slow Spans"
+            label={translate("common:uiSlowSpans", "Slow Spans")}
             value={data ? formatCount(data.slowSpanCount) : "..."}
             tooltip={
               data
-                ? `Spans with a duration of ${formatDuration(data.slowSpanThresholdMs)} or longer.`
-                : "Spans at or above the configured slow-span threshold."
+                ? translate(
+                    "common:uiSpansAtOrAboveDuration",
+                    "Spans with a duration of {{duration}} or longer.",
+                    { duration: formatDuration(data.slowSpanThresholdMs) },
+                  )
+                : translate(
+                    "common:uiSlowSpanThresholdTooltip",
+                    "Spans at or above the configured slow-span threshold.",
+                  )
             }
             tone={data && data.slowSpanCount > 0 ? "warning" : "default"}
           />
           <StatBlock
-            label="Parse Errors"
+            label={translate("common:uiParseErrors", "Parse Errors")}
             value={data ? formatCount(data.parseErrorCount) : "..."}
             tone={data && data.parseErrorCount > 0 ? "warning" : "default"}
           />
@@ -1133,9 +1190,16 @@ export function DiagnosticsSettingsPanel() {
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Latest Failures">
+      <SettingsSection title={translate("common:uiLatestFailures", "Latest Failures")}>
         {data && data.latestFailures.length > 0 ? (
-          <DiagnosticsTable headers={["Span", "Cause", "Duration", "Ended"]}>
+          <DiagnosticsTable
+            headers={[
+              translate("common:uiHeaderSpan", "Span"),
+              translate("common:uiHeaderCause", "Cause"),
+              translate("common:uiHeaderDuration", "Duration"),
+              translate("common:uiHeaderEnded", "Ended"),
+            ]}
+          >
             {data.latestFailures.map((failure) => (
               <tr key={`${failure.traceId}:${failure.spanId}`}>
                 <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
@@ -1154,14 +1218,25 @@ export function DiagnosticsSettingsPanel() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading failures..." : "No failed spans found."} />
+          <EmptyRows
+            label={
+              isInitialLoading
+                ? translate("common:uiLoadingFailures", "Loading failures...")
+                : translate("common:uiNoFailedSpans", "No failed spans found.")
+            }
+          />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Most Common Failures">
+      <SettingsSection title={translate("common:uiMostCommonFailures", "Most Common Failures")}>
         {data && data.commonFailures.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Count", "Cause", "Last Seen"]}
+            headers={[
+              translate("common:uiHeaderSpan", "Span"),
+              translate("common:uiHeaderCount", "Count"),
+              translate("common:uiHeaderCause", "Cause"),
+              translate("common:uiHeaderLastSeen", "Last Seen"),
+            ]}
             minTableWidth="min-w-[760px]"
           >
             {data.commonFailures.map((failure) => (
@@ -1183,15 +1258,24 @@ export function DiagnosticsSettingsPanel() {
           </DiagnosticsTable>
         ) : (
           <EmptyRows
-            label={isInitialLoading ? "Loading failure groups..." : "No repeated failures found."}
+            label={
+              isInitialLoading
+                ? translate("common:uiLoadingFailureGroups", "Loading failure groups...")
+                : translate("common:uiNoRepeatedFailures", "No repeated failures found.")
+            }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Slowest Spans">
+      <SettingsSection title={translate("common:uiSlowestSpans", "Slowest Spans")}>
         {data && data.slowestSpans.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Duration", "Ended", "Trace"]}
+            headers={[
+              translate("common:uiHeaderSpan", "Span"),
+              translate("common:uiHeaderDuration", "Duration"),
+              translate("common:uiHeaderEnded", "Ended"),
+              translate("common:uiHeaderTrace", "Trace"),
+            ]}
             minTableWidth="min-w-[900px]"
             columnWidths={["w-[44%]", "w-[14%]", "w-[12%]", "w-[30%]"]}
           >
@@ -1213,11 +1297,17 @@ export function DiagnosticsSettingsPanel() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading slow spans..." : "No spans found."} />
+          <EmptyRows
+            label={
+              isInitialLoading
+                ? translate("common:uiLoadingSlowSpans", "Loading slow spans...")
+                : translate("common:uiNoSpansFound", "No spans found.")
+            }
+          />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Span Logs">
+      <SettingsSection title={translate("common:uiSpanLogs", "Span Logs")}>
         {data && data.latestWarningAndErrorLogs.length > 0 ? (
           <ScrollArea
             radius="none"
@@ -1273,7 +1363,7 @@ export function DiagnosticsSettingsPanel() {
                     <td className="px-4 py-3 align-top text-muted-foreground">
                       <ExpandableText
                         collapsedClassName="line-clamp-2"
-                        expandLabel="Show full message"
+                        expandLabel={translate("common:uiShowFullMessage", "Show full message")}
                         text={event.message}
                       />
                     </td>
@@ -1287,15 +1377,25 @@ export function DiagnosticsSettingsPanel() {
           </ScrollArea>
         ) : (
           <EmptyRows
-            label={isInitialLoading ? "Loading recent logs..." : "No warnings or errors found."}
+            label={
+              isInitialLoading
+                ? translate("common:uiLoadingRecentLogs", "Loading recent logs...")
+                : translate("common:uiNoWarningsOrErrors", "No warnings or errors found.")
+            }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection title="Top Span Names">
+      <SettingsSection title={translate("common:uiTopSpanNames", "Top Span Names")}>
         {data && data.topSpansByCount.length > 0 ? (
           <DiagnosticsTable
-            headers={["Span", "Count", "Failures", "Average", "Max"]}
+            headers={[
+              translate("common:uiHeaderSpan", "Span"),
+              translate("common:uiHeaderCount", "Count"),
+              translate("common:uiHeaderFailures", "Failures"),
+              translate("common:uiHeaderAverage", "Average"),
+              translate("common:uiHeaderMax", "Max"),
+            ]}
             minTableWidth="min-w-[760px]"
             columnWidths={["w-[48%]", "w-[13%]", "w-[13%]", "w-[13%]", "w-[13%]"]}
           >
@@ -1320,7 +1420,13 @@ export function DiagnosticsSettingsPanel() {
             ))}
           </DiagnosticsTable>
         ) : (
-          <EmptyRows label={isInitialLoading ? "Loading span names..." : "No spans found."} />
+          <EmptyRows
+            label={
+              isInitialLoading
+                ? translate("common:uiLoadingSpanNames", "Loading span names...")
+                : translate("common:uiNoSpansFound", "No spans found.")
+            }
+          />
         )}
       </SettingsSection>
     </SettingsPageContainer>

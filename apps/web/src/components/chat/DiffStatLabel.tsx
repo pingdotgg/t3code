@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { memo } from "react";
 import { cn } from "~/lib/utils";
 
@@ -32,7 +33,11 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
       {showParentheses && <span className="text-muted-foreground/70">(</span>}
       <span
         role="group"
-        aria-label={`${additions} additions, ${deletions} deletions`}
+        aria-label={translate(
+          "common:uiDiffStatsLabel",
+          "{{additions}} additions, {{deletions}} deletions",
+          { additions, deletions },
+        )}
         className={cn(
           layout === "inline"
             ? "inline-flex items-center gap-1 tabular-nums align-middle"

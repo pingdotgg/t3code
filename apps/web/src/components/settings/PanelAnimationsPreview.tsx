@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { type CSSProperties, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -10,7 +11,10 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
   return (
     <button
       type="button"
-      aria-label="Replay panel animation preview"
+      aria-label={translate(
+        "common:uiReplayPanelAnimationPreview",
+        "Replay panel animation preview",
+      )}
       className="flex h-10 w-full cursor-pointer overflow-hidden rounded-lg border border-border bg-background p-1 shadow-xs/5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
       onClick={() => setPanelsOpen((open) => !open)}
       style={{ "--preview-duration": `${durationMs}ms` } as CSSProperties}

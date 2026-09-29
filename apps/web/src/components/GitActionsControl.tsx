@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import {
@@ -928,7 +929,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       id="publish-remote-name"
                       value={publishRemoteName}
                       onChange={(event) => setPublishRemoteName(event.target.value)}
-                      placeholder="origin"
+                      placeholder={translate("gitActions:defaultPublishRemoteName", "origin")}
                       disabled={publishRepositoryAction.isPending}
                     />
                   </label>

@@ -1,4 +1,5 @@
-"use client";
+import { translate } from "@t3tools/i18n";
+("use client");
 
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
@@ -182,8 +183,14 @@ function BrowserMiniPlayer({
     void operation(runtimeTabId).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: translate(
+          "common:uiUnableUpdatePoppedOutPreview",
+          "Unable to update popped-out preview",
+        ),
+        description:
+          error instanceof Error
+            ? error.message
+            : translate("common:uiAnErrorOccurred", "An error occurred."),
       });
     });
   };
@@ -196,7 +203,7 @@ function BrowserMiniPlayer({
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
-      label="Floating browser preview"
+      label={translate("chatView:floatingBrowserPreview", "Floating browser preview")}
       recording={recording}
       onOpenInPanel={openInPanel}
       pillActions={
@@ -208,8 +215,11 @@ function BrowserMiniPlayer({
                 size="icon-xs"
                 aria-label={
                   desktopOverlay?.pictureInPicture
-                    ? "Close popped-out preview"
-                    : "Pop preview into separate window"
+                    ? translate("common:uiClosePoppedOutPreview", "Close popped-out preview")
+                    : translate(
+                        "common:uiPopPreviewIntoSeparateWindow",
+                        "Pop preview into separate window",
+                      )
                 }
                 disabled={!desktopOverlay?.hasWebContents}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -221,8 +231,8 @@ function BrowserMiniPlayer({
           </TooltipTrigger>
           <TooltipPopup side="top">
             {desktopOverlay?.pictureInPicture
-              ? "Close separate window"
-              : "Pop into separate window"}
+              ? translate("common:uiCloseSeparatePreviewWindow", "Close separate preview window")
+              : translate("common:uiPopIntoSeparateWindow", "Pop into separate window")}
           </TooltipPopup>
         </Tooltip>
       }
@@ -240,7 +250,7 @@ function BrowserMiniPlayer({
           />
           {!desktopOverlay?.hasWebContents ? (
             <div className="pointer-events-none absolute inset-0 z-[49] flex items-center justify-center rounded-[inherit] bg-muted text-xs text-muted-foreground">
-              Reconnecting preview…
+              {translate("common:uiReconnectingPreview", "Reconnecting preview…")}
             </div>
           ) : null}
         </>
@@ -284,7 +294,7 @@ function DeviceMiniPlayer({
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
-      label="Floating device preview"
+      label={translate("chatView:floatingDevicePreview", "Floating device preview")}
       onOpenInPanel={openInPanel}
       cornerRadius={cornerRadius}
     >
@@ -455,7 +465,9 @@ function MiniPlayerShell({
           >
             <div
               role={recording ? "status" : undefined}
-              aria-label={recording ? "Recording preview" : undefined}
+              aria-label={
+                recording ? translate("common:uiRecordingPreview", "Recording preview") : undefined
+              }
               aria-hidden={!recording}
               className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
             >
@@ -486,7 +498,10 @@ function MiniPlayerShell({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label="Open preview in right panel"
+                      aria-label={translate(
+                        "common:uiOpenPreviewInRightPanel",
+                        "Open preview in right panel",
+                      )}
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={onOpenInPanel}
                     />
@@ -494,7 +509,9 @@ function MiniPlayerShell({
                 >
                   <PanelRightIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="top">Open in right panel</TooltipPopup>
+                <TooltipPopup side="top">
+                  {translate("chatView:openInRightPanel", "Open in right panel")}
+                </TooltipPopup>
               </Tooltip>
               {pillActions}
               <Tooltip>
@@ -503,7 +520,10 @@ function MiniPlayerShell({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label="Close floating preview"
+                      aria-label={translate(
+                        "chatView:closeFloatingPreview",
+                        "Close floating preview",
+                      )}
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={close}
                     />
@@ -511,7 +531,9 @@ function MiniPlayerShell({
                 >
                   <XIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="top">Close floating preview</TooltipPopup>
+                <TooltipPopup side="top">
+                  {translate("chatView:closeFloatingPreview", "Close floating preview")}
+                </TooltipPopup>
               </Tooltip>
             </div>
           </div>

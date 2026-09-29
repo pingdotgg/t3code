@@ -1,5 +1,6 @@
 import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -27,11 +28,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
-  rightPanelUnavailableLabel = "Right panel is unavailable",
+  rightPanelUnavailableLabel,
   liveAgentCount,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
+  const { t } = useTranslation("chatView");
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -44,7 +46,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label={t("toggleTerminalDrawer")}
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -54,8 +56,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
+              ? `${t("toggleTerminalDrawer")}${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+              : t("terminalDrawerUnavailable")}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -67,8 +69,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             onPressedChange={onToggleRightPanel}
             aria-label={
               liveAgentCount > 0
-                ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                : "Toggle right panel"
+                ? `${t("toggleRightPanel")}, ${liveAgentCount === 1 ? t("oneAgentWorking") : t("agentsWorking", { count: liveAgentCount })}`
+                : t("toggleRightPanel")
             }
             variant="ghost"
             size="sm"
@@ -87,12 +89,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {rightPanelAvailable
-            ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
+            ? `${t("toggleRightPanel")}${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
                 liveAgentCount > 0
-                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                  ? ` · ${liveAgentCount === 1 ? t("oneAgentWorking") : t("agentsWorking", { count: liveAgentCount })}`
                   : ""
               }`
-            : rightPanelUnavailableLabel}
+            : (rightPanelUnavailableLabel ?? t("rightPanelUnavailable"))}
         </TooltipPopup>
       </Tooltip>
     </div>

@@ -1,4 +1,5 @@
 import { isElectron } from "~/env";
+import { resources, translate } from "@t3tools/i18n";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -947,7 +948,23 @@ export function searchableSetting(id: SettingsSearchItemId): {
   readonly title: string;
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title };
+  return { id: anchorId, title: translate(`settings:searchTitles.${id}`, title) };
+}
+
+const SEARCH_DESCRIPTION_FALLBACKS = resources.en.settings.searchDescriptions as Readonly<
+  Record<string, string | undefined>
+>;
+
+/**
+ * The description that pairs with a searchable setting id, so a row's copy
+ * lives beside its title instead of as a literal prop. Returns undefined for
+ * rows without one, which keeps the caller's prop optional.
+ */
+export function searchableSettingDescription(id: SettingsSearchItemId): string | undefined {
+  const english = SEARCH_DESCRIPTION_FALLBACKS[id];
+  return english === undefined
+    ? undefined
+    : translate(`settings:searchDescriptions.${id}`, english);
 }
 
 export function filterAvailableSettingsSearchItems(

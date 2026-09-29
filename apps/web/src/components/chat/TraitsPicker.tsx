@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -94,7 +95,7 @@ const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 function DefaultBadge() {
   return (
     <Badge variant="outline" size="sm" className="min-w-0">
-      Default
+      {translate("common:systemDefault", "Default")}
     </Badge>
   );
 }
@@ -396,8 +397,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               </div>
               {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
                 <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                  Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
-                  option.
+                  {translate(
+                    "common:uiPromptContainsUltrathink",
+                    'Your prompt contains "ultrathink". Remove it to change this option.',
+                  )}
                 </div>
               ) : null}
               <MenuRadioGroup
@@ -460,7 +463,12 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 {(["on", "off"] as const).map((value) => (
                   <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
                     <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                      <span>{value === "on" ? "On" : "Off"}</span>
+                      <span>
+                        {translate(
+                          value === "on" ? "common:on" : "common:off",
+                          value === "on" ? "On" : "Off",
+                        )}
+                      </span>
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -583,7 +591,9 @@ export const TraitsPicker = memo(function TraitsPicker({
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
   });
-  const accessibleLabel = showFastModeIcon ? `${triggerLabel}, Fast mode on` : triggerLabel;
+  const accessibleLabel = showFastModeIcon
+    ? `${triggerLabel}${translate("chatView:fastModeOnSuffix", ", Fast mode on")}`
+    : triggerLabel;
   const fastModeIcon = showFastModeIcon ? (
     <>
       <ComposerControlIcon
@@ -598,7 +608,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               : "text-foreground",
         )}
       />
-      <span className="sr-only">Fast mode on</span>
+      <span className="sr-only">{translate("chatView:fastModeOn", "Fast mode on")}</span>
     </>
   ) : null;
 

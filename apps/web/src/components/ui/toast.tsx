@@ -1,4 +1,5 @@
-"use client";
+import { translate } from "@t3tools/i18n";
+("use client");
 
 import { Spinner } from "~/components/ui/spinner";
 
@@ -663,7 +664,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               />
               <div className={toastCornerDismissClass}>
                 <button
-                  aria-label="Dismiss notification"
+                  aria-label={translate("common:uiDismissNotification", "Dismiss notification")}
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
                   onClick={() =>
@@ -754,7 +755,10 @@ function AnchoredToasts() {
                     <>
                       <div className={toastCornerDismissClass}>
                         <button
-                          aria-label="Dismiss notification"
+                          aria-label={translate(
+                            "common:uiDismissNotification",
+                            "Dismiss notification",
+                          )}
                           className={toastCornerOrbClass}
                           data-slot="toast-close"
                           onClick={() =>

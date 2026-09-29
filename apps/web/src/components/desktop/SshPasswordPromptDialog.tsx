@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -158,10 +159,15 @@ function ActiveSshPasswordPrompt({
     >
       <DialogPopup className="max-w-md" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>SSH Password Required</DialogTitle>
+          <DialogTitle>
+            {translate("chatView:sshPasswordRequired", "SSH Password Required")}
+          </DialogTitle>
           <DialogDescription>
-            T3 needs your SSH password to connect to <code>{target}</code>. The password is passed
-            to the local SSH process for this connection attempt and is not saved by T3 Code.
+            {translate(
+              "common:uiSshPasswordDescription",
+              "T3 needs your SSH password to connect to {{target}}. The password is passed to the local SSH process for this connection attempt and is not saved by T3 Code.",
+              { target },
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -184,7 +190,7 @@ function ActiveSshPasswordPrompt({
                         : "shrink-0 text-xs text-muted-foreground"
                     }
                   >
-                    {isExpired ? "Expired" : remainingLabel}
+                    {isExpired ? translate("common:uiExpired", "Expired") : remainingLabel}
                   </span>
                 ) : null}
               </div>
@@ -202,17 +208,22 @@ function ActiveSshPasswordPrompt({
               <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Use SSH keys to avoid repeated password prompts on new SSH sessions.
+                {translate(
+                  "chatView:sshKeysHint",
+                  "Use SSH keys to avoid repeated password prompts on new SSH sessions.",
+                )}
               </p>
             )}
           </form>
         </DialogPanel>
         <DialogFooter>
           <Button disabled={isResponding} type="button" variant="outline" onClick={cancelPrompt}>
-            {isExpired ? "Dismiss" : "Cancel"}
+            {isExpired
+              ? translate("common:uiDismissPrompt", "Dismiss")
+              : translate("common:cancel", "Cancel")}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">
-            Continue
+            {translate("settings:continueButton", "Continue")}
           </Button>
         </DialogFooter>
       </DialogPopup>

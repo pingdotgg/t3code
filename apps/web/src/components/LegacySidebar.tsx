@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -781,7 +782,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onPointerDown={(event) => event.stopPropagation()}
               onClick={handlePrClick}
               className="text-muted-foreground"
-              aria-label={`PR #${currentLinkedPr.number}, status pending`}
+              aria-label={translate(
+                "common:uiPullRequestStatusPending",
+                "PR #{{number}}, status pending",
+                { number: currentLinkedPr.number },
+              )}
             >
               <PullRequestGlyph.pullRequest className="size-3" />
             </a>
@@ -821,7 +826,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 render={
                   <button
                     type="button"
-                    aria-label={`Open localhost:${discoveredPorts[0]?.port ?? ""}`}
+                    aria-label={translate("common:uiOpenLocalhostPort", "Open localhost:{{port}}", {
+                      port: discoveredPorts[0]?.port ?? "",
+                    })}
                     className="inline-flex cursor-pointer items-center justify-center text-success-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                     onClick={handleOpenDiscoveredPort}
                   />
@@ -830,8 +837,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <Globe2Icon className="size-3" />
               </TooltipTrigger>
               <TooltipPopup side="top">
-                Open localhost:{discoveredPorts[0]?.port}
-                {discoveredPorts.length > 1 ? ` (+${discoveredPorts.length - 1})` : ""}
+                {translate(
+                  "common:uiOpenLocalhostPorts",
+                  "Open localhost:{{port}}{{additionalPorts}}",
+                  {
+                    port: discoveredPorts[0]?.port ?? "",
+                    additionalPorts:
+                      discoveredPorts.length > 1 ? ` (+${discoveredPorts.length - 1})` : "",
+                  },
+                )}
               </TooltipPopup>
             </Tooltip>
           )}

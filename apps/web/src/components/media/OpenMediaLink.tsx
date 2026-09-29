@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { DownloadIcon, ExternalLinkIcon } from "lucide-react";
 
 import { resolveExternalWebLinkHost } from "../chat/externalLinkContextMenu";
@@ -39,7 +40,14 @@ export function OpenMediaLink(props: {
       }
     >
       {isBlob ? <DownloadIcon /> : <ExternalLinkIcon />}
-      {originalUrl ? "Open original" : isBlob ? "Download video" : "Open in browser"}
+      {translate(
+        originalUrl
+          ? "common:uiOpenOriginal"
+          : isBlob
+            ? "common:uiDownloadVideo"
+            : "common:uiOpenInBrowser",
+        originalUrl ? "Open original" : isBlob ? "Download video" : "Open in browser",
+      )}
     </Button>
   );
 }

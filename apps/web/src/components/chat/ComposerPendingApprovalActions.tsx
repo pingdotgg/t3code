@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   type ApprovalRequestId,
   type ProviderApprovalDecision,
@@ -69,7 +70,13 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         <Menu>
           <MenuTrigger
             disabled={isResponding}
-            render={<Button size="icon-xs" variant="outline" aria-label="More approval options" />}
+            render={
+              <Button
+                size="icon-xs"
+                variant="outline"
+                aria-label={translate("common:uiMoreApprovalOptions", "More approval options")}
+              />
+            }
           >
             <EllipsisIcon />
           </MenuTrigger>

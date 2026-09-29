@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { PlusIcon } from "lucide-react";
@@ -71,7 +72,7 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              Add hub
+              {translate("settings:addHub", "Add hub")}
             </Button>
           ) : null
         }
@@ -79,11 +80,14 @@ export function UsageProviderSettings({
         {platform?.os === "darwin" ? (
           <SettingsRow
             id="cursor-keychain-usage"
-            title="Cursor account usage"
-            description="Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access."
+            title={translate("common:uiCursorAccountUsage", "Cursor account usage")}
+            description={translate(
+              "common:uiReadYourExistingCursorCLILoginFrom",
+              "Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access.",
+            )}
             control={
               <Switch
-                aria-label="Cursor account usage"
+                aria-label={translate("common:uiCursorAccountUsage", "Cursor account usage")}
                 checked={cursorKeychainUsageEnabled}
                 disabled={readOnly || updatingCursor}
                 onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
@@ -92,7 +96,7 @@ export function UsageProviderSettings({
           />
         ) : null}
         {entries.length === 0 ? (
-          <SettingsRow title="No hubs configured." />
+          <SettingsRow title={translate("settings:noHubsConfigured", "No hubs configured.")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -102,7 +106,8 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
+                    {translate("common:uiCliProxyName", "CLI Proxy")}
+                    {source.enabled ? "" : translate("common:uiDisabledSuffix", " · Disabled")}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>
                 }
@@ -143,20 +148,25 @@ function RemoveUsageProviderButton({
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        {translate("sidebar:remove", "Remove")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {translate("common:uiRemoveLimitSource", "Remove {{source}}?", { source: label })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              {translate(
+                "common:uiRemoveLimitSourceDescription",
+                "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {translate("chatView:cancel", "Cancel")}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -164,7 +174,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {translate("settings:removeHub", "Remove hub")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

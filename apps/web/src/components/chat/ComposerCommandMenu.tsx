@@ -10,6 +10,7 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
+import { translate } from "@t3tools/i18n";
 import { useTranslation } from "@t3tools/i18n/react";
 import {
   BlocksIcon,
@@ -125,16 +126,22 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill"
-                  ? "Searching workspace skills..."
+                  ? translate("common:uiSearchingWorkspaceSkills", "Searching workspace skills…")
                   : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
-                    : "Searching workspace files..."
+                    ? translate("common:uiFindingPullRequest", "Finding pull request…")
+                    : translate("common:uiSearchingWorkspaceFiles", "Searching workspace files…")
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
+                    ? translate(
+                        "common:noSkillsFoundTryCommands",
+                        "No skills found. Try / to browse provider commands.",
+                      )
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? translate(
+                          "common:noMatchingFilesOrFolders",
+                          "No matching files or folders.",
+                        )
+                      : translate("common:noMatchingCommand", "No matching command.")))}
             </p>
           </div>
         )}
@@ -237,7 +244,7 @@ function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffi
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
       {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
-      {props.showSkillSuffix ? " Skill" : null}
+      {props.showSkillSuffix ? ` ${translate("common:uiSkillSuffix", "Skill")}` : null}
     </Badge>
   );
 }

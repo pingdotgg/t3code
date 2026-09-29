@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import {
   memo,
   useCallback,
@@ -187,14 +188,18 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           if (event.target === event.currentTarget) onClose();
         }}
       >
-        <DialogTitle className="sr-only">Expanded {mediaLabel} preview</DialogTitle>
+        <DialogTitle className="sr-only">
+          {translate("common:uiExpandedMediaPreview", "Expanded {{media}} preview", {
+            media: mediaLabel,
+          })}
+        </DialogTitle>
         {preview.images.length > 1 && (
           <Button
             type="button"
             size="icon"
             variant="media-navigation"
             className="left-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
+            aria-label={translate("common:uiPreviousMedia", "Previous media")}
             onClick={() => navigateImage(-1)}
           >
             <ChevronLeftIcon className="size-5" />
@@ -209,7 +214,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               variant="media-close"
               className="absolute right-0 -top-10 z-20"
               onClick={onClose}
-              aria-label={`Close ${mediaLabel} preview`}
+              aria-label={translate("common:uiCloseMediaPreview", "Close {{name}} preview", {
+                name: mediaLabel,
+              })}
             >
               <XIcon />
             </Button>
@@ -226,8 +233,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               <ExpandedMediaFailure>
                 <p>
                   {openOriginalLink
-                    ? "This image could not be loaded."
-                    : "Image unavailable. The file may have been moved or deleted."}
+                    ? translate("common:uiImageCouldNotLoad", "This image could not be loaded.")
+                    : translate(
+                        "common:uiImageMayHaveMoved",
+                        "Image unavailable. The file may have been moved or deleted.",
+                      )}
                 </p>
                 {openOriginalLink}
               </ExpandedMediaFailure>
@@ -276,7 +286,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="right-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
+            aria-label={translate("common:uiNextMedia", "Next media")}
             onClick={() => navigateImage(1)}
           >
             <ChevronRightIcon className="size-5" />

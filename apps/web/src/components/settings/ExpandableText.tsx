@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { InlineButton } from "../ui/button";
 import { useId, useState } from "react";
 
@@ -11,7 +12,7 @@ export function ExpandableText({
   text,
   className,
   collapsedClassName = "line-clamp-3",
-  expandLabel = "Show full error",
+  expandLabel = translate("common:uiShowFullError", "Show full error"),
 }: {
   text: string;
   className?: string;
@@ -41,7 +42,7 @@ export function ExpandableText({
           className="mt-1"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "Show less" : expandLabel}
+          {expanded ? translate("common:uiShowLess", "Show less") : expandLabel}
         </InlineButton>
       ) : null}
     </div>

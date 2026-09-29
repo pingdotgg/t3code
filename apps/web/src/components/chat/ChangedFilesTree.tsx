@@ -1,4 +1,5 @@
 import { type TurnId } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { type MouseEvent, memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
@@ -44,6 +45,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onOpenTurnDiff,
     onFileContextMenu,
   } = props;
+  const { t } = useTranslation("chatView");
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
 
@@ -58,7 +60,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
           <span>
-            {files.length} changed file{files.length === 1 ? "" : "s"}
+            {files.length === 1
+              ? t("oneChangedFile")
+              : t("changedFilesCount", { count: files.length })}
           </span>
           {hasNonZeroStat(summaryStat) && (
             <DiffStatLabel
@@ -79,7 +83,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     aria-label={
-                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                      allDirectoriesExpanded ? t("collapseAllFolders") : t("expandAllFolders")
                     }
                     data-scroll-anchor-ignore
                     onClick={onToggleAllDirectories}
@@ -93,7 +97,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 )}
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+                {allDirectoriesExpanded ? t("collapseAllFolders") : t("expandAllFolders")}
               </TooltipPopup>
             </Tooltip>
           )}
@@ -104,15 +108,15 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   type="button"
                   size="xs"
                   variant="ghost-muted"
-                  aria-label="Open diff"
+                  aria-label={t("openDiff")}
                   onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
                 />
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+              <span className="hidden @[24rem]/changed-files:inline">{t("openDiff")}</span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+            <TooltipPopup side="top">{t("openFullDiff")}</TooltipPopup>
           </Tooltip>
         </div>
       </div>

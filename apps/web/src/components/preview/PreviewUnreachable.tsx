@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -25,7 +26,7 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
       <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-8 py-12 sm:py-16">
         <ErrorIcon className="mb-6 size-12 text-muted-foreground/70" />
         <h1 className="mb-3 text-2xl font-semibold leading-tight text-foreground">
-          This site can&rsquo;t be reached
+          {translate("common:uiSiteCantBeReached", "This site can’t be reached")}
         </h1>
         <p className="text-sm leading-relaxed text-muted-foreground">
           <span className="font-semibold text-foreground">{host}</span>: {friendly}.
@@ -33,11 +34,21 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
 
         {showDetails ? (
           <div className="mt-6 rounded-lg border border-border bg-muted/40 p-4 text-sm">
-            <p className="mb-2 font-medium text-foreground">Try:</p>
+            <p className="mb-2 font-medium text-foreground">{translate("common:uiTry", "Try:")}</p>
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              <li>Checking your connection</li>
-              <li>Confirming the dev server is running</li>
-              <li>Checking the proxy and the firewall</li>
+              <li>{translate("chatView:checkingYourConnection", "Checking your connection")}</li>
+              <li>
+                {translate(
+                  "chatView:confirmingDevServerRunning",
+                  "Confirming the dev server is running",
+                )}
+              </li>
+              <li>
+                {translate(
+                  "chatView:checkingProxyAndFirewall",
+                  "Checking the proxy and the firewall",
+                )}
+              </li>
             </ul>
           </div>
         ) : null}
@@ -53,11 +64,13 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
             size="sm"
             onClick={() => setShowDetails((value) => !value)}
           >
-            {showDetails ? "Hide details" : "Details"}
+            {showDetails
+              ? translate("common:uiHideDetails", "Hide details")
+              : translate("common:uiShowDetails", "Details")}
           </Button>
           <div className="flex-1" />
           <Button type="button" size="sm" onClick={onReload}>
-            Reload
+            {translate("chatView:reload", "Reload")}
           </Button>
         </div>
       </div>

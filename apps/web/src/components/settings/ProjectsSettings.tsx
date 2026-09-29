@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { EnvironmentId } from "@t3tools/contracts";
 
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
@@ -28,7 +29,10 @@ export function ProjectsSettings() {
         </SettingsPageContainer>
       ) : (
         <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
+          {translate(
+            "common:uiProjectsChooseProject",
+            "Choose a project to manage its name, icon, checkouts and actions.",
+          )}
         </SettingsScopeNotice>
       )}
     </div>

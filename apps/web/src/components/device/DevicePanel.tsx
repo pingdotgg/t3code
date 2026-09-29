@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type {
   DevicePlatform,
@@ -178,7 +179,9 @@ export function DevicePanel(props: {
       <DeviceHostUpdates state={state} environmentId={environmentId} />
       {bootingDevices.length > 0 ? (
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
-          Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a minute.
+          {translate("common:uiStartingDevices", "Starting {{devices}}… This can take a minute.", {
+            devices: bootingDevices.map((device) => device.name).join(", "),
+          })}
         </div>
       ) : null}
       {operationError ? (
@@ -190,7 +193,7 @@ export function DevicePanel(props: {
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Dismiss device error"
+            aria-label={translate("chatView:dismissDeviceError", "Dismiss device error")}
             onClick={() => setOperationError(null)}
           >
             <X className="size-3" />
@@ -204,7 +207,8 @@ export function DevicePanel(props: {
             environmentId={environmentId}
             device={activeDevice}
             hostLabel={
-              state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"
+              state.hosts.find((host) => host.id === activeDevice.hostId)?.label ??
+              translate("common:uiDeviceHostFallback", "Device host")
             }
             hostDiagnostics={state.hostStatusDetail}
             visible={props.visible}
@@ -214,10 +218,15 @@ export function DevicePanel(props: {
           />
         ) : pendingDevice || hostBusy || !loaded ? (
           <DeviceLoadingView
-            name={pendingDevice?.name ?? "Devices"}
+            name={pendingDevice?.name ?? translate("common:uiDevicesLabel", "Devices")}
             description={
               pendingDevice
-                ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                ? translate("common:uiDeviceHostDescription", "{{host}} · {{version}}", {
+                    host:
+                      state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ??
+                      translate("common:uiDeviceHostFallback", "Device host"),
+                    version: pendingDevice.version,
+                  })
                 : ""
             }
             stage="opening"
@@ -244,8 +253,12 @@ export function DevicePanel(props: {
                   <Smartphone className="size-6 opacity-60" />
                   <p className="max-w-sm">
                     {state.hostStatus === "failed"
-                      ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                      : "No simulators or emulators were found on this environment."}
+                      ? (state.hostStatusDetail ??
+                        translate("common:uiDeviceHubFailed", "The device hub failed to start."))
+                      : translate(
+                          "common:uiNoSimulatorsOrEmulators",
+                          "No simulators or emulators were found on this environment.",
+                        )}
                   </p>
                 </>
               ) : null}
@@ -267,16 +280,39 @@ export function DevicePanel(props: {
                               </span>
                             }
                             title={device.name}
-                            description={`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                            description={translate(
+                              "common:uiDeviceHostStatusDescription",
+                              "{{host}} · {{version}} · {{status}}",
+                              {
+                                host:
+                                  state.hosts.find((host) => host.id === device.hostId)?.label ??
+                                  translate("common:uiDeviceHostFallback", "Device host"),
+                                version: device.version,
+                                status: translate(
+                                  device.booted
+                                    ? "common:uiDeviceRunning"
+                                    : "common:uiDeviceStopped",
+                                  device.booted ? "Running" : "Stopped",
+                                ),
+                              },
+                            )}
                             disabled={pendingDeviceKey !== null}
-                            aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
+                            aria-label={translate(
+                              device.booted ? "common:uiOpenDevice" : "common:uiStartDevice",
+                              device.booted ? "Open {{name}}" : "Start {{name}}",
+                              { name: device.name },
+                            )}
                             onClick={() => void selectDevice(deviceKey(device))}
                             action={
                               pendingDeviceKey === deviceKey(device) ? (
                                 <Spinner size="xs" />
                               ) : (
                                 <span className="text-xs text-muted-foreground">
-                                  {device.booted ? "Open" : "Start"}
+                                  {translate(
+                                    device.booted ? "common:uiOpenDevice" : "common:uiStartDevice",
+                                    device.booted ? "Open {{name}}" : "Start {{name}}",
+                                    { name: device.name },
+                                  )}
                                 </span>
                               )
                             }
@@ -291,8 +327,10 @@ export function DevicePanel(props: {
               !state.devices.some((device) => device.platform === "android") &&
               !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                 <p className="max-w-sm text-xs">
-                  No Android virtual devices found. Create one in Android Studio's Device Manager,
-                  then refresh.
+                  {translate(
+                    "chatView:noAndroidVirtualDevices",
+                    "No Android virtual devices found. Create one in Android Studio's Device Manager, then refresh.",
+                  )}
                 </p>
               ) : null}
               {loaded && !hostBusy ? (
@@ -302,7 +340,7 @@ export function DevicePanel(props: {
                   size="sm"
                   onClick={() => void list({ environmentId, input: {} })}
                 >
-                  Refresh devices
+                  {translate("chatView:refreshDevices", "Refresh devices")}
                 </Button>
               ) : null}
             </div>

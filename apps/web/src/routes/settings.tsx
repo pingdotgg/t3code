@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -29,6 +30,7 @@ import {
 } from "../components/settings/settingsSearch";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
+  const { t } = useTranslation("settings");
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
     <Button
@@ -38,12 +40,13 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
-      Restore device defaults
+      {t("restoreDeviceDefaults")}
     </Button>
   );
 }
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
+  const { t: tCommon } = useTranslation("common");
   const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
@@ -102,7 +105,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          {tCommon("uiReconnectToChangeSettings", { scope: scope.label })}
         </p>
       </SettingsPageContainer>
     );

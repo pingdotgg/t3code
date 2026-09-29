@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -55,7 +56,12 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         </AlertDescription>
         {onDismiss && (
           <AlertAction>
-            <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={translate("common:uiDismissError", "Dismiss error")}
+              onClick={onDismiss}
+            >
               <XIcon className="text-destructive" />
             </Button>
           </AlertAction>

@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -395,7 +396,12 @@ export function DeviceStreamView(props: {
         )}
         tabIndex={0}
         role="application"
-        aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
+        aria-label={translate(
+          props.platform === "ios"
+            ? "common:uiIosSimulatorScreen"
+            : "common:uiAndroidEmulatorScreen",
+          props.platform === "ios" ? "iOS Simulator screen" : "Android Emulator screen",
+        )}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
@@ -510,7 +516,7 @@ export function DeviceStreamView(props: {
               size="xs"
               aria-pressed={!!showPhone}
               disabled={!!phoneUnavailableReason}
-              title={phoneUnavailableReason ?? "Show 3D phone"}
+              title={phoneUnavailableReason ?? translate("common:uiShow3dPhone", "Show 3D phone")}
               onClick={() => setPresentation("phone")}
             >
               3D
@@ -521,21 +527,25 @@ export function DeviceStreamView(props: {
               aria-pressed={!showPhone}
               onClick={() => setPresentation("flat")}
             >
-              Flat
+              {translate("chatView:deviceFlat", "Flat")}
             </Button>
           </div>
         ) : null}
         {status === "streaming" && !inputState.connected ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
+              {translate(
+                "common:uiInputDisconnectedReconnecting",
+                "Input disconnected{{detail}}, reconnecting…",
+                { detail: inputState.detail ? ` (${inputState.detail})` : "" },
+              )}
             </span>
           </div>
         ) : null}
         {retainingAndroidFrame && showPhone && showRestartNotice ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Waiting for device video…
+              {translate("common:uiWaitingForDeviceVideo", "Waiting for device video…")}
             </span>
           </div>
         ) : null}
@@ -559,7 +569,7 @@ export function DeviceStreamView(props: {
                     clientRef.current?.start();
                   }}
                 >
-                  Reconnect
+                  {translate("chatView:reconnect", "Reconnect")}
                 </Button>
               ) : null}
             </DeviceLoadingView>

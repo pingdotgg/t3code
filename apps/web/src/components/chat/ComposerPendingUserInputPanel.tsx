@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { type ApprovalRequestId } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "@t3tools/i18n/react";
@@ -183,7 +184,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsibleTrigger
         render={<ComposerBanner.Row render={<button type="button" />} />}
         title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          isCollapsed
+            ? translate("common:uiShowQuestionAndOptions", "Show the question and its options")
+            : translate("common:uiHideQuestionAndOptions", "Hide the question and its options")
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
       >

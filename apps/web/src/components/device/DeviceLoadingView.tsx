@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { translate } from "@t3tools/i18n";
 import { Smartphone } from "lucide-react";
 
 import { Spinner } from "~/components/ui/spinner";
@@ -35,7 +36,9 @@ export function DeviceLoadingView(props: {
           <div
             className="flex w-24 gap-1"
             aria-label={
-              props.stage === "opening" ? "Step 1 of 2: open device" : "Step 2 of 2: connect video"
+              props.stage === "opening"
+                ? translate("common:uiDeviceLoadingStepOpen", "Step 1 of 2: open device")
+                : translate("common:uiDeviceLoadingStepVideo", "Step 2 of 2: connect video")
             }
           >
             <span className="h-1 flex-1 rounded-full bg-foreground/60" />

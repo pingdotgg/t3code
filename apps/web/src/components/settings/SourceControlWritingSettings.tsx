@@ -1,3 +1,4 @@
+import { translate } from "@t3tools/i18n";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import type {
@@ -125,7 +126,10 @@ export function SourceControlWritingSettingsSection() {
   const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
 
   return (
-    <SettingsSection id="source-control-text-generation" title="Text generation">
+    <SettingsSection
+      id="source-control-text-generation"
+      title={translate("settings:textGeneration", "Text generation")}
+    >
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
@@ -135,7 +139,10 @@ export function SourceControlWritingSettingsSection() {
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label="source control writing style"
+              label={translate(
+                "common:uiSourceControlWritingStyle",
+                "Source control writing style",
+              )}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -163,7 +170,10 @@ export function SourceControlWritingSettingsSection() {
             <SelectTrigger
               size="sm"
               className="w-full sm:w-56"
-              aria-label="Source control writing style"
+              aria-label={translate(
+                "common:uiSourceControlWritingStyle",
+                "Source control writing style",
+              )}
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
@@ -189,8 +199,14 @@ export function SourceControlWritingSettingsSection() {
                   value={allInstructions ?? ""}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
-                  aria-label="Custom source control instructions for all selected environments"
-                  placeholder="Write the instructions each selected environment should use."
+                  aria-label={translate(
+                    "common:uiCustomSourceControlInstructionsForAllSelected",
+                    "Custom source control instructions for all selected environments",
+                  )}
+                  placeholder={translate(
+                    "common:uiWriteTheInstructionsEachSelectedEnvironmentShould",
+                    "Write the instructions each selected environment should use.",
+                  )}
                 />
                 <Button
                   size="sm"
@@ -207,7 +223,7 @@ export function SourceControlWritingSettingsSection() {
                     setEditingAllInstructions(false);
                   }}
                 >
-                  Apply instructions to all
+                  {translate("settings:applyInstructionsToAll", "Apply instructions to all")}
                 </Button>
               </>
             ) : (
@@ -219,7 +235,10 @@ export function SourceControlWritingSettingsSection() {
                   setEditingAllInstructions(true);
                 }}
               >
-                Write custom instructions for all
+                {translate(
+                  "settings:writeCustomInstructionsForAll",
+                  "Write custom instructions for all",
+                )}
               </Button>
             )}
           </div>
@@ -236,8 +255,14 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep titles concise. Use short bullet points in descriptions."
-              aria-label="Custom source control writing instructions"
+              placeholder={translate(
+                "common:uiKeepTitlesConciseUseShortBulletPoints",
+                "Keep titles concise. Use short bullet points in descriptions.",
+              )}
+              aria-label={translate(
+                "common:uiCustomSourceControlWritingInstructions",
+                "Custom source control writing instructions",
+              )}
             />
           </div>
         ) : null}
@@ -248,12 +273,18 @@ export function SourceControlWritingSettingsSection() {
         settingKeys={["sourceControlWritingStyle"]}
         mixed={templatesMixed}
         {...searchableSetting("follow-change-request-templates")}
-        description="Use the repository's template for change request descriptions when available."
+        description={translate(
+          "common:uiTemplateDescription",
+          "Use the repository's template for change request descriptions when available.",
+        )}
         resetAction={
           templatesMixed ||
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
-              label="change request templates"
+              label={translate(
+                "common:uiFollowChangeRequestTemplates",
+                "Follow change request templates",
+              )}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -275,7 +306,10 @@ export function SourceControlWritingSettingsSection() {
                 },
               })
             }
-            aria-label="Follow change request templates"
+            aria-label={translate(
+              "common:uiFollowChangeRequestTemplates",
+              "Follow change request templates",
+            )}
           />
         }
       />
@@ -284,17 +318,26 @@ export function SourceControlWritingSettingsSection() {
         serverScoped
         settingKeys={["sourceControlWriterModelSelection"]}
         {...searchableSetting("source-control-writer-model")}
-        description="Model for source control text and branch or bookmark names. Off uses the environment's text generation model."
+        description={translate(
+          "common:uiWriterModelDescription",
+          "Model for source control text and branch or bookmark names. Off uses the environment's text generation model.",
+        )}
         control={
           !hasServerTargets ? (
             <span className="text-sm text-muted-foreground">
-              Connect an environment to choose its source control writer model.
+              {translate(
+                "settings:connectEnvironmentForWriterModel",
+                "Connect an environment to choose its source control writer model.",
+              )}
             </span>
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-2">
               {usesDedicatedModel && !canEnableDedicatedModel ? (
                 <span className="text-sm text-muted-foreground">
-                  No text generation providers available.
+                  {translate(
+                    "settings:noTextGenerationProviders",
+                    "No text generation providers available.",
+                  )}
                 </span>
               ) : null}
               {usesDedicatedModel && canEnableDedicatedModel ? (
@@ -305,7 +348,10 @@ export function SourceControlWritingSettingsSection() {
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  triggerAriaLabel="Source control writer model"
+                  triggerAriaLabel={translate(
+                    "common:uiSourceControlWriterModel",
+                    "Source control writer model",
+                  )}
                   {...(mixedWriterModel ? { triggerLabel: "Mixed" } : {})}
                   {...(environmentId
                     ? {
@@ -323,7 +369,10 @@ export function SourceControlWritingSettingsSection() {
                     if (reason) {
                       toastManager.add({
                         type: "error",
-                        title: "Source control writer model not saved",
+                        title: translate(
+                          "common:uiSourceControlWriterModelNotSaved",
+                          "Source control writer model not saved",
+                        ),
                         description: reason,
                       });
                       return;
@@ -348,7 +397,10 @@ export function SourceControlWritingSettingsSection() {
                       : null,
                   })
                 }
-                aria-label="Use a separate source control writer model"
+                aria-label={translate(
+                  "common:uiUseASeparateSourceControlWriterModel",
+                  "Use a separate source control writer model",
+                )}
               />
             </div>
           )
