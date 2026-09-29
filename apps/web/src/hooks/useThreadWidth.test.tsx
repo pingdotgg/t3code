@@ -4,10 +4,23 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import {
   FIT_TABLES_STORAGE_KEY,
+  threadWidthStyle,
   useFitTables,
   THREAD_WIDTH_STORAGE_KEY,
   useThreadWidth,
 } from "./useThreadWidth";
+
+it("maps the preference onto the shared message and composer width variable", () => {
+  expect(threadWidthStyle(0)).toEqual({
+    "--thread-content-max-width": "calc(48rem * 1 + 100% * 0)",
+  });
+  expect(threadWidthStyle(50)).toEqual({
+    "--thread-content-max-width": "calc(48rem * 0.5 + 100% * 0.5)",
+  });
+  expect(threadWidthStyle(100)).toEqual({
+    "--thread-content-max-width": "calc(48rem * 0 + 100% * 1)",
+  });
+});
 
 let renderer: ReactTestRenderer | undefined;
 let saved: Map<string, string>;
