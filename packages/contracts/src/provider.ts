@@ -60,6 +60,9 @@ export const ProviderSessionStartInput = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
+  /** Internal: the orchestrator is replacing the thread's native conversation
+      with a fresh session seeded by a transcript handoff. */
+  transcriptHandoff: Schema.optional(Schema.Boolean),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,

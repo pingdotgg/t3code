@@ -335,6 +335,11 @@ export type TimelineLatestTurn = Pick<
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
+/** Activities that render as a labeled rule across the timeline. */
+function isDividerActivityKind(kind: string | undefined): boolean {
+  return kind === "context-compaction" || kind === "provider.handoff";
+}
+
 type ActivityEntry = Extract<TimelineEntry, { kind: "message" | "work" }>;
 
 function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
@@ -343,7 +348,7 @@ function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
     : entry.kind === "work" &&
         entry.entry.agentSpawn === undefined &&
         entry.entry.questionAnswer === undefined &&
-        entry.entry.sourceActivityKind !== "context-compaction" &&
+        !isDividerActivityKind(entry.entry.sourceActivityKind) &&
         entry.entry.tone !== "error";
 }
 
@@ -400,10 +405,11 @@ export type MessagesTimelineRow =
       expanded: boolean;
     }
   | {
-      kind: "context-compaction";
+      kind: "divider";
       id: string;
       createdAt: string;
       label: string;
+      icon: "compaction" | "handoff";
     }
   | {
       kind: "message";
@@ -1040,7 +1046,7 @@ export function deriveMessagesTimelineRows(input: {
       !entryBelongsToActiveTurn(entry, index) ||
       entry.kind !== "work" ||
       entry.entry.questionAnswer !== undefined ||
-      entry.entry.sourceActivityKind === "context-compaction" ||
+      isDividerActivityKind(entry.entry.sourceActivityKind) ||
       entry.entry.tone === "error"
     ) {
       break;
@@ -1206,13 +1212,15 @@ export function deriveMessagesTimelineRows(input: {
 
     if (
       timelineEntry.kind === "work" &&
-      timelineEntry.entry.sourceActivityKind === "context-compaction"
+      isDividerActivityKind(timelineEntry.entry.sourceActivityKind)
     ) {
       nextRows.push({
-        kind: "context-compaction",
+        kind: "divider",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         label: timelineEntry.entry.label,
+        icon:
+          timelineEntry.entry.sourceActivityKind === "provider.handoff" ? "handoff" : "compaction",
       });
       continue;
     }
@@ -1247,7 +1255,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.questionAnswer !== undefined ||
-          nextEntry.entry.sourceActivityKind === "context-compaction" ||
+          isDividerActivityKind(nextEntry.entry.sourceActivityKind) ||
           nextEntry.entry.tone === "error" ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
@@ -1630,9 +1638,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
     }
 
-    case "context-compaction": {
+    case "divider": {
       const bc = b as typeof a;
-      return a.createdAt === bc.createdAt && a.label === bc.label;
+      return a.createdAt === bc.createdAt && a.label === bc.label && a.icon === bc.icon;
     }
 
     case "proposed-plan":

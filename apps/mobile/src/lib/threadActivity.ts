@@ -270,12 +270,17 @@ const activityRunsCache = new WeakMap<
   }
 >();
 
+/** Activities that render as a labeled rule across the feed. */
+function isDividerActivityKind(kind: string | undefined): boolean {
+  return kind === "context-compaction" || kind === "provider.handoff";
+}
+
 export function isContextCompactionActivityGroup(
   entry: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
 ): boolean {
   return (
     entry.activities.length === 1 &&
-    entry.activities[0]?.workEntry.sourceActivityKind === "context-compaction"
+    isDividerActivityKind(entry.activities[0]?.workEntry.sourceActivityKind)
   );
 }
 
@@ -1583,7 +1588,7 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     }
 
     const isStandalone =
-      entry.activity.workEntry.sourceActivityKind === "context-compaction" ||
+      isDividerActivityKind(entry.activity.workEntry.sourceActivityKind) ||
       entry.activity.workEntry.questionAnswer !== undefined;
     if (isStandalone || firstActivityEntry?.turnId !== entry.turnId) {
       flushGroup();

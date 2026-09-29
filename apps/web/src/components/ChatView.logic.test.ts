@@ -1208,6 +1208,40 @@ describe("resolveComposerProviderSelection", () => {
     ).toBeNull();
   });
 
+  it("lets a picked model leave the locked driver but keeps fallbacks on it", () => {
+    const codexEntry = entry("codex");
+    const claudeEntry = entry("claudeAgent");
+    const disabledClaudeEntry = entry("claudeAgent", "claude_work", { enabled: false });
+    const locked = {
+      lockedProvider: ProviderDriverKind.make("codex"),
+      lockedInstanceId: codexEntry.instanceId,
+    };
+
+    expect(
+      resolveComposerProviderSelection({
+        entries: [codexEntry, claudeEntry],
+        explicitInstanceId: claudeEntry.instanceId,
+        candidateInstanceIds: [claudeEntry.instanceId, codexEntry.instanceId],
+        ...locked,
+      }).selectedProviderEntry?.instanceId,
+    ).toBe(claudeEntry.instanceId);
+    expect(
+      resolveComposerProviderSelection({
+        entries: [claudeEntry, codexEntry],
+        candidateInstanceIds: [null, claudeEntry.instanceId],
+        ...locked,
+      }).selectedProviderEntry?.instanceId,
+    ).toBe(codexEntry.instanceId);
+    expect(
+      resolveComposerProviderSelection({
+        entries: [codexEntry, disabledClaudeEntry],
+        explicitInstanceId: disabledClaudeEntry.instanceId,
+        candidateInstanceIds: [disabledClaudeEntry.instanceId, codexEntry.instanceId],
+        ...locked,
+      }).selectedProviderEntry?.instanceId,
+    ).toBe(codexEntry.instanceId);
+  });
+
   it("uses the custom instance's capability instead of the default instance", () => {
     const defaultEntry = entry("antigravity", "antigravity", {
       showInteractionModeToggle: true,

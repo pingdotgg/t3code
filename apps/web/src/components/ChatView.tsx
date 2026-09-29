@@ -2849,6 +2849,7 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
+        explicitInstanceId: selectedProviderByThreadId,
         candidateInstanceIds: [
           selectedProviderByThreadId,
           activeThread?.session?.providerInstanceId,
@@ -7662,12 +7663,18 @@ export default function ChatView(props: ChatViewProps) {
       (useQueuedMessageStore.getState().queuesByThreadKey[activeThreadKey] ?? []).some(
         (message) => message.sending !== undefined || !message.holdUntilUserAction,
       );
+    // Steering cannot cross providers: a switch waits for the running turn,
+    // then starts the new provider with a transcript handoff.
+    const switchesRunningProvider =
+      activeThread.session?.providerInstanceId !== undefined &&
+      activeThread.session.providerInstanceId !== ctxSelectedModelSelection.instanceId;
     if (
       !directAnnotation &&
       activeThreadKey &&
       (queueStillSending ||
         (phase === "running" &&
-          (settings.followUpBehavior === "queue") !== (submissionIntent === "alternate")))
+          (switchesRunningProvider ||
+            (settings.followUpBehavior === "queue") !== (submissionIntent === "alternate"))))
     ) {
       const sendSettings = readComposerSendSettings(sendCtx);
       if (
@@ -9225,29 +9232,8 @@ export default function ChatView(props: ChatViewProps) {
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
       // are rejected by returning early; the server remains authoritative too.
-      const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
-      const resolvedDriverKind = entry?.driver ?? null;
-      if (
-        lockedProvider !== null &&
-        resolvedDriverKind !== null &&
-        resolvedDriverKind !== lockedProvider
-      ) {
-        if (options?.focusComposer !== false) scheduleComposerFocus();
-        return;
-      }
-      if (lockedProvider !== null && activeThread.session?.providerInstanceId) {
-        const currentEntry = providerStatuses.find(
-          (snapshot) => snapshot.instanceId === activeThread.session?.providerInstanceId,
-        );
-        if (
-          currentEntry?.continuation?.groupKey &&
-          entry?.continuation?.groupKey &&
-          currentEntry.continuation.groupKey !== entry.continuation.groupKey
-        ) {
-          if (options?.focusComposer !== false) scheduleComposerFocus();
-          return;
-        }
-      }
+      // Another driver or continuation group is allowed on a started thread:
+      // the server starts a fresh session there and hands the transcript off.
       const resolvedModel = resolveAppModelSelectionForInstance(
         instanceId,
         settings,
@@ -9288,7 +9274,6 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeThread,
-      lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,

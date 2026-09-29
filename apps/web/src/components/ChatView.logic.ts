@@ -542,6 +542,8 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
   candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
+  /** The instance the user picked in the composer, if any. */
+  explicitInstanceId?: ProviderInstanceId | null | undefined;
   lockedProvider: ProviderDriverKind | null;
   lockedInstanceId: ProviderInstanceId | null | undefined;
 }) {
@@ -568,7 +570,17 @@ export function resolveComposerProviderSelection(input: {
       (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
       (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
   );
+  // A model the user picked may leave the locked driver: the server hands the
+  // conversation off to the new provider. Fallbacks stay on the locked driver.
+  const explicitEntry =
+    input.explicitInstanceId == null
+      ? undefined
+      : input.entries.find(
+          (entry) =>
+            entry.instanceId === input.explicitInstanceId && entry.enabled && entry.isAvailable,
+        );
   const selectedProviderEntry =
+    explicitEntry ??
     input.candidateInstanceIds
       .map((candidate) =>
         compatibleEntries.find(

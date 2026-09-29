@@ -1250,6 +1250,37 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
         }
       }),
   );
+
+  it.effect("starts a fresh session on another instance for a transcript handoff", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      originalAntigravityInstanceAvailable = true;
+      const threadId = asThreadId("thread-antigravity-transcript-handoff");
+      yield* directory.upsert({
+        threadId,
+        provider: antigravityDriver,
+        providerInstanceId: originalAntigravityInstanceId,
+        status: "stopped",
+        runtimeMode: "approval-required",
+        resumeCursor: { sessionId: "native-session" },
+      });
+      replacementAntigravity.startSession.mockClear();
+
+      yield* provider.startSession(threadId, {
+        providerInstanceId: replacementAntigravityInstanceId,
+        threadId,
+        runtimeMode: "approval-required",
+        transcriptHandoff: true,
+      });
+
+      assert.equal(replacementAntigravity.startSession.mock.calls.length, 1);
+      assert.equal(replacementAntigravity.startSession.mock.calls[0]?.[0].resumeCursor, undefined);
+      const binding = Option.getOrThrow(yield* directory.getBinding(threadId));
+      assert.equal(binding.providerInstanceId, replacementAntigravityInstanceId);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
 });
 
 const unsupportedRollback = makeProviderServiceLayer({ supportsConversationRollback: false });

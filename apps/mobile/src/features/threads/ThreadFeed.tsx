@@ -1470,7 +1470,11 @@ function renderFeedEntry(
         <View className="h-px flex-1 bg-subtle" />
         <View className="shrink-0 flex-row items-center gap-1.5">
           <SymbolView
-            name="arrow.down.right.and.arrow.up.left"
+            name={
+              entry.activities[0]!.workEntry.sourceActivityKind === "provider.handoff"
+                ? "arrow.right.circle"
+                : "arrow.down.right.and.arrow.up.left"
+            }
             size={12}
             tintColor={iconSubtleColor}
             type="monochrome"

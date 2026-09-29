@@ -1443,10 +1443,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        // A transcript handoff deliberately replaces the native conversation,
+        // so only a cursor carried across instances needs a compatible resume state.
         if (
           persistedBinding?.provider === resolvedProvider &&
           persistedBinding.providerInstanceId !== resolvedInstanceId &&
-          (input.resumeCursor != null || persistedBinding.resumeCursor != null)
+          (input.resumeCursor != null ||
+            (persistedBinding.resumeCursor != null && input.transcriptHandoff !== true))
         ) {
           const previousInstanceId = yield* requireBindingInstanceId(
             "ProviderService.startSession",

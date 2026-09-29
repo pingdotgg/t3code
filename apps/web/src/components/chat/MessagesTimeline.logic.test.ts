@@ -1354,10 +1354,44 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows).toEqual([
       {
-        kind: "context-compaction",
+        kind: "divider",
         id: "compaction-entry",
         createdAt: "2026-01-01T00:00:00Z",
         label: "Compacted context 899K → 19K tokens",
+        icon: "compaction",
+      },
+    ]);
+  });
+
+  it("renders a provider handoff as a divider", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "handoff-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "handoff",
+            createdAt: "2026-01-01T00:00:00Z",
+            label: "Switched from Claude Opus 4.6 to GPT-5.4, context handed off",
+            tone: "info",
+            sourceActivityKind: "provider.handoff",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "divider",
+        id: "handoff-entry",
+        createdAt: "2026-01-01T00:00:00Z",
+        label: "Switched from Claude Opus 4.6 to GPT-5.4, context handed off",
+        icon: "handoff",
       },
     ]);
   });

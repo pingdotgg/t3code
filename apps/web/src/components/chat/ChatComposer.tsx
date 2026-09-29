@@ -1870,15 +1870,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [providerStatuses, settings],
   );
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
-  const {
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-  } = useMemo(
+  const { selectedProviderEntry, requestedDriverKind, unavailableProviderInstanceId } = useMemo(
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
+        explicitInstanceId: selectedProviderByThreadId,
         candidateInstanceIds: [
           selectedProviderByThreadId,
           activeThread?.session?.providerInstanceId,
@@ -5064,8 +5060,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
             : selectedModelForPickerWithCustomFallback
         }
-        lockedProvider={lockedProvider}
-        lockedContinuationGroupKey={lockedContinuationGroupKey}
+        // Started threads can switch to any provider; the server hands off context.
+        lockedProvider={null}
+        lockedContinuationGroupKey={null}
         instanceEntries={providerInstanceEntries}
         keybindings={keybindings}
         modelOptionsByInstance={modelOptionsByInstance}

@@ -350,9 +350,14 @@ describe("ProviderCommandReactor", () => {
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
+        models: [{ slug: modelSelection.model, name: "GPT-5 Codex" }],
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
+      },
+      {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        models: [{ slug: "claude-opus-4-6", name: "Claude Opus 4.6" }],
       },
     ];
 
@@ -3538,7 +3543,7 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
-  it("rejects provider changes after a thread is already bound to a session provider", async () => {
+  it("hands a started thread off to another driver with a fresh session and transcript", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -3583,75 +3588,140 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      return (
-        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
-        false
-      );
-    });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
 
-    expect(harness.startSession.mock.calls.length).toBe(1);
-    expect(harness.sendTurn.mock.calls.length).toBe(1);
-    expect(harness.stopSession.mock.calls.length).toBe(0);
+    expect(harness.stopSession.mock.calls.length).toBe(1);
+    expect(harness.startSession.mock.calls.length).toBe(2);
+    const handoffStart = harness.startSession.mock.calls[1]?.[1];
+    expect(handoffStart).toMatchObject({
+      provider: "claudeAgent",
+      providerInstanceId: "claudeAgent",
+    });
+    expect(handoffStart).not.toHaveProperty("resumeCursor");
+
+    const handoffTurn = harness.sendTurn.mock.calls[1]?.[0] as { input?: string } | undefined;
+    expect(handoffTurn?.input).toMatch(/^<t3_provider_handoff>/);
+    expect(handoffTurn?.input).toContain("### User\nfirst");
+    expect(handoffTurn?.input).not.toContain("### User\nsecond");
+    expect(handoffTurn?.input?.endsWith("\n\nsecond")).toBe(true);
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.session?.threadId).toBe("thread-1");
-    expect(thread?.session?.providerName).toBe("codex");
-    expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.session?.providerName).toBe("claudeAgent");
     expect(
-      thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
+      thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toBe(false);
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.handoff"),
     ).toMatchObject({
-      payload: {
-        detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
-      },
+      summary: "Switched from GPT-5 Codex to Claude Opus 4.6, context handed off",
+      payload: { fromInstanceId: "codex", toInstanceId: "claudeAgent", includedMessages: 1 },
     });
   });
 
-  it("rejects cross-driver provider changes after the existing thread session has stopped", async () => {
+  it("hands off to another driver after the existing thread session has stopped", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make("cmd-session-set-stopped-provider-switch"),
-        threadId: ThreadId.make("thread-1"),
-        session: {
+      harness.engine
+        .dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-stopped-provider-switch"),
           threadId: ThreadId.make("thread-1"),
-          status: "stopped",
-          providerName: "codex",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: now,
-        },
-        createdAt: now,
-      }),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "stopped",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        })
+        .pipe(
+          Effect.andThen(
+            harness.engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-turn-start-stopped-provider-switch"),
+              threadId: ThreadId.make("thread-1"),
+              message: {
+                messageId: asMessageId("user-message-stopped-provider-switch"),
+                role: "user",
+                text: "continue with claude",
+                attachments: [],
+              },
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: "claude-opus-4-6",
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "approval-required",
+              createdAt: now,
+            }),
+          ),
+        ),
     );
 
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.stopSession.mock.calls.length).toBe(0);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      providerInstanceId: "claudeAgent",
+    });
+    expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("resumeCursor");
+    const turn = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
+    expect(turn?.input).toMatch(/^<t3_provider_handoff>/);
+    expect(turn?.input?.endsWith("\n\ncontinue with claude")).toBe(true);
+  });
+
+  it("keeps rejecting incompatible provider changes for manual compaction", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
     await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-stopped-provider-switch"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-stopped-provider-switch"),
-          role: "user",
-          text: "continue with claude",
-          attachments: [],
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("claudeAgent"),
-          model: "claude-opus-4-6",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
+      harness.engine
+        .dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-compact-switch-1"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-compact-switch-1"),
+            role: "user",
+            text: "first",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        })
+        .pipe(
+          Effect.andThen(
+            Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1)),
+          ),
+          Effect.andThen(
+            harness.engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-turn-start-compact-switch-2"),
+              threadId: ThreadId.make("thread-1"),
+              message: {
+                messageId: asMessageId("user-message-compact-switch-2"),
+                role: "user",
+                text: "/compact",
+                attachments: [],
+              },
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: "claude-opus-4-6",
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "approval-required",
+              createdAt: now,
+            }),
+          ),
+        ),
     );
 
     await waitFor(async () => {
@@ -3662,18 +3732,8 @@ describe("ProviderCommandReactor", () => {
         false
       );
     });
-
-    expect(harness.startSession.mock.calls.length).toBe(0);
-    expect(harness.sendTurn.mock.calls.length).toBe(0);
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(
-      thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
-    ).toMatchObject({
-      payload: {
-        detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
-      },
-    });
+    expect(harness.startSession.mock.calls.length).toBe(1);
+    expect(harness.compactThread.mock.calls.length).toBe(0);
   });
 
   it("reacts to thread.turn.interrupt-requested by calling provider interrupt", async () => {
