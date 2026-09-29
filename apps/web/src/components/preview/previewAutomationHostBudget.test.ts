@@ -2,9 +2,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   PREVIEW_HOST_RESPONSE_MARGIN_MS,
+  resolveHostDeadlineMs,
   resolveHostWaitBudgetMs,
   waitForHostReadiness,
 } from "./previewAutomationHostBudget";
+
+describe("resolveHostDeadlineMs", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns an absolute deadline that keeps the response margin", () => {
+    expect(resolveHostDeadlineMs(15_000)).toBe(
+      1_000_000 + 15_000 - PREVIEW_HOST_RESPONSE_MARGIN_MS,
+    );
+  });
+});
 
 describe("resolveHostWaitBudgetMs", () => {
   it("reserves the full response margin once the request budget allows it", () => {

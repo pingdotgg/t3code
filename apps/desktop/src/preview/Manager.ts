@@ -79,6 +79,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
+import { isBenignAbortedTraceExport } from "./previewDiagnosticsFilter.ts";
 import { DEFAULT_ZOOM_FACTOR, nextZoomLevel, ZOOM_EPSILON } from "../zoomLevels.ts";
 
 export type PreviewNavStatus =
@@ -1014,17 +1015,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }
         if (method === "Network.loadingFailed" && requestId) {
           const request = current.requests.get(requestId);
+          const errorText = String(params["errorText"] ?? "Network request failed");
+          const withoutRequest = replaceMap(current.requests, (copy) => {
+            copy.delete(requestId);
+          });
+          if (request && isBenignAbortedTraceExport({ url: request.url, errorText })) {
+            return { ...current, requests: withoutRequest };
+          }
           return {
             ...current,
-            requests: replaceMap(current.requests, (copy) => {
-              copy.delete(requestId);
-            }),
+            requests: withoutRequest,
             networkEntries: request
               ? pushBounded(current.networkEntries, {
                   ...request,
                   status: null,
                   failed: true,
-                  errorText: String(params["errorText"] ?? "Network request failed"),
+                  errorText,
                   timestamp,
                 })
               : current.networkEntries,
