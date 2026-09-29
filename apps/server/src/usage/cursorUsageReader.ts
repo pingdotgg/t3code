@@ -5,7 +5,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
-import { readMacCursorAccessToken } from "../provider/cursorCredentialStore.ts";
+import {
+  CursorKeychainTimeoutError,
+  readMacCursorAccessToken,
+} from "../provider/cursorCredentialStore.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -86,7 +89,9 @@ export async function readCursorAccountUsage(
         ? null
         : typeof credentialSource === "string"
           ? "Cursor credentials could not be read."
-          : "Cursor Keychain credentials could not be read.",
+          : cause instanceof CursorKeychainTimeoutError
+            ? "Allow Keychain access on the Mac running T3 Code, then refresh."
+            : "Cursor Keychain credentials could not be read.",
     };
   }
   if (typeof accessToken !== "string" || !accessToken) {

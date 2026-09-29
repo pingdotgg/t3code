@@ -171,7 +171,8 @@ export const isWindowsCommandNotFound = Effect.fn("processRunner.isWindowsComman
   },
 );
 
-const collectText = Effect.fn("processRunner.collectText")(function* (input: {
+// Untraced: no attributes, and its time is the runProcessCore span. Errors fail that span.
+const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;

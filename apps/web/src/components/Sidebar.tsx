@@ -21,7 +21,10 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  resolveSettledThreadTimestamp,
+  sortSettledThreads,
+} from "@t3tools/client-runtime/state/thread-sort";
 import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
@@ -172,6 +175,7 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
+  resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   searchSidebarThreads,
@@ -184,7 +188,6 @@ import {
   sidebarMarkerId,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
-  sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -742,6 +745,12 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     promptPreview.length > 0
       ? promptPreview
       : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+  const accessibility = resolveSidebarRowAccessibility({
+    title: preview,
+    statusLabel: "Unsent draft",
+    projectDisplayName: props.projectDisplayName,
+    isActive: props.isActive,
+  });
   const handleActivate = useCallback(() => onNavigate(draftId), [draftId, onNavigate]);
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
@@ -769,6 +778,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       <div
         role="button"
         tabIndex={0}
+        aria-label={accessibility.label}
+        aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
           "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -777,6 +788,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         onClick={handleActivate}
         onKeyDown={handleKeyDown}
       >
+        <span className="sr-only">{preview}</span>
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
@@ -804,7 +816,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
+            {preview}
+          </div>
         </div>
       </div>
     </li>
@@ -1460,6 +1474,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       </span>
     ) : null;
 
+  const accessibility = resolveSidebarRowAccessibility({
+    title: thread.title,
+    statusLabel: topStatus?.label ?? null,
+    projectDisplayName: props.projectDisplayName,
+    isActive: props.isActive,
+  });
+
   const title = isRenaming ? (
     <input
       autoFocus
@@ -1475,6 +1496,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     />
   ) : (
     <span
+      aria-hidden
       className={cn(
         "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
@@ -1505,6 +1527,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {thread.title}
     </span>
   );
+  const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
   // Stacks show their layer count; multiple unrelated links show their total count.
   // Plain clicks open T3; individual PR links also support opening the host in a new tab.
@@ -1606,6 +1629,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ref={rowRef}
                 role="button"
                 tabIndex={0}
+                aria-label={accessibility.label}
+                aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
@@ -1616,6 +1641,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               />
             }
           >
+            {accessibleTitle}
             {/* Settled history recedes: dimmed favicon at rest, restored on
               hover so the tail stays scannable when you're hunting. */}
             <span
@@ -1759,6 +1785,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ref={rowRef}
               role="button"
               tabIndex={0}
+              aria-label={accessibility.label}
+              aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
@@ -1769,6 +1797,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             />
           }
         >
+          {accessibleTitle}
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
@@ -2021,6 +2050,12 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
   const { thread } = props;
+  const accessibility = resolveSidebarRowAccessibility({
+    title: thread.title,
+    statusLabel: null,
+    projectDisplayName: props.projectDisplayName,
+    isActive: props.isRouteActive,
+  });
   const threadRef = useMemo(
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
@@ -2097,12 +2132,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               // which owns all keyboard interaction for the listbox.
               tabIndex={-1}
               aria-selected={props.isHighlighted}
-              aria-current={props.isRouteActive ? "page" : undefined}
-              aria-label={
-                props.projectDisplayName
-                  ? `${thread.title}, ${props.projectDisplayName}`
-                  : thread.title
-              }
+              aria-current={accessibility.current}
+              aria-label={accessibility.label}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(
@@ -2689,7 +2720,7 @@ export default function Sidebar() {
           firstValidTimestampMs(left.snoozedUntil ?? null) -
           firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
-      settledThreads: sortSettledThreadsForSidebar(settled),
+      settledThreads: sortSettledThreads(settled),
       snoozeNow: preciseNow,
     };
   }, [
@@ -3528,7 +3559,7 @@ export default function Sidebar() {
     if (dragState === null || thread === undefined) return [];
     const key = (candidate: EnvironmentThreadShell) =>
       scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id));
-    return sortSettledThreadsForSidebar([
+    return sortSettledThreads([
       ...settledThreads.filter((candidate) => key(candidate) !== dragState.activeKey),
       applySidebarThreadDrop(thread, "settled", dragState.occurredAt),
     ]).map(key);
@@ -4754,7 +4785,7 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
-        <SidebarGroup className="flex-1">
+        <SidebarGroup className="flex-1" role="presentation">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
@@ -4845,7 +4876,11 @@ export default function Sidebar() {
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     ref={attachListMotionRef}
-                    role="list"
+                    // VoiceOver treats an exposed list as an interaction boundary,
+                    // which hides its rows from ordinary linear navigation. A
+                    // presentational list also makes its implicit listitems
+                    // presentational while preserving every descendant control.
+                    role="presentation"
                     className={cn(
                       "relative flex flex-col gap-px",
                       sidebarListItems.length > 0 && "flex-1",
