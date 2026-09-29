@@ -76,7 +76,8 @@ function parsePositiveInt(raw: string): number | null {
  * invocation actually made, plus the latest rate-limit header block per
  * resource. Only the latest block per resource is kept — an invocation that
  * paged through three responses leaves the quota where the last one did.
- */ export function parseGhDebugTelemetry(stderr: string): {
+ */
+export function parseGhDebugTelemetry(stderr: string): {
   readonly httpRequestCount: number | null;
   readonly rateLimits: ReadonlyArray<GitHubApiRateLimitObservation>;
 } {
@@ -119,20 +120,11 @@ function parsePositiveInt(raw: string): number | null {
 
 /**
  * `GH_DEBUG=api` writes its request/response trace to stderr, which is also
- * where real error text lives. The trace grammar, as observed from real `gh`
- * output, is:
- *
- *   `* Request at/to …`, `> …` request lines, an optional dumped request
- *   body, `< HTTP/…` plus `< Header: …` response lines, an optional dumped
- *   response body, `* Request took …` — then, on failure, gh's own single
- *   line summary (`gh: …`).
- *
- * Bodies are dumped verbatim with no marker prefix, so line-prefix stripping
- * is not enough: once a diagnostic marker opens the trace, everything drops
- * until the trace closes. The trace closes only at gh's own summary line and
- * only after a completed request, so a truncated trace or a body can never
- * flip the sanitizer back into keeping mode. Lines outside any trace (spawn
- * errors, auth hints, `--include`-free summaries) are kept verbatim.
+ * where real error text lives. Bodies dump verbatim with no marker prefix,
+ * so once a diagnostic marker (`*`, `>`, `<`, `GraphQL query/variables`)
+ * opens the trace, everything drops until gh's own short `gh:` summary
+ * closes it (shape-guarded so dumped JSON cannot reopen it). Lines outside
+ * any trace are kept verbatim.
  */
 export function stripGhDebugLines(stderr: string): string {
   const kept: Array<string> = [];
@@ -193,8 +185,7 @@ export function summarizeGhArgs(args: ReadonlyArray<string>): string {
   const [command, ...rest] = args;
   if (command === undefined) return "gh";
   if (command === "api") {
-    // `gh api [--hostname H] <endpoint>`: the endpoint names the call. Flags,
-    // their values, and dynamic path segments never reach the label.
+    // The endpoint names the call; flags, values, and path segments never do.
     const valueFlags = new Set([
       "--hostname",
       "-H",

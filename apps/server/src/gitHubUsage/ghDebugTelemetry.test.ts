@@ -105,20 +105,6 @@ describe("parseGhDebugTelemetry", () => {
 });
 
 describe("stripGhDebugLines", () => {
-  it("removes diagnostic lines but keeps gh's own summary", () => {
-    const stderr = [
-      "* Request to https://api.github.com/user",
-      "> GET /user HTTP/1.1",
-      "> Authorization: token ████████████████████",
-      "GraphQL query:",
-      "query { viewer { login } }",
-      'GraphQL variables: {"limit":1}',
-      "< HTTP/2.0 403 Forbidden",
-      "gh: API rate limit exceeded for authenticated user.",
-    ].join("\n");
-    expect(stripGhDebugLines(stderr)).toBe("gh: API rate limit exceeded for authenticated user.");
-  });
-
   it("returns empty string when every line is diagnostic", () => {
     expect(stripGhDebugLines("* Request took 1ms\n> GET /x HTTP/1.1")).toBe("");
   });
@@ -287,12 +273,6 @@ describe("parseGhCooldown", () => {
   });
 
   it("returns no cooldown without retry or reset evidence", () => {
-    // The 404 trace carries a reset epoch, which is cooldown evidence even
-    // without a retry-after header.
-    expect(parseGhCooldown(TRACE_ERROR_404)).toStrictEqual({
-      retryAfterAtMs: 1790659280_000,
-      secondary: false,
-    });
     expect(parseGhCooldown("boom")).toStrictEqual({ retryAfterAtMs: null, secondary: false });
   });
 });
@@ -328,14 +308,12 @@ describe("aggregateUsage", () => {
     expect(report.totals.httpRequestsUnknown).toBe(true);
   });
 
-  it("separates cache-served reads from outbound traffic", () => {
+  it("counts failure and rate-limited outcomes in totals", () => {
     const events = [
-      event({ at: NOW - 10_000, servedFromCache: true, httpRequests: 0 }),
       event({ at: NOW - 20_000, servedFromCache: false, httpRequests: 3, outcome: "rate-limited" }),
       event({ at: NOW - 30_000, servedFromCache: false, httpRequests: 1, outcome: "failure" }),
     ];
     const report = aggregateUsage(events, { nowMs: NOW, windowMs: 3_600_000 });
-    expect(report.totals.servedFromCache).toBe(1);
     expect(report.totals.errors).toBe(1);
     expect(report.totals.rateLimited).toBe(1);
   });

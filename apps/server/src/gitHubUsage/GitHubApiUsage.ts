@@ -371,7 +371,6 @@ export class GitHubApiUsageStore {
     return this.events.length;
   }
 
-  /** True once any write happened since the last snapshot; drives the saver. */
   consumeDirty(): boolean {
     const was = this.dirty;
     this.dirty = false;
@@ -1122,8 +1121,6 @@ function buildService(store: GitHubApiUsageStore): GitHubApiUsage["Service"] {
     });
 
   return GitHubApiUsage.of({
-    // Recording never fails the caller: the store is synchronous and bounded,
-    // and any defect is contained and logged rather than propagated.
     record: (input) =>
       Effect.sync(() => store.record(input, Date.now())).pipe(
         Effect.catchCause((cause) => Effect.logWarning("GitHub API usage record failed", cause)),
@@ -1145,7 +1142,6 @@ export const GitHubApiUsageLive = Layer.effect(GitHubApiUsage, make);
 export const USAGE_SNAPSHOT_KEY = "github-usage-snapshot-v1";
 const SNAPSHOT_SAVE_INTERVAL = Duration.seconds(30);
 
-/** Total save: failures are logged, never thrown — callers must not break on I/O. */
 export function saveUsageSnapshot(
   store: GitHubApiUsageStore,
 ): Effect.Effect<void, never, KeyValueStore.KeyValueStore> {
@@ -1171,7 +1167,7 @@ function saveIfDirty(
   );
 }
 
-/** Total load: a missing or invalid snapshot starts fresh with a warning. */
+/** A missing or invalid snapshot starts fresh with a warning. */
 export function loadUsageSnapshot(
   store: GitHubApiUsageStore,
   nowMs: number,
@@ -1202,9 +1198,8 @@ export function loadUsageSnapshot(
 }
 
 /**
- * File-backed usage history: loads the snapshot at startup, saves dirty
- * state every 30 seconds, and flushes on shutdown. Falls back to memory-only
- * history when the snapshot directory is unavailable.
+ * File-backed usage history with memory-only fallback when the snapshot
+ * directory is unavailable.
  */
 export const GitHubApiUsagePersistentLive = Layer.unwrap(
   Effect.gen(function* () {

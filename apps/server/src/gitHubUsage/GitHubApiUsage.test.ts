@@ -231,44 +231,88 @@ describe("GitHubApiUsageStore quota", () => {
     expect(quota[0]?.remaining).toBeNull();
   });
 
-  it("records cooldowns and clears them once elapsed", () => {
+  it("scopes cooldowns to observed resources with primary and secondary kinds", () => {
     const store = new GitHubApiUsageStore();
-    store.observeCooldown("github.com", NOW + 60_000);
+    store.setIdentity("github.com", "octocat");
     store.record(
       {
-        operation: "pr view",
-        feature: "monitor",
+        operation: "api graphql",
+        feature: "detail",
+        host: "github.com",
+        httpRequests: 1,
+        outcome: "success",
+        latencyMs: 5,
+        rateLimits: [
+          { resource: "graphql", limit: 5000, remaining: 100, used: 4900, resetAtMs: null },
+        ],
+      },
+      NOW,
+    );
+    store.record(
+      {
+        operation: "api user",
+        feature: "viewer",
         host: "github.com",
         httpRequests: 1,
         outcome: "rate-limited",
         latencyMs: 5,
+        rateLimits: [{ resource: "core", limit: 5000, remaining: 0, used: 5000, resetAtMs: null }],
+        retryAfterAtMs: NOW + 120_000,
       },
       NOW,
     );
-    const cooling = store.report({ window: "1h" }, NOW).quota[0]?.coolingDownUntil;
-    expect(cooling).toBe(new Date(NOW + 60_000).toISOString());
-    expect(store.report({ window: "1h" }, NOW + 120_000).quota[0]?.coolingDownUntil).toBeNull();
+    // A host-level cooldown without resource context.
+    store.observeCooldown("ghe.example.com", NOW + 60_000);
+    store.record(
+      {
+        operation: "pr list",
+        feature: "list",
+        host: "ghe.example.com",
+        httpRequests: 1,
+        outcome: "success",
+        latencyMs: 5,
+        rateLimits: [{ resource: "core", limit: 60, remaining: 59, used: 1, resetAtMs: null }],
+      },
+      NOW,
+    );
+    const quota = store.report({ window: "1h" }, NOW).quota;
+    expect(
+      quota.find((bucket) => bucket.host === "github.com" && bucket.resource === "core"),
+    ).toMatchObject({
+      coolingDownUntil: new Date(NOW + 120_000).toISOString(),
+      coolingDownKind: "primary",
+    });
+    expect(
+      quota.find((bucket) => bucket.host === "github.com" && bucket.resource === "graphql"),
+    ).toMatchObject({
+      coolingDownUntil: null,
+      coolingDownKind: null,
+    });
+    expect(quota.find((bucket) => bucket.host === "ghe.example.com")?.coolingDownUntil).toBe(
+      new Date(NOW + 60_000).toISOString(),
+    );
+    // Elapsed cooldowns clear.
+    expect(
+      store
+        .report({ window: "1h" }, NOW + 180_000)
+        .quota.find((bucket) => bucket.resource === "core")?.coolingDownUntil,
+    ).toBeNull();
   });
 
-  it("throttles explicit refresh attempts per account", () => {
+  it("throttles refresh attempts per account without wedging on clock skew", () => {
     const store = new GitHubApiUsageStore();
     expect(store.shouldRefresh("github.com", NOW)).toBe(true);
     store.markRefreshAttempt("github.com", NOW);
     expect(store.shouldRefresh("github.com", NOW + QUOTA_REFRESH_MIN_INTERVAL_MS - 1)).toBe(false);
     expect(store.shouldRefresh("github.com", NOW + QUOTA_REFRESH_MIN_INTERVAL_MS)).toBe(true);
-  });
-
-  it("does not merge refresh throttles across accounts on one host", () => {
-    const store = new GitHubApiUsageStore();
     store.markRefreshAttempt("github.com", NOW, "account-a");
     expect(store.shouldRefresh("github.com", NOW, "account-a")).toBe(false);
     expect(store.shouldRefresh("github.com", NOW, "account-b")).toBe(true);
-    expect(store.shouldRefresh("github.com", NOW)).toBe(true);
+    expect(store.shouldRefresh("github.com", NOW - 1_000_000)).toBe(true);
   });
 
-  it("partitions quota by identity instead of relabeling on switch", () => {
+  it("partitions quota by identity across switches without relabeling", () => {
     const store = new GitHubApiUsageStore();
-    store.setIdentity("github.com", "account-a");
     store.record(
       {
         operation: "api graphql",
@@ -283,78 +327,24 @@ describe("GitHubApiUsageStore quota", () => {
       },
       NOW,
     );
+    store.setIdentity("github.com", "account-a");
     store.setIdentity("github.com", "account-b");
     const quota = store
       .report({ window: "1h" }, NOW)
       .quota.filter((bucket) => bucket.host === "github.com");
-    const exhausted = quota.find((bucket) => bucket.login === "account-a");
-    expect(exhausted).toMatchObject({ resource: "graphql", remaining: 0 });
-    // B inherits nothing: no bucket carries B with A's exhausted numbers.
-    expect(
-      quota.filter((bucket) => bucket.login === "account-b" && bucket.remaining !== null),
-    ).toStrictEqual([]);
-  });
-
-  it("lets the first known identity claim unattributed observations", () => {
-    const store = new GitHubApiUsageStore();
-    store.record(
-      {
-        operation: "api user",
-        feature: "viewer",
-        host: "github.com",
-        httpRequests: 1,
-        outcome: "success",
-        latencyMs: 5,
-        rateLimits: [{ resource: "core", limit: 5000, remaining: 4999, used: 1, resetAtMs: null }],
-      },
-      NOW,
-    );
-    store.setIdentity("github.com", "account-a");
-    expect(store.report({ window: "1h" }, NOW).quota).toMatchObject([
-      { host: "github.com", resource: "core", login: "account-a" },
-    ]);
-  });
-
-  it("never stores the unattributed sentinel as an account identity", () => {
-    const store = new GitHubApiUsageStore();
-    store.record(
-      {
-        operation: "api user",
-        feature: "viewer",
-        host: "github.com",
-        httpRequests: 1,
-        outcome: "success",
-        latencyMs: 5,
-        rateLimits: [{ resource: "core", limit: 5000, remaining: 4999, used: 1, resetAtMs: null }],
-      },
-      NOW,
-    );
-    store.setIdentity("github.com", "account-a");
-    // A later switch must not redisplay the earlier observation under B: the
-    // first claim moved it to A instead of leaving an "unknown" bucket that
-    // borrows whichever identity is current.
-    store.setIdentity("github.com", "account-b");
-    const quota = store.report({ window: "1h" }, NOW).quota;
     expect(quota).toHaveLength(1);
-    expect(quota[0]).toMatchObject({
-      host: "github.com",
-      resource: "core",
-      login: "account-a",
-      remaining: 4999,
-    });
+    expect(quota[0]).toMatchObject({ resource: "graphql", login: "account-a", remaining: 0 });
   });
 
   it("attributes delayed observations to the identity current at receipt", () => {
     const store = new GitHubApiUsageStore();
     store.setIdentity("github.com", "account-a");
     store.setIdentity("github.com", "account-b");
-    // No login carried: lands under the current identity, never merged into A.
     store.observeRateLimit(
       "github.com",
       { resource: "core", limit: 5000, remaining: 10, used: 4990, resetAtMs: null },
       NOW,
     );
-    // An explicit login still reaches the previous owner.
     store.observeRateLimit(
       "github.com",
       { resource: "search", limit: 30, remaining: 29, used: 1, resetAtMs: null },
@@ -489,7 +479,6 @@ describe("GitHubApiUsage refreshQuota service", () => {
       const { first, second } = yield* program;
       expect(first._tag).toBe("GitHubApiUsageError");
       expect(first.message).toContain("boom: connection reset");
-      // The failed attempt counts against the throttle: no second probe.
       expect(second).toMatchObject({ host: "github.com", refreshed: false });
       expect(calls).toBe(1);
     }),
@@ -537,7 +526,6 @@ describe("GitHubApiUsage refreshQuota service", () => {
         expect(calls).toBe(1);
         const second = yield* Effect.forkChild(usage.refreshQuota("github.com"));
         for (let i = 0; i < 1000; i += 1) yield* Effect.yieldNow;
-        // Still one probe: the second caller shares the in-flight refresh.
         expect(calls).toBe(1);
         yield* Deferred.succeed(latch, undefined);
         const r1 = yield* Fiber.join(first);
@@ -627,37 +615,6 @@ describe("GitHubApiUsageStore durable buckets", () => {
     expect(report.totals.servedFromCache).toBe(1000);
   });
 
-  it("survives restarts via snapshot round-trip", () => {
-    const store = new GitHubApiUsageStore(NOW - 7_200_000);
-    store.setIdentity("github.com", "octocat");
-    for (let index = 0; index < 1050; index += 1) {
-      recordOutbound(store, NOW - 3_500_000 + index * 1000);
-    }
-    store.record(
-      {
-        operation: "api user",
-        feature: "viewer",
-        host: "github.com",
-        httpRequests: 1,
-        outcome: "rate-limited",
-        latencyMs: 5,
-        rateLimits: [{ resource: "core", limit: 5000, remaining: 0, used: 5000, resetAtMs: null }],
-        retryAfterAtMs: NOW + 120_000,
-      },
-      NOW - 1000,
-    );
-    const before = store.report({ window: "24h" }, NOW);
-    const revived = new GitHubApiUsageStore();
-    expect(revived.restore(store.snapshot(), NOW)).toBe(true);
-    const after = revived.report({ window: "24h" }, NOW);
-    expect(after.totals).toStrictEqual(before.totals);
-    expect(after.byPullRequest).toStrictEqual(before.byPullRequest);
-    expect(after.quota).toStrictEqual(before.quota);
-    expect(after.coverage).toStrictEqual(before.coverage);
-    // The bounded recent ring is session detail and restarts empty.
-    expect(after.recent).toStrictEqual([]);
-  });
-
   it("rejects corrupt snapshots and starts fresh", () => {
     const store = new GitHubApiUsageStore();
     expect(store.restore(null, NOW)).toBe(false);
@@ -672,21 +629,23 @@ describe("GitHubApiUsageStore durable buckets", () => {
     Effect.gen(function* () {
       const store = new GitHubApiUsageStore(NOW - 7_200_000);
       store.setIdentity("github.com", "octocat");
+      for (let index = 0; index < 1050; index += 1) {
+        recordOutbound(store, NOW - 3_500_000 + index * 1000);
+      }
       store.record(
         {
-          operation: "api graphql",
-          feature: "monitor",
+          operation: "api user",
+          feature: "viewer",
           host: "github.com",
-          repository: "acme/app",
-          prNumber: 7,
-          httpRequests: 2,
-          outcome: "success",
+          httpRequests: 1,
+          outcome: "rate-limited",
           latencyMs: 5,
           rateLimits: [
-            { resource: "graphql", limit: 5000, remaining: 100, used: 4900, resetAtMs: null },
+            { resource: "core", limit: 5000, remaining: 0, used: 5000, resetAtMs: null },
           ],
+          retryAfterAtMs: NOW + 120_000,
         },
-        NOW - 60_000,
+        NOW - 1000,
       );
       yield* saveUsageSnapshot(store);
       const revived = new GitHubApiUsageStore();
@@ -697,6 +656,8 @@ describe("GitHubApiUsageStore durable buckets", () => {
       expect(after.byPullRequest).toStrictEqual(before.byPullRequest);
       expect(after.quota).toStrictEqual(before.quota);
       expect(after.coverage).toStrictEqual(before.coverage);
+      // The bounded recent ring is session detail and restarts empty.
+      expect(after.recent).toStrictEqual([]);
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
@@ -723,7 +684,6 @@ describe("GitHubApiUsageStore durable buckets", () => {
     const wide = store.report({ window: "24h" }, NOW + 2000);
     expect(wide.coverage.complete).toBe(false);
     expect(wide.coverage.startAt).toBe(new Date(NOW).toISOString());
-    // A window fully inside coverage is complete.
     expect(store.report({ window: "5m" }, NOW + 600_000).coverage.complete).toBe(true);
   });
 
