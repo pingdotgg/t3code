@@ -78,6 +78,8 @@ function provider(auth: ServerProvider["auth"]): ServerProvider {
   };
 }
 function Onboarding({ inline = false }: { inline?: boolean }) {
+  "use no memo";
+  // The atom mock is refreshed by render(), rather than an external-store subscription.
   const [adding, setAdding] = useState(true);
   const [createdAccount, setCreatedAccount] = useState<ProviderInstanceId | null>(null);
   return (
