@@ -290,11 +290,11 @@ function SidebarScopeCheckbox({ checked }: { checked: boolean }) {
         className={cn(
           "flex size-3.5 items-center justify-center rounded-xs border",
           checked
-            ? "border-primary bg-primary text-primary-foreground"
+            ? "border-foreground/55 bg-foreground/10 text-foreground"
             : "border-muted-foreground/40",
         )}
       >
-        {checked ? <CheckIcon className="size-2.5" strokeWidth={3} /> : null}
+        {checked ? <CheckIcon className="size-2.5 text-foreground" strokeWidth={3} /> : null}
       </span>
     </span>
   );
