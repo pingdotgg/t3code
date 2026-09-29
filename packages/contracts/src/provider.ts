@@ -179,6 +179,34 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
 
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
 
+export const ProviderSessionCommandInput = Schema.Struct({
+  threadId: ThreadId,
+  command: Schema.Literals(["copy", "export", "share"]),
+  outputPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderSessionCommandInput = typeof ProviderSessionCommandInput.Type;
+
+export const ProviderSessionCommandResult = Schema.Union([
+  Schema.Struct({ command: Schema.Literal("copy"), text: Schema.String }),
+  Schema.Struct({
+    command: Schema.Literal("export"),
+    fileName: TrimmedNonEmptyString,
+    html: Schema.String,
+    outputPath: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({ command: Schema.Literal("share"), url: TrimmedNonEmptyString }),
+]);
+export type ProviderSessionCommandResult = typeof ProviderSessionCommandResult.Type;
+
+export class ProviderSessionCommandError extends Schema.TaggedErrorClass<ProviderSessionCommandError>()(
+  "ProviderSessionCommandError",
+  { threadId: ThreadId, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export class ProviderUploadFeedbackError extends Schema.TaggedErrorClass<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",
   {
