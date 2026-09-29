@@ -39,10 +39,13 @@ export function AssistantCitationChip({
     onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
+    /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
+    onRestoreFocus?: () => void;
   };
 }) {
   const navigate = useNavigate();
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
+  const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
@@ -110,7 +113,7 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline focus-visible:outline-2 focus-visible:outline-foreground"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
@@ -120,7 +123,7 @@ export function AssistantCitationChip({
   const chatSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-[color-mix(in_oklab,var(--context-chip-accent)_17%,transparent)] focus-visible:outline-2 focus-visible:outline-[var(--contrast-foreground)]"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-sm text-inherit no-underline hover:bg-(--context-chip-accent)/17 focus-visible:outline-2 focus-visible:outline-foreground"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />
@@ -155,6 +158,7 @@ export function AssistantCitationChip({
         >
           <PopoverTrigger
             aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
             <PencilIcon aria-hidden="true" />
@@ -169,6 +173,22 @@ export function AssistantCitationChip({
                 commentInputRef.current?.focus({ preventScroll: true });
                 return false;
               }}
+              finalFocus={
+                commentEditor.onRestoreFocus
+                  ? () => {
+                      // Leave focus alone when the user closed the popover by moving to another control.
+                      const activeElement = document.activeElement;
+                      if (
+                        activeElement === document.body ||
+                        (activeElement !== null && commentPopupRef.current?.contains(activeElement))
+                      ) {
+                        commentEditor.onRestoreFocus?.();
+                      }
+                      return false;
+                    }
+                  : undefined
+              }
+              ref={commentPopupRef}
               aria-label="Edit citation comment"
               width="md"
               padding="compact"

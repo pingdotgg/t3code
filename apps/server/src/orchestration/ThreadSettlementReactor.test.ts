@@ -24,13 +24,17 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
 import {
   PullRequestService,
   type PullRequestMergeEvent,
@@ -38,11 +42,17 @@ import {
 import { ServerActivation } from "../serverActivation.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSnapshotQuery.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "./Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "./Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
 import * as ThreadSettlementReactor from "./ThreadSettlementReactor.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Path from "effect/Path";
@@ -168,6 +178,8 @@ function makeBranchPullRequest(
 
 interface HarnessOptions {
   readonly snapshot: OrchestrationShellSnapshot;
+  /** Serve full sweep reads from this instead of `snapshot`. */
+  readonly getShellSnapshot?: ProjectionSnapshotQueryShape["getShellSnapshot"];
   readonly settings?: ServerSettings;
   readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
   readonly pullRequestSummary?: PullRequestService["Service"]["summary"];
@@ -181,7 +193,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make(options.snapshot);
   const snapshotReadCount = yield* Ref.make(0);
-  const snapshotReads = yield* Queue.unbounded<number>();
+  // Each shell read: a thread id for a one-thread read, null for a full read.
+  const snapshotReads = yield* Queue.unbounded<ThreadId | null>();
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
   const settingsReads = yield* Queue.unbounded<ServerSettings>();
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
@@ -254,10 +267,27 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
 
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
-      getShellSnapshot: () =>
-        Ref.updateAndGet(snapshotReadCount, (count) => count + 1).pipe(
-          Effect.tap((count) => Queue.offer(snapshotReads, count)),
-          Effect.andThen(Ref.get(snapshots)),
+      getShellSnapshot: (readOptions) =>
+        Ref.update(snapshotReadCount, (count) => count + 1).pipe(
+          Effect.andThen(Queue.offer(snapshotReads, null)),
+          Effect.andThen(options.getShellSnapshot?.(readOptions) ?? Ref.get(snapshots)),
+        ),
+      getSnapshotSequence: () =>
+        Ref.get(snapshots).pipe(Effect.map(({ snapshotSequence }) => ({ snapshotSequence }))),
+      getThreadShellById: (threadId) =>
+        Ref.get(snapshots).pipe(
+          Effect.map(({ threads }) =>
+            Option.fromUndefinedOr(
+              threads.find((thread) => thread.id === threadId && thread.archivedAt === null),
+            ),
+          ),
+          Effect.tap(() => Queue.offer(snapshotReads, threadId)),
+        ),
+      getProjectShells: (projectIds) =>
+        Ref.get(snapshots).pipe(
+          Effect.map(({ projects }) =>
+            projects.filter((project) => projectIds?.includes(project.id) ?? true),
+          ),
         ),
     }),
     Layer.mock(GitManager)({
@@ -313,7 +343,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
 const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
   reactor: ThreadSettlementReactor.ThreadSettlementReactor["Service"],
   activation: Deferred.Deferred<void>,
-  snapshotReads: Queue.Queue<number>,
+  snapshotReads: Queue.Queue<ThreadId | null>,
 ) {
   yield* reactor.start();
   yield* Deferred.succeed(activation, undefined);
@@ -443,7 +473,7 @@ describe("ThreadSettlementReactor", () => {
                   updatedAt: NOW,
                 },
               });
-              yield* Queue.take(fixture.snapshotReads);
+              assert.strictEqual(yield* Queue.take(fixture.snapshotReads), thread.id);
               yield* reactor.drain;
             }
             assert.deepStrictEqual(
@@ -463,7 +493,7 @@ describe("ThreadSettlementReactor", () => {
               aggregateId: readySession.threadId,
               payload: { threadId: readySession.threadId, session: readySession },
             });
-            yield* Queue.take(fixture.snapshotReads);
+            assert.strictEqual(yield* Queue.take(fixture.snapshotReads), readySession.threadId);
             yield* reactor.drain;
             assert.deepStrictEqual(
               (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
@@ -1416,6 +1446,88 @@ describe("ThreadSettlementReactor", () => {
           assert.strictEqual((yield* Ref.get(fixture.commands)).length, 4);
         }).pipe(Effect.provide(fixture.layer));
       }),
+    ),
+  );
+
+  it.effect("settles the same threads from the unsettled read as from the full read", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES ('settlement-project', 'Project', '/workspace/project', '[]', ${NOW}, ${NOW}),
+          ('linked-settlement-project', 'Linked', '/workspace/linked', '[]', ${NOW}, ${NOW}),
+          ('dormant-project', 'Dormant', '/workspace/dormant', '[]', ${NOW}, ${NOW})`;
+      yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch, branch_pull_request_json, latest_user_message_at, created_at, updated_at, archived_at, settled_override, settled_at)
+        VALUES
+          ('idle', 'settlement-project', 'Idle', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-08-20T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, NULL, NULL, NULL),
+          ('merged', 'settlement-project', 'Merged', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'feature',
+            '{"projectId":"linked-settlement-project","repository":"owner/repository","number":42,"url":"https://example.test/owner/repository/pull/42"}',
+            '2026-08-27T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, NULL, NULL, NULL),
+          ('linked', 'settlement-project', 'Linked', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-08-27T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, NULL, NULL, NULL),
+          ('open', 'settlement-project', 'Open', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'open-feature', NULL, '2026-08-27T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, NULL, NULL, NULL),
+          ('resumed', 'settlement-project', 'Resumed', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-08-20T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, NULL, 'active', NULL),
+          ('settled', 'dormant-project', 'Settled', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'done', NULL, '2026-08-20T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, NULL, 'settled', '2026-08-21T00:00:00.000Z'),
+          ('archived', 'settlement-project', 'Archived', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-08-20T00:00:00.000Z', '2026-08-01T00:00:00.000Z', ${NOW}, ${NOW}, NULL, NULL)`;
+      yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at, snapshot_json)
+        VALUES ('linked', 'example.test', 'owner/repository', 7, 'https://example.test/owner/repository/pull/7', 'manual', ${NOW},
+          '{"state":"merged","title":"Review","headBranch":"linked","baseBranch":"main","isDraft":false,"updatedAt":"2026-08-28T12:00:00.000Z","syncedAt":"2026-08-28T12:00:00.000Z","mergedAt":"2026-08-28T12:00:00.000Z","closedAt":null}')`;
+
+      const sweep = (read: ProjectionSnapshotQueryShape["getShellSnapshot"]) =>
+        Effect.gen(function* () {
+          const readThreadIds: Array<string> = [];
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([]),
+            getShellSnapshot: (options) =>
+              read(options).pipe(
+                Effect.tap((snapshot) =>
+                  Effect.sync(() => readThreadIds.push(...snapshot.threads.map(({ id }) => id))),
+                ),
+              ),
+            branchPullRequest: ({ branch }) =>
+              Effect.succeed(branch === "open-feature" ? makeBranchPullRequest("open") : null),
+            pullRequestSummary: (input) =>
+              Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
+          });
+          return yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            return {
+              readThreadIds: readThreadIds.toSorted(),
+              commands: (yield* Ref.get(fixture.commands))
+                .map(({ threadId, settledAt }) => `${threadId} ${settledAt}`)
+                .toSorted(),
+              branchCalls: (yield* Ref.get(fixture.branchCalls))
+                .map(({ branch }) => branch)
+                .toSorted(),
+              summaryCalls: yield* Ref.get(fixture.summaryCalls),
+            };
+          }).pipe(Effect.provide(fixture.layer));
+        }).pipe(Effect.scoped);
+
+      const { readThreadIds: unsettledReads, ...unsettled } = yield* sweep(query.getShellSnapshot);
+      const { readThreadIds: fullReads, ...full } = yield* sweep(() => query.getShellSnapshot());
+      assert.deepStrictEqual(unsettled, full);
+      // A settle for inactivity, for a synced merged link, and for a saved
+      // branch PR whose project only that PR names.
+      assert.deepStrictEqual(unsettled.commands, [
+        "idle 2026-08-20T00:00:00.000Z",
+        "linked 2026-08-27T00:00:00.000Z",
+        "merged 2026-08-27T00:00:00.000Z",
+      ]);
+      assert.deepStrictEqual(fullReads, [...unsettledReads, "settled"].toSorted());
+      assert.deepStrictEqual(unsettledReads, ["idle", "linked", "merged", "open", "resumed"]);
+    }).pipe(
+      Effect.provide(
+        OrchestrationProjectionSnapshotQueryLive.pipe(
+          Layer.provide(ThreadBackgroundLiveness.layer),
+          Layer.provide(ThreadPlanProgress.layer),
+          Layer.provide(
+            Layer.succeed(RepositoryIdentityResolver, { resolve: () => Effect.succeed(null) }),
+          ),
+          Layer.provideMerge(SqlitePersistenceMemory),
+        ),
+      ),
     ),
   );
 });

@@ -211,7 +211,17 @@ function makeRegistry(
 
 const makeTestRunner = (
   registry: ProviderRegistryShape,
-  manifest = ModelManifest.BUNDLED_MODEL_MANIFEST,
+  // Generic updater fixtures use synthetic versions. Keep their compatibility
+  // unknown so real harness minimums do not bypass the command under test.
+  manifest: ModelManifest.ModelManifestData = {
+    version: 1,
+    currentModels: {},
+    compatibility: [CODEX_DRIVER, CURSOR_DRIVER, OPENCODE_DRIVER].map((driver) => ({
+      driver,
+      t3CodeRange: ">=0.0.42",
+      ranges: [],
+    })),
+  },
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(

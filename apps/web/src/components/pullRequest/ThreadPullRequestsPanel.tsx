@@ -16,6 +16,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
@@ -161,7 +162,17 @@ function LinkRow({
                 />
               ) : null}
               {snapshot !== null ? (
-                <PullRequestRowBranches head={snapshot.headBranch} base={snapshot.baseBranch} />
+                <>
+                  {/* Cut in the middle: rows from one owner differ in the repository name at the
+                      end, which a tail cut would hide. */}
+                  <Tooltip>
+                    <TooltipTrigger render={<span className="flex min-w-0 max-w-32 font-mono" />}>
+                      <MiddleTruncate value={link.repository} showTitle={false} />
+                    </TooltipTrigger>
+                    <TooltipPopup>{link.repository}</TooltipPopup>
+                  </Tooltip>
+                  <PullRequestRowBranches head={snapshot.headBranch} base={snapshot.baseBranch} />
+                </>
               ) : (
                 <span className="truncate font-mono">
                   {link.host}/{link.repository}
@@ -297,7 +308,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           ))}
         </div>
       </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-[.7rem] text-muted-foreground">
+      <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
         <span>
           {openCount} open · {links.length} linked
           {lastSynced ? ` · synced ${formatRelativeTimeLabel(lastSynced)}` : ""}
