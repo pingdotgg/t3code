@@ -22,7 +22,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
-import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
@@ -230,7 +230,9 @@ const makeTestRunner = (
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ProviderRegistry, registry),
-            Layer.mock(ProviderInstanceRegistry)({ listInstances: Effect.succeed([]) }),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              listInstances: Effect.succeed([]),
+            }),
             Layer.succeed(ModelManifest.ModelManifest, {
               current: Effect.succeed(manifest),
               refresh: Effect.succeed(manifest),

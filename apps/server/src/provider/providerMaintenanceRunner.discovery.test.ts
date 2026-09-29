@@ -16,8 +16,8 @@ import {
   ProviderVersionCache,
 } from "./providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
-import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
 
 const driver = ProviderDriverKind.make("cursor");
 const maintenance = makeProviderMaintenanceCapabilities({
@@ -164,8 +164,10 @@ for (const outcome of ["success", "update-failed", "discovery-failed"] as const)
               }),
               refreshInBackground: Effect.void,
             }),
-            Layer.mock(ProviderInstanceRegistry)({ listInstances: Effect.succeed(instances) }),
-            Layer.mock(ProviderRegistry)({
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              listInstances: Effect.succeed(instances),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Ref.get(providers),
               getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(maintenance),
               refreshInstance: (id) =>
