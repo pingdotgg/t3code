@@ -548,7 +548,7 @@ export const OpenAI: Icon = ({ className, ...props }) => (
     {...props}
     preserveAspectRatio="xMidYMid"
     viewBox="100 100 411 411"
-    className={cn("fill-black dark:fill-white", className)}
+    className={cn("fill-current", className)}
   >
     <path
       fillRule="evenodd"

@@ -1,3 +1,4 @@
+import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
@@ -317,6 +318,7 @@ export function UsageRouteScreen() {
                   className="w-full ios:w-36"
                 />
               </View>
+              <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
               {merged.duplicateSources.length > 0 ? (
                 <Text className="text-sm text-foreground-muted">
                   Counted once across environments sharing a transcript directory:{" "}

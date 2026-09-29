@@ -1,3 +1,6 @@
+import { CodexInstallation } from "../CodexInstallation.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 /**
  * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
  *
@@ -25,6 +28,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EnvironmentId,
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
@@ -246,6 +250,17 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(
+      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+    ),
+    Layer.provideMerge(Layer.mock(ServerSecretStore)({})),
+    Layer.provideMerge(
+      Layer.succeed(ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(
+          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
+        ),
+      }),
+    ),
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
@@ -594,7 +609,20 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
   // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
-  const infraLayer = OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer));
+  const infraLayer = OpenCodeRuntimeLive.pipe(
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(
+      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+    ),
+    Layer.provideMerge(Layer.mock(ServerSecretStore)({})),
+    Layer.provideMerge(
+      Layer.succeed(ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(
+          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
+        ),
+      }),
+    ),
+  );
   const testLayer = AntigravityInstallation.layer.pipe(
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {

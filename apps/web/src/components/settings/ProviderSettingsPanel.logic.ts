@@ -20,18 +20,22 @@ export function isProviderSettingsEnvironmentAvailable(input: {
 export function buildProviderEnvironmentOptions<T extends ProviderEnvironmentOptionLike>(
   environments: ReadonlyArray<T>,
   primaryEnvironmentId: EnvironmentId | null,
+  environmentIds?: readonly EnvironmentId[],
 ): ReadonlyArray<T> {
-  return environments.toSorted((left, right) => {
-    const leftIsPrimary = left.environmentId === primaryEnvironmentId;
-    const rightIsPrimary = right.environmentId === primaryEnvironmentId;
-    if (leftIsPrimary !== rightIsPrimary) {
-      return leftIsPrimary ? -1 : 1;
-    }
-    return (
-      left.label.localeCompare(right.label) ||
-      String(left.environmentId).localeCompare(String(right.environmentId))
-    );
-  });
+  const allowed = environmentIds ? new Set(environmentIds) : null;
+  return environments
+    .filter((environment) => !allowed || allowed.has(environment.environmentId))
+    .toSorted((left, right) => {
+      const leftIsPrimary = left.environmentId === primaryEnvironmentId;
+      const rightIsPrimary = right.environmentId === primaryEnvironmentId;
+      if (leftIsPrimary !== rightIsPrimary) {
+        return leftIsPrimary ? -1 : 1;
+      }
+      return (
+        left.label.localeCompare(right.label) ||
+        String(left.environmentId).localeCompare(String(right.environmentId))
+      );
+    });
 }
 
 export function resolveSelectedProviderEnvironmentId(

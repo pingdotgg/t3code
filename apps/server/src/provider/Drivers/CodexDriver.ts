@@ -68,6 +68,10 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
+import { CodexInstallation } from "../CodexInstallation.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -111,7 +115,10 @@ export type CodexDriverEnv =
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ServerSecretStore
+  | ServerEnvironmentIdentity
+  | CodexInstallation;
 
 export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -123,6 +130,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      if (config.setupMode === "managed")
+        return yield* makeManagedCodexProvider({
+          instanceId,
+          displayName,
+          accentColor,
+          environment,
+          enabled,
+          config,
+        });
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const fileSystem = yield* FileSystem.FileSystem;

@@ -144,6 +144,33 @@ export const makeProviderAuthService = Effect.gen(function* () {
   });
 
   return ProviderAuthService.ProviderAuthService.of({
+    reconnectProfile: Effect.fnUntraced(function* (input) {
+      const auth = yield* getController(input.instanceId, "export");
+      if (!auth.reconnectProfile)
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "export",
+          detail: "This provider does not support ChatGPT profile transfer.",
+        });
+      return yield* auth.reconnectProfile(input.methodId);
+    }),
+    importProfile: (input) =>
+      credentialChanges.withPermit(
+        Effect.gen(function* () {
+          const auth = yield* getController(input.instanceId, "import");
+          yield* checkSharedBinding(input.instanceId, "start", auth);
+          if (!auth.importProfile)
+            return yield* new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "import",
+              detail: "This provider does not support ChatGPT profile transfer.",
+            });
+          return yield* auth.importProfile(
+            input.profile,
+            stopSessions(input.instanceId, auth.credentialBinding),
+          );
+        }),
+      ),
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
@@ -153,6 +180,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
             ownerSessionId,
             stopSessions(input.instanceId, auth.credentialBinding),
             input.methodId,
+            input.returnUrl,
+            input.callbackMode,
           );
         }),
       );
