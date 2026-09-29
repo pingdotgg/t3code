@@ -216,7 +216,7 @@ const makeTestRunner = (
   manifest: ModelManifest.ModelManifestData = {
     version: 1,
     currentModels: {},
-    compatibility: [CODEX_DRIVER, OPENCODE_DRIVER].map((driver) => ({
+    compatibility: [CODEX_DRIVER, CURSOR_DRIVER, OPENCODE_DRIVER].map((driver) => ({
       driver,
       t3CodeRange: ">=0.0.42",
       ranges: [],
