@@ -146,6 +146,37 @@ export function createT3I18n(locale: SupportedLocale): i18n {
   return instance;
 }
 
+interface LooseTranslator {
+  readonly t: (
+    key: string,
+    options?: { readonly defaultValue?: string } & Readonly<Record<string, unknown>>,
+  ) => string;
+}
+
+let activeInstance: i18n | null = null;
+
+/**
+ * Registers the instance React renders from so plain modules can translate too.
+ * One locale is live per client, so a single slot is enough.
+ */
+export function setActiveI18nInstance(instance: i18n | null): void {
+  activeInstance = instance;
+}
+
+/**
+ * Translates outside React, for copy that lives in data modules rather than
+ * components. Before a provider registers an instance this returns the English
+ * `defaultValue`, so module-level copy never surfaces as a raw lookup key.
+ */
+export function translate(
+  key: string,
+  defaultValue: string,
+  params?: Readonly<Record<string, string | number>>,
+): string {
+  if (activeInstance === null) return defaultValue;
+  return (activeInstance as unknown as LooseTranslator).t(key, { defaultValue, ...params });
+}
+
 declare module "i18next" {
   interface CustomTypeOptions {
     defaultNS: "common";

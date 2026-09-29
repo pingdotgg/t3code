@@ -4,6 +4,7 @@ import { I18nextProvider, initReactI18next, useTranslation } from "react-i18next
 import {
   getT3I18nOptions,
   resolveSupportedLocale,
+  setActiveI18nInstance,
   setActiveLocale,
   type LocalePreference,
 } from "./index.ts";
@@ -20,6 +21,7 @@ export function T3I18nProvider(props: {
     if (typeof document !== "undefined") document.documentElement.lang = locale;
     const instance = createInstance();
     void instance.use(initReactI18next).init(getT3I18nOptions(locale));
+    setActiveI18nInstance(instance);
     return instance;
   });
 
