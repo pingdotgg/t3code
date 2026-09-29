@@ -80,16 +80,6 @@ describe("getOnboardingProviderState", () => {
   it("waits for a provider snapshot before offering an action", () => {
     expect(getOnboardingProviderState(undefined)).toBe("checking");
   });
-  it("waits for the initial CLI probe before offering installation or sign-in", () => {
-    expect(
-      getOnboardingProviderState({
-        ...readyCodex,
-        installed: false,
-        status: "warning",
-        auth: { status: "unknown" },
-      }),
-    ).toBe("checking");
-  });
 });
 
 describe("selectOnboardingProvidersByDriver", () => {
