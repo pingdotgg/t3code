@@ -242,6 +242,18 @@ describe("legacyLinkedPullRequestOf", () => {
   it("does not guess when the project identity is unavailable", () => {
     expect(legacyLinkedPullRequestOf([link(7)], "project-1" as never, null)).toBeNull();
   });
+  it("does not route links for a local-path remote with no host or provider", () => {
+    const localIdentity = {
+      canonicalKey: "/tmp/r/remote",
+      displayName: "remote",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "/tmp/r/remote.git",
+      },
+    };
+    expect(legacyLinkedPullRequestOf([link(7)], "project-1" as never, localIdentity)).toBeNull();
+  });
 });
 
 describe("resolveThreadPullRequestChains", () => {

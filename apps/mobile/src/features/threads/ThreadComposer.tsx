@@ -663,7 +663,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ? "assertive"
                 : "polite"
             }
-            className="px-3 py-2 text-xs text-foreground"
+            className={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken"
+                ? "bg-danger px-3 py-2 text-xs text-danger-foreground"
+                : "px-3 py-2 text-xs text-foreground"
+            }
           >
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>
