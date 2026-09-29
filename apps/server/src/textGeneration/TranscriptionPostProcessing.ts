@@ -23,9 +23,7 @@ export function buildTranscriptionPostProcessingPrompt(
     ? `\n\n${placement} Use the composer draft only for context. Return only the cleaned transcript, without any surrounding composer text.\n<composer_before>\n${draft.text.slice(0, start)}\n</composer_before>\n<composer_selection>\n${draft.text.slice(start, end)}\n</composer_selection>\n<composer_after>\n${draft.text.slice(end)}\n</composer_after>`
     : "";
   return {
-    prompt: instructions.includes("${output}")
-      ? `${instructions.replaceAll("${output}", transcriptBlock)}${context}`
-      : `${instructions}\n\n${transcriptBlock}${context}`,
+    prompt: `${instructions}\n\n${transcriptBlock}${context}`,
     outputSchema: TranscriptionPostProcessingOutput,
   };
 }

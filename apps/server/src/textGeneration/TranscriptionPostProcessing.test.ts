@@ -14,13 +14,8 @@ describe("buildTranscriptionPostProcessingPrompt", () => {
     );
   });
 
-  it("supports Handy-compatible output placeholders", () => {
-    const result = buildTranscriptionPostProcessingPrompt("Clean this:\n${output}", "raw text");
-    expect(result.prompt).toBe("Clean this:\n<transcript>\nraw text\n</transcript>");
-  });
-
   it("shows where the transcript replaces composer text", () => {
-    const result = buildTranscriptionPostProcessingPrompt("Clean ${output}", "raw", {
+    const result = buildTranscriptionPostProcessingPrompt("Clean this transcript.", "raw", {
       text: "Before old after",
       selection: { start: 7, end: 10 },
     });
@@ -31,7 +26,7 @@ describe("buildTranscriptionPostProcessingPrompt", () => {
   });
 
   it("describes insertion at a cursor without selected text", () => {
-    const result = buildTranscriptionPostProcessingPrompt("Clean ${output}", "raw", {
+    const result = buildTranscriptionPostProcessingPrompt("Clean this transcript.", "raw", {
       text: "Before after",
       selection: { start: 7, end: 7 },
     });
