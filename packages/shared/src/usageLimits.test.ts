@@ -3,6 +3,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  EventId,
+  type OrchestrationThreadActivity,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -14,6 +16,7 @@ import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
+  collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
   displayLimitWindows,
@@ -23,6 +26,8 @@ import {
   paceOf,
   providersWithLimits,
   remainingPercent,
+  isChatGptUsageLimitError,
+  usesChatGptSharing,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1122,5 +1127,110 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("external usage settings", () => {
+  it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
+    const managed = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported", message: "Track usage in ChatGPT." },
+        externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: {
+            providers: [managed, { ...managed, instanceId: ProviderInstanceId.make("personal") }],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("b"),
+        { entry: { target: { label: "B" } }, serverConfig: { providers: [managed] } },
+      ],
+    ]);
+    expect(collectExternalUsageLinks(presentations)).toEqual([
+      {
+        ...managed.usageLimits!.externalUsage,
+        message: "Track usage in ChatGPT.",
+        accounts: [`${managed.instanceId} on A`, "personal on A", `${managed.instanceId} on B`],
+      },
+    ]);
+    expect(collectLimitAccounts(presentations)).toEqual([]);
+    expect(collectLimitNotices(presentations)).toEqual([]);
+  });
+  it("omits disabled, uninstalled and signed-out providers", () => {
+    const managed = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: {
+            providers: [
+              { ...managed, enabled: false },
+              { ...managed, installed: false },
+              { ...managed, auth: { status: "unauthenticated" as const } },
+              provider({}),
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectExternalUsageLinks(presentations)).toEqual([]);
+  });
+});
+
+describe("ChatGPT sharing presentation", () => {
+  it("requires verified sharing metadata rather than the Codex driver or login type", () => {
+    const codex = provider({ auth: { status: "authenticated", type: "chatgpt" } });
+    expect(usesChatGptSharing(codex)).toBe(false);
+    expect(
+      usesChatGptSharing({ ...codex, auth: { ...codex.auth, subscriptionSharing: true } }),
+    ).toBe(true);
+    expect(
+      usesChatGptSharing({
+        ...codex,
+        auth: { status: "unauthenticated", subscriptionSharing: true },
+      }),
+    ).toBe(false);
+  });
+  it("only gives the matching current structured limit error a management action", () => {
+    const limit: OrchestrationThreadActivity = {
+      id: EventId.make("sharing-limit"),
+      tone: "error",
+      kind: "runtime.error",
+      summary: "Runtime error",
+      turnId: null,
+      createdAt: "2026-09-03T12:00:00.000Z",
+      payload: { code: "subscription_sharing_usage_limit_exceeded", message: "Limit reached" },
+    };
+    expect(isChatGptUsageLimitError([limit], "Limit reached")).toBe(true);
+    expect(isChatGptUsageLimitError([limit], "A different failure")).toBe(false);
+    expect(isChatGptUsageLimitError([limit], null)).toBe(false);
+    expect(
+      isChatGptUsageLimitError(
+        [{ ...limit, payload: { message: "Limit reached" } }],
+        "Limit reached",
+      ),
+    ).toBe(false);
+    expect(
+      isChatGptUsageLimitError(
+        [limit, { ...limit, payload: { code: "unrelated", message: "Limit reached" } }],
+        "Limit reached",
+      ),
+    ).toBe(false);
   });
 });
