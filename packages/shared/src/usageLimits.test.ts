@@ -207,6 +207,74 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("merges OpenCode Go limits from machines with the same API key", () => {
+    const go = provider({
+      driver: ProviderDriverKind.make("opencode"),
+      instanceId: ProviderInstanceId.make("opencode"),
+      auth: { status: "authenticated" },
+      usageLimits: {
+        checkedAt,
+        credentialFingerprint: "shared-go-key",
+        windows: [{ ...window, id: "go_rolling", usedPercent: 3 }],
+      },
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [go] } }],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [
+              {
+                ...go,
+                usageLimits: {
+                  ...go.usageLimits!,
+                  checkedAt: "2026-09-03T11:30:00.000Z",
+                  windows: [{ ...window, id: "go_rolling", usedPercent: 4 }],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.environments).toEqual([
+      { environmentId: "env-a", label: "Laptop" },
+      { environmentId: "env-b", label: "Desktop" },
+    ]);
+    expect(collectLimitPools(accounts, now)[0]?.windows[0]?.members).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(4);
+
+    const differentKey = {
+      ...go,
+      usageLimits: { ...go.usageLimits!, credentialFingerprint: "other-go-key" },
+    };
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: { providers: [differentKey] },
+    });
+    expect(collectLimitAccounts(input)).toHaveLength(2);
+
+    input.set(EnvironmentId.make("env-a"), {
+      ...laptop,
+      serverConfig: {
+        providers: [{ ...go, auth: { status: "authenticated", email: "same@example.com" } }],
+      },
+    });
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: {
+        providers: [
+          { ...differentKey, auth: { status: "authenticated", email: "SAME@example.com" } },
+        ],
+      },
+    });
+    expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
     const native = provider({
       driver: claude,
