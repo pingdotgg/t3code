@@ -4147,6 +4147,248 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completionEvents).toHaveLength(1);
   });
 
+  it.each([false, true])(
+    "does not redeliver a completed message's text when a later turn replays its part (streaming=%s)",
+    async (enableAssistantStreaming) => {
+      const harness = await createHarness({ serverSettings: { enableAssistantStreaming } });
+      const now = new Date().toISOString();
+      const messageId = "assistant:item-cross-turn-redelivery";
+
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-turn-one-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-one-cross-turn-redelivery"),
+      });
+      await waitForThread(
+        harness.engine,
+        (thread) => thread.session?.activeTurnId === "turn-one-cross-turn-redelivery",
+      );
+
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId("evt-delta-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-one-cross-turn-redelivery"),
+        itemId: asItemId("item-cross-turn-redelivery"),
+        payload: { streamKind: "assistant_text", delta: "alpha" },
+      });
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId("evt-completed-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-one-cross-turn-redelivery"),
+        itemId: asItemId("item-cross-turn-redelivery"),
+        payload: { itemType: "assistant_message", status: "completed" },
+      });
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-turn-one-completed-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-one-cross-turn-redelivery"),
+        payload: { state: "completed" },
+      });
+      const completed = await waitForThread(harness.engine, (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === messageId && !message.streaming && message.text === "alpha",
+        ),
+      );
+      expect(
+        completed.messages.find((message: ProviderRuntimeTestMessage) => message.id === messageId)
+          ?.text,
+      ).toBe("alpha");
+
+      // A later turn replays the old part's full snapshot (adapter replay or
+      // late snapshot). The old message must not grow.
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-turn-two-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-two-cross-turn-redelivery"),
+      });
+      await waitForThread(
+        harness.engine,
+        (thread) => thread.session?.activeTurnId === "turn-two-cross-turn-redelivery",
+      );
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId("evt-delta-replay-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-two-cross-turn-redelivery"),
+        itemId: asItemId("item-cross-turn-redelivery"),
+        payload: { streamKind: "assistant_text", delta: "alpha" },
+      });
+      harness.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-turn-two-completed-cross-turn-redelivery"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: now,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-two-cross-turn-redelivery"),
+        payload: { state: "completed" },
+      });
+
+      const final = await waitForThread(
+        harness.engine,
+        (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+      );
+      expect(
+        final.messages.find((message: ProviderRuntimeTestMessage) => message.id === messageId)
+          ?.text,
+      ).toBe("alpha");
+    },
+  );
+
+  it("does not append finalized text twice when a late snapshot refills the buffer within a turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const messageId = "assistant:item-redo-finalize";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-redo-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-redo-finalize"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.activeTurnId === "turn-redo-finalize",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-delta-redo-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-redo-finalize"),
+      itemId: asItemId("item-redo-finalize"),
+      payload: { streamKind: "assistant_text", delta: "beta" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-completed-redo-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-redo-finalize"),
+      itemId: asItemId("item-redo-finalize"),
+      payload: { itemType: "assistant_message", status: "completed", detail: "beta" },
+    });
+    // A late full snapshot for the same part refills the buffer after the
+    // item completion was already finalized.
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-delta-late-redo-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-redo-finalize"),
+      itemId: asItemId("item-redo-finalize"),
+      payload: { streamKind: "assistant_text", delta: "beta" },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-redo-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-redo-finalize"),
+      payload: { state: "completed" },
+    });
+
+    // Waiting for the session to settle guarantees the terminal
+    // turn.completed finalization above was already projected.
+    const final = await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+    expect(
+      final.messages.find((message: ProviderRuntimeTestMessage) => message.id === messageId)?.text,
+    ).toBe("beta");
+  });
+
+  it("reprocessing the same item.completed emits no new message events", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    const messageId = "assistant:item-replay-finalize";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-replay-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replay-finalize"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.activeTurnId === "turn-replay-finalize",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-delta-replay-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replay-finalize"),
+      itemId: asItemId("item-replay-finalize"),
+      payload: { streamKind: "assistant_text", delta: "gamma" },
+    });
+    const completedEvent = {
+      type: "item.completed",
+      eventId: asEventId("evt-completed-replay-finalize"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replay-finalize"),
+      itemId: asItemId("item-replay-finalize"),
+      payload: { itemType: "assistant_message", status: "completed", detail: "gamma" },
+    } as const;
+    harness.emit(completedEvent);
+    await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === messageId && !message.streaming && message.text === "gamma",
+      ),
+    );
+
+    const countMessageEvents = async () =>
+      Effect.runPromise(
+        Stream.runCollect(harness.engine.readEvents(0)).pipe(
+          Effect.map(
+            (chunk) =>
+              Array.from(chunk).filter(
+                (event) =>
+                  event.type === "thread.message-sent" && event.payload.messageId === messageId,
+              ).length,
+          ),
+        ),
+      );
+    const before = await countMessageEvents();
+
+    harness.emit(completedEvent);
+    await harness.drain();
+
+    expect(await countMessageEvents()).toBe(before);
+  });
+
   it("publishes turn-completed assistant finalization before clearing the active session", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
