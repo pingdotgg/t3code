@@ -121,6 +121,7 @@ export const pullRequestQueryKeys = {
       input.host ?? null,
       input.feature ?? null,
       input.query ?? null,
+      input.prNumber ?? null,
     ] as const,
   monitorStatus: (environmentId: EnvironmentId | null, reference: PullRequestRef) =>
     [

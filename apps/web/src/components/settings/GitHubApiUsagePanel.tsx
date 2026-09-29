@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type GitHubApiQuotaBucket,
   type GitHubApiUsageBreakdown,
@@ -46,6 +46,18 @@ function formatCountdown(targetIso: string | null, nowMs: number): string | null
   return `resets in ${hours}h ${minutes % 60}m`;
 }
 
+/** Split a `host/owner/name#number` breakdown key into a report filter. */
+function parsePrKey(key: string): { repository: string; prNumber: number } | null {
+  const hash = key.lastIndexOf("#");
+  if (hash < 0) return null;
+  const prNumber = Number(key.slice(hash + 1));
+  const repoKey = key.slice(0, hash);
+  const slash = repoKey.indexOf("/");
+  const repository = slash < 0 ? repoKey : repoKey.slice(slash + 1);
+  if (!Number.isSafeInteger(prNumber) || prNumber <= 0 || repository.length === 0) return null;
+  return { repository, prNumber };
+}
+
 function BreakdownRows({
   rows,
   limit = 8,
@@ -75,6 +87,12 @@ function BreakdownRows({
             <span className="font-medium text-foreground">{formatCount(row.httpRequests)}</span> req
             {" · "}
             {formatCount(row.invocations)} calls
+            {row.cacheHits > 0 ? (
+              <span>
+                {" · "}
+                {formatCount(row.cacheHits)} cached
+              </span>
+            ) : null}
             {row.errors > 0 ? (
               <span className="text-destructive">
                 {" · "}
@@ -146,7 +164,12 @@ function QuotaCard({
         </p>
       )}
       <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-        {coolingDown ? <Badge variant="destructive">cooling down</Badge> : null}
+        {coolingDown && bucket.coolingDownKind === "secondary" ? (
+          <Badge variant="destructive">secondary limit</Badge>
+        ) : null}
+        {coolingDown && bucket.coolingDownKind !== "secondary" ? (
+          <Badge variant="destructive">cooling down</Badge>
+        ) : null}
         {stale && !coolingDown ? <Badge variant="secondary">stale</Badge> : null}
         {countdown ? <span>{countdown}</span> : null}
         <span>
@@ -164,15 +187,21 @@ export function GitHubApiUsagePanel() {
   const [host, setHost] = useState<string>("");
   const [feature, setFeature] = useState<string>("");
   const [query, setQuery] = useState<string>("");
+  const [prKey, setPrKey] = useState<string>("");
+  const [recentLimit, setRecentLimit] = useState(15);
 
+  const prFilter = useMemo(() => (prKey ? (parsePrKey(prKey) ?? null) : null), [prKey]);
   const request = useMemo(
     () => ({
       window,
       ...(host ? { host } : {}),
       ...(feature ? { feature } : {}),
       ...(query.trim() ? { query: query.trim() } : {}),
+      // A selected pull request scopes by repository plus number, since PR
+      // numbers alone collide across repositories.
+      ...(prFilter ? { query: prFilter.repository, prNumber: prFilter.prNumber } : {}),
     }),
-    [window, host, feature, query],
+    [window, host, feature, query, prFilter],
   );
   const reportQuery = useQuery(gitHubApiUsageReportQueryOptions({ environmentId, request }));
   const refreshMutation = useMutation(
@@ -180,6 +209,12 @@ export function GitHubApiUsagePanel() {
   );
 
   const report = reportQuery.data;
+  const refreshError =
+    refreshMutation.error instanceof Error
+      ? refreshMutation.error.message
+      : refreshMutation.error
+        ? String(refreshMutation.error)
+        : null;
   const hostOptions = useMemo(
     () => [...new Set((report?.byHost ?? []).map((row) => row.key))].toSorted(),
     [report],
@@ -188,7 +223,18 @@ export function GitHubApiUsagePanel() {
     () => [...new Set((report?.byFeature ?? []).map((row) => row.key))].toSorted(),
     [report],
   );
+  const prOptions = useMemo(() => (report?.byPullRequest ?? []).map((row) => row.key), [report]);
   const trendMax = Math.max(1, ...(report?.trend ?? []).map((bucket) => bucket.httpRequests));
+  const visibleRecent = (report?.recent ?? []).slice(0, recentLimit);
+
+  // A selected PR that aged out of the window stops filtering rather than
+  // silently narrowing to nothing.
+  useEffect(() => {
+    if (report && prKey !== "" && !prOptions.includes(prKey)) {
+      setPrKey("");
+      setRecentLimit(15);
+    }
+  }, [report, prKey, prOptions]);
 
   return (
     <SettingsSection
@@ -256,6 +302,22 @@ export function GitHubApiUsagePanel() {
               </option>
             ))}
           </select>
+          <select
+            aria-label="Filter by pull request"
+            value={prKey}
+            onChange={(event) => {
+              setPrKey(event.target.value);
+              setRecentLimit(15);
+            }}
+            className="h-8 max-w-56 rounded-lg border border-border/60 bg-background px-2 text-xs text-foreground"
+          >
+            <option value="">All pull requests</option>
+            {prOptions.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -264,6 +326,22 @@ export function GitHubApiUsagePanel() {
             className="h-8 w-48"
           />
         </div>
+        {refreshError ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-xs text-foreground"
+          >
+            <span className="font-medium">Quota refresh failed: </span>
+            {refreshError}{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={() => refreshMutation.reset()}
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
 
         {reportQuery.isPending ? (
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
@@ -286,7 +364,7 @@ export function GitHubApiUsagePanel() {
               Retry
             </Button>
           </Empty>
-        ) : report.totals.invocations === 0 ? (
+        ) : report.totals.invocations === 0 && report.totals.servedFromCache === 0 ? (
           <Empty>
             <EmptyHeader>
               <EmptyMedia>
@@ -301,6 +379,13 @@ export function GitHubApiUsagePanel() {
           </Empty>
         ) : (
           <>
+            {!report.coverage.complete ? (
+              <div className="rounded-xl border border-border/60 bg-muted/50 px-4 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                Partial window coverage — counts cover{" "}
+                {new Date(report.coverage.startAt).toLocaleString("en-US")} onward. Older traffic
+                predates this server run or fell out of the bounded history.
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               {[
                 {
@@ -381,6 +466,13 @@ export function GitHubApiUsagePanel() {
 
             <div>
               <p className="px-1 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/50">
+                By pull request
+              </p>
+              <BreakdownRows rows={report.byPullRequest} />
+            </div>
+
+            <div>
+              <p className="px-1 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/50">
                 Quota
               </p>
               <div className="flex flex-col gap-2">
@@ -391,7 +483,7 @@ export function GitHubApiUsagePanel() {
                 ) : (
                   report.quota.map((bucket) => (
                     <QuotaCard
-                      key={`${bucket.host} ${bucket.resource}`}
+                      key={`${bucket.host} ${bucket.resource} ${bucket.login ?? ""}`}
                       bucket={bucket}
                       refreshing={refreshMutation.isPending}
                       onRefresh={() =>
@@ -410,7 +502,7 @@ export function GitHubApiUsagePanel() {
                 Recent calls
               </p>
               <ul className="divide-y divide-border/60">
-                {report.recent.slice(0, 15).map((event) => (
+                {visibleRecent.map((event) => (
                   <li
                     key={`${event.at}|${event.operation}|${event.feature}|${event.host}|${event.repository ?? ""}|${event.prNumber ?? ""}|${event.outcome}|${event.httpRequests ?? "?"}`}
                     className="flex items-center gap-3 px-1 py-1.5 text-xs"
@@ -453,6 +545,29 @@ export function GitHubApiUsagePanel() {
                   </li>
                 ))}
               </ul>
+              {visibleRecent.length === 0 ? (
+                <p className="px-1 py-3 text-xs text-muted-foreground">
+                  No calls match these filters in this window.
+                </p>
+              ) : (
+                <p className="px-1 pt-2 text-[11px] text-muted-foreground">
+                  Showing {visibleRecent.length} of {report.recent.length} recent calls
+                  {visibleRecent.length < report.recent.length ? (
+                    <>
+                      {" · "}
+                      <button
+                        type="button"
+                        className="underline underline-offset-2"
+                        onClick={() =>
+                          setRecentLimit((limit) => Math.min(limit + 15, report.recent.length))
+                        }
+                      >
+                        Show more
+                      </button>
+                    </>
+                  ) : null}
+                </p>
+              )}
             </div>
 
             <div className="rounded-xl bg-muted/50 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground">
@@ -464,10 +579,11 @@ export function GitHubApiUsagePanel() {
               </p>
               <p className="mt-1">
                 Request counts are measured per HTTP request from the CLI&apos;s own trace; a “?”
-                means that call&apos;s trace was unavailable and was never guessed. History keeps up
-                to 1,000 calls over the last 24 hours on this server run; restarting the server
-                clears it. Quota is read passively from response headers; Refresh spends one request
-                and is throttled to one per host every 5 minutes.
+                means that call&apos;s trace was unavailable and was never guessed. Headline totals
+                persist across restarts in durable per-minute buckets; recent-call detail and
+                filtered drilldowns read the bounded in-memory list. Quota is read passively from
+                response headers; Refresh spends one request and is throttled to one attempt per
+                host every 5 minutes.
               </p>
             </div>
           </>

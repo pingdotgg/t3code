@@ -192,17 +192,18 @@ it.effect("records cache-served reads separately from outbound traffic", () =>
     const program = Effect.gen(function* () {
       const service = yield* PullRequestService.PullRequestService;
       const usage = yield* GitHubApiUsage;
-      // The fake provider never touches `gh`, so the only telemetry is the
-      // service's own cache accounting: one miss, then one TTL hit.
+      // The fake provider never touches `gh`, so the miss records nothing and
+      // the TTL hit records a cache-served read with zero invocations.
       yield* service.list({ state: "open" });
       yield* service.list({ state: "open" });
       return yield* usage.report({ window: "5m" });
     }).pipe(Effect.provide(live));
     const report = yield* program;
-    assert.strictEqual(report.totals.invocations, 1);
+    assert.strictEqual(report.totals.invocations, 0);
     assert.strictEqual(report.totals.servedFromCache, 1);
     assert.strictEqual(report.totals.httpRequests, 0);
     assert.strictEqual(report.byFeature[0]?.key, "list");
+    assert.strictEqual(report.byFeature[0]?.cacheHits, 1);
   }),
 );
 

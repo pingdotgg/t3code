@@ -39,15 +39,20 @@ export const GitHubApiUsageReportInput = Schema.Struct({
   feature: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   /** Free-text match against `operation` or `repository`, bounded for transport. */
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+  /** Narrow to one pull request number; combine with `query` for the repository. */
+  prNumber: Schema.optional(PositiveInt),
 });
 export type GitHubApiUsageReportInput = typeof GitHubApiUsageReportInput.Type;
 
 export const GitHubApiUsageBreakdown = Schema.Struct({
   key: TrimmedNonEmptyString,
+  /** Outbound `gh` invocations; cache-served reads are counted separately below. */
   invocations: NonNegativeInt,
   httpRequests: NonNegativeInt,
   errors: NonNegativeInt,
   rateLimited: NonNegativeInt,
+  /** Reads answered without leaving the process; never counted as invocations. */
+  cacheHits: NonNegativeInt,
 });
 export type GitHubApiUsageBreakdown = typeof GitHubApiUsageBreakdown.Type;
 
@@ -90,10 +95,16 @@ export const GitHubApiQuotaBucket = Schema.Struct({
   lastObservedAt: IsoDateTime,
   /** A rate-limit refusal was observed and its cooldown has not elapsed. */
   coolingDownUntil: Schema.NullOr(IsoDateTime),
+  /**
+   * Primary quota exhaustion vs a secondary (abuse/nuisance) limit, where the
+   * trace gave evidence. Null where the kind is unknown.
+   */
+  coolingDownKind: Schema.NullOr(Schema.Literals(["primary", "secondary"])),
 });
 export type GitHubApiQuotaBucket = typeof GitHubApiQuotaBucket.Type;
 
 export const GitHubApiUsageTotals = Schema.Struct({
+  /** Outbound `gh` invocations; cache-served reads are counted separately below. */
   invocations: NonNegativeInt,
   httpRequests: NonNegativeInt,
   httpRequestsUnknown: Schema.Boolean,
@@ -103,6 +114,18 @@ export const GitHubApiUsageTotals = Schema.Struct({
 });
 export type GitHubApiUsageTotals = typeof GitHubApiUsageTotals.Type;
 
+/**
+ * Whether the report covers its whole window. Unfiltered headline aggregates
+ * come from durable time buckets and stay exact across restarts and ring
+ * eviction; filtered drilldowns read the bounded recent-event ring and are
+ * complete only back to `startAt`.
+ */
+export const GitHubApiUsageCoverage = Schema.Struct({
+  complete: Schema.Boolean,
+  startAt: IsoDateTime,
+});
+export type GitHubApiUsageCoverage = typeof GitHubApiUsageCoverage.Type;
+
 export const GitHubApiUsageReport = Schema.Struct({
   window: GitHubApiUsageWindow,
   generatedAt: IsoDateTime,
@@ -110,9 +133,11 @@ export const GitHubApiUsageReport = Schema.Struct({
   retainedEvents: NonNegativeInt,
   retentionHours: NonNegativeInt,
   totals: GitHubApiUsageTotals,
+  coverage: GitHubApiUsageCoverage,
   byFeature: Schema.Array(GitHubApiUsageBreakdown),
   byOperation: Schema.Array(GitHubApiUsageBreakdown),
   byRepository: Schema.Array(GitHubApiUsageBreakdown),
+  byPullRequest: Schema.Array(GitHubApiUsageBreakdown),
   byHost: Schema.Array(GitHubApiUsageBreakdown),
   trend: Schema.Array(GitHubApiUsageTrendBucket),
   recent: Schema.Array(GitHubApiUsageRecentEvent),

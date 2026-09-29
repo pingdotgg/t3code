@@ -8,6 +8,8 @@ import {
 import { runProcess } from "../../processRunner.ts";
 import { GitHubApiUsage } from "../../gitHubUsage/GitHubApiUsage.ts";
 import {
+  classifyResolvedOutcome,
+  parseGhCooldown,
   parseGhDebugTelemetry,
   stripGhDebugLines,
   summarizeGhArgs,
@@ -56,8 +58,11 @@ export function splitRunnerMessage(
 }
 
 function retryAfterAtFromMessage(message: string): string | undefined {
-  const retryAfter = /(?:^|\r?\n)\s*retry-after\s*:\s*([^\r\n]+)/iu.exec(message)?.[1]?.trim();
-  const resetAt = /(?:^|\r?\n)\s*x-ratelimit-reset\s*:\s*(\d+)/iu.exec(message)?.[1];
+  // Trace header lines carry a `< ` prefix, which bare-message parsing misses.
+  const retryAfter = /(?:^|\r?\n)\s*(?:[<>]\s*)?retry-after\s*:\s*([^\r\n]+)/iu
+    .exec(message)?.[1]
+    ?.trim();
+  const resetAt = /(?:^|\r?\n)\s*(?:[<>]\s*)?x-ratelimit-reset\s*:\s*(\d+)/iu.exec(message)?.[1];
   const retryAt =
     retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter)
       ? Date.now() + Number(retryAfter) * 1_000
@@ -75,15 +80,32 @@ function normalizeGitHubCliError(
   args?: readonly string[],
 ): GitHubCliError {
   if (error instanceof Error) {
-    if (error.message.includes("Command not found: gh")) {
+    // Sanitize once: the raw message can carry the debug trace and dumped
+    // bodies, and `cause` travels over RPC inside Schema.Unknown — so the
+    // retained cause must be the cleaned text, never the original error.
+    // Classification runs on the same cleaned text, which keeps rate-limit
+    // and not-found signals while dropping body-driven false positives.
+    const { stderr, timedOut } =
+      args === undefined
+        ? { stderr: error.message, timedOut: false }
+        : splitRunnerMessage(error.message, args);
+    const cleaned = stripGhDebugLines(stderr);
+    const safeCause = new Error(
+      cleaned.length > 0
+        ? cleaned
+        : timedOut
+          ? "GitHub CLI command failed: timed out."
+          : "GitHub CLI command failed.",
+    );
+    if (cleaned.includes("Command not found: gh")) {
       return new GitHubCliError({
         operation,
         detail: "GitHub CLI (`gh`) is required but not available on PATH.",
-        cause: error,
+        cause: safeCause,
       });
     }
 
-    const lower = error.message.toLowerCase();
+    const lower = cleaned.toLowerCase();
     if (
       lower.includes("authentication failed") ||
       lower.includes("not logged in") ||
@@ -93,7 +115,7 @@ function normalizeGitHubCliError(
       return new GitHubCliError({
         operation,
         detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
-        cause: error,
+        cause: safeCause,
       });
     }
 
@@ -106,19 +128,11 @@ function normalizeGitHubCliError(
       return new GitHubCliError({
         operation,
         detail: "Pull request not found. Check the PR number or URL and try again.",
-        cause: error,
+        cause: safeCause,
       });
     }
 
-    const { stderr, timedOut } =
-      args === undefined
-        ? { stderr: error.message, timedOut: false }
-        : splitRunnerMessage(error.message, args);
     const retryAfterAt = retryAfterAtFromMessage(stderr);
-    // `GH_DEBUG=api` writes its request/response trace to stderr. Strip every
-    // diagnostic line before it reaches the detail so failures stay small and
-    // never carry argv, headers, tokens, or query dumps.
-    const cleaned = stripGhDebugLines(stderr);
     return new GitHubCliError({
       operation,
       // An exhausted quota fails every call identically until the reset, so say that once in
@@ -132,7 +146,7 @@ function normalizeGitHubCliError(
             : "GitHub CLI command failed.",
       ),
       ...(retryAfterAt ? { retryAfterAt } : {}),
-      cause: error,
+      cause: safeCause,
     });
   }
 
@@ -332,17 +346,31 @@ const makeGitHubCli = Effect.sync(() => {
       };
 
       if (attempt.status === "ok") {
+        const result = attempt.result;
+        // Resolution is not success: `allowNonZeroExit` callers resolve on
+        // HTTP errors and interpret the response themselves.
+        const outcome = classifyResolvedOutcome({
+          code: result.code,
+          timedOut: result.timedOut,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        });
         if (usage._tag === "Some") {
-          const telemetry = parseGhDebugTelemetry(attempt.result.stderr);
+          const telemetry = parseGhDebugTelemetry(result.stderr);
+          const cooldown = outcome === "success" ? null : parseGhCooldown(result.stderr);
           yield* usage.value.record({
             ...attribution,
             httpRequests: telemetry.httpRequestCount,
-            outcome: "success",
+            outcome,
             latencyMs,
             rateLimits: telemetry.rateLimits,
+            ...(cooldown?.retryAfterAtMs !== null && cooldown?.retryAfterAtMs !== undefined
+              ? { retryAfterAtMs: cooldown.retryAfterAtMs }
+              : {}),
+            ...(cooldown?.secondary === true ? { secondaryRateLimit: true } : {}),
           });
         }
-        return attempt.result;
+        return result;
       }
 
       const raw = attempt.raw;
@@ -356,15 +384,15 @@ const makeGitHubCli = Effect.sync(() => {
       const normalized = normalizeGitHubCliError("execute", failure, input.args);
       if (usage._tag === "Some") {
         const outcome = isGitHubRateLimitMessage(normalized.detail) ? "rate-limited" : "failure";
-        const retryAfterAtMs =
-          normalized.retryAfterAt !== undefined ? Date.parse(normalized.retryAfterAt) : Number.NaN;
+        const cooldown = parseGhCooldown(stderr);
         yield* usage.value.record({
           ...attribution,
           httpRequests: telemetry.httpRequestCount,
           outcome,
           latencyMs,
           rateLimits: telemetry.rateLimits,
-          ...(Number.isFinite(retryAfterAtMs) ? { retryAfterAtMs } : {}),
+          ...(cooldown.retryAfterAtMs !== null ? { retryAfterAtMs: cooldown.retryAfterAtMs } : {}),
+          ...(cooldown.secondary ? { secondaryRateLimit: true } : {}),
         });
       }
       return yield* normalized;

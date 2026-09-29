@@ -43,6 +43,8 @@ export interface GitHubApiUsageBreakdown {
   readonly httpRequests: number;
   readonly errors: number;
   readonly rateLimited: number;
+  /** Reads answered without leaving the process; never counted as invocations. */
+  readonly cacheHits: number;
 }
 
 export interface GitHubApiUsageTrendBucket {
@@ -74,8 +76,7 @@ function parsePositiveInt(raw: string): number | null {
  * invocation actually made, plus the latest rate-limit header block per
  * resource. Only the latest block per resource is kept — an invocation that
  * paged through three responses leaves the quota where the last one did.
- */
-export function parseGhDebugTelemetry(stderr: string): {
+ */ export function parseGhDebugTelemetry(stderr: string): {
   readonly httpRequestCount: number | null;
   readonly rateLimits: ReadonlyArray<GitHubApiRateLimitObservation>;
 } {
@@ -118,21 +119,49 @@ export function parseGhDebugTelemetry(stderr: string): {
 
 /**
  * `GH_DEBUG=api` writes its request/response trace to stderr, which is also
- * where real error text lives. Strip every diagnostic line so failure details
- * stay small and never carry headers, tokens, or query dumps.
+ * where real error text lives. The trace grammar, as observed from real `gh`
+ * output, is:
+ *
+ *   `* Request at/to …`, `> …` request lines, an optional dumped request
+ *   body, `< HTTP/…` plus `< Header: …` response lines, an optional dumped
+ *   response body, `* Request took …` — then, on failure, gh's own single
+ *   line summary (`gh: …`).
+ *
+ * Bodies are dumped verbatim with no marker prefix, so line-prefix stripping
+ * is not enough: once a diagnostic marker opens the trace, everything drops
+ * until the trace closes. The trace closes only at gh's own summary line and
+ * only after a completed request, so a truncated trace or a body can never
+ * flip the sanitizer back into keeping mode. Lines outside any trace (spawn
+ * errors, auth hints, `--include`-free summaries) are kept verbatim.
  */
 export function stripGhDebugLines(stderr: string): string {
   const kept: Array<string> = [];
+  let inTrace = false;
   for (const line of stderr.split("\n")) {
     const trimmed = line.trim();
+    if (
+      trimmed.startsWith("*") ||
+      trimmed.startsWith(">") ||
+      trimmed.startsWith("<") ||
+      /^graphql\s+(query|variables)\s*:/i.test(trimmed)
+    ) {
+      inTrace = true;
+      continue;
+    }
+    if (inTrace) {
+      // Only gh's own short prose summary closes the trace. The shape guard
+      // (no braces/brackets, length-bounded) keeps dumped JSON bodies and
+      // query documents from flipping the sanitizer back into keeping mode.
+      if (/^gh:[^<>{}[\]]{0,300}$/.test(trimmed)) {
+        inTrace = false;
+        kept.push(trimmed);
+      }
+      continue;
+    }
     if (trimmed.length === 0) continue;
-    if (trimmed.startsWith("*") || trimmed.startsWith(">") || trimmed.startsWith("<")) continue;
-    if (/^graphql\s+(query|variables)\s*:/i.test(trimmed)) continue;
-    kept.push(line.trim());
+    kept.push(trimmed);
   }
-  // Drop dumped query bodies: a line that opens a GraphQL document is followed
-  // by its body until the matching diagnostics resume.
-  return kept.filter((line) => !/^(query|mutation|fragment|[{"])({|\s|$)/.test(line)).join("\n");
+  return kept.join("\n");
 }
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -220,35 +249,85 @@ export function classifyGhOutcome(input: {
   return "success";
 }
 
+/**
+ * Outcome for a resolved `runProcess` result. Promise resolution is not API
+ * success: callers using `allowNonZeroExit` resolve on HTTP errors and
+ * interpret the response themselves, so a non-zero code (or a timed-out run
+ * that resolved anyway) is classified from response evidence. The stdout head
+ * is consulted for the rate-limit signal only — it is bounded, never stored.
+ */
+export function classifyResolvedOutcome(input: {
+  readonly code: number | null;
+  readonly timedOut: boolean;
+  readonly stderr: string;
+  readonly stdout: string;
+}): GitHubApiUsageOutcome {
+  if (input.code === 0 && !input.timedOut) return "success";
+  const cleaned = stripGhDebugLines(input.stderr);
+  return isGitHubRateLimitMessage(`${cleaned}\n${input.stdout.slice(0, 4000)}`)
+    ? "rate-limited"
+    : "failure";
+}
+
 function breakdown(
   events: ReadonlyArray<GitHubApiUsageEvent>,
   keyOf: (event: GitHubApiUsageEvent) => string,
 ): Array<GitHubApiUsageBreakdown> {
   const byKey = new Map<string, GitHubApiUsageBreakdown>();
   for (const event of events) {
+    const fromCache = event.servedFromCache;
     const key = keyOf(event);
     const held = byKey.get(key);
     if (held === undefined) {
       byKey.set(key, {
         key,
-        invocations: 1,
+        invocations: fromCache ? 0 : 1,
         httpRequests: event.httpRequests ?? 0,
-        errors: event.outcome === "failure" ? 1 : 0,
-        rateLimited: event.outcome === "rate-limited" ? 1 : 0,
+        errors: !fromCache && event.outcome === "failure" ? 1 : 0,
+        rateLimited: !fromCache && event.outcome === "rate-limited" ? 1 : 0,
+        cacheHits: fromCache ? 1 : 0,
       });
     } else {
-      byKey.set(key, {
-        key,
-        invocations: held.invocations + 1,
+      byKey.set(held.key, {
+        key: held.key,
+        invocations: held.invocations + (fromCache ? 0 : 1),
         httpRequests: held.httpRequests + (event.httpRequests ?? 0),
-        errors: held.errors + (event.outcome === "failure" ? 1 : 0),
-        rateLimited: held.rateLimited + (event.outcome === "rate-limited" ? 1 : 0),
+        errors: held.errors + (!fromCache && event.outcome === "failure" ? 1 : 0),
+        rateLimited: held.rateLimited + (!fromCache && event.outcome === "rate-limited" ? 1 : 0),
+        cacheHits: held.cacheHits + (fromCache ? 1 : 0),
       });
     }
   }
   return [...byKey.values()].toSorted(
     (left, right) => right.httpRequests - left.httpRequests || right.invocations - left.invocations,
   );
+}
+
+/**
+ * Cooldown evidence from a debug trace: `Retry-After` (or the quota `reset`
+ * as fallback) plus whether the trace names a secondary rate limit. Header
+ * lines in the trace carry a `< ` prefix, which bare-message parsing misses.
+ */
+export function parseGhCooldown(stderr: string): {
+  readonly retryAfterAtMs: number | null;
+  readonly secondary: boolean;
+} {
+  const retryAfter = /(?:^|\r?\n)\s*(?:[<>]\s*)?retry-after\s*:\s*([^\r\n]+)/iu
+    .exec(stderr)?.[1]
+    ?.trim();
+  const resetAt = /(?:^|\r?\n)\s*(?:[<>]\s*)?x-ratelimit-reset\s*:\s*(\d+)/iu.exec(stderr)?.[1];
+  const retryAt =
+    retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter)
+      ? Date.now() + Number(retryAfter) * 1_000
+      : retryAfter
+        ? Date.parse(retryAfter)
+        : resetAt
+          ? Number(resetAt) * 1_000
+          : Number.NaN;
+  return {
+    retryAfterAtMs: Number.isFinite(retryAt) ? retryAt : null,
+    secondary: /secondary rate limit/iu.test(stderr),
+  };
 }
 
 /**
@@ -264,6 +343,7 @@ export function aggregateUsage(
   readonly byFeature: ReadonlyArray<GitHubApiUsageBreakdown>;
   readonly byOperation: ReadonlyArray<GitHubApiUsageBreakdown>;
   readonly byRepository: ReadonlyArray<GitHubApiUsageBreakdown>;
+  readonly byPullRequest: ReadonlyArray<GitHubApiUsageBreakdown>;
   readonly byHost: ReadonlyArray<GitHubApiUsageBreakdown>;
   readonly trend: ReadonlyArray<GitHubApiUsageTrendBucket>;
   readonly recent: ReadonlyArray<GitHubApiUsageEvent>;
@@ -280,25 +360,31 @@ export function aggregateUsage(
   }));
   let httpRequests = 0;
   let httpRequestsUnknown = false;
+  let invocations = 0;
   let servedFromCache = 0;
   let errors = 0;
   let rateLimited = 0;
   for (const event of inWindow) {
+    const fromCache = event.servedFromCache;
     if (event.httpRequests === null) httpRequestsUnknown = true;
     else httpRequests += event.httpRequests;
-    if (event.servedFromCache) servedFromCache += 1;
-    if (event.outcome === "failure") errors += 1;
-    if (event.outcome === "rate-limited") rateLimited += 1;
+    if (fromCache) {
+      servedFromCache += 1;
+    } else {
+      invocations += 1;
+      if (event.outcome === "failure") errors += 1;
+      if (event.outcome === "rate-limited") rateLimited += 1;
+    }
     const bucket = Math.min(
       bucketCount - 1,
       Math.max(0, Math.floor((event.at - (input.nowMs - input.windowMs)) / bucketMs)),
     );
-    trend[bucket]!.invocations += 1;
+    trend[bucket]!.invocations += fromCache ? 0 : 1;
     trend[bucket]!.httpRequests += event.httpRequests ?? 0;
   }
   return {
     totals: {
-      invocations: inWindow.length,
+      invocations,
       httpRequests,
       httpRequestsUnknown,
       servedFromCache,
@@ -310,6 +396,10 @@ export function aggregateUsage(
     byRepository: breakdown(
       inWindow.filter((event) => event.repository !== null),
       (event) => `${event.host}/${event.repository!}`,
+    ),
+    byPullRequest: breakdown(
+      inWindow.filter((event) => event.repository !== null && event.prNumber !== null),
+      (event) => `${event.host}/${event.repository}#${event.prNumber}`,
     ),
     byHost: breakdown(inWindow, (event) => event.host),
     trend,
