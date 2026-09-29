@@ -22,11 +22,15 @@ import type {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
+  AudioLinesIcon,
   CheckIcon,
   DownloadIcon,
+  GaugeIcon,
   GlobeIcon,
+  HardDriveIcon,
   LanguagesIcon,
   RefreshCwIcon,
+  TargetIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -181,20 +185,19 @@ function ModelCard(props: {
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
     <div
-      className={`rounded-lg border px-3 py-2.5 ${model.active ? "border-accent/50 bg-accent/5" : "border-border/70 bg-card/30"}`}
+      className={`rounded-lg border px-3 py-3 ${model.active ? "border-primary/40 bg-primary/5" : "border-border/70 bg-card/30"}`}
     >
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-medium">{model.name}</span>
-            {model.active ? (
-              <Badge variant="secondary">
-                <CheckIcon className="mr-1 size-3" />
-                Active
+            <span className="text-sm font-semibold leading-5">{model.name}</span>
+            {model.recommended ? <Badge variant="outline">Recommended</Badge> : null}
+            {model.supportsStreaming ? (
+              <Badge variant="outline">
+                <AudioLinesIcon className="mr-1 size-3" />
+                Streaming
               </Badge>
             ) : null}
-            {model.recommended ? <Badge variant="outline">Recommended</Badge> : null}
-            {model.supportsStreaming ? <Badge variant="outline">Streaming</Badge> : null}
             {model.supportsTranslation ? (
               <Badge variant="outline">
                 <LanguagesIcon className="mr-1 size-3" />
@@ -203,16 +206,25 @@ function ModelCard(props: {
             ) : null}
           </div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1">
               <GlobeIcon className="size-3" />
               {model.languages.length === 1
                 ? languageLabel(model.languages[0]!)
                 : `${model.languages.length} languages`}
             </span>
-            <span>{formatSize(model.size)}</span>
-            <span>Accuracy {model.accuracy}</span>
-            <span>Speed {model.speed}</span>
+            <span className="inline-flex items-center gap-1">
+              <HardDriveIcon className="size-3" />
+              {formatSize(model.size)}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <TargetIcon className="size-3" />
+              Accuracy {model.accuracy}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <GaugeIcon className="size-3" />
+              Speed {model.speed}
+            </span>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -234,7 +246,12 @@ function ModelCard(props: {
             <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
               Use model
             </Button>
-          ) : null}
+          ) : (
+            <Button size="sm" variant="secondary" disabled>
+              <CheckIcon className="mr-1.5 size-3.5" />
+              Selected
+            </Button>
+          )}
           {model.state === "installed" ? (
             <Button
               size="icon-sm"
