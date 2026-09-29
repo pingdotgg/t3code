@@ -871,13 +871,7 @@ export function sortThreadsForSidebar<
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder = "created_at"): T[] {
   if (sortOrder === "created_at") return sortActiveThreadsByOrderKey(threads);
   const lastActiveAt = new Map(
-    threads.map((thread) => [
-      thread,
-      toSortableTimestamp(thread.updatedAt) ??
-        toSortableTimestamp(thread.latestUserMessageAt ?? undefined) ??
-        toSortableTimestamp(thread.createdAt) ??
-        0,
-    ]),
+    threads.map((thread) => [thread, getThreadSortTimestamp(thread, "updated_at")]),
   );
   return [...threads].sort(
     (left, right) =>

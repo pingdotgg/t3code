@@ -1016,6 +1016,30 @@ describe("sortThreadsForSidebar", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["older-active", "newer-idle"]);
   });
+
+  it("keeps an updating thread in place until its turn finishes", () => {
+    const running = {
+      ...sortable({ id: "running", createdAt: "2026-03-09T08:00:00.000Z" }),
+      lastFinishedAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T13:00:00.000Z",
+    };
+    const waiting = {
+      ...sortable({ id: "waiting", createdAt: "2026-03-09T09:00:00.000Z" }),
+      lastFinishedAt: "2026-03-09T11:00:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    };
+
+    expect(sortThreadsForSidebar([running, waiting], "updated_at").map((thread) => thread.id)).toEqual([
+      "waiting",
+      "running",
+    ]);
+    expect(
+      sortThreadsForSidebar(
+        [{ ...running, lastFinishedAt: "2026-03-09T14:00:00.000Z" }, waiting],
+        "updated_at",
+      ).map((thread) => thread.id),
+    ).toEqual(["running", "waiting"]);
+  });
 });
 
 describe("pinOrderKeyBetween", () => {
