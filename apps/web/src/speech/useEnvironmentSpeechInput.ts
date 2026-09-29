@@ -158,9 +158,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       deleteRecording: platform.deleteRecording,
       ...(postProcessingEnabled && postProcessingPrepared
         ? {
-            postProcess: async (transcript: string, options: { readonly signal: AbortSignal }) => {
+            postProcess: async (transcript, options) => {
               const result = await runtime.runPromise(
-                postProcessEnvironmentTranscript(postProcessingPrepared, transcript),
+                postProcessEnvironmentTranscript(postProcessingPrepared, transcript, {
+                  text: options.draft.text,
+                  selection: options.draft.selection,
+                }),
                 options,
               );
               return result.text;

@@ -10,6 +10,10 @@ const quoteCorrectionWord = Schema.encodeSync(Schema.fromJsonString(Schema.Strin
 
 export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(function* (input: {
   readonly transcript: string;
+  readonly draft?: {
+    readonly text: string;
+    readonly selection: { readonly start: number; readonly end: number };
+  };
   readonly cwd: string;
   readonly settings: ServerSettings;
 }) {
@@ -25,6 +29,7 @@ export const postProcessTranscript = Effect.fn("speech.postProcessTranscript")(f
       ? `${instructions}\n\nCorrection cue: ${quoteCorrectionWord(input.settings.speechCorrectionWord.trim())}. Only when this cue clearly marks a spoken self-correction, apply the correction the speaker made and omit the cue from the result. The correction may revise, add to, or retract earlier speech. Preserve everything else. If the cue is an intended part of the sentence, keep it. Use the surrounding context to decide; do not assume every occurrence is a correction.`
       : instructions,
     input.transcript,
+    input.draft,
   );
   const generated = yield* textGeneration.generateTranscriptionPostProcessing({
     cwd: input.cwd,

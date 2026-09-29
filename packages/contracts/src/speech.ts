@@ -118,6 +118,10 @@ export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: Speech
 export const EnvironmentSpeechTranslationRequest = Schema.Struct({ enabled: Schema.Boolean });
 export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
   transcript: Schema.String.check(Schema.isMaxLength(100_000)),
+  draft: Schema.Struct({
+    text: Schema.String.check(Schema.isMaxLength(100_000)),
+    selection: Schema.Struct({ start: Schema.Number, end: Schema.Number }),
+  }),
 });
 export const EnvironmentSpeechPostProcessingResult = Schema.Struct({ text: Schema.String });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;

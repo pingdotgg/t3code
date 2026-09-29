@@ -224,6 +224,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
             });
             return yield* postProcessTranscript({
               transcript: args.payload.transcript,
+              draft: args.payload.draft,
               cwd,
               settings,
             });
