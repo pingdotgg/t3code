@@ -56,6 +56,22 @@ describe("timelineContentOverflowsViewport", () => {
       ),
     ).toBe(false);
   });
+
+  it("uses the last row's position as a lower bound while its size is unmeasured", () => {
+    const unmeasuredPastViewport = buildState({
+      positions: [0, 900],
+      sizes: [200, Number.NaN],
+      scrollLength: 700,
+    });
+    expect(timelineContentOverflowsViewport(unmeasuredPastViewport, inset)).toBe(true);
+
+    const unmeasuredInsideViewport = buildState({
+      positions: [0, 200],
+      sizes: [200, Number.NaN],
+      scrollLength: 700,
+    });
+    expect(timelineContentOverflowsViewport(unmeasuredInsideViewport, inset)).toBe(false);
+  });
 });
 
 describe("timeline scroll anchoring", () => {
