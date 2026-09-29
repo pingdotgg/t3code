@@ -24,9 +24,9 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 
 /** A side chat asks before changing files, so it is safe next to a running parent. */
-export const SIDE_CHAT_READ_ONLY_RUNTIME_MODE = "approval-required" as const;
+const SIDE_CHAT_READ_ONLY_RUNTIME_MODE = "approval-required" as const;
 /** "Allow edits" still asks before commands, unlike the parent's full access. */
-export const SIDE_CHAT_EDITABLE_RUNTIME_MODE = "auto-accept-edits" as const;
+const SIDE_CHAT_EDITABLE_RUNTIME_MODE = "auto-accept-edits" as const;
 
 export interface StartSideChatInput {
   readonly history: SideChatHistoryChoice;

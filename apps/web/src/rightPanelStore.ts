@@ -249,7 +249,7 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   activeTerminalId: terminalId,
 });
 
-export const asideSurface = (threadId: string): RightPanelSurface => ({
+const asideSurface = (threadId: string): RightPanelSurface => ({
   id: `aside:${threadId}`,
   kind: "aside",
   threadId,

@@ -208,15 +208,6 @@ export function readEnvironmentSupportsTitleRegeneration(environmentId: Environm
   );
 }
 
-/** Whether the environment's server understands side chats (sideChat, and parentThreadId on
-    thread.create). An older one would drop those fields and create an ordinary thread. */
-export function readEnvironmentSupportsSideChats(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadSideChats === true
-  );
-}
-
 /** Whether the environment's server understands thread.pin/unpin.
     Same version-skew contract as settlement. */
 export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {
