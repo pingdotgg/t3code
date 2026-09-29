@@ -53,6 +53,7 @@ import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   ProviderAdapterEnsureThreadError,
+  ProviderAdapterEventStreamError,
   ProviderAdapterForkThreadError,
   ProviderAdapterInterruptError,
   ProviderAdapterOpenSessionError,
@@ -196,9 +197,12 @@ interface ThreadState {
   model: ModelRef | undefined;
 }
 
-const protocolError = (detail: string) =>
-  new ProviderAdapterProtocolError({ driver: OPENCODE_PROVIDER, detail });
-const notYet = (feature: string) => protocolError(`OpenCode 2 ${feature} is not supported yet`);
+/** One wording for every capability later layers add. */
+const notYet = (feature: string) =>
+  new ProviderAdapterProtocolError({
+    driver: OPENCODE_PROVIDER,
+    detail: `OpenCode 2 ${feature} is not supported yet`,
+  });
 
 const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
   driver: OPENCODE_PROVIDER,
@@ -209,7 +213,12 @@ const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
 const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
   const nativeId = providerThread.nativeThreadRef?.nativeId;
   return nativeId === undefined || nativeId === null
-    ? Effect.fail(protocolError(`Provider thread ${providerThread.id} has no OpenCode session`))
+    ? Effect.fail(
+        new ProviderAdapterProtocolError({
+          driver: OPENCODE_PROVIDER,
+          detail: `Provider thread ${providerThread.id} has no OpenCode session`,
+        }),
+      )
     : Effect.succeed(nativeId);
 };
 
@@ -254,7 +263,10 @@ const modelRef = (selection: ProviderAdapterV2TurnInput["modelSelection"]) => {
   const parsed = parseOpenCodeModelSlug(selection.model);
   if (parsed === null) {
     return Effect.fail(
-      protocolError(`OpenCode model '${selection.model}' must use provider/model format`),
+      new ProviderAdapterProtocolError({
+        driver: OPENCODE_PROVIDER,
+        detail: `OpenCode model '${selection.model}' must use provider/model format`,
+      }),
     );
   }
   const variant = getModelSelectionStringOptionValue(selection, "variant");
@@ -689,7 +701,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     // The stream is the only terminal signal, so a lost stream settles every
     // running turn and breaks the session: T3 reopens it for the next turn.
+    // Set before the turns are settled, so a turn starting meanwhile sees it.
+    let streamFailure: string | undefined;
     const failAll = Effect.fnUntraced(function* (message: string) {
+      streamFailure = message;
       for (const state of threads.values()) {
         const failure = makeProviderFailure({ message, class: "transport_error" });
         yield* finishTurn(state, { status: "failed", failure }, "broken");
@@ -849,15 +864,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           // Sessions allow every tool, so any other mode would silently run as Full access.
           if (turnInput.runtimePolicy.runtimeMode !== "full-access") {
-            return yield* protocolError(OPENCODE_2_FULL_ACCESS_ONLY);
+            return yield* new ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: OPENCODE_2_FULL_ACCESS_ONLY,
+            });
           }
           const sessionId = yield* sessionIdOf(turnInput.providerThread);
           const state = threads.get(sessionId);
           if (state === undefined) {
-            return yield* protocolError(`OpenCode session ${sessionId} is not registered`);
+            return yield* new ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: `OpenCode session ${sessionId} is not registered`,
+            });
           }
           if (state.active !== undefined) {
-            return yield* protocolError(`OpenCode session ${sessionId} already has an active turn`);
+            return yield* new ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: `OpenCode session ${sessionId} already has an active turn`,
+            });
           }
           // A selection changed since the last turn applies now; OpenCode keeps
           // the session's model otherwise.
@@ -889,6 +913,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
             interrupted: false,
           };
+          // No stream is left to end this turn, so it must not start.
+          if (streamFailure !== undefined) {
+            return yield* new ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: input.providerSessionId,
+              cause: streamFailure,
+            });
+          }
           state.active = turn;
           yield* emitProviderTurn(state, turn, providerTurn);
           state.providerThread = {
@@ -986,9 +1018,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // is on the way), the turn is still open and nothing stopped.
           if (!reply.value.interrupted && state.active === turn) {
             turn.interrupted = false;
-            return yield* protocolError(
-              `OpenCode session ${sessionId} had nothing running to stop`,
-            );
+            return yield* new ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: `OpenCode session ${sessionId} had nothing running to stop`,
+            });
           }
         }).pipe(
           Effect.mapError(

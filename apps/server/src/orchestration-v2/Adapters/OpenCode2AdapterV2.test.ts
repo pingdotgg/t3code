@@ -547,6 +547,23 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("refuses a turn after the event stream is gone instead of prompting", () =>
+    Effect.gen(function* () {
+      // The stream ends with no turn running; no prompt is expected after it.
+      const { runtime, thread } = yield* resumed([{ type: "runtime_exit", status: "success" }]);
+      // The runtime ends its own events once the lost stream is settled.
+      yield* runtime.events.pipe(Stream.runDrain);
+      const refused = yield* runtime
+        .startTurn(turnInput(thread))
+        .pipe(Effect.flip, Effect.timeout("5 seconds"));
+      assert.equal(refused._tag, "ProviderAdapterTurnStartError");
+      assert.equal(
+        (refused.cause as { readonly _tag?: string } | undefined)?._tag,
+        "ProviderAdapterEventStreamError",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports the session as failed after a lost stream settles its turns", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
