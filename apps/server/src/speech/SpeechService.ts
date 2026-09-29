@@ -937,7 +937,7 @@ export const make = Effect.gen(function* () {
                           try: () => Promise.resolve().then(() => inferenceModel.dispose()),
                           catch: (disposeCause) => speechError("transcription", disposeCause),
                         });
-                        return yield* Effect.fail(speechError("inference", cause));
+                        return yield* speechError("inference", cause);
                       }
                       yield* Effect.tryPromise({
                         try: () => Promise.resolve().then(() => inferenceModel.dispose()),
