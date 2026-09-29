@@ -11321,6 +11321,74 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  for (const bootstrap of [false, true]) {
+    it.effect(
+      `rejects unsupported cloud execution before ${bootstrap ? "bootstrap" : "thread creation"}`,
+      () =>
+        Effect.gen(function* () {
+          const dispatchedCommands: Array<OrchestrationCommand> = [];
+          yield* buildAppUnderTest({
+            layers: {
+              orchestrationEngine: {
+                dispatch: (command) =>
+                  Effect.sync(() => {
+                    dispatchedCommands.push(command);
+                    return { sequence: dispatchedCommands.length };
+                  }),
+                readEvents: () => Stream.empty,
+              },
+            },
+          });
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          const createThread = {
+            projectId: defaultProjectId,
+            title: "Cloud Thread",
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            executionTarget: "cloud" as const,
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          };
+          const wsUrl = yield* getWsServerUrl("/ws");
+          const failure = yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              Effect.flip(
+                client[ORCHESTRATION_WS_METHODS.dispatchCommand](
+                  bootstrap
+                    ? {
+                        type: "thread.turn.start",
+                        commandId: CommandId.make("cmd-cloud-bootstrap"),
+                        threadId: ThreadId.make("thread-cloud"),
+                        message: {
+                          messageId: MessageId.make("message-cloud"),
+                          role: "user",
+                          text: "hello",
+                          attachments: [],
+                        },
+                        modelSelection: defaultModelSelection,
+                        runtimeMode: "full-access",
+                        interactionMode: "default",
+                        bootstrap: { createThread },
+                        createdAt,
+                      }
+                    : {
+                        type: "thread.create",
+                        commandId: CommandId.make("cmd-cloud-create"),
+                        threadId: ThreadId.make("thread-cloud"),
+                        ...createThread,
+                      },
+                ),
+              ),
+            ),
+          );
+          assert.include(failure.message, "does not support cloud execution");
+          assert.deepEqual(dispatchedCommands, []);
+        }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
   it.effect(
     "bootstraps first-send worktree turns on the server before dispatching turn start",
     () =>

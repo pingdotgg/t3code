@@ -1423,6 +1423,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const instanceInfo = yield* registry.getInstanceInfo(resolvedInstanceId);
         const resolvedProvider = instanceInfo.driverKind;
         metricProvider = resolvedProvider;
+        if (parsed.executionTarget === "cloud" && resolvedProvider !== "cursor") {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            `Provider instance '${resolvedInstanceId}' does not support cloud execution.`,
+          );
+        }
         if (parsed.provider !== undefined && parsed.provider !== resolvedProvider) {
           return yield* toValidationError(
             "ProviderService.startSession",

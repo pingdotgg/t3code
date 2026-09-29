@@ -327,7 +327,7 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
   ): Effect.Effect<void> => {
     let replaying = replayingHistory;
     let lastEventId: string | undefined;
-    let streamedReply = false;
+    let assistantText = "";
     let assistantItem: RuntimeItemId | undefined;
     let assistantItemCount = 0;
     const startedTools = new Set<string>();
@@ -353,13 +353,14 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
           text: event.result.text ?? undefined,
           git: event.result.git ?? undefined,
         };
-        return closeAssistantItem;
+        return Effect.void;
       }
       if (replaying) return Effect.void;
       switch (event.type) {
         case "assistant":
           return Effect.gen(function* () {
             if (!assistantItem) {
+              assistantText = "";
               assistantItemCount += 1;
               assistantItem = RuntimeItemId.make(`${run.runId}:assistant:${assistantItemCount}`);
               yield* emit({
@@ -370,7 +371,7 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
                 payload: { itemType: "assistant_message", status: "inProgress" },
               });
             }
-            streamedReply = true;
+            assistantText += event.text;
             yield* emit({
               type: "content.delta",
               threadId: ctx.threadId,
@@ -433,7 +434,6 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
             if (error.status === 400 || error.status === 410) {
               lastEventId = undefined;
               replaying = true;
-              streamedReply = false;
             }
           }),
         ),
@@ -447,7 +447,6 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
         // The stream closed without a result. Ask the run directly before reconnecting.
         const current = yield* Effect.result(ctx.api.getRun(agentId, run.runId));
         if (Result.isSuccess(current) && isTerminalRunStatus(current.success.status)) {
-          streamedReply = false;
           terminal = {
             status: current.success.status,
             text: current.success.result ?? undefined,
@@ -472,11 +471,28 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
       });
 
     return loop(0).pipe(
-      Effect.andThen(closeAssistantItem),
       Effect.andThen(
-        Effect.suspend(() =>
-          terminal ? finishRun(ctx, run, { ...terminal, streamedReply }) : Effect.void,
-        ),
+        Effect.gen(function* () {
+          if (!terminal) return;
+          // A recovered result may extend the last partial message. Append only
+          // its missing suffix before closing that item; never duplicate a reply.
+          let streamedReply = terminal.text === assistantText;
+          if (assistantItem && terminal.text?.startsWith(assistantText)) {
+            const delta = terminal.text.slice(assistantText.length);
+            if (delta) {
+              yield* emit({
+                type: "content.delta",
+                threadId: ctx.threadId,
+                turnId: run.turnId,
+                itemId: assistantItem,
+                payload: { streamKind: "assistant_text", delta },
+              });
+            }
+            streamedReply = true;
+          }
+          yield* closeAssistantItem;
+          yield* finishRun(ctx, run, { ...terminal, streamedReply });
+        }),
       ),
       Effect.catchCause((cause) =>
         Effect.logError("Cursor Cloud run follower failed.", { runId: run.runId, cause }),
@@ -741,13 +757,12 @@ export const makeCursorCloudAdapter = Effect.fn("makeCursorCloudAdapter")(functi
                 ? { model: ctx.session.model }
                 : {},
           });
+          const resumeCursor = ctx.session.resumeCursor;
           yield* startFollowing(ctx, agentId, run, false);
           return {
             threadId: ctx.threadId,
             turnId,
-            ...(ctx.session.resumeCursor !== undefined
-              ? { resumeCursor: ctx.session.resumeCursor }
-              : {}),
+            ...(resumeCursor !== undefined ? { resumeCursor } : {}),
           } satisfies ProviderTurnStartResult;
         }),
       );

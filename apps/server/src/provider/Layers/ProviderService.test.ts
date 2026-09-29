@@ -839,70 +839,80 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
   }),
 );
 
-it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
-  Effect.gen(function* () {
-    const codex = makeFakeCodexAdapter();
-    const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
-    const registryBase = makeAdapterRegistryMock({
-      [CODEX_DRIVER]: codex.adapter,
-      [CLAUDE_AGENT_DRIVER]: claude.adapter,
-    });
-    const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
-      ...registryBase,
-      getInstanceInfo: (instanceId) =>
-        instanceId === claudeAgentInstanceId
-          ? Effect.succeed({
-              instanceId,
-              driverKind: CLAUDE_AGENT_DRIVER,
-              displayName: undefined,
-              enabled: false,
-              continuationIdentity: {
+for (const restriction of ["disabled", "cloud"] as const) {
+  it.effect(`ProviderServiceLive rejects ${restriction} sessions for unsupported providers`, () =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const registryBase = makeAdapterRegistryMock({
+        [CODEX_DRIVER]: codex.adapter,
+        [CLAUDE_AGENT_DRIVER]: claude.adapter,
+      });
+      const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+        ...registryBase,
+        getInstanceInfo: (instanceId) =>
+          instanceId === claudeAgentInstanceId
+            ? Effect.succeed({
+                instanceId,
                 driverKind: CLAUDE_AGENT_DRIVER,
-                continuationKey: "claudeAgent:instance:claudeAgent",
-              },
-            })
-          : registryBase.getInstanceInfo(instanceId),
-    };
-    const providerAdapterLayer = Layer.succeed(
-      ProviderAdapterRegistry.ProviderAdapterRegistry,
-      registry,
-    );
-    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
-      Layer.provide(SqlitePersistenceMemory),
-    );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
-    const providerLayer = makeProviderServiceLive().pipe(
-      Layer.provide(NodeServices.layer),
-      Layer.provide(providerAdapterLayer),
-      Layer.provide(directoryLayer),
-      Layer.provide(defaultServerSettingsLayer),
-      Layer.provide(serverConfigTestLayer),
-      Layer.provide(AnalyticsService.layerTest),
-      Layer.provide(
-        Layer.succeed(
-          ProviderEventLoggers.ProviderEventLoggers,
-          ProviderEventLoggers.NoOpProviderEventLoggers,
+                displayName: undefined,
+                enabled: restriction !== "disabled",
+                continuationIdentity: {
+                  driverKind: CLAUDE_AGENT_DRIVER,
+                  continuationKey: "claudeAgent:instance:claudeAgent",
+                },
+              })
+            : registryBase.getInstanceInfo(instanceId),
+      };
+      const providerAdapterLayer = Layer.succeed(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        registry,
+      );
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(providerAdapterLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
         ),
-      ),
-    );
+      );
 
-    const failure = yield* Effect.flip(
-      Effect.gen(function* () {
-        const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(asThreadId("thread-disabled"), {
-          provider: ProviderDriverKind.make("claudeAgent"),
-          providerInstanceId: claudeAgentInstanceId,
-          threadId: asThreadId("thread-disabled"),
-          runtimeMode: "full-access",
-        });
-      }).pipe(Effect.provide(providerLayer)),
-    );
+      const failure = yield* Effect.flip(
+        Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          return yield* provider.startSession(asThreadId("thread-disabled"), {
+            provider: ProviderDriverKind.make("claudeAgent"),
+            providerInstanceId: claudeAgentInstanceId,
+            threadId: asThreadId("thread-disabled"),
+            runtimeMode: "full-access",
+            ...(restriction === "cloud" ? { executionTarget: "cloud" as const } : {}),
+          });
+        }).pipe(Effect.provide(providerLayer)),
+      );
 
-    assert.instanceOf(failure, ProviderValidationError);
-    assert.include(failure.issue, "Provider instance 'claudeAgent' is disabled");
-    assert.equal(claude.startSession.mock.calls.length, 0);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(
+        failure.issue,
+        restriction === "disabled"
+          ? "Provider instance 'claudeAgent' is disabled"
+          : "does not support cloud execution",
+      );
+      assert.equal(claude.startSession.mock.calls.length, 0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 it.effect(
   "ProviderServiceLive allows enabled custom instances when legacy driver is disabled",

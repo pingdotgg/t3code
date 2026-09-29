@@ -203,10 +203,13 @@ it.layer(testLayer)("CursorCloudAdapter", (it) => {
           options: [{ id: "fast", value: true }],
         },
       });
-      yield* adapter.sendTurn({
+      const admitted = yield* adapter.sendTurn({
         threadId: THREAD_ID,
         input: "List the files",
         interactionMode: "plan",
+      });
+      expect(admitted.resumeCursor).toMatchObject({
+        activeRun: { runId: "run-1", turnId: admitted.turnId },
       });
       const events = yield* collector.completed;
 
@@ -318,65 +321,71 @@ it.layer(testLayer)("CursorCloudAdapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  for (const recovery of ["finished run", "expired cursor"] as const) {
-    it.effect(`preserves the final reply after a partial stream and ${recovery}`, () =>
-      Effect.gen(function* () {
-        let connections = 0;
-        const api = fakeCursorApi([
-          route("POST", "/v1/agents/bc-1/runs", () =>
-            json({ run: { id: "run-2", agentId: "bc-1", status: "RUNNING" } }),
-          ),
-          route("GET", "/v1/agents/bc-1/runs/run-2", () =>
-            json({
-              id: "run-2",
-              agentId: "bc-1",
-              status: recovery === "finished run" ? "FINISHED" : "RUNNING",
-              result: "Hello world.",
+  for (const streamedText of ["Hel", "Hello world."]) {
+    for (const recovery of ["finished run", "expired cursor"] as const) {
+      it.effect(`preserves one final reply after streaming ${streamedText} and ${recovery}`, () =>
+        Effect.gen(function* () {
+          let connections = 0;
+          const api = fakeCursorApi([
+            route("POST", "/v1/agents/bc-1/runs", () =>
+              json({ run: { id: "run-2", agentId: "bc-1", status: "RUNNING" } }),
+            ),
+            route("GET", "/v1/agents/bc-1/runs/run-2", () =>
+              json({
+                id: "run-2",
+                agentId: "bc-1",
+                status: recovery === "finished run" ? "FINISHED" : "RUNNING",
+                result: "Hello world.",
+              }),
+            ),
+            route("GET", "/v1/agents/bc-1/runs/run-2/stream", () => {
+              connections += 1;
+              if (connections === 1)
+                return sse([{ id: "7", event: "assistant", data: { text: streamedText } }]);
+              if (connections === 2) return new Response("{}", { status: 410 });
+              return sse([
+                { id: "7", event: "assistant", data: { text: "Hello world." } },
+                { id: "8", event: "result", data: { status: "FINISHED", text: "Hello world." } },
+              ]);
             }),
-          ),
-          route("GET", "/v1/agents/bc-1/runs/run-2/stream", () => {
-            connections += 1;
-            if (connections === 1)
-              return sse([{ id: "7", event: "assistant", data: { text: "Hel" } }]);
-            if (connections === 2) return new Response("{}", { status: 410 });
-            return sse([
-              { id: "7", event: "assistant", data: { text: "Hello world." } },
-              { id: "8", event: "result", data: { status: "FINISHED", text: "Hello world." } },
-            ]);
-          }),
-        ]);
-        const adapter = yield* makeCursorCloudAdapter(SETTINGS, {
-          environment: ENVIRONMENT,
-          instanceId: INSTANCE_ID,
-        }).pipe(Effect.provideService(HttpClient.HttpClient, api.client));
-        const collector = yield* collectUntilTurnCompleted(adapter.streamEvents);
-        yield* adapter.startSession({
-          threadId: THREAD_ID,
-          providerInstanceId: INSTANCE_ID,
-          cwd: process.cwd(),
-          runtimeMode: "full-access",
-          resumeCursor: { schemaVersion: 1, kind: "cloud", agentId: "bc-1" },
-        });
-        yield* adapter.sendTurn({ threadId: THREAD_ID, input: "Say hello" });
-        const events = yield* collector.completed;
-        const completions = events.filter(
-          (event) =>
-            event.type === "item.completed" && event.payload.itemType === "assistant_message",
-        );
-        expect(completions).toHaveLength(2);
-        expect(completions[0]).toMatchObject({ itemId: "run-2:assistant:1" });
-        expect(completions[1]).toMatchObject({ payload: { detail: "Hello world." } });
-        expect(events.at(-1)).toMatchObject({
-          type: "turn.completed",
-          payload: { state: "completed" },
-        });
-        expect(
-          api.requests
-            .filter((request) => request.path.endsWith("/stream"))
-            .map((request) => request.lastEventId),
-        ).toEqual(recovery === "finished run" ? [undefined] : [undefined, "7", undefined]);
-      }).pipe(Effect.scoped),
-    );
+          ]);
+          const adapter = yield* makeCursorCloudAdapter(SETTINGS, {
+            environment: ENVIRONMENT,
+            instanceId: INSTANCE_ID,
+          }).pipe(Effect.provideService(HttpClient.HttpClient, api.client));
+          const collector = yield* collectUntilTurnCompleted(adapter.streamEvents);
+          yield* adapter.startSession({
+            threadId: THREAD_ID,
+            providerInstanceId: INSTANCE_ID,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+            resumeCursor: { schemaVersion: 1, kind: "cloud", agentId: "bc-1" },
+          });
+          yield* adapter.sendTurn({ threadId: THREAD_ID, input: "Say hello" });
+          const events = yield* collector.completed;
+          const completions = events.filter(
+            (event) =>
+              event.type === "item.completed" && event.payload.itemType === "assistant_message",
+          );
+          expect(completions).toHaveLength(1);
+          expect(completions[0]).toMatchObject({ itemId: "run-2:assistant:1" });
+          expect(
+            events
+              .flatMap((event) => (event.type === "content.delta" ? [event.payload.delta] : []))
+              .join(""),
+          ).toBe("Hello world.");
+          expect(events.at(-1)).toMatchObject({
+            type: "turn.completed",
+            payload: { state: "completed" },
+          });
+          expect(
+            api.requests
+              .filter((request) => request.path.endsWith("/stream"))
+              .map((request) => request.lastEventId),
+          ).toEqual(recovery === "finished run" ? [undefined] : [undefined, "7", undefined]);
+        }).pipe(Effect.scoped),
+      );
+    }
   }
 
   it.effect("reattaches to a run left in flight and reports only its result", () =>

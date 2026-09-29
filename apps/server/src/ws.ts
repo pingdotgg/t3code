@@ -1796,8 +1796,38 @@ const makeWsRpcLayer = (
                 ),
               );
 
+        const validatedDispatch = Effect.gen(function* () {
+          const createThread =
+            normalizedCommand.type === "thread.create"
+              ? normalizedCommand
+              : normalizedCommand.type === "thread.turn.start"
+                ? normalizedCommand.bootstrap?.createThread
+                : undefined;
+          if (createThread?.executionTarget === "cloud") {
+            const providers = yield* providerRegistry.getProviders;
+            const selections = [createThread.modelSelection];
+            if (
+              normalizedCommand.type === "thread.turn.start" &&
+              normalizedCommand.modelSelection
+            ) {
+              selections.push(normalizedCommand.modelSelection);
+            }
+            for (const selection of selections) {
+              if (
+                !providers.some(
+                  (provider) => provider.instanceId === selection.instanceId && provider.cloud,
+                )
+              ) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: `Provider instance '${selection.instanceId}' does not support cloud execution.`,
+                });
+              }
+            }
+          }
+          return yield* dispatchEffect;
+        });
         return startup
-          .enqueueCommand(dispatchEffect)
+          .enqueueCommand(validatedDispatch)
           .pipe(
             Effect.mapError((cause) =>
               toDispatchCommandError(cause, "Failed to dispatch orchestration command"),

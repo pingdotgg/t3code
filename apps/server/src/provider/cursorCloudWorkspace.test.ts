@@ -84,6 +84,33 @@ it.layer(NodeServices.layer)("resolveCursorCloudRepository", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  for (const selection of ["feature", "origin/main"]) {
+    it.effect(`warns about unpublished work when selecting ${selection}`, () =>
+      Effect.gen(function* () {
+        const { cwd, git, commit } = yield* makeRepository("https://github.com/acme/widgets.git");
+        git("checkout", "-qb", "feature");
+        git("config", "branch.feature.remote", "origin");
+        git("config", "branch.feature.merge", "refs/heads/main");
+        commit("unpublished feature work");
+        git("checkout", "-q", "main");
+        expect((yield* resolveCursorCloudRepository(cwd, selection)).hasUnpushedLocalWork).toBe(
+          true,
+        );
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect("warns about a dirty checkout when selecting its remote branch", () =>
+    Effect.gen(function* () {
+      const { cwd, git } = yield* makeRepository("https://github.com/acme/widgets.git");
+      yield* (yield* FileSystem.FileSystem).writeFileString(NodePath.join(cwd, "a.txt"), "x");
+      git("add", "a.txt");
+      expect((yield* resolveCursorCloudRepository(cwd, "origin/main")).hasUnpushedLocalWork).toBe(
+        true,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses a chosen branch that is not on GitHub", () =>
     Effect.gen(function* () {
       const { cwd, git } = yield* makeRepository("https://github.com/acme/widgets.git");

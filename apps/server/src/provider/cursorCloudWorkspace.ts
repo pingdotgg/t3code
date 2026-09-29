@@ -51,7 +51,7 @@ export const resolveCursorCloudRepository = Effect.fn("resolveCursorCloudReposit
 
   const checkedOut = yield* git(["symbolic-ref", "--quiet", "--short", "HEAD"]);
   const localBranch = selectedBranch
-    ? yield* git(["show-ref", "--verify", "--quiet", `refs/heads/${selectedBranch}`])
+    ? yield* git(["rev-parse", "--verify", "--quiet", `refs/heads/${selectedBranch}`])
     : undefined;
   const remotes = (yield* git(["remote"]))?.split("\n") ?? [];
   const selectedRemote =
@@ -93,10 +93,31 @@ export const resolveCursorCloudRepository = Effect.fn("resolveCursorCloudReposit
         detail: `Branch '${selectedBranch}' is not on GitHub yet. Push it, or pick a branch that is.`,
       });
     }
+    const localRefs = selectedRemote
+      ? (
+          (yield* git(["for-each-ref", "--format=%(refname:short)\t%(upstream)", "refs/heads/"])) ??
+          ""
+        )
+          .split("\n")
+          .flatMap((line) => {
+            const [name, upstream] = line.split("\t");
+            return name && upstream === `refs/remotes/${remote}/${upstreamBranch}` ? [name] : [];
+          })
+      : localBranch
+        ? [selectedBranch]
+        : [];
+    let hasUnpushedLocalWork = false;
+    for (const name of localRefs) {
+      const ahead = yield* git(["rev-list", "--count", `${upstreamTip}..refs/heads/${name}`]);
+      if ((name === checkedOut && dirty) || Number(ahead ?? 0) > 0) {
+        hasUnpushedLocalWork = true;
+        break;
+      }
+    }
     return {
       url: `https://github.com/${nameWithOwner}`,
       startingRef: upstreamBranch,
-      hasUnpushedLocalWork: selectedBranch === checkedOut && (dirty || head !== upstreamTip),
+      hasUnpushedLocalWork,
     } satisfies CursorCloudRepository;
   }
 
