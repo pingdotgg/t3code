@@ -40,6 +40,7 @@ interface SettingsScopeMenuProps {
   readonly value: SettingsScopeSearch;
   readonly groups: readonly SidebarProjectSnapshot[];
   readonly environments: readonly EnvironmentPresentation[];
+  readonly singleEnvironment: boolean;
   readonly onChange: (next: SettingsScopeSearch) => void;
 }
 
@@ -56,6 +57,7 @@ export function SettingsScopeSentence() {
   if (scope === null || SETTINGS_DEVICE_ONLY_PATHS.has(pathname)) return null;
   const props: SettingsScopeMenuProps = {
     value: scope.search,
+    singleEnvironment: scope.singleEnvironment,
     groups: scope.groups,
     environments,
     onChange: scope.selectScope,
@@ -105,7 +107,13 @@ function ScopeMenu({
   );
 }
 
-function EnvironmentScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
+function EnvironmentScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+  singleEnvironment,
+}: SettingsScopeMenuProps) {
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
     value,
@@ -131,7 +139,9 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
           ? settingsScopeEnvironmentLabel(selected, environments)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
             ? "Unavailable environment"
-            : "All environments"
+            : singleEnvironment
+              ? "No environments"
+              : "All environments"
       }
     >
       <MenuRadioGroup
@@ -140,14 +150,18 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
           if (typeof next === "string") onChange(selectEnvironmentAxis(value, next));
         }}
       >
-        <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
-          <span className="flex min-w-0 items-center gap-2">
-            <LayersIcon aria-hidden className="size-3.5" />
-            <span className="min-w-0 flex-1 truncate">All environments</span>
-            <MenuRadioItemIndicator />
-          </span>
-        </MenuRadioItem>
-        <MenuSeparator />
+        {!singleEnvironment ? (
+          <>
+            <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
+              <span className="flex min-w-0 items-center gap-2">
+                <LayersIcon aria-hidden className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">All environments</span>
+                <MenuRadioItemIndicator />
+              </span>
+            </MenuRadioItem>
+            <MenuSeparator />
+          </>
+        ) : null}
         {environments.map((environment) => (
           <MenuRadioItem key={environment.environmentId} value={environment.environmentId}>
             <span className="flex min-w-0 items-center gap-2">
