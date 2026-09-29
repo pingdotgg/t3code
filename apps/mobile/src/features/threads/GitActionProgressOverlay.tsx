@@ -1,8 +1,9 @@
 import * as Haptics from "expo-haptics";
 import { GlassView } from "expo-glass-effect";
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useRef } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, useColorScheme, View } from "react-native";
+import { Pressable, StyleSheet, useColorScheme, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -158,7 +159,7 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
 function OverlayIcon(props: { readonly phase: GitActionProgress["phase"] }) {
   switch (props.phase) {
     case "running":
-      return <ActivityIndicator size="small" colorClassName={"accent-icon"} />;
+      return <AppActivityIndicator size="small" colorClassName={"accent-icon"} />;
     case "success":
       return (
         <View className="h-6 w-6 items-center justify-center rounded-full bg-green-500">

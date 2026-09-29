@@ -1,0 +1,52 @@
+import { CircularProgressIndicator, Host } from "@expo/ui/jetpack-compose";
+import { size as composeSize } from "@expo/ui/jetpack-compose/modifiers";
+import { StyleSheet, View, type ActivityIndicatorProps } from "react-native";
+import { withUniwind } from "uniwind";
+
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+
+function AndroidActivityIndicator({
+  animating = true,
+  color,
+  colorClassName: _colorClassName,
+  className: _className,
+  hidesWhenStopped: _hidesWhenStopped,
+  size = "small",
+  style,
+  ...viewProps
+}: ActivityIndicatorProps) {
+  const { themeAppearance, themeVariables } = useAppearancePreferences();
+  const diameter = typeof size === "number" ? size : size === "large" ? 36 : 20;
+
+  return (
+    <View
+      accessible={animating}
+      accessibilityRole="progressbar"
+      accessibilityState={{ busy: animating }}
+      {...viewProps}
+      style={[styles.container, style]}
+    >
+      <View
+        pointerEvents="none"
+        importantForAccessibility="no-hide-descendants"
+        style={{ width: diameter, height: diameter }}
+      >
+        {animating ? (
+          <Host colorScheme={themeAppearance} ignoreSafeAreaKeyboardInsets style={{ flex: 1 }}>
+            <CircularProgressIndicator
+              color={color ?? themeVariables["--color-primary"]}
+              modifiers={[composeSize(diameter, diameter)]}
+              strokeWidth={diameter / 10}
+            />
+          </Host>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+export const AppActivityIndicator = withUniwind(AndroidActivityIndicator);
+
+const styles = StyleSheet.create({
+  container: { alignItems: "center", justifyContent: "center" },
+});

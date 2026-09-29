@@ -1,3 +1,4 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
@@ -11,15 +12,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Platform,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -486,7 +479,7 @@ export function BranchPickerScreen(props: {
               : 0,
           }}
         >
-          {props.loading ? <ActivityIndicator /> : null}
+          {props.loading ? <AppActivityIndicator /> : null}
           <Text className="text-center text-sm text-foreground-muted">
             {props.loading
               ? "Loading branches…"
@@ -525,7 +518,7 @@ export function BranchPickerScreen(props: {
         ListFooterComponent={
           props.refreshing ? (
             <View className="items-center py-4">
-              <ActivityIndicator />
+              <AppActivityIndicator />
             </View>
           ) : null
         }

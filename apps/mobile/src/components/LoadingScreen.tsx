@@ -1,5 +1,6 @@
-import { ActivityIndicator, StatusBar, View } from "react-native";
+import { StatusBar, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppActivityIndicator } from "./AppActivityIndicator";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 import { AppText as Text } from "./AppText";
@@ -21,7 +22,7 @@ export function LoadingScreen(props: {
         {messagePlacement === "above-spinner" ? (
           <Text className="font-t3-bold text-lg text-foreground">{props.message}</Text>
         ) : null}
-        <ActivityIndicator size="large" />
+        <AppActivityIndicator size="large" />
         {messagePlacement === "below-spinner" ? (
           <Text className="font-t3-bold text-lg text-foreground">{props.message}</Text>
         ) : null}

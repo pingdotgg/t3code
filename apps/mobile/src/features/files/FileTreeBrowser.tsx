@@ -1,8 +1,9 @@
 import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, RefreshControl, View } from "react-native";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -296,7 +297,7 @@ export function FileTreeBrowser(props: {
               </Pressable>
             </>
           ) : props.isPending ? (
-            <ActivityIndicator size="small" />
+            <AppActivityIndicator size="small" />
           ) : (
             <>
               <Text className="text-sm font-t3-bold text-foreground">No files found</Text>
