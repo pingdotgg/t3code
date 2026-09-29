@@ -2017,7 +2017,7 @@ function claudeToolUseBlocksFromAssistantMessage(
   return message.message.content.filter(isClaudeToolUseContentBlock);
 }
 
-export interface ClaudeToolPresentation {
+interface ClaudeToolPresentation {
   readonly title: string;
   readonly toolSource?: ToolActivitySource;
 }
@@ -2043,7 +2043,7 @@ function metaHttpUrl(value: unknown): string | undefined {
  * humanized name) plus the server's name and icon. The CLI sends these as
  * `tool_use_meta` on assistant frames; the SDK types do not declare it yet.
  */
-export function claudeToolPresentationsFromAssistantMessage(
+function claudeToolPresentationsFromAssistantMessage(
   message: SDKMessage,
 ): ReadonlyMap<string, ClaudeToolPresentation> {
   const presentations = new Map<string, ClaudeToolPresentation>();
