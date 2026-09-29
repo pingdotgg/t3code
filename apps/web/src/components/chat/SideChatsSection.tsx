@@ -104,7 +104,7 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
                 size="icon-xs"
                 variant="ghost"
                 part="icon"
-                className="shrink-0"
+                className="shrink-0 justify-center"
                 aria-label={`Discard ${thread.title}`}
                 onClick={() => void actions.discard(thread.id)}
               />
@@ -132,6 +132,7 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
                   size="icon-xs"
                   variant="ghost"
                   part="icon"
+                  className="justify-center"
                   aria-label={`Start a side chat ${defaultChoice === "with" ? "with" : "without"} history`}
                   disabled={starting}
                   onClick={() => void start(defaultChoice)}
@@ -151,6 +152,7 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
                   size="icon-xs"
                   variant="ghost"
                   part="icon"
+                  className="justify-center"
                   aria-label="Choose side chat type"
                   disabled={starting}
                 />
