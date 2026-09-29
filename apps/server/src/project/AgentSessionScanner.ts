@@ -101,6 +101,7 @@ const CODEX_INJECTED_PROMPT_PATTERN =
 export const agentSessionKey = (provider: string, providerInstanceId: string, sessionId: string) =>
   `${provider}:${providerInstanceId}:${sessionId}`;
 
+/** Derive a compact title from the first nonempty line, capped at 100 characters. */
 const firstLine = (text: string) => text.trim().split("\n")[0]?.slice(0, 100).trim();
 const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /**
@@ -1531,9 +1532,11 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  // Match linked worktrees by the common Git directory, not origin URL: another
-  // clone of the same repository is a different workspace. This path deliberately
-  // includes T3 worktrees, which project discovery above must exclude.
+  /**
+   * Find the enclosing checkout and its common Git directory. Linked worktrees,
+   * including T3 worktrees, share that identity; separate clones do not.
+   * Return null outside a checkout and a null branch for a detached HEAD.
+   */
   const checkoutIdentity = Effect.fn("AgentSessionScanner.checkoutIdentity")(function* (
     cwd: string,
   ) {
@@ -1565,6 +1568,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  /** Resolve directory aliases, falling back to an absolute path if realpath is unavailable. */
   const realPathOrResolved = (target: string) =>
     fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
 
@@ -1604,6 +1608,11 @@ export const make = Effect.gen(function* () {
       : undefined;
   });
 
+  /**
+   * Read bounded transcript prefixes to return recent sessions inside the project
+   * scope. Direct selection filters by identity before applying the listing budget.
+   * Keep transcript paths internal so attachment can re-read the selected history.
+   */
   const discoverSessions = Effect.fn("AgentSessionScanner.discoverSessions")(function* (
     workspaceRoot: string,
     excludedSessions: ReadonlySet<string> = new Set(),
@@ -1732,6 +1741,7 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /** Return picker summaries without exposing the internal transcript paths used for attachment. */
   const listSessions: AgentSessionScanner["Service"]["listSessions"] = (
     workspaceRoot,
     excludedSessions,
@@ -1743,6 +1753,11 @@ export const make = Effect.gen(function* () {
       })),
     );
 
+  /**
+   * Re-discover and read a selected transcript, rejecting changed session or
+   * directory identities. Classify root aliases by filesystem identity so the
+   * importer can preserve the native cwd without marking it as a linked worktree.
+   */
   const readSession: AgentSessionScanner["Service"]["readSession"] = Effect.fn(
     "AgentSessionScanner.readSession",
   )(function* (workspaceRoot, providerInstanceId, sessionId) {

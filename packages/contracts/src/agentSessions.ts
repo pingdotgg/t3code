@@ -39,6 +39,7 @@ export function importedAgentSessionThreadId(
   return ThreadId.make(`import:${providerInstanceId}:${providerSessionId}`);
 }
 
+/** Recognize import-owned IDs; the prefix alone does not establish that history was published. */
 export function isImportedAgentSessionThreadId(threadId: string): boolean {
   return threadId.startsWith("import:");
 }

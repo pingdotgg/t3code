@@ -504,6 +504,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   return overflows;
 }
 
+/** Provide checkout controls for drafts and threads, with external-session resume available on drafts. */
 export const BranchToolbar = memo(function BranchToolbar({
   forceNewWorktree = false,
   ref,

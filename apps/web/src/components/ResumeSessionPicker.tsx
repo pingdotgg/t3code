@@ -67,6 +67,7 @@ export function ResumeSessionPicker({ projectRef }: { projectRef: ScopedProjectR
     [query.data, search],
   );
 
+  /** Attach once per selection and navigate in the owning environment unless the picker unmounted. */
   const select = async (session: ResumableAgentSession) => {
     if (attachingRef.current) return;
     attachingRef.current = true;

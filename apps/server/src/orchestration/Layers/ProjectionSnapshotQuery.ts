@@ -3223,6 +3223,7 @@ pending_approval_requests AS (
       });
     });
 
+  /** Read session ownership metadata without loading histories; deleted threads release their claim. */
   const getProviderBoundThreads: ProjectionSnapshotQueryShape["getProviderBoundThreads"] = () =>
     listProviderBoundThreadRows(undefined).pipe(
       Effect.mapError(

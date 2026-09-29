@@ -26,6 +26,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 const { list: sessionList, attach: sessionAttach } =
   createAgentSessionResumeAtoms(connectionAtomRuntime);
 
+/** Browse external sessions on the selected environment and return the attached thread to navigation. */
 export function ResumeSessionPicker(props: {
   projectRef: ScopedProjectRef;
   disabled: boolean;
@@ -60,9 +61,11 @@ export function ResumeSessionPicker(props: {
     () => filterResumableSessions(query.data?.sessions ?? [], search),
     [query.data, search],
   );
+  /** Keep the picker mounted during attachment so its result or failure remains visible. */
   const close = () => {
     if (!busy.current) setOpen(false);
   };
+  /** Attach once per selection and notify navigation only while this picker is still mounted. */
   const select = async (session: ResumableAgentSession) => {
     if (busy.current) return;
     busy.current = true;

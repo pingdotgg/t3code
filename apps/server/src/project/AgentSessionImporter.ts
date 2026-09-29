@@ -36,6 +36,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import * as ProviderSessionDirectory from "../provider/Services/ProviderSessionDirectory.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
+/** Preserve storage failures as the scan error shared by the session RPCs. */
 const readProjectsFailed = (cause: unknown) =>
   new AgentSessionScanError({ operation: "read-projects", cause });
 
@@ -232,6 +233,7 @@ const importAgentThread = Effect.fn("importAgentThread")(function* ({
   return threadId;
 });
 
+/** Resolve the persisted project root; callers cannot supply their own discovery scope. */
 const readSessionProject = Effect.fn("readSessionProject")(function* (projectId: ProjectId) {
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const project = yield* snapshots
@@ -327,6 +329,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   return { importedCount, skippedCount } satisfies AgentSessionImportResult;
 });
 
+/** Extract the native session ID from a provider cursor, ignoring bindings without one. */
 function bindingSessionId(
   binding: ProviderSessionDirectory.ProviderRuntimeBinding,
 ): string | undefined {
@@ -382,6 +385,10 @@ const readSessionClaims = Effect.gen(function* () {
   return claims;
 });
 
+/**
+ * List external sessions not held by a T3 thread. This project's unfinished
+ * imports remain eligible so the user can retry them.
+ */
 export const listAgentSessions = Effect.fn("listAgentSessions")(function* (
   input: AgentSessionListInput,
 ) {

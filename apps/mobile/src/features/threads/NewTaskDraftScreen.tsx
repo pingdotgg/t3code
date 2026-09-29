@@ -175,6 +175,7 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
+/** Compose a new task or attach an external session within the selected environment and project. */
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;

@@ -63,6 +63,7 @@ export function shouldShowEnvironmentIndicator(input: {
   return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
 }
 
+/** Keep the strip for project context or hosted controls, including Resume in non-Git projects. */
 export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
