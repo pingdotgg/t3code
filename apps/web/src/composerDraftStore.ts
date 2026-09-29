@@ -2684,7 +2684,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const existing = state.draftsByThreadKey[threadKey];
             const base = existing ?? createEmptyThreadDraft();
 
-            // Update the map entry for this provider
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[instanceKey];
             if (providerOpts) {
@@ -2698,7 +2697,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextMap[instanceKey] = rest as ModelSelection;
             }
 
-            // Handle sticky persistence
             let nextStickyMap = state.stickyModelSelectionByProvider;
             let nextStickyActiveProvider = state.stickyActiveProvider;
             if (options?.persistSticky === true) {
