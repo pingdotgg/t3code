@@ -107,6 +107,8 @@ const rpcClientMock = {
     invalidate: vi.fn(),
     reviewerCandidates: vi.fn(),
     requestReviewers: vi.fn(),
+    usageReport: vi.fn(),
+    quotaRefresh: vi.fn(),
   },
   pullRequestMonitors: {
     start: vi.fn(),

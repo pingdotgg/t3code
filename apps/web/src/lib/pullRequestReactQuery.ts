@@ -3,6 +3,9 @@ import type {
   CollaborativeAcceptancePauseReason,
   CollaborativeAcceptanceStatus,
   EnvironmentId,
+  GitHubApiQuotaRefreshInput,
+  GitHubApiUsageReport,
+  GitHubApiUsageReportInput,
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -109,6 +112,17 @@ export const pullRequestQueryKeys = {
       reference.repository,
       reference.number,
     ] as const,
+  usageReport: (environmentId: EnvironmentId | null, input: GitHubApiUsageReportInput) =>
+    [
+      "pull-requests",
+      environmentId ?? null,
+      "usage-report",
+      input.window ?? "1h",
+      input.host ?? null,
+      input.feature ?? null,
+      input.query ?? null,
+      input.prNumber ?? null,
+    ] as const,
   monitorStatus: (environmentId: EnvironmentId | null, reference: PullRequestRef) =>
     [
       "pull-requests",
@@ -163,6 +177,8 @@ export const pullRequestMutationKeys = {
     ["pull-requests", "mutation", environmentId ?? null, "request-reviewers"] as const,
   invalidate: (environmentId: EnvironmentId | null) =>
     ["pull-requests", "mutation", environmentId ?? null, "invalidate"] as const,
+  quotaRefresh: (environmentId: EnvironmentId | null) =>
+    ["pull-requests", "mutation", environmentId ?? null, "quota-refresh"] as const,
   monitorStart: (environmentId: EnvironmentId | null) =>
     ["pull-requests", "mutation", environmentId ?? null, "monitor-start"] as const,
   monitorStop: (environmentId: EnvironmentId | null) =>
@@ -353,6 +369,36 @@ export function pullRequestReviewerCandidatesQueryOptions(input: {
     queryFn: () => requirePullRequestApi(input.environmentId).reviewerCandidates(input.reference),
     enabled: input.environmentId !== null && (input.enabled ?? true),
     staleTime: PULL_REQUEST_STALE_TIME_MS,
+  });
+}
+
+export function gitHubApiUsageReportQueryOptions(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly request: GitHubApiUsageReportInput;
+  readonly enabled?: boolean;
+}) {
+  return queryOptions<GitHubApiUsageReport>({
+    queryKey: pullRequestQueryKeys.usageReport(input.environmentId, input.request),
+    queryFn: () => requirePullRequestApi(input.environmentId).usageReport(input.request),
+    enabled: input.environmentId !== null && (input.enabled ?? true),
+    placeholderData: keepPreviousData,
+    staleTime: PULL_REQUEST_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function gitHubApiQuotaRefreshMutationOptions(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationKey: pullRequestMutationKeys.quotaRefresh(input.environmentId),
+    mutationFn: (value: GitHubApiQuotaRefreshInput) =>
+      requirePullRequestApi(input.environmentId).quotaRefresh(value),
+    onSuccess: () =>
+      input.queryClient.invalidateQueries({
+        queryKey: [...pullRequestQueryKeys.environment(input.environmentId), "usage-report"],
+      }),
   });
 }
 

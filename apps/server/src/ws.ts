@@ -26,6 +26,7 @@ import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
   GitHubCliError,
+  GitHubApiUsageError,
   PullRequestUnavailableError,
   PullRequestMonitorError,
   CollaborativeAcceptanceCaseLookupError,
@@ -193,6 +194,7 @@ import { expandHomePath } from "./pathExpansion.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as GitHubApiUsage from "./gitHubUsage/GitHubApiUsage.ts";
 import { repositoryFromPullRequestUrl } from "./pullRequestMonitor/PullRequestMonitorAssociationReactor.ts";
 import * as PullRequestMonitors from "./pullRequestMonitor/PullRequestMonitorService.ts";
 import { CollaborativeAcceptanceCoordinator } from "./collaborativeAcceptance/Coordinator.ts";
@@ -333,6 +335,7 @@ const makeWsRpcLayer = (
       const deviceService = yield* DeviceService.DeviceService;
       const previewAutomationBroker = yield* PreviewAutomationBroker;
       const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
+      const gitHubApiUsage = yield* Effect.serviceOption(GitHubApiUsage.GitHubApiUsage);
       const pullRequestMonitors = yield* Effect.serviceOption(
         PullRequestMonitors.PullRequestMonitorService,
       );
@@ -428,6 +431,18 @@ const makeWsRpcLayer = (
         Option.match(pullRequests, {
           onNone: () =>
             Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),
+          onSome: operation,
+        });
+      const withGitHubApiUsage = <A, E>(
+        operation: (service: GitHubApiUsage.GitHubApiUsage["Service"]) => Effect.Effect<A, E>,
+      ): Effect.Effect<A, E | GitHubApiUsageError> =>
+        Option.match(gitHubApiUsage, {
+          onNone: () =>
+            Effect.fail(
+              new GitHubApiUsageError({
+                message: "GitHub API usage telemetry is unavailable in this environment.",
+              }),
+            ),
           onSome: operation,
         });
       const dispatchNormalizedCommand = makeClientCommandDispatcher({
@@ -2347,6 +2362,20 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.pullRequestsRequestReviewers,
             withPullRequests((service) => service.requestReviewers(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsUsageReport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsUsageReport,
+            withGitHubApiUsage((service) => service.report(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
+        [WS_METHODS.pullRequestsQuotaRefresh]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsQuotaRefresh,
+            withGitHubApiUsage((service) => service.refreshQuota(input.host)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestMonitorsStart]: (input) =>

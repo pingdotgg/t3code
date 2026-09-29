@@ -1,7 +1,19 @@
 import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
-import { rewriteGitHubRateLimitDetail, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  isGitHubRateLimitMessage,
+  rewriteGitHubRateLimitDetail,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 
 import { runProcess } from "../../processRunner.ts";
+import { GitHubApiUsage } from "../../gitHubUsage/GitHubApiUsage.ts";
+import {
+  classifyResolvedOutcome,
+  parseGhCooldown,
+  parseGhDebugTelemetry,
+  stripGhDebugLines,
+  summarizeGhArgs,
+} from "../../gitHubUsage/ghDebugTelemetry.ts";
 import { GitHubCliError } from "@t3tools/contracts";
 import {
   GitHubCli,
@@ -17,9 +29,40 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/**
+ * The process runner joins a failure's stderr onto one `<argv> <reason>.`
+ * first line, so the first `* Request to …` trace line — and every
+ * rate-limit header after it — is invisible to line-anchored parsing, and the
+ * argv plus one debug fragment survive debug-line stripping. Recover the raw
+ * stderr with the exact argv this call ran with. Anything without that prefix
+ * (spawn errors, raw stderr handed in directly) passes through untouched.
+ */
+export function splitRunnerMessage(
+  message: string,
+  args: readonly string[],
+): {
+  readonly stderr: string;
+  readonly timedOut: boolean;
+} {
+  const label = ["gh", ...args].join(" ");
+  if (!message.startsWith(label)) return { stderr: message, timedOut: false };
+  const rest = message.slice(label.length);
+  if (rest.startsWith(" timed out.")) {
+    const stderr = rest.slice(" timed out.".length);
+    return { stderr: stderr.startsWith(" ") ? stderr.slice(1) : stderr, timedOut: true };
+  }
+  const match = /^ failed \([^)]*\)\.([\s\S]*)$/.exec(rest);
+  if (!match) return { stderr: message, timedOut: false };
+  const stderr = match[1] ?? "";
+  return { stderr: stderr.startsWith(" ") ? stderr.slice(1) : stderr, timedOut: false };
+}
+
 function retryAfterAtFromMessage(message: string): string | undefined {
-  const retryAfter = /(?:^|\r?\n)\s*retry-after\s*:\s*([^\r\n]+)/iu.exec(message)?.[1]?.trim();
-  const resetAt = /(?:^|\r?\n)\s*x-ratelimit-reset\s*:\s*(\d+)/iu.exec(message)?.[1];
+  // Trace header lines carry a `< ` prefix, which bare-message parsing misses.
+  const retryAfter = /(?:^|\r?\n)\s*(?:[<>]\s*)?retry-after\s*:\s*([^\r\n]+)/iu
+    .exec(message)?.[1]
+    ?.trim();
+  const resetAt = /(?:^|\r?\n)\s*(?:[<>]\s*)?x-ratelimit-reset\s*:\s*(\d+)/iu.exec(message)?.[1];
   const retryAt =
     retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter)
       ? Date.now() + Number(retryAfter) * 1_000
@@ -31,17 +74,38 @@ function retryAfterAtFromMessage(message: string): string | undefined {
   return Number.isFinite(retryAt) ? new Date(retryAt).toISOString() : undefined;
 }
 
-function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
+function normalizeGitHubCliError(
+  operation: "execute" | "stdout",
+  error: unknown,
+  args?: readonly string[],
+): GitHubCliError {
   if (error instanceof Error) {
-    if (error.message.includes("Command not found: gh")) {
+    // Sanitize once: the raw message can carry the debug trace and dumped
+    // bodies, and `cause` travels over RPC inside Schema.Unknown — so the
+    // retained cause must be the cleaned text, never the original error.
+    // Classification runs on the same cleaned text, which keeps rate-limit
+    // and not-found signals while dropping body-driven false positives.
+    const { stderr, timedOut } =
+      args === undefined
+        ? { stderr: error.message, timedOut: false }
+        : splitRunnerMessage(error.message, args);
+    const cleaned = stripGhDebugLines(stderr);
+    const safeCause = new Error(
+      cleaned.length > 0
+        ? cleaned
+        : timedOut
+          ? "GitHub CLI command failed: timed out."
+          : "GitHub CLI command failed.",
+    );
+    if (cleaned.includes("Command not found: gh")) {
       return new GitHubCliError({
         operation,
         detail: "GitHub CLI (`gh`) is required but not available on PATH.",
-        cause: error,
+        cause: safeCause,
       });
     }
 
-    const lower = error.message.toLowerCase();
+    const lower = cleaned.toLowerCase();
     if (
       lower.includes("authentication failed") ||
       lower.includes("not logged in") ||
@@ -51,7 +115,7 @@ function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown
       return new GitHubCliError({
         operation,
         detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
-        cause: error,
+        cause: safeCause,
       });
     }
 
@@ -64,19 +128,25 @@ function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown
       return new GitHubCliError({
         operation,
         detail: "Pull request not found. Check the PR number or URL and try again.",
-        cause: error,
+        cause: safeCause,
       });
     }
 
-    const retryAfterAt = retryAfterAtFromMessage(error.message);
+    const retryAfterAt = retryAfterAtFromMessage(stderr);
     return new GitHubCliError({
       operation,
       // An exhausted quota fails every call identically until the reset, so say that once in
       // stable words the PR caches and the client can match on — instead of echoing the raw
       // `gh` argv and stderr on every failure.
-      detail: rewriteGitHubRateLimitDetail(`GitHub CLI command failed: ${error.message}`),
+      detail: rewriteGitHubRateLimitDetail(
+        cleaned.length > 0
+          ? `GitHub CLI command failed: ${cleaned}`
+          : timedOut
+            ? "GitHub CLI command failed: timed out."
+            : "GitHub CLI command failed.",
+      ),
       ...(retryAfterAt ? { retryAfterAt } : {}),
-      cause: error,
+      cause: safeCause,
     });
   }
 
@@ -239,21 +309,93 @@ function decodeGitHubJson<S extends Schema.Top>(
 
 const makeGitHubCli = Effect.sync(() => {
   const execute: GitHubCliShape["execute"] = (input) =>
-    Effect.tryPromise({
-      try: () =>
-        runProcess("gh", input.args, {
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          ...(input.allowNonZeroExit ? { allowNonZeroExit: true } : {}),
-          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-          ...(input.maxOutputBytes === undefined
-            ? {}
-            : {
-                maxBufferBytes: input.maxOutputBytes,
-                outputMode: input.truncateOutputAtMaxBytes === true ? "truncate" : "error",
-              }),
-        }),
-      catch: (error) => normalizeGitHubCliError("execute", error),
+    Effect.gen(function* () {
+      // No extra quota is spent to observe usage: `GH_DEBUG=api` makes `gh`
+      // itself report each HTTP request and the response rate-limit headers
+      // on stderr. Tokens arrive redacted (`token ████`) and debug lines are
+      // stripped from failure details before they reach any caller.
+      const startedAt = Date.now();
+      const attempt = yield* Effect.tryPromise({
+        try: () =>
+          runProcess("gh", input.args, {
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            env: { ...process.env, GH_DEBUG: "api" },
+            ...(input.allowNonZeroExit ? { allowNonZeroExit: true } : {}),
+            ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+            ...(input.maxOutputBytes === undefined
+              ? {}
+              : {
+                  maxBufferBytes: input.maxOutputBytes,
+                  outputMode: input.truncateOutputAtMaxBytes === true ? "truncate" : "error",
+                }),
+          }),
+        catch: (error: unknown) => error,
+      }).pipe(
+        Effect.map((result) => ({ status: "ok" as const, result })),
+        Effect.catch((raw: unknown) => Effect.succeed({ status: "failed" as const, raw })),
+      );
+      const latencyMs = Date.now() - startedAt;
+      const usage = yield* Effect.serviceOption(GitHubApiUsage);
+      const attribution = {
+        operation: summarizeGhArgs(input.args),
+        feature: input.usage?.feature ?? "unknown",
+        host: input.usage?.host ?? "unknown",
+        ...(input.usage?.repository == null ? {} : { repository: input.usage.repository }),
+        ...(input.usage?.prNumber == null ? {} : { prNumber: input.usage.prNumber }),
+      };
+
+      if (attempt.status === "ok") {
+        const result = attempt.result;
+        // Resolution is not success: `allowNonZeroExit` callers resolve on
+        // HTTP errors and interpret the response themselves.
+        const outcome = classifyResolvedOutcome({
+          code: result.code,
+          timedOut: result.timedOut,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        });
+        if (usage._tag === "Some") {
+          const telemetry = parseGhDebugTelemetry(result.stderr);
+          const cooldown = outcome === "success" ? null : parseGhCooldown(result.stderr);
+          yield* usage.value.record({
+            ...attribution,
+            httpRequests: telemetry.httpRequestCount,
+            outcome,
+            latencyMs,
+            rateLimits: telemetry.rateLimits,
+            ...(cooldown?.retryAfterAtMs !== null && cooldown?.retryAfterAtMs !== undefined
+              ? { retryAfterAtMs: cooldown.retryAfterAtMs }
+              : {}),
+            ...(cooldown?.secondary === true ? { secondaryRateLimit: true } : {}),
+          });
+        }
+        return result;
+      }
+
+      const raw = attempt.raw;
+      const failure =
+        raw instanceof Error ? raw : new Error("GitHub CLI command failed with no detail.");
+      // The runner embeds stderr in the failure message behind an
+      // `<argv> <reason>.` prefix; recover the raw stderr first so the
+      // first request's trace line and rate-limit headers parse exactly.
+      const { stderr } = splitRunnerMessage(failure.message, input.args);
+      const telemetry = parseGhDebugTelemetry(stderr);
+      const normalized = normalizeGitHubCliError("execute", failure, input.args);
+      if (usage._tag === "Some") {
+        const outcome = isGitHubRateLimitMessage(normalized.detail) ? "rate-limited" : "failure";
+        const cooldown = parseGhCooldown(stderr);
+        yield* usage.value.record({
+          ...attribution,
+          httpRequests: telemetry.httpRequestCount,
+          outcome,
+          latencyMs,
+          rateLimits: telemetry.rateLimits,
+          ...(cooldown.retryAfterAtMs !== null ? { retryAfterAtMs: cooldown.retryAfterAtMs } : {}),
+          ...(cooldown.secondary ? { secondaryRateLimit: true } : {}),
+        });
+      }
+      return yield* normalized;
     });
 
   const service = {
@@ -261,6 +403,7 @@ const makeGitHubCli = Effect.sync(() => {
     listOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "association" },
         args: [
           "pr",
           "list",
@@ -298,6 +441,7 @@ const makeGitHubCli = Effect.sync(() => {
     listRepositoryOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "association" },
         args: [
           "pr",
           "list",
@@ -340,6 +484,7 @@ const makeGitHubCli = Effect.sync(() => {
               : [];
           const result = yield* execute({
             cwd: input.cwd,
+            usage: { feature: "association" },
             args: [
               "pr",
               "view",
@@ -364,6 +509,7 @@ const makeGitHubCli = Effect.sync(() => {
         const result = yield* execute({
           cwd: input.cwd,
           allowNonZeroExit: true,
+          usage: { feature: "association", host: reference.hostname },
           args: [
             "api",
             "--hostname",
@@ -434,12 +580,14 @@ const makeGitHubCli = Effect.sync(() => {
           : [];
       return execute({
         cwd: input.cwd,
+        usage: { feature: "diff" },
         args: ["pr", "diff", input.reference, ...repositoryArgs],
       }).pipe(Effect.map((result) => result.stdout));
     },
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "repository" },
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -456,6 +604,7 @@ const makeGitHubCli = Effect.sync(() => {
     createPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "create" },
         args: [
           "pr",
           "create",
@@ -472,6 +621,7 @@ const makeGitHubCli = Effect.sync(() => {
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "repository" },
         args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
       }).pipe(
         Effect.map((value) => {
@@ -482,6 +632,7 @@ const makeGitHubCli = Effect.sync(() => {
     checkoutPullRequest: (input) =>
       execute({
         cwd: input.cwd,
+        usage: { feature: "checkout" },
         args: ["pr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
   } satisfies GitHubCliShape;

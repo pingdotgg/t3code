@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ThreadId,
+  isGitHubRateLimitMessage,
   type ProjectId,
   type PullRequestInvolvement,
   type PullRequestListInput,
@@ -648,15 +649,29 @@ function PullRequestsRoute() {
                         listError instanceof Error ? listError.message : "Please try again."
                       }
                       action={
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            void Promise.all(listQueries.map((query) => query.refetch()))
-                          }
-                        >
-                          Retry
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              void Promise.all(listQueries.map((query) => query.refetch()))
+                            }
+                          >
+                            Retry
+                          </Button>
+                          {listError instanceof Error &&
+                          isGitHubRateLimitMessage(listError.message) ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                void navigate({ to: "/settings/pull-request-collaboration" })
+                              }
+                            >
+                              See API usage
+                            </Button>
+                          ) : null}
+                        </div>
                       }
                     />
                   ) : null}

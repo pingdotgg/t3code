@@ -148,6 +148,12 @@ import type {
   PullRequestThreadResolutionInput,
 } from "./pullRequest.ts";
 import type {
+  GitHubApiQuotaRefreshInput,
+  GitHubApiQuotaRefreshResult,
+  GitHubApiUsageReport,
+  GitHubApiUsageReportInput,
+} from "./gitHubUsage.ts";
+import type {
   PullRequestMonitorContextInput,
   PullRequestMonitorContextResult,
   PullRequestMonitorLaunchFallbackInput,
@@ -1193,6 +1199,8 @@ export interface EnvironmentApi {
     invalidate: (input: PullRequestInvalidateInput) => Promise<void>;
     reviewerCandidates: (input: PullRequestRef) => Promise<PullRequestReviewerCandidateList>;
     requestReviewers: (input: PullRequestReviewerRequestInput) => Promise<void>;
+    usageReport: (input: GitHubApiUsageReportInput) => Promise<GitHubApiUsageReport>;
+    quotaRefresh: (input: GitHubApiQuotaRefreshInput) => Promise<GitHubApiQuotaRefreshResult>;
   };
   pullRequestMonitors: {
     start: (input: PullRequestMonitorStartInput) => Promise<PullRequestMonitorMutationResult>;

@@ -75,6 +75,8 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       invalidate: rpcClient.pullRequests.invalidate,
       reviewerCandidates: rpcClient.pullRequests.reviewerCandidates,
       requestReviewers: rpcClient.pullRequests.requestReviewers,
+      usageReport: rpcClient.pullRequests.usageReport,
+      quotaRefresh: rpcClient.pullRequests.quotaRefresh,
     },
     pullRequestMonitors: {
       start: rpcClient.pullRequestMonitors.start,

@@ -441,6 +441,12 @@ const fetchIssueComments = Effect.fn("fetchGitHubPullRequestIssueComments")(func
       const raw = yield* input.github
         .execute({
           cwd: input.cwd,
+          usage: {
+            feature: "monitor",
+            host: input.host,
+            repository: `${input.owner}/${input.repository}`,
+            prNumber: input.number,
+          },
           args: [
             "api",
             "--include",
@@ -529,6 +535,13 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
     });
   }
 
+  const monitorUsage = {
+    feature: "monitor",
+    host: input.host,
+    repository: input.repository,
+    prNumber: input.number,
+  };
+
   const mapCliError = (error: GitHubCliError) =>
     new PullRequestProviderError({
       provider: "github",
@@ -545,6 +558,7 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
   const pageRaw = yield* github
     .execute({
       cwd: input.cwd,
+      usage: monitorUsage,
       args: [
         "api",
         "graphql",
@@ -588,6 +602,7 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
     const raw = yield* github
       .execute({
         cwd: input.cwd,
+        usage: monitorUsage,
         args: [
           "api",
           "graphql",
@@ -649,6 +664,7 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
       const raw = yield* github
         .execute({
           cwd: input.cwd,
+          usage: monitorUsage,
           args: [
             "api",
             "--hostname",
@@ -679,6 +695,7 @@ export const fetchGitHubPullRequestMonitorSnapshot = Effect.fn(
       const raw = yield* github
         .execute({
           cwd: input.cwd,
+          usage: monitorUsage,
           args: [
             "api",
             "--hostname",

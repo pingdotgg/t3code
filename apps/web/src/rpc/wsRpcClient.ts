@@ -167,6 +167,8 @@ export interface WsRpcClient {
     readonly invalidate: RpcUnaryMethod<typeof WS_METHODS.pullRequestsInvalidate>;
     readonly reviewerCandidates: RpcUnaryMethod<typeof WS_METHODS.pullRequestsReviewerCandidates>;
     readonly requestReviewers: RpcUnaryMethod<typeof WS_METHODS.pullRequestsRequestReviewers>;
+    readonly usageReport: RpcUnaryMethod<typeof WS_METHODS.pullRequestsUsageReport>;
+    readonly quotaRefresh: RpcUnaryMethod<typeof WS_METHODS.pullRequestsQuotaRefresh>;
   };
   readonly pullRequestMonitors: {
     readonly start: RpcUnaryMethod<typeof WS_METHODS.pullRequestMonitorsStart>;
@@ -441,6 +443,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.pullRequestsReviewerCandidates](input)),
       requestReviewers: (input) =>
         transport.request((client) => client[WS_METHODS.pullRequestsRequestReviewers](input)),
+      usageReport: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsUsageReport](input)),
+      quotaRefresh: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsQuotaRefresh](input)),
     },
     pullRequestMonitors: {
       start: (input) =>

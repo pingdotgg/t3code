@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { afterEach, expect, vi } from "vitest";
 
 vi.mock("../../processRunner", () => ({
@@ -7,8 +7,9 @@ vi.mock("../../processRunner", () => ({
 }));
 
 import { runProcess } from "../../processRunner.ts";
+import { GitHubApiUsage, GitHubApiUsageLive } from "../../gitHubUsage/GitHubApiUsage.ts";
 import { GitHubCli } from "../Services/GitHubCli.ts";
-import { GitHubCliLive } from "./GitHubCli.ts";
+import { GitHubCliLive, splitRunnerMessage } from "./GitHubCli.ts";
 
 const mockedRunProcess = vi.mocked(runProcess);
 const layer = it.layer(GitHubCliLive);
@@ -377,3 +378,161 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 });
+
+it("recovers raw stderr from the runner message prefix", () => {
+  const args = ["api", "--hostname", "github.com", "user", "--jq", ".login"];
+  const label = `gh ${args.join(" ")}`;
+  const stderr = "* Request to https://api.github.com/user\n< HTTP/2.0 403 Forbidden";
+  expect(
+    splitRunnerMessage(`${label} failed (code=1, signal=null). ${stderr}`, args),
+  ).toStrictEqual({ stderr, timedOut: false });
+  expect(splitRunnerMessage(`${label} timed out. ${stderr}`, args)).toStrictEqual({
+    stderr,
+    timedOut: true,
+  });
+  expect(splitRunnerMessage(`${label} failed (code=1, signal=null).`, args)).toStrictEqual({
+    stderr: "",
+    timedOut: false,
+  });
+  // Spawn errors, raw stderr, and other commands' messages pass through untouched.
+  expect(splitRunnerMessage("Command not found: gh", args)).toStrictEqual({
+    stderr: "Command not found: gh",
+    timedOut: false,
+  });
+  expect(splitRunnerMessage(stderr, args)).toStrictEqual({ stderr, timedOut: false });
+  expect(splitRunnerMessage(`${label} exceeded stdout buffer limit (8 bytes).`, args).stderr).toBe(
+    `${label} exceeded stdout buffer limit (8 bytes).`,
+  );
+});
+
+it.effect("records measured requests and quota from a failed invocation", () =>
+  Effect.gen(function* () {
+    const args = ["api", "--hostname", "github.com", "user", "--jq", ".login"];
+    const stderr = [
+      "* Request to https://api.github.com/user",
+      "> GET /user HTTP/1.1",
+      "> Authorization: token ████████████████████",
+      "< HTTP/2.0 403 Forbidden",
+      "< X-Ratelimit-Limit: 5000",
+      "< X-Ratelimit-Remaining: 0",
+      "< X-Ratelimit-Reset: 1790633756",
+      "< X-Ratelimit-Resource: core",
+      "< X-Ratelimit-Used: 5000",
+      "",
+      '{"message": "API rate limit exceeded for authenticated user."}',
+      "",
+      "* Request took 100.0ms",
+      "gh: API rate limit exceeded for authenticated user.",
+    ].join("\n");
+    mockedRunProcess.mockRejectedValueOnce(
+      new Error(`gh ${args.join(" ")} failed (code=1, signal=null). ${stderr}`),
+    );
+
+    const program = Effect.gen(function* () {
+      const gh = yield* GitHubCli;
+      const usage = yield* GitHubApiUsage;
+      const error = yield* gh
+        .execute({ cwd: "/repo", args, usage: { feature: "viewer", host: "github.com" } })
+        .pipe(Effect.flip);
+      const report = yield* usage.report({ window: "5m" });
+      return { error, report };
+    }).pipe(Effect.provide(Layer.mergeAll(GitHubCliLive, GitHubApiUsageLive)));
+    const { error, report } = yield* program;
+
+    // The single failed request counts exactly, and its quota headers are
+    // observed precisely when quota pressure occurs.
+    assert.strictEqual(report.totals.httpRequests, 1);
+    assert.strictEqual(report.totals.httpRequestsUnknown, false);
+    assert.strictEqual(report.totals.rateLimited, 1);
+    assert.strictEqual(report.quota[0]?.resource, "core");
+    assert.strictEqual(report.quota[0]?.remaining, 0);
+    // The detail carries neither the argv nor the debug trace.
+    assert.equal(error.detail.includes("gh api"), false);
+    assert.equal(error.detail.includes("--jq"), false);
+    assert.equal(error.detail.includes("* Request to"), false);
+    assert.equal(error.detail.includes("GitHub API rate limit exceeded"), true);
+  }),
+);
+
+it.effect("sanitizes the retained cause on failure", () =>
+  Effect.gen(function* () {
+    mockedRunProcess.mockRejectedValueOnce(
+      new Error(
+        [
+          "gh api --hostname github.com graphql failed (code=1, signal=null). * Request to https://api.github.com/graphql",
+          "> POST /graphql HTTP/1.1",
+          "< HTTP/2.0 200 OK",
+          "",
+          '{"data": {"private_fixture": "SYNTHETIC_PRIVATE_BODY"}}',
+          "",
+          "* Request took 100.0ms",
+          "gh: something failed",
+        ].join("\n"),
+      ),
+    );
+
+    const program = Effect.gen(function* () {
+      const gh = yield* GitHubCli;
+      return yield* gh
+        .execute({ cwd: "/repo", args: ["api", "--hostname", "github.com", "graphql"] })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(GitHubCliLive));
+    const error = yield* program;
+    const causeText =
+      error.cause instanceof Error ? error.cause.message : String(error.cause ?? "");
+    expect(causeText).not.toContain("SYNTHETIC_PRIVATE_BODY");
+    expect(causeText).not.toContain("* Request to");
+    expect(causeText).not.toContain("--hostname");
+  }),
+);
+
+it.effect("classifies allowed non-zero exits by response evidence", () =>
+  Effect.gen(function* () {
+    const args = ["api", "--hostname", "github.com", "graphql", "--include"];
+    const program = () =>
+      Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        const usage = yield* GitHubApiUsage;
+        const result = yield* gh.execute({
+          cwd: "/repo",
+          args,
+          allowNonZeroExit: true,
+          usage: { feature: "association", host: "github.com" },
+        });
+        const report = yield* usage.report({ window: "5m" });
+        return { result, report };
+      }).pipe(Effect.provide(Layer.mergeAll(GitHubCliLive, GitHubApiUsageLive)));
+
+    mockedRunProcess.mockResolvedValueOnce({
+      stdout: 'HTTP/2.0 200 OK\n\n{"errors":[{"message":"API rate limit already exceeded."}]}',
+      stderr: [
+        "* Request to https://api.github.com/graphql",
+        "< HTTP/2.0 200 OK",
+        "< X-Ratelimit-Resource: graphql",
+        "< X-Ratelimit-Remaining: 0",
+        "",
+        "* Request took 100.0ms",
+      ].join("\n"),
+      code: 1,
+      signal: null,
+      timedOut: false,
+    });
+    const limited = yield* program();
+    assert.strictEqual(limited.result.code, 1);
+    assert.strictEqual(limited.report.totals.rateLimited, 1);
+    assert.strictEqual(limited.report.totals.errors, 0);
+    assert.strictEqual(limited.report.totals.httpRequests, 1);
+    assert.strictEqual(limited.report.totals.httpRequestsUnknown, false);
+
+    mockedRunProcess.mockResolvedValueOnce({
+      stdout: 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}',
+      stderr: "* Request to https://api.github.com/graphql\n* Request took 100.0ms",
+      code: 1,
+      signal: null,
+      timedOut: false,
+    });
+    const failed = yield* program();
+    assert.strictEqual(failed.report.totals.errors, 1);
+    assert.strictEqual(failed.report.totals.rateLimited, 0);
+  }),
+);
