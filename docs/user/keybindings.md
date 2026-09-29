@@ -84,7 +84,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
+`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
@@ -111,10 +111,14 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
-`thread.undo` (`mod+z` by default) reverses the most recent thread action that is
-still offering **Undo** in a notification, such as an unpin, settle, snooze, or
-archive. Its default rule skips text fields and terminals so native undo keeps
-working there.
+`thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
+bottom of the sidebar, such as unpin, settle, snooze, or archive. Consecutive
+actions of the same kind undo together. The notice remains available for five
+seconds after the latest action. The default shortcut skips text fields and
+terminals so native undo keeps working there.
+
+`navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
+through the pages you have visited, like a browser's back and forward buttons.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your

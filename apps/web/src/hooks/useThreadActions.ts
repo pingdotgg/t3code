@@ -15,7 +15,6 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
-import { snoozeWakeDescription } from "../components/Sidebar.snooze";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -27,6 +26,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
+  readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
@@ -44,7 +44,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "./threadUndo";
-import { showUndoToast } from "./showUndoToast";
+import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
@@ -105,6 +105,18 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<ThreadAutoSettleOptOutUnsupportedError>()(
+  "ThreadAutoSettleOptOutUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.";
+  }
 }
 
 export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinningUnsupportedError>()(
@@ -201,6 +213,9 @@ export function useThreadActions() {
   const unpinThreadMutation = useAtomCommand(threadEnvironment.unpin, {
     reportFailure: false,
   });
+  const setThreadAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
   const reorderPinnedThreadMutation = useAtomCommand(threadEnvironment.reorderPin, {
     reportFailure: false,
   });
@@ -223,7 +238,6 @@ export function useThreadActions() {
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -313,9 +327,8 @@ export function useThreadActions() {
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
-      showUndoToast({
-        title: "Thread archived",
-        description: thread.title,
+      showThreadUndoNotice({
+        action: "Archived",
         claim: action,
         // Undo also brings the reader back when archiving moved them to a draft.
         undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
@@ -559,6 +572,27 @@ export function useThreadActions() {
     [unsettleThreadMutation],
   );
 
+  /** Turns automatic settlement (inactivity, merged PR) on or off for one thread. */
+  const setThreadAutoSettle = useCallback(
+    async (target: ScopedThreadRef, enabled: boolean) => {
+      if (!readEnvironmentSupportsAutoSettleOptOut(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadAutoSettleOptOutUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return setThreadAutoSettleMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, enabled },
+      });
+    },
+    [setThreadAutoSettleMutation],
+  );
+
   const pinThread = useCallback(
     async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
       // Version skew: never send the command to a server that predates it.
@@ -613,9 +647,8 @@ export function useThreadActions() {
         input: { threadId: target.threadId },
       });
       if (result._tag === "Success" && action.isCurrent()) {
-        showUndoToast({
-          title: "Thread unpinned",
-          description: thread?.title,
+        showThreadUndoNotice({
+          action: "Unpinned",
           claim: action,
           undo: () => pinThread(target, orderKey === undefined ? {} : { orderKey }),
           failureTitle: "Failed to undo unpin",
@@ -629,11 +662,7 @@ export function useThreadActions() {
   );
 
   const settleThread = useCallback(
-    async (
-      target: ScopedThreadRef,
-      // Batch callers settle a selection at once and stay silent as before.
-      opts: { undoToast?: boolean } = {},
-    ) => {
+    async (target: ScopedThreadRef) => {
       // Version skew: never send the command to a server that predates it —
       // the raw protocol rejection would read as a random failure.
       if (!readEnvironmentSupportsSettlement(target.environmentId)) {
@@ -671,13 +700,8 @@ export function useThreadActions() {
       if (wokeAt !== null) {
         markThreadVisited(scopedThreadKey(target), wokeAt);
       }
-      if (opts.undoToast === false) {
-        action.finish();
-        return result;
-      }
-      showUndoToast({
-        title: "Thread settled",
-        description: resolved?.thread.title,
+      showThreadUndoNotice({
+        action: "Settled",
         claim: action,
         undo: async () => {
           const unsettled = await unsettleThread(target);
@@ -797,12 +821,7 @@ export function useThreadActions() {
   );
 
   const snoozeThread = useCallback(
-    async (
-      target: ScopedThreadRef,
-      snoozedUntil: string,
-      // Batch callers report one toast for the whole selection instead.
-      opts: { undoToast?: boolean } = {},
-    ) => {
+    async (target: ScopedThreadRef, snoozedUntil: string) => {
       // Version skew: never send the command to a server that predates it.
       if (!readEnvironmentSupportsSnooze(target.environmentId)) {
         return AsyncResult.failure(
@@ -833,21 +852,20 @@ export function useThreadActions() {
         environmentId: target.environmentId,
         input: { threadId: target.threadId, snoozedUntil },
       });
-      if (result._tag !== "Success" || opts.undoToast === false) {
+      if (result._tag !== "Success") {
         action.finish();
         return result;
       }
-      // Snooze hides the row, so the toast is the only confirmation.
-      showUndoToast({
-        title: `Snoozed until ${snoozeWakeDescription(snoozedUntil, new Date(), timestampFormat)}`,
-        description: resolved?.thread.title,
+      // Snooze hides the row, so keep its confirmation in the sidebar.
+      showThreadUndoNotice({
+        action: "Snoozed",
         claim: action,
         undo: () => unsnoozeThread(target),
         failureTitle: "Failed to wake thread",
       });
       return result;
     },
-    [resolveThreadTarget, snoozeThreadMutation, timestampFormat, unsnoozeThread],
+    [resolveThreadTarget, snoozeThreadMutation, unsnoozeThread],
   );
 
   const confirmAndDeleteThread = useCallback(
@@ -894,6 +912,7 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoSettle,
     }),
     [
       archiveThread,
@@ -903,6 +922,7 @@ export function useThreadActions() {
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoSettle,
       settleThread,
       snoozeThread,
       unarchiveThread,

@@ -668,7 +668,7 @@ function decodeAttributes(
     entries[attribute.key] = decodeValue(attribute.value);
   }
 
-  return compactTraceAttributes(entries);
+  return truncateTraceAttributes(compactTraceAttributes(entries));
 }
 
 function decodeValue(input: OtlpResource.AnyValue | null | undefined): unknown {
