@@ -6,7 +6,7 @@ import {
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useState } from "react";
-import { AppState, Pressable, ScrollView, View } from "react-native";
+import { AppState, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
@@ -99,9 +99,13 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           >
             {backgroundSetup ? (
               <AppActivityIndicator
-                size="small"
+                size={Platform.OS === "android" ? 12 : "small"}
                 colorClassName="accent-icon-muted"
-                style={{ width: 12, height: 12, transform: [{ scale: 0.65 }] }}
+                style={{
+                  width: 12,
+                  height: 12,
+                  transform: Platform.OS === "android" ? undefined : [{ scale: 0.65 }],
+                }}
               />
             ) : failed ? (
               <SymbolView

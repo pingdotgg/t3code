@@ -97,7 +97,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
         {node.name}
       </Text>
       {node.kind === "directory" && props.expanded && props.loading ? (
-        <ActivityIndicator size="small" accessibilityLabel={`Loading ${node.name}`} />
+        <AppActivityIndicator size="small" accessibilityLabel={`Loading ${node.name}`} />
       ) : null}
     </Pressable>
   );
