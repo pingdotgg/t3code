@@ -129,4 +129,60 @@ describe("AssetAccess", () => {
       }),
     ).pipe(Effect.provide(testLayer)),
   );
+
+  it.effect("issues and resolves an attachment URL by id", () =>
+    withWorkspace((workspaceRoot, outsideRoot) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const attachmentsDir = path.join(outsideRoot, "attachments");
+        yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+        const attachmentId = "thread-1-abc123";
+        const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
+        yield* fileSystem.writeFile(attachmentPath, new Uint8Array([137, 80, 78, 71, 13, 10]));
+        const layer = Layer.provideMerge(
+          Layer.succeed(ServerConfig, { attachmentsDir } as ServerConfigShape),
+          testLayer,
+        );
+
+        const url = yield* issueAssetUrl({
+          resource: {
+            _tag: "attachment",
+            attachmentId,
+            fileName: "shot.png",
+            mimeType: "image/png",
+            disposition: "inline",
+          },
+        }).pipe(Effect.provide(layer));
+
+        const resolved = yield* resolveAsset(
+          tokenFromRelativeUrl(url.relativeUrl),
+          "shot.png",
+        ).pipe(Effect.provide(layer));
+        expect(resolved).toEqual({
+          kind: "file",
+          path: yield* fileSystem.realPath(attachmentPath),
+        });
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects an unknown attachment id", () =>
+    withWorkspace((_workspaceRoot, outsideRoot) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const layer = Layer.provideMerge(
+          Layer.succeed(ServerConfig, {
+            attachmentsDir: path.join(outsideRoot, "attachments"),
+          } as ServerConfigShape),
+          testLayer,
+        );
+        const error = yield* issueAssetUrl({
+          resource: { _tag: "attachment", attachmentId: "thread-1-missing" },
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error._tag).toBe("AssetAttachmentNotFoundError");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
 });

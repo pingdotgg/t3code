@@ -258,6 +258,11 @@ export interface DesktopLocalRebuildResult {
   message: string | null;
 }
 
+export interface DesktopLocalRebuildOptions {
+  /** Fast-forward the checkout to its upstream before building. */
+  pullLatest?: boolean;
+}
+
 /**
  * Whether the remote default branch has moved past the commit the running
  * Dev build was built from. Compared with `git ls-remote` (no fetch, no
@@ -1020,7 +1025,7 @@ export interface DesktopBridge {
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   getLocalRebuildState?: () => Promise<DesktopLocalRebuildState>;
-  rebuildAndRestart?: () => Promise<DesktopLocalRebuildResult>;
+  rebuildAndRestart?: (options?: DesktopLocalRebuildOptions) => Promise<DesktopLocalRebuildResult>;
   checkLocalRebuildStaleness?: () => Promise<DesktopLocalRebuildStaleness>;
   showNotification: (request: DesktopNotificationRequest) => Promise<boolean>;
   onNotificationClick: (listener: (click: DesktopNotificationClick) => void) => () => void;

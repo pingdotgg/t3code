@@ -96,7 +96,7 @@ export function useLocalRebuildStaleness(input: {
 }
 
 export interface LocalRebuildRequest {
-  readonly requestLocalRebuild: () => void;
+  readonly requestLocalRebuild: (options?: { readonly pullLatest?: boolean }) => void;
   readonly isStartingLocalRebuild: boolean;
 }
 
@@ -104,45 +104,57 @@ export interface LocalRebuildRequest {
 export function useRequestLocalRebuild(): LocalRebuildRequest {
   const [isStartingLocalRebuild, setIsStartingLocalRebuild] = useState(false);
 
-  const requestLocalRebuild = useCallback(() => {
-    const rebuildAndRestart = window.desktopBridge?.rebuildAndRestart;
-    if (!rebuildAndRestart || isStartingLocalRebuild) return;
-    if (!window.confirm("Build the current checkout, install it, and restart T3 Code?")) return;
+  const requestLocalRebuild = useCallback(
+    (options?: { readonly pullLatest?: boolean }) => {
+      const rebuildAndRestart = window.desktopBridge?.rebuildAndRestart;
+      if (!rebuildAndRestart || isStartingLocalRebuild) return;
+      const pullLatest = options?.pullLatest === true;
+      if (
+        !window.confirm(
+          pullLatest
+            ? "Pull the latest changes, build the checkout, install it, and restart T3 Code?"
+            : "Build the current checkout, install it, and restart T3 Code?",
+        )
+      )
+        return;
 
-    setIsStartingLocalRebuild(true);
-    void rebuildAndRestart()
-      .then((result) => {
-        if (result.accepted) {
-          toastManager.add({
-            type: "success",
-            title: "Local rebuild started",
-            description: "T3 Code will restart after the new build is ready.",
-          });
-          return;
-        }
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not start local rebuild",
-            description: [result.message, result.logPath ? `Log: ${result.logPath}` : null]
-              .filter(Boolean)
-              .join(" "),
-          }),
-        );
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not start local rebuild",
-            description: error instanceof Error ? error.message : "Local rebuild failed to start.",
-          }),
-        );
-      })
-      .finally(() => {
-        setIsStartingLocalRebuild(false);
-      });
-  }, [isStartingLocalRebuild]);
+      setIsStartingLocalRebuild(true);
+      void rebuildAndRestart(pullLatest ? { pullLatest: true } : undefined)
+        .then((result) => {
+          if (result.accepted) {
+            toastManager.add({
+              type: "success",
+              title: "Local rebuild started",
+              description: "T3 Code will restart after the new build is ready.",
+            });
+            return;
+          }
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start local rebuild",
+              description: [result.message, result.logPath ? `Log: ${result.logPath}` : null]
+                .filter(Boolean)
+                .join(" "),
+            }),
+          );
+        })
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start local rebuild",
+              description:
+                error instanceof Error ? error.message : "Local rebuild failed to start.",
+            }),
+          );
+        })
+        .finally(() => {
+          setIsStartingLocalRebuild(false);
+        });
+    },
+    [isStartingLocalRebuild],
+  );
 
   return { requestLocalRebuild, isStartingLocalRebuild };
 }

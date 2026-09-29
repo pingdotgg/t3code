@@ -3548,6 +3548,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(rebuildAndRestart).toHaveBeenCalledOnce();
+          expect(rebuildAndRestart).toHaveBeenCalledWith({ pullLatest: true });
         },
         { timeout: 8_000, interval: 16 },
       );

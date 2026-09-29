@@ -38,7 +38,6 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
-  DesktopLocalRebuildResult,
   DesktopLocalRebuildState,
 } from "@t3tools/contracts";
 import { DesktopNotificationRequest } from "@t3tools/contracts";
@@ -110,8 +109,10 @@ import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
   checkLocalDevRebuildStaleness,
   launchLocalDevRebuild,
+  pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
   resolveLocalDevRebuildState,
+  runLocalRebuildStart,
 } from "./localDevRebuild.ts";
 
 const decodeDesktopNotificationRequest = Schema.decodeUnknownSync(DesktopNotificationRequest);
@@ -2098,28 +2099,19 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
-  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async () => {
-    if (localRebuildStarted) {
-      return {
-        accepted: false,
-        logPath: Path.join(LOG_DIR, "dev-rebuild.log"),
-        message: "A local rebuild is already in progress.",
-      } satisfies DesktopLocalRebuildResult;
-    }
-    localRebuildStarted = true;
-    const result = await launchLocalDevRebuild(
-      getLocalDevRebuildState(),
-      LOG_DIR,
-      undefined,
-      () => {
-        localRebuildStarted = false;
+  ipcMain.handle(LOCAL_REBUILD_START_CHANNEL, async (_event, options) =>
+    runLocalRebuildStart({
+      isStarted: () => localRebuildStarted,
+      setStarted: (started) => {
+        localRebuildStarted = started;
       },
-    );
-    if (!result.accepted) {
-      localRebuildStarted = false;
-    }
-    return result satisfies DesktopLocalRebuildResult;
-  });
+      getState: getLocalDevRebuildState,
+      pullLatest: (sourceRoot) => pullLatestCheckoutChanges(sourceRoot),
+      launch: (state, onExit) => launchLocalDevRebuild(state, LOG_DIR, undefined, onExit),
+      alreadyStartedLogPath: Path.join(LOG_DIR, "dev-rebuild.log"),
+      options: options as { pullLatest?: unknown } | undefined,
+    }),
+  );
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
