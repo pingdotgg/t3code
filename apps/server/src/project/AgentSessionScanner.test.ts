@@ -183,6 +183,74 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   for (const provider of ["codex", "claudeAgent"] as const) {
+    it.effect(`tries older ${provider} transcripts after a newer filename suffix collision`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* makeTempDir("t3code-resume-collision-");
+        const workspace = path.join(base, "workspace");
+        yield* fs.makeDirectory(workspace);
+        const claudeHomePath = path.join(base, "claude");
+        const codexHomePath = path.join(base, "codex");
+        const sessionId =
+          provider === "codex" ? "named-session" : "5c119ee3-f063-4999-87ce-a062d004c37c";
+        const otherId =
+          provider === "codex" ? `other-${sessionId}` : "6c119ee3-f063-4999-87ce-a062d004c37c";
+        const directory =
+          provider === "codex"
+            ? path.join(codexHomePath, "sessions", "2026", "08", "24")
+            : path.join(claudeHomePath, "projects", "collision");
+        const validPath = path.join(
+          directory,
+          `${provider === "codex" ? "rollout-" : ""}${sessionId}.jsonl`,
+        );
+        for (const [filePath, id, text, mtimeMs] of [
+          [validPath, sessionId, "Correct session", 1_000],
+          [
+            path.join(directory, `rollout-newer-${sessionId}.jsonl`),
+            otherId,
+            "Wrong session",
+            2_000,
+          ],
+          [path.join(directory, `rollout-newest-${sessionId}.jsonl`), sessionId, null, 3_000],
+        ] as const) {
+          const metadata =
+            provider === "codex"
+              ? { type: "session_meta", payload: { id, cwd: workspace } }
+              : { type: "system", sessionId: id, cwd: workspace };
+          const prompt =
+            provider === "codex"
+              ? { type: "event_msg", payload: { type: "user_message", message: text } }
+              : { type: "user", sessionId: id, cwd: workspace, message: { content: text } };
+          yield* writeTranscript({
+            filePath,
+            contents: [metadata, ...(text ? [prompt] : [])]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n"),
+            mtimeMs,
+          });
+        }
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const selected = yield* scanner.readSession(
+            workspace,
+            ProviderInstanceId.make(provider),
+            sessionId,
+          );
+          expect(selected.source.filePath).toBe(validPath);
+          expect(selected.session.title).toBe("Correct session");
+          expect(selected.thread.providerSessionId).toBe(sessionId);
+          yield* fs.remove(validPath);
+          const error = yield* scanner
+            .readSession(workspace, ProviderInstanceId.make(provider), sessionId)
+            .pipe(Effect.flip);
+          expect(error._tag).toBe("AgentSessionResumeError");
+        }).pipe(Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })));
+      }),
+    );
+  }
+
+  for (const provider of ["codex", "claudeAgent"] as const) {
     for (const oversizedFirstRecord of [true, false]) {
       it.effect(
         `reads ${provider} sessions beyond the listing prefix (${oversizedFirstRecord ? "large first record" : "late prompt"})`,

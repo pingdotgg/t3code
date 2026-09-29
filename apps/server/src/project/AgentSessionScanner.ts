@@ -1701,7 +1701,7 @@ export const make = Effect.gen(function* () {
             updatedAt: DateTime.formatIso(DateTime.makeUnsafe(transcript.mtimeMs ?? 0)),
           },
         });
-        break;
+        continue;
       }
       if (sessions.length >= SESSION_LIST_LIMIT || remainingBytes <= 0) break;
       inspected += 1;
@@ -1784,9 +1784,10 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * Re-discover and read a selected transcript, rejecting changed session or
-   * directory identities. Classify root aliases by filesystem identity so the
-   * importer can preserve the native cwd without marking it as a linked worktree.
+   * Try matching transcripts newest-first until full history validates the native
+   * session and directory identities; filename suffixes alone are not authoritative.
+   * Classify root aliases by filesystem identity so the importer can preserve the
+   * native cwd without marking it as a linked worktree.
    */
   const readSession: AgentSessionScanner["Service"]["readSession"] = Effect.fn(
     "AgentSessionScanner.readSession",
@@ -1795,68 +1796,71 @@ export const make = Effect.gen(function* () {
       providerInstanceId,
       sessionId,
     });
-    const selected = sessions.find(
-      ({ session }) =>
-        session.providerInstanceId === providerInstanceId && session.sessionId === sessionId,
-    );
-    if (!selected)
-      return yield* new AgentSessionResumeError({
-        message: "This session is no longer available in this project. Refresh the session list.",
-      });
-    const stats = yield* statOption(selected.filePath);
-    if (Option.isNone(stats) || stats.value.type !== "File")
-      return yield* new AgentSessionResumeError({
-        message: "The session transcript is no longer available.",
-      });
-    const identity = transcriptIdentity(selected.filePath, stats.value);
-    const snapshot = yield* readTranscript(
-      selected.filePath,
-      identity,
-      MAX_IMPORT_RECORDS,
-      selected.session.provider,
-    ).pipe(importReadLock.withPermits(1));
-    // Discovery above already matched the listed directory to this project.
-    const cwd = snapshot?.records.map(extractDecodedCwd).find((value) => value !== null);
-    if (
-      !snapshot ||
-      !cwd ||
-      (yield* directoryIdentity(cwd)) !== (yield* directoryIdentity(selected.session.cwd))
-    ) {
-      return yield* new AgentSessionResumeError({
-        message:
-          "The session changed or its history could not be read. Refresh the session list and try again.",
-      });
+    let failure = new AgentSessionResumeError({
+      message: "This session is no longer available in this project. Refresh the session list.",
+    });
+    for (const selected of sessions) {
+      const stats = yield* statOption(selected.filePath);
+      if (Option.isNone(stats) || stats.value.type !== "File") {
+        failure = new AgentSessionResumeError({
+          message: "The session transcript is no longer available.",
+        });
+        continue;
+      }
+      const identity = transcriptIdentity(selected.filePath, stats.value);
+      const snapshot = yield* readTranscript(
+        selected.filePath,
+        identity,
+        MAX_IMPORT_RECORDS,
+        selected.session.provider,
+      ).pipe(importReadLock.withPermits(1));
+      // Discovery above already matched the listed directory to this project.
+      const cwd = snapshot?.records.map(extractDecodedCwd).find((value) => value !== null);
+      if (
+        !snapshot ||
+        !cwd ||
+        (yield* directoryIdentity(cwd)) !== (yield* directoryIdentity(selected.session.cwd))
+      ) {
+        failure = new AgentSessionResumeError({
+          message:
+            "The session changed or its history could not be read. Refresh the session list and try again.",
+        });
+        continue;
+      }
+      const thread = parseAgentSessionRecords(
+        {
+          source: selected.session.provider,
+          providerInstanceId,
+          fallbackSessionId: sessionId,
+          lastActiveAtMs: identity.mtimeMs ?? 0,
+        },
+        snapshot.records,
+      );
+      if (
+        !thread ||
+        thread.providerSessionId !== sessionId ||
+        (thread.source === "claudeAgent" && !CLAUDE_SESSION_ID_PATTERN.test(sessionId))
+      ) {
+        failure = new AgentSessionResumeError({
+          message: "The session transcript could not be resumed.",
+        });
+        continue;
+      }
+      return {
+        session: { ...selected.session, title: resumableSessionTitle(thread, snapshot.records) },
+        isProjectRoot:
+          (yield* directoryIdentity(selected.session.cwd)) ===
+          (yield* directoryIdentity(workspaceRoot)),
+        thread,
+        source: {
+          ...identity,
+          provider: thread.source,
+          providerInstanceId,
+          providerSessionId: sessionId,
+        },
+      };
     }
-    const thread = parseAgentSessionRecords(
-      {
-        source: selected.session.provider,
-        providerInstanceId,
-        fallbackSessionId: sessionId,
-        lastActiveAtMs: identity.mtimeMs ?? 0,
-      },
-      snapshot.records,
-    );
-    if (
-      !thread ||
-      thread.providerSessionId !== sessionId ||
-      (thread.source === "claudeAgent" && !CLAUDE_SESSION_ID_PATTERN.test(sessionId))
-    )
-      return yield* new AgentSessionResumeError({
-        message: "The session transcript could not be resumed.",
-      });
-    return {
-      session: { ...selected.session, title: resumableSessionTitle(thread, snapshot.records) },
-      isProjectRoot:
-        (yield* directoryIdentity(selected.session.cwd)) ===
-        (yield* directoryIdentity(workspaceRoot)),
-      thread,
-      source: {
-        ...identity,
-        provider: thread.source,
-        providerInstanceId,
-        providerSessionId: sessionId,
-      },
-    };
+    return yield* failure;
   });
 
   return AgentSessionScanner.of({ scan, recentThreads, listSessions, readSession });
