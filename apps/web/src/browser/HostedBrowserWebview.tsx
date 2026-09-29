@@ -159,7 +159,20 @@ export function HostedBrowserWebview(props: {
     // A click inside the guest only reaches this document as a webview focus
     // event, so open menus and popovers never see the outside press that
     // would dismiss them. Replay it as a pointerdown on the webview itself.
-    const dismissHostPopups = () => {
+    //
+    // Hidden guests cannot be clicked by a person, so their focus comes from
+    // agent automation (CDP mouse input focuses the target guest). Hand focus
+    // back to whatever the user was typing into instead of swallowing keys.
+    const onWebviewFocus = (event: FocusEvent) => {
+      const surface = useBrowserSurfaceStore.getState().byTabId[runtimeTabId];
+      if (!surface?.visible || !surface.rect) {
+        if (event.relatedTarget instanceof HTMLElement) {
+          event.relatedTarget.focus({ preventScroll: true });
+        } else {
+          webview.blur();
+        }
+        return;
+      }
       webview.dispatchEvent(
         new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
       );
@@ -167,7 +180,7 @@ export function HostedBrowserWebview(props: {
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
-    webview.addEventListener("focus", dismissHostPopups);
+    webview.addEventListener("focus", onWebviewFocus);
     register();
     return () => {
       disposed = true;
@@ -175,7 +188,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
-      webview.removeEventListener("focus", dismissHostPopups);
+      webview.removeEventListener("focus", onWebviewFocus);
     };
   }, [clientSettingsHydrated, config, initialSrc, runtimeTabId, webviewGeneration]);
 
