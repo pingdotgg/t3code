@@ -1,5 +1,6 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import {
   cloneElement,
   useState,
@@ -43,6 +44,7 @@ export function PullRequestLinkPreview({
   onOpenFallback?: (url: string) => Promise<void>;
   fallback?: ReactNode;
 }) {
+  const { t } = useTranslation("pullRequests");
   const [open, setOpen] = useState(false);
   const [resolvingClick, setResolvingClick] = useState(false);
   const detailQuery = useEnvironmentQuery(
@@ -84,7 +86,7 @@ export function PullRequestLinkPreview({
   const state =
     detail === null
       ? null
-      : resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft });
+      : resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft }, t);
   const authorLabel =
     detail?.author === null
       ? "ghost"
@@ -125,7 +127,7 @@ export function PullRequestLinkPreview({
                   <span className="min-w-0 truncate">{authorLabel}</span>
                   <span aria-hidden>·</span>
                   <span className="shrink-0">
-                    opened {formatRelativeTimeLabel(detail.createdAt)}
+                    {t("pullRequestOpenedAt", { time: formatRelativeTimeLabel(detail.createdAt) })}
                   </span>
                 </div>
               </div>

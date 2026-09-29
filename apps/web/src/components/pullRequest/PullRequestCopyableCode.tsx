@@ -8,6 +8,7 @@ export function PullRequestCopyableCode({
   target,
   copyLabel,
   copiedLabel,
+  copiedText = "Copied",
   className,
   tooltipSide = "top",
   onError,
@@ -16,6 +17,7 @@ export function PullRequestCopyableCode({
   readonly target: string;
   readonly copyLabel: string;
   readonly copiedLabel: string;
+  readonly copiedText?: string;
   readonly className?: string;
   readonly tooltipSide?: "top" | "bottom";
   readonly onError?: (error: Error) => void;
@@ -55,11 +57,11 @@ export function PullRequestCopyableCode({
             isCopied ? "opacity-100" : "opacity-0",
           )}
         >
-          Copied
+          {copiedText}
         </span>
       </TooltipTrigger>
       <TooltipPopup variant="code" side={tooltipSide}>
-        {`${isCopied ? "Copied" : copyLabel}: ${value}`}
+        {`${isCopied ? copiedText : copyLabel}: ${value}`}
       </TooltipPopup>
     </Tooltip>
   );

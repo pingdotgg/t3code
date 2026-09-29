@@ -1,4 +1,5 @@
 import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
+import { createT3I18n } from "@t3tools/i18n";
 import { describe, expect, it } from "@effect/vitest";
 import type { AnimationEvent } from "react";
 
@@ -108,6 +109,26 @@ describe("prStatusIndicator", () => {
       tooltipLead: "PR #42 - Open",
       tooltipTitle: "PR branch",
     });
+  });
+
+  it("preserves a multi-digit PR identity in localized status and pending labels", () => {
+    const pr = status().pr;
+    if (!pr) throw new Error("Expected pull request fixture");
+    const t = createT3I18n("zh-CN").getFixedT("zh-CN", "pullRequests");
+    const largeNumber = 12345;
+    expect(
+      prStatusIndicator({ ...pr, number: largeNumber }, undefined, t, "zh-CN")?.tooltipLead,
+    ).toContain("#12345");
+    expect(
+      resolveThreadPullRequestBadgePresentation({
+        badge: null,
+        number: largeNumber,
+        url: pr.url,
+        status: null,
+        t,
+        locale: "zh-CN",
+      })?.label,
+    ).toContain("#12345");
   });
 
   it("uses red for closed pull requests", () => {

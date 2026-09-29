@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import type { TFunction } from "@t3tools/i18n";
 import {
   ChevronDownIcon,
   ExternalLinkIcon,
@@ -14,6 +15,7 @@ import {
   MessageSquareIcon,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -149,24 +151,34 @@ function ActorTimelineMarker({
   );
 }
 
-function friendlyReviewState(value: string): string {
+function friendlyReviewState(value: string, t: TFunction<"pullRequests">): string {
+  const normalized = value.toLowerCase().replaceAll("_", "-");
+  if (normalized === "approved") return t("reviewApproved");
+  if (normalized === "changes-requested") return t("reviewChangesRequested");
+  if (normalized === "dismissed") return t("reviewDismissed");
+  if (normalized === "commented") return t("reviewCommented");
+  if (normalized === "pending") return t("reviewPending");
   const words = value.toLowerCase().replaceAll("_", " ").replaceAll("-", " ");
   return words.replace(/^\w/u, (letter) => letter.toUpperCase());
 }
 
 function ReviewStateBadge({ state }: { state: string }) {
+  const { t } = useTranslation("pullRequests");
   return (
-    <span className="text-3xs font-medium text-muted-foreground">{friendlyReviewState(state)}</span>
+    <span className="text-3xs font-medium text-muted-foreground">
+      {friendlyReviewState(state, t)}
+    </span>
   );
 }
 
 function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
+  const { t } = useTranslation("pullRequests");
   return url === null ? null : (
     <Button
       size="icon-xs"
       variant="ghost-muted"
       className="-mr-1 -mt-1 shrink-0"
-      aria-label="Open activity on host"
+      aria-label={t("openActivityOnHost")}
       onClick={() => onOpen(url)}
     >
       <ExternalLinkIcon className="size-3" />
@@ -188,6 +200,7 @@ function ConversationCard({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const { t } = useTranslation("pullRequests");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -205,7 +218,7 @@ function ConversationCard({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the comment" });
+      toastManager.add({ type: "error", title: t("couldNotSaveComment") });
       return;
     }
     setEditing(false);
@@ -235,7 +248,7 @@ function ConversationCard({
           {editable !== null && !editing ? (
             <PullRequestEditButton
               className="-mt-1"
-              aria-label="Edit comment"
+              aria-label={t("editComment")}
               onClick={() => setEditing(true)}
             />
           ) : null}
@@ -260,7 +273,7 @@ function ConversationCard({
             cwd={cwd}
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
-            label="Edit comment"
+            label={t("editComment")}
             saving={saving}
             onSave={(body) => void save(body)}
             onCancel={() => setEditing(false)}
@@ -303,6 +316,7 @@ function ConversationGroup({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const { t, i18n } = useTranslation("pullRequests");
   const [open, setOpen] = useState(false);
   const actors = uniqueConversationActors(events);
   const first = events[0];
@@ -326,11 +340,15 @@ function ConversationGroup({
           >
             <span className="min-w-0 flex-1">
               <span className="block text-xs font-semibold">
-                {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"}
+                {t(events.length === 1 ? "timelineCommentCountOne" : "timelineCommentCount", {
+                  amount: new Intl.NumberFormat(i18n.resolvedLanguage).format(events.length),
+                })}
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
-                {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                {formatRelativeTimeLabel(first.at)}
+                {t(actors.length === 1 ? "timelineAuthorCountOne" : "timelineAuthorCount", {
+                  amount: new Intl.NumberFormat(i18n.resolvedLanguage).format(actors.length),
+                })}{" "}
+                · {formatRelativeTimeLabel(first.at)}
               </span>
             </span>
             <ChevronDownIcon
@@ -373,11 +391,12 @@ function CommitEvent({
   event: PullRequestTimelineEvent;
   onOpen: (oid: string) => void;
 }) {
+  const { t } = useTranslation("pullRequests");
   return (
     <button
       type="button"
       className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-ring"
-      aria-label={`View commit ${event.id}`}
+      aria-label={t("viewCommit", { oid: event.id })}
       onClick={() => onOpen(event.id)}
     >
       <ActorTimelineMarker
@@ -387,7 +406,7 @@ function CommitEvent({
       <div className="flex min-w-0 items-center gap-2.5 py-1.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold text-foreground transition-colors group-hover:text-primary">
-            {event.body ?? "Untitled commit"}
+            {event.body ?? t("untitledCommit")}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
             <code className="font-mono">{event.id.slice(0, 7)}</code>
@@ -407,20 +426,21 @@ function CommitEvent({
 }
 
 function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
+  const { t } = useTranslation("pullRequests");
   const presentation =
     event.kind === "opened"
       ? {
           icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
-          label: "Pull request opened",
+          label: t("pullRequestOpened"),
         }
       : event.kind === "merged"
         ? {
             icon: <PullRequestGlyph.merged className="size-3.5" />,
-            label: "Pull request merged",
+            label: t("pullRequestMerged"),
           }
         : {
             icon: <PullRequestGlyph.closed className="size-3.5" />,
-            label: "Pull request closed",
+            label: t("pullRequestClosed"),
           };
 
   return (
@@ -460,6 +480,7 @@ function ReviewVerdictEvent({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const { t } = useTranslation("pullRequests");
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       {/* Pinned rather than centred: this row grows with a body, and a
@@ -491,10 +512,10 @@ function ReviewVerdictEvent({
                   />
                 }
               >
-                {pullRequestReviewOutcomeLabel(outcome)}
-                {stale ? <span className="sr-only">, before the latest commits</span> : null}
+                {pullRequestReviewOutcomeLabel(outcome, t)}
+                {stale ? <span className="sr-only">, {t("beforeLatestCommits")}</span> : null}
               </TooltipTrigger>
-              <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome)}</TooltipPopup>
+              <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(outcome, t)}</TooltipPopup>
             </Tooltip>
           </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -554,6 +575,7 @@ export function PullRequestTimelineTab({
   onOpenCommit: (oid: string) => void;
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation("pullRequests");
   const events = buildPullRequestTimeline(detail);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
@@ -619,7 +641,7 @@ export function PullRequestTimelineTab({
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
             <PullRequestGlyph.pullRequest className="mb-2 size-5" />
-            <p className="text-xs">No activity yet.</p>
+            <p className="text-xs">{t("noActivityYet")}</p>
           </div>
         ) : null}
       </div>

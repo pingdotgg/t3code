@@ -14,6 +14,8 @@ import type {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useTranslation } from "@t3tools/i18n/react";
+import type { TFunction } from "@t3tools/i18n";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownUpIcon,
@@ -226,26 +228,81 @@ function PullRequestGroupHeader({
 
 // The state filters wear the same glyphs the rows do, so the two read as one vocabulary.
 const INVOLVEMENT_TABS = [
-  { value: "all", label: "All", Icon: LayersIcon },
-  { value: "reviewing", label: "Reviewing", Icon: EyeIcon },
-  { value: "authored", label: "Authored", Icon: PenLineIcon },
+  { value: "all", label: "All", translationKey: "filterAll", Icon: LayersIcon },
+  {
+    value: "reviewing",
+    label: "Reviewing",
+    translationKey: "filterReviewing",
+    Icon: EyeIcon,
+  },
+  { value: "authored", label: "Authored", translationKey: "filterAuthored", Icon: PenLineIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
 
 const STATE_TABS = [
-  { value: "all", label: "All", Icon: LayersIcon },
-  { value: "open", label: "Open", Icon: PullRequestGlyph.pullRequest },
-  { value: "closed", label: "Closed", Icon: PullRequestGlyph.closed },
-  { value: "merged", label: "Merged", Icon: PullRequestGlyph.merged },
+  { value: "all", label: "All", translationKey: "filterAll", Icon: LayersIcon },
+  {
+    value: "open",
+    label: "Open",
+    translationKey: "pullRequestOpen",
+    Icon: PullRequestGlyph.pullRequest,
+  },
+  {
+    value: "closed",
+    label: "Closed",
+    translationKey: "pullRequestStateClosed",
+    Icon: PullRequestGlyph.closed,
+  },
+  {
+    value: "merged",
+    label: "Merged",
+    translationKey: "pullRequestStateMerged",
+    Icon: PullRequestGlyph.merged,
+  },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
 
 const SORT_OPTIONS = [
-  { value: "ready", label: "Merge readiness", Icon: ListChecksIcon },
-  { value: "blocked", label: "Blocked on me", Icon: UserLockIcon },
-  { value: "updated", label: "Recently updated", Icon: ClockIcon },
-  { value: "newest", label: "Newest shown", Icon: CalendarArrowDownIcon },
-  { value: "oldest", label: "Oldest shown", Icon: CalendarArrowUpIcon },
-  { value: "largest", label: "Largest shown", Icon: Maximize2Icon },
-  { value: "smallest", label: "Smallest shown", Icon: Minimize2Icon },
+  {
+    value: "ready",
+    label: "Merge readiness",
+    translationKey: "sortMergeReadiness",
+    Icon: ListChecksIcon,
+  },
+  {
+    value: "blocked",
+    label: "Blocked on me",
+    translationKey: "sortBlockedOnMe",
+    Icon: UserLockIcon,
+  },
+  {
+    value: "updated",
+    label: "Recently updated",
+    translationKey: "sortRecentlyUpdated",
+    Icon: ClockIcon,
+  },
+  {
+    value: "newest",
+    label: "Newest shown",
+    translationKey: "sortNewestShown",
+    Icon: CalendarArrowDownIcon,
+  },
+  {
+    value: "oldest",
+    label: "Oldest shown",
+    translationKey: "sortOldestShown",
+    Icon: CalendarArrowUpIcon,
+  },
+  {
+    value: "largest",
+    label: "Largest shown",
+    translationKey: "sortLargestShown",
+    Icon: Maximize2Icon,
+  },
+  {
+    value: "smallest",
+    label: "Smallest shown",
+    translationKey: "sortSmallestShown",
+    Icon: Minimize2Icon,
+  },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListSort>>;
 
 /** Long enough that a keystroke does not become a request, short enough to feel answered. */
@@ -260,6 +317,14 @@ const MATCHED_ELSEWHERE_SCORE = 10;
 const PAGE_SIZE = 99;
 /** The largest page the listing accepts; past it the request is refused outright. */
 const MAX_PAGE_SIZE = 500;
+
+function localizedOptionLabel<Value extends string>(
+  option: PullRequestFilterOption<Value>,
+  t: TFunction<"pullRequests">,
+): string {
+  return option.translationKey === undefined ? option.label : t(option.translationKey);
+}
+
 /** Stable empty map so the memos below do not see a new object on every render. */
 const EMPTY_VIEWERS: PullRequestListResult["viewers"] = {};
 /** Stable so a read that is not wanted right now does not re-key on every render. */
@@ -341,6 +406,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 });
 
 function PullRequestsRouteView() {
+  const { t } = useTranslation("pullRequests");
   useEscapeToGoBack();
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
@@ -1748,8 +1814,8 @@ function PullRequestsRouteView() {
         <PullRequestListGhost rows={7} />
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
-          title="Pull requests unavailable"
-          error="Update your T3 Code servers to browse pull requests."
+          title={t("pullRequestsUnavailableTitle")}
+          error={t("pullRequestsServerUpdateRequired")}
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} />
@@ -1822,9 +1888,9 @@ function PullRequestsRouteView() {
 
       {listQuery.error && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
-          <span>{listQuery.error} Showing the last pull requests loaded.</span>
+          <span>{t("pullRequestsErrorWithCachedResults", { error: listQuery.error })}</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
-            Retry
+            {t("pullRequestsRetry")}
           </Button>
         </div>
       ) : null}
@@ -1833,7 +1899,7 @@ function PullRequestsRouteView() {
           {loadingMore ? (
             <span className="flex items-center gap-2">
               <Spinner aria-hidden size="sm" />
-              {sentCursors === null ? "Updating pull requests" : "Loading more"}
+              {sentCursors === null ? t("pullRequestsUpdating") : t("pullRequestsLoadingMore")}
             </span>
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
             <Button
@@ -1842,10 +1908,10 @@ function PullRequestsRouteView() {
               onClick={loadMore}
               disabled={listQuery.isPending || showingCarried}
             >
-              Load more pull requests
+              {t("pullRequestsLoadMore")}
             </Button>
           ) : (
-            <span>Narrow your search to find more pull requests.</span>
+            <span>{t("pullRequestsNarrowSearchHint")}</span>
           )}
         </div>
       ) : null}
@@ -1856,7 +1922,7 @@ function PullRequestsRouteView() {
   // kind force the hostname to tell them apart.
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All", Icon: Plug2Icon },
+    { value: "", label: "All", translationKey: "filterAll", Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
       // `expectedHosts` stands in before the server has answered, and nothing is known to be
       // unreadable yet; once the summaries arrive they carry whether each one could be read.
@@ -1874,7 +1940,7 @@ function PullRequestsRouteView() {
   // The same shape the host pills take, so the two groups read as one control. Each server
   // wears the machine it runs on.
   const serverMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All servers", Icon: LayersIcon },
+    { value: "", label: t("pullRequestsAllServers"), Icon: LayersIcon },
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
       label: environment.label,
@@ -1883,9 +1949,9 @@ function PullRequestsRouteView() {
   ];
   const sortMenu = (
     <CompactFilterMenu
-      label="Sort pull requests"
+      label={t("pullRequestsSort")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
-      triggerLabel="Sort"
+      triggerLabel={t("pullRequestsSortShort")}
       outlined
       value={sort}
       options={SORT_OPTIONS}
@@ -2229,13 +2295,15 @@ function CompactFilterMenu<Value extends string>({
   onChange: (value: Value) => void;
   className?: string;
 }) {
+  const { t } = useTranslation("pullRequests");
   const current = options.find((option) => option.value === value) ?? options[0];
   if (!current) return null;
+  const currentLabel = localizedOptionLabel(current, t);
   return (
     <Menu>
       <MenuTrigger
-        aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
-        title={iconOnly ? `${label}: ${current.label}` : undefined}
+        aria-label={triggerLabel || iconOnly ? `${label}: ${currentLabel}` : label}
+        title={iconOnly ? `${label}: ${currentLabel}` : undefined}
         render={
           outlined ? (
             <Button variant="outline" size={iconOnly ? "icon" : "default"} />
@@ -2254,7 +2322,7 @@ function CompactFilterMenu<Value extends string>({
           </>
         ) : (
           <>
-            <span className="truncate">{current.label}</span>
+            <span className="truncate">{currentLabel}</span>
             <ChevronDownIcon aria-hidden className="size-3 shrink-0 text-muted-foreground/70" />
           </>
         )}
@@ -2271,7 +2339,7 @@ function CompactFilterMenu<Value extends string>({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <PullRequestFilterOptionIcon option={option} />
-                  {option.label}
+                  {localizedOptionLabel(option, t)}
                 </span>
               </MenuRadioItem>
             );
@@ -2316,6 +2384,7 @@ function ExpandableSearch({
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
+  const { t } = useTranslation("pullRequests");
   const containerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -2348,7 +2417,7 @@ function ExpandableSearch({
     <Button
       size="icon-sm"
       variant="ghost"
-      aria-label="Search pull requests"
+      aria-label={t("filterSearchPullRequestsLabel")}
       onClick={() => onOpenChange(true)}
     >
       <SearchIcon className="size-4" />
@@ -2403,6 +2472,7 @@ function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
+  const { t } = useTranslation("pullRequests");
   const markerRef = useRef<HTMLDivElement | null>(null);
   const [condensed, setCondensed] = useState(false);
   useEffect(() => {
@@ -2476,30 +2546,30 @@ function PullRequestsColumn({
       >
         {titlebarControls}
         {condensed ? (
-          <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
+          <WorkspaceBreadcrumb ariaLabel={t("pullRequestsPageScope")} className="overflow-hidden">
             {/* An expanded search owns the scarce horizontal space. The page title stays
                 available to readers while the live filters remain available in both states. */}
             <WorkspaceBreadcrumbItem current className={cn(searchExpanded && "sr-only")}>
-              <h1 className="truncate">Pull Requests</h1>
+              <h1 className="truncate">{t("pullRequestsPageTitle")}</h1>
             </WorkspaceBreadcrumbItem>
             {searchExpanded ? null : <WorkspaceBreadcrumbSeparator />}
             <WorkspaceBreadcrumbItem className="shrink gap-1.5">
               <CompactFilterMenu
-                label="Filter by state"
+                label={t("pullRequestsFilterByState")}
                 value={state}
                 options={STATE_TABS}
                 onChange={onState}
                 className="shrink-0"
               />
               <CompactFilterMenu
-                label="Filter by involvement"
+                label={t("pullRequestsFilterByInvolvement")}
                 value={involvement}
                 options={INVOLVEMENT_TABS}
                 onChange={onInvolvement}
               />
               {hostMenuOptions.length > 2 ? (
                 <CompactFilterMenu
-                  label="Filter by host"
+                  label={t("pullRequestsFilterByHost")}
                   value={host ?? ""}
                   options={hostMenuOptions}
                   onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -2508,9 +2578,9 @@ function PullRequestsColumn({
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         ) : (
-          <WorkspaceBreadcrumb ariaLabel="Pull requests breadcrumb">
+          <WorkspaceBreadcrumb ariaLabel={t("pullRequestsPageBreadcrumb")}>
             <WorkspaceBreadcrumbItem current>
-              <h1 className="truncate">Pull Requests</h1>
+              <h1 className="truncate">{t("pullRequestsPageTitle")}</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}
@@ -2582,11 +2652,12 @@ function PullRequestRefreshControl({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const { t } = useTranslation("pullRequests");
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}
       variant={compact ? "ghost" : "outline"}
-      aria-label="Refresh pull requests"
+      aria-label={t("pullRequestsRefresh")}
       onClick={onRefresh}
       disabled={refreshing}
     >

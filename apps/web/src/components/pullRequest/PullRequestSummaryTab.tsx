@@ -15,6 +15,8 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
+import type { TFunction } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -71,6 +73,7 @@ function CommentIdentity({
   comment: PullRequestComment;
   detail: PullRequestDetailView;
 }) {
+  const { t, i18n } = useTranslation("pullRequests");
   const actor = comment.author;
   const profileUrl =
     detail.provider === "github" && actor && !actor.login.endsWith("[bot]")
@@ -97,8 +100,11 @@ function CommentIdentity({
           <time dateTime={comment.createdAt}>{formatRelativeTimeLabel(comment.createdAt)}</time>
         </TooltipTrigger>
         <TooltipPopup>
-          {new Date(comment.createdAt).toLocaleString()}
-          {comment.url ? " · Open comment on host" : ""}
+          {new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(comment.createdAt))}
+          {comment.url ? ` · ${t("openCommentOnHost")}` : ""}
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -112,6 +118,7 @@ function CommentLocation({
   comment: PullRequestComment;
   thread: PullRequestReviewThread | undefined;
 }) {
+  const { t } = useTranslation("pullRequests");
   const path = thread?.path ?? comment.path;
   if (!path) return null;
   const label = `${path}${thread?.line ? `:${thread.line}` : ""}`;
@@ -121,13 +128,25 @@ function CommentLocation({
         <TooltipTrigger render={<span className="truncate font-mono" />}>{label}</TooltipTrigger>
         <TooltipPopup>{label}</TooltipPopup>
       </Tooltip>
-      {thread?.isOutdated ? <span className="shrink-0">Outdated</span> : null}
+      {thread?.isOutdated ? <span className="shrink-0">{t("outdatedReviewLabel")}</span> : null}
     </div>
   );
 }
 
-/** "CHANGES_REQUESTED" reads as "Changes requested": one capital, the host's underscores gone. */
-function reviewStateLabel(state: string): string {
+/** Review states arrive as provider enums; map known values to the reader's chosen language. */
+function reviewStateLabel(state: string, t: TFunction<"pullRequests">): string {
+  switch (state.toUpperCase()) {
+    case "APPROVED":
+      return t("reviewApproved");
+    case "CHANGES_REQUESTED":
+      return t("reviewChangesRequested");
+    case "COMMENTED":
+      return t("reviewCommented");
+    case "DISMISSED":
+      return t("reviewDismissed");
+    case "PENDING":
+      return t("reviewPending");
+  }
   const words = state.toLowerCase().replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
@@ -157,6 +176,7 @@ function CommentBody({
   editing: CommentEditing;
   className?: string | undefined;
 }) {
+  const { t } = useTranslation("pullRequests");
   if (editing.editingId === comment.id) {
     return (
       <PullRequestMarkdownEditor
@@ -165,7 +185,7 @@ function CommentBody({
         cwd={editing.cwd}
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
-        label="Edit comment"
+        label={t("editComment")}
         saving={editing.saving}
         onSave={(body) => editing.onSave(comment, body)}
         onCancel={() => editing.onEdit(null)}
@@ -183,7 +203,10 @@ function CommentBody({
         threadRef={editing.threadRef}
       />
       {editing.canEdit(comment) ? (
-        <PullRequestEditButton aria-label="Edit comment" onClick={() => editing.onEdit(comment)} />
+        <PullRequestEditButton
+          aria-label={t("editComment")}
+          onClick={() => editing.onEdit(comment)}
+        />
       ) : null}
     </div>
   );
@@ -362,6 +385,7 @@ function CommentGroup({
   children: ReactNode;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const { t, i18n } = useTranslation("pullRequests");
   const authors = [
     ...new Map(
       comments.map((comment) => [reviewerKey(comment.author?.login ?? "ghost"), comment.author]),
@@ -414,21 +438,31 @@ function CommentGroup({
               <span className="block text-xs font-medium text-foreground/90">{label}</span>
               <span className="flex flex-wrap gap-x-1.5 text-2xs text-muted-foreground">
                 <span>
-                  {authors.length} {authors.length === 1 ? "author" : "authors"}
+                  {t(authors.length === 1 ? "summaryAuthorOne" : "summaryAuthorMany", {
+                    amount: new Intl.NumberFormat(i18n.resolvedLanguage).format(authors.length),
+                  })}
                 </span>
                 {fileCount > 0 ? (
                   <span>
-                    · {fileCount} {fileCount === 1 ? "file" : "files"}
+                    ·{" "}
+                    {t(fileCount === 1 ? "summaryFileOne" : "summaryFileMany", {
+                      amount: new Intl.NumberFormat(i18n.resolvedLanguage).format(fileCount),
+                    })}
                   </span>
                 ) : null}
                 {latest ? (
                   <span>
-                    · Latest{" "}
+                    · {t("summaryLatest")}{" "}
                     <Tooltip>
                       <TooltipTrigger render={<time dateTime={latest} />}>
                         {formatRelativeTimeLabel(latest)}
                       </TooltipTrigger>
-                      <TooltipPopup>{new Date(latest).toLocaleString()}</TooltipPopup>
+                      <TooltipPopup>
+                        {new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        }).format(new Date(latest))}
+                      </TooltipPopup>
                     </Tooltip>
                   </span>
                 ) : null}
@@ -463,8 +497,8 @@ export function PullRequestSummaryTab({
   checksStale = false,
   activityError,
   pendingFinding,
-  fixFindingLabel = "Fix in a thread",
-  fixCheckLabel = "Fix",
+  fixFindingLabel: suppliedFixFindingLabel,
+  fixCheckLabel: suppliedFixCheckLabel,
   onFixFinding,
   onRefresh,
   onRefreshChecks = onRefresh,
@@ -484,6 +518,10 @@ export function PullRequestSummaryTab({
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
+  const { t, i18n } = useTranslation("pullRequests");
+  const fixFindingLabel = suppliedFixFindingLabel ?? t("fixFindingInAThread");
+  const fixCheckLabel = suppliedFixCheckLabel ?? t("fixCheckInAThread");
+  const formatCount = (value: number) => new Intl.NumberFormat(i18n.resolvedLanguage).format(value);
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
@@ -526,8 +564,10 @@ export function PullRequestSummaryTab({
         className="w-full"
         onClick={() => setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })}
       >
-        Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} older comment
-        {hiddenCommentCount === 1 ? "" : "s"} ({hiddenCommentCount} hidden)
+        {t(hiddenCommentCount === 1 ? "showOlderComment" : "showOlderComments", {
+          amount: formatCount(Math.min(hiddenCommentCount, COMMENT_PAGE)),
+          hidden: formatCount(hiddenCommentCount),
+        })}
       </Button>
     ) : null;
   // Read from the whole conversation, not the window shown below it: a verdict older than the
@@ -571,7 +611,7 @@ export function PullRequestSummaryTab({
   const openCheck = (url: string) => {
     void openLink(url).catch((error: unknown) => {
       console.error(error);
-      toastManager.add({ type: "error", title: "Unable to open check details" });
+      toastManager.add({ type: "error", title: t("unableToOpenCheck") });
     });
   };
 
@@ -600,7 +640,7 @@ export function PullRequestSummaryTab({
     const result = await update({ environmentId, input: { ...reference, body } });
     setBodySaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the description" });
+      toastManager.add({ type: "error", title: t("couldNotSaveDescription") });
       return;
     }
     setBodyScope(null);
@@ -627,7 +667,7 @@ export function PullRequestSummaryTab({
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not save the comment" });
+        toastManager.add({ type: "error", title: t("couldNotSaveComment") });
         return;
       }
       setCommentScope(null);
@@ -674,7 +714,7 @@ export function PullRequestSummaryTab({
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
             ) : comment.reviewState ? (
-              <span>{reviewStateLabel(comment.reviewState)}</span>
+              <span>{reviewStateLabel(comment.reviewState, t)}</span>
             ) : null}
           </div>
           {/* Review remarks only. A plain conversation comment is talk, not a finding,
@@ -688,7 +728,7 @@ export function PullRequestSummaryTab({
               onClick={() => onFixFinding(finding)}
             >
               <HammerIcon className="size-3" />
-              {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : fixFindingLabel}
+              {pendingFinding === pullRequestFindingKey(finding) ? t("preparing") : fixFindingLabel}
             </Button>
           ) : null}
           {reactionBar}
@@ -711,10 +751,10 @@ export function PullRequestSummaryTab({
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
-          <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
+          <MetaRow icon={<UsersIcon className="size-3.5" />} label={t("reviewers")}>
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
               {reviewerEntries.length === 0 ? (
-                <span className="text-muted-foreground">None</span>
+                <span className="text-muted-foreground">{t("none")}</span>
               ) : (
                 <span className="flex items-center -space-x-1">
                   {reviewerEntries.map((entry) => {
@@ -759,8 +799,8 @@ export function PullRequestSummaryTab({
                           {entry.outcome ? (
                             <span className="sr-only">
                               {entry.stale
-                                ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
-                                : pullRequestReviewOutcomeLabel(entry.outcome)}
+                                ? pullRequestReviewOutcomeStaleLabel(entry.outcome, t)
+                                : pullRequestReviewOutcomeLabel(entry.outcome, t)}
                             </span>
                           ) : null}
                         </TooltipTrigger>
@@ -768,8 +808,8 @@ export function PullRequestSummaryTab({
                           {entry.outcome
                             ? `${named} — ${
                                 entry.stale
-                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
-                                  : pullRequestReviewOutcomeLabel(entry.outcome)
+                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome, t)
+                                  : pullRequestReviewOutcomeLabel(entry.outcome, t)
                               }`
                             : named}
                         </TooltipPopup>
@@ -796,10 +836,10 @@ export function PullRequestSummaryTab({
           {/* The row is shown empty only where a label could be put on it from here; on a host
               with none to offer, an empty row is a row about nothing. */}
           {detail.labels.length > 0 || detail.capabilities.labels === true ? (
-            <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
+            <MetaRow icon={<TagIcon className="size-3.5" />} label={t("labels")}>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 {detail.labels.length === 0 ? (
-                  <span className="text-muted-foreground">None</span>
+                  <span className="text-muted-foreground">{t("none")}</span>
                 ) : (
                   detail.labels.map((label) => (
                     <PullRequestLabelChip
@@ -823,7 +863,7 @@ export function PullRequestSummaryTab({
         </div>
       </section>
 
-      <Section key={`description:${detail.url}`} title="Description" keepMounted>
+      <Section key={`description:${detail.url}`} title={t("description")} keepMounted>
         <div className="group">
           {bodyScope === detail.url ? (
             <PullRequestMarkdownEditor
@@ -833,8 +873,8 @@ export function PullRequestSummaryTab({
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
               threadRef={threadRef}
-              label="Pull request description"
-              placeholder="Describe this pull request"
+              label={t("pullRequestDescription")}
+              placeholder={t("describePullRequest")}
               saving={bodySaving}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
@@ -843,14 +883,16 @@ export function PullRequestSummaryTab({
             <div className="flex items-start gap-1">
               <PullRequestMarkdown
                 className="min-w-0 flex-1"
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
+                text={
+                  detail.body.trim().length > 0 ? detail.body : `_${t("noDescriptionProvided")}_`
+                }
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 threadRef={threadRef}
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <PullRequestEditButton
-                  aria-label="Edit description"
+                  aria-label={t("editDescription")}
                   onClick={() => setBodyScope(detail.url)}
                 />
               ) : null}
@@ -859,16 +901,16 @@ export function PullRequestSummaryTab({
         </div>
       </Section>
 
-      <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
+      <Section key={`checks:${detail.url}`} title={t("checksLabel")} defaultOpen={false}>
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>Check details are out of date.</span>
+            <span>{t("checkDetailsOutOfDate")}</span>
             <Button size="xs" variant="ghost" onClick={onRefreshChecks}>
-              Refresh
+              {t("refresh")}
             </Button>
           </div>
         ) : detail.checks.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No checks reported.</p>
+          <p className="text-xs text-muted-foreground">{t("noChecksReported")}</p>
         ) : (
           detail.checks.map((check, index) => {
             const finding = { kind: "check", check } as const;
@@ -892,7 +934,7 @@ export function PullRequestSummaryTab({
                   <PullRequestCheckStatusIcon status={check.status} />
                   <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
                   <span className="shrink-0 text-muted-foreground">
-                    {pullRequestCheckStatusLabel(check)}
+                    {pullRequestCheckStatusLabel(check, t)}
                   </span>
                 </button>
                 {/* Only where there is something to fix. A passing check has no failure to
@@ -907,7 +949,7 @@ export function PullRequestSummaryTab({
                   >
                     <HammerIcon className="size-3" />
                     {pendingFinding === pullRequestFindingKey(finding)
-                      ? "Preparing..."
+                      ? t("preparing")
                       : fixCheckLabel}
                   </Button>
                 ) : null}
@@ -918,21 +960,17 @@ export function PullRequestSummaryTab({
       </Section>
 
       <Section
-        title={`Comments (${detail.commentCount})`}
+        title={t("commentsSectionTitle", { amount: formatCount(detail.commentCount) })}
         actions={
           <Button
             size="xs"
             variant="ghost-muted"
             className="shrink-0"
-            aria-label={
-              commentOrder === "newest"
-                ? "Show oldest comments first"
-                : "Show newest comments first"
-            }
+            aria-label={commentOrder === "newest" ? t("showOldestFirst") : t("showNewestFirst")}
             onClick={() => setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))}
           >
             <ArrowDownUpIcon aria-hidden className="size-3" />
-            {commentOrder === "newest" ? "Newest first" : "Oldest first"}
+            {commentOrder === "newest" ? t("newestFirst") : t("oldestFirst")}
           </Button>
         }
       >
@@ -944,12 +982,11 @@ export function PullRequestSummaryTab({
           <>
             {detail.commentsTruncated ? (
               <p className="mb-2 rounded-md border border-warning/30 bg-warning-surface px-2 py-1.5 text-xs">
-                This conversation is longer than this page reads in one go. The most recent{" "}
-                {detail.comments.length} are here; open it on the host to read the rest.
+                {t("longConversation", { amount: formatCount(detail.comments.length) })}
               </p>
             ) : null}
             {detail.comments.length === 0 ? (
-              <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
+              <p className="py-2 text-xs text-muted-foreground">{t("noCommentsYet")}</p>
             ) : (
               <div className="space-y-3">
                 {commentOrder === "oldest" ? showOldestCommentsButton : null}
@@ -962,13 +999,15 @@ export function PullRequestSummaryTab({
                     className="w-full"
                     onClick={() => setShown({ url: detail.url, count: COMMENT_PAGE })}
                   >
-                    Show only {COMMENT_PAGE} recent comments
+                    {t("showOnlyRecentComments", { amount: formatCount(COMMENT_PAGE) })}
                   </Button>
                 ) : null}
                 {botComments.length > 0 ? (
                   <CommentGroup
                     key={`bots:${detail.url}`}
-                    label={`${botComments.length} bot comment${botComments.length === 1 ? "" : "s"}`}
+                    label={t(botComments.length === 1 ? "botComment" : "botComments", {
+                      amount: formatCount(botComments.length),
+                    })}
                     comments={botComments}
                     detail={detail}
                     onOpenChange={(open) => {
@@ -993,8 +1032,15 @@ export function PullRequestSummaryTab({
                             })
                           }
                         >
-                          Show {Math.min(hiddenBotCommentCount, COMMENT_PAGE)} older bot comment
-                          {hiddenBotCommentCount === 1 ? "" : "s"} ({hiddenBotCommentCount} hidden)
+                          {t(
+                            hiddenBotCommentCount === 1
+                              ? "showOlderBotComment"
+                              : "showOlderBotComments",
+                            {
+                              amount: formatCount(Math.min(hiddenBotCommentCount, COMMENT_PAGE)),
+                              hidden: formatCount(hiddenBotCommentCount),
+                            },
+                          )}
                         </Button>
                       ) : null}
                       {shownBotComments > COMMENT_PAGE ? (
@@ -1004,7 +1050,7 @@ export function PullRequestSummaryTab({
                           className="w-full"
                           onClick={() => setShownBots({ url: detail.url, count: COMMENT_PAGE })}
                         >
-                          Show only {COMMENT_PAGE} recent bot comments
+                          {t("showOnlyRecentBotComments", { amount: formatCount(COMMENT_PAGE) })}
                         </Button>
                       ) : null}
                     </div>
@@ -1013,7 +1059,12 @@ export function PullRequestSummaryTab({
                 {finishedComments.length > 0 ? (
                   <CommentGroup
                     key={detail.url}
-                    label={`${finishedComments.length} resolved or dismissed comment${finishedComments.length === 1 ? "" : "s"}`}
+                    label={t(
+                      finishedComments.length === 1
+                        ? "resolvedOrDismissedComment"
+                        : "resolvedOrDismissedComments",
+                      { amount: formatCount(finishedComments.length) },
+                    )}
                     comments={finishedComments}
                     detail={detail}
                   >
@@ -1027,7 +1078,7 @@ export function PullRequestSummaryTab({
                             editing={commentEditing}
                             detail={detail}
                             thread={thread}
-                            label={thread?.isResolved ? "Resolved" : "Review dismissed"}
+                            label={thread?.isResolved ? t("resolved") : t("reviewDismissed")}
                             body={visibleBody(comment.body)}
                             reactionBar={
                               <PullRequestReactionBar

@@ -16,6 +16,8 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useRender } from "@base-ui/react/use-render";
+import { useTranslation } from "@t3tools/i18n/react";
+import type { TFunction } from "@t3tools/i18n";
 import { useMemo, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -153,11 +155,15 @@ export function resolveThreadPullRequestBadgePresentation({
   number,
   url,
   status,
+  t,
+  locale,
 }: {
   readonly badge: ThreadPullRequestBadge | null;
   readonly number?: number | undefined;
   readonly url?: string | undefined;
   readonly status: PrStatusIndicator | null;
+  readonly t?: TFunction<"pullRequests">;
+  readonly locale?: string;
 }): ThreadPullRequestBadgePresentation | null {
   // The badge already folds every visible link into one state, draft included, so both the
   // stack and the linked count index the shared table directly rather than the single-PR resolver.
@@ -166,20 +172,47 @@ export function resolveThreadPullRequestBadgePresentation({
     return {
       Icon: PullRequestGlyph.stack,
       toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} pull requests, ${aggregate.label.toLowerCase()}`,
+      label:
+        t?.("threadStackBadgeLabel", {
+          amount: new Intl.NumberFormat(locale).format(badge.layers),
+          state: resolvePullRequestState(
+            {
+              state: badge.state === "draft" ? "open" : badge.state,
+              isDraft: badge.state === "draft",
+            },
+            t,
+          ).label.toLowerCase(),
+        }) ?? `Stack of ${badge.layers} pull requests, ${aggregate.label.toLowerCase()}`,
       text: badge.layers,
     };
   }
   if (number === undefined || url === undefined) return null;
 
-  const tooltip = status?.tooltip ?? `PR #${number}, status pending`;
+  const tooltip =
+    status?.tooltip ??
+    t?.("threadPullRequestPendingStatus", {
+      number: new Intl.NumberFormat(locale, { useGrouping: false }).format(number),
+    }) ??
+    `PR #${number}, status pending`;
   if (badge?.kind === "pull-request" && badge.others > 0) {
     // Unrelated links fold into one state, so a count of merged PRs reads as merged.
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
+      label:
+        t?.("threadOtherLinkedBadgeLabel", {
+          status: tooltip,
+          amount: new Intl.NumberFormat(locale).format(badge.others),
+          state: resolvePullRequestState(
+            {
+              state: badge.state === "draft" ? "open" : badge.state,
+              isDraft: badge.state === "draft",
+            },
+            t,
+          ).label.toLowerCase(),
+        }) ??
+        `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
       text: `+${badge.others + 1}`,
     };
   }
@@ -214,7 +247,15 @@ export function ThreadPullRequestBadgeControl({
   onOpenStack: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>) => void;
 }) {
-  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
+  const { t, i18n } = useTranslation("pullRequests");
+  const presentation = resolveThreadPullRequestBadgePresentation({
+    badge,
+    number,
+    url,
+    status,
+    t,
+    ...(i18n.resolvedLanguage === undefined ? {} : { locale: i18n.resolvedLanguage }),
+  });
   if (presentation === null) return null;
   return (
     <PullRequestBadge
@@ -290,6 +331,7 @@ export function ThreadPullRequestsMiniList({
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
 }) {
+  const { t, i18n } = useTranslation("pullRequests");
   const lines = useMemo(
     () =>
       pullRequestListLines(resolveThreadPullRequestChains(visibleThreadPullRequests(pullRequests))),
@@ -303,7 +345,7 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft }, t);
         return (
           <li
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -329,7 +371,8 @@ export function ThreadPullRequestsMiniList({
             </span>
             {line.stack ? (
               <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
+                {line.stack.kind === "native" ? t("threadStackType") : t("threadChainType")} ·{" "}
+                {new Intl.NumberFormat(i18n.resolvedLanguage).format(line.stack.size)}
               </span>
             ) : null}
           </li>
@@ -342,17 +385,31 @@ export function ThreadPullRequestsMiniList({
 export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  t?: TFunction<"pullRequests">,
+  locale?: string,
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true }, t);
 
-  const tooltipLead = `${presentation.shortName} #${pr.number} - ${state.label}`;
+  const number = new Intl.NumberFormat(locale, { useGrouping: false }).format(pr.number);
+  const tooltipLead =
+    t?.("threadPrStatusTooltipLead", {
+      provider: presentation.shortName,
+      number,
+      state: state.label,
+    }) ?? `${presentation.shortName} #${pr.number} - ${state.label}`;
   return {
-    label: `${presentation.shortName} ${state.label.toLowerCase()}`,
+    label:
+      t?.("threadPrStatusLabel", {
+        provider: presentation.shortName,
+        state: state.label.toLowerCase(),
+      }) ?? `${presentation.shortName} ${state.label.toLowerCase()}`,
     colorClass: state.toneClassName,
     Icon: state.Icon,
-    tooltip: `${tooltipLead}: ${pr.title}`,
+    tooltip:
+      t?.("threadPrStatusTooltip", { lead: tooltipLead, title: pr.title }) ??
+      `${tooltipLead}: ${pr.title}`,
     tooltipLead,
     tooltipTitle: pr.title,
     url: pr.url,
@@ -496,6 +553,7 @@ export function ThreadStatusLabel({
  * thread status dot, matching the sidebar's leading indicators.
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const { t, i18n } = useTranslation("pullRequests");
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -508,7 +566,12 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     thread.branchPullRequest,
   );
   const pr = pullRequest?.pr ?? null;
-  const prStatus = prStatusIndicator(pr, pullRequest?.sourceControlProvider);
+  const prStatus = prStatusIndicator(
+    pr,
+    pullRequest?.sourceControlProvider,
+    t,
+    i18n.resolvedLanguage,
+  );
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -547,7 +610,11 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       {pendingLink ? (
         <PullRequestGlyph.pullRequest
           className="size-3 text-muted-foreground"
-          aria-label={`PR #${pendingLink.number}, status pending`}
+          aria-label={t("threadPendingLinkLabel", {
+            number: new Intl.NumberFormat(i18n.resolvedLanguage, { useGrouping: false }).format(
+              pendingLink.number,
+            ),
+          })}
         />
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}

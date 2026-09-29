@@ -1,6 +1,7 @@
 import { SearchIcon } from "lucide-react";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import { memo, type RefCallback } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
@@ -70,6 +71,26 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
  * two lines without the padding: a 56px row less 20px of `py-2.5`.
  */
 const PAGE_ROW_CLASS = "px-3 py-2.5 [contain-intrinsic-block-size:36.5px]";
+
+function PullRequestMatchedElsewhere() {
+  const { t } = useTranslation("pullRequests");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
+        }
+      >
+        <span className="sr-only">{t("rowMatchedInDescription")}</span>
+        <SearchIcon aria-hidden className="size-3 shrink-0" />
+        <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
+          {t("rowMatchedInDescription")}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{t("rowMatchedInDescription")}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 export type PullRequestRowTarget = Pick<
   EnvironmentPullRequestEntry,
@@ -200,22 +221,7 @@ function PullRequestRowImpl({
         metaClassName="@container/pr-row-meta"
         meta={
           <>
-            {matchedElsewhere ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
-                  }
-                >
-                  <span className="sr-only">matched in the description</span>
-                  <SearchIcon aria-hidden className="size-3 shrink-0" />
-                  <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                    matched in the description
-                  </span>
-                </TooltipTrigger>
-                <TooltipPopup side="top">Matched in the description</TooltipPopup>
-              </Tooltip>
-            ) : null}
+            {matchedElsewhere ? <PullRequestMatchedElsewhere /> : null}
             {showProvider ? (
               <Tooltip>
                 <TooltipTrigger render={<span className="inline-flex shrink-0" />}>

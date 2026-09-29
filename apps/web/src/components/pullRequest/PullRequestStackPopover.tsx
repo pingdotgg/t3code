@@ -1,6 +1,7 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
 import { useState } from "react";
+import { useTranslation } from "@t3tools/i18n/react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } from "../ui/menu";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
@@ -19,6 +20,7 @@ function StackBody({
   onSelect: (reference: PullRequestRef) => void;
   stackNumber: number;
 }) {
+  const { t } = useTranslation("pullRequests");
   const query = usePullRequestStack(environmentId, reference);
   if (query.data !== null) {
     return (
@@ -28,7 +30,7 @@ function StackBody({
           notice={query.notice}
           stale={!!query.error}
         />
-        {query.error ? <MenuItem onClick={query.refresh}>Retry stack refresh</MenuItem> : null}
+        {query.error ? <MenuItem onClick={query.refresh}>{t("retryStackRefresh")}</MenuItem> : null}
         <PullRequestStackLayers stack={query.data} reference={reference} onSelect={onSelect} />
       </>
     );
@@ -37,8 +39,7 @@ function StackBody({
     <>
       <PullRequestStackHeader number={stackNumber} />
       <MenuGroupLabel>
-        {query.error ??
-          (query.isPending ? "Loading stack…" : "This pull request is no longer in a stack.")}
+        {query.error ?? (query.isPending ? t("stackLoading") : t("stackNoLongerAvailable"))}
       </MenuGroupLabel>
     </>
   );
@@ -55,6 +56,7 @@ export function PullRequestStackPopover({
   membership: PullRequestStackMembership;
   onSelect: (reference: PullRequestRef) => void;
 }) {
+  const { t, i18n } = useTranslation("pullRequests");
   const [open, setOpen] = useState(false);
   return (
     <Menu open={open} onOpenChange={setOpen}>
@@ -70,7 +72,13 @@ export function PullRequestStackPopover({
                   className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-normal text-muted-foreground"
                 />
               }
-              aria-label={`Stack ${membership.number}, layer ${membership.position} of ${membership.size}`}
+              aria-label={t("stackLayerPosition", {
+                number: new Intl.NumberFormat(i18n.resolvedLanguage, { useGrouping: false }).format(
+                  membership.number,
+                ),
+                position: new Intl.NumberFormat(i18n.resolvedLanguage).format(membership.position),
+                total: new Intl.NumberFormat(i18n.resolvedLanguage).format(membership.size),
+              })}
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
             >
@@ -80,7 +88,13 @@ export function PullRequestStackPopover({
           }
         />
         <TooltipPopup>
-          View stack #{membership.number}, layer {membership.position} of {membership.size}
+          {t("viewStackLayer", {
+            number: new Intl.NumberFormat(i18n.resolvedLanguage, { useGrouping: false }).format(
+              membership.number,
+            ),
+            position: new Intl.NumberFormat(i18n.resolvedLanguage).format(membership.position),
+            total: new Intl.NumberFormat(i18n.resolvedLanguage).format(membership.size),
+          })}
         </TooltipPopup>
       </Tooltip>
       <MenuPopup

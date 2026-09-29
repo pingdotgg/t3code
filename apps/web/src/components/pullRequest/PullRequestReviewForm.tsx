@@ -5,6 +5,7 @@
  * repeated here. The popover around it belongs to PullRequestComposer.
  */
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
+import { useTranslation } from "@t3tools/i18n/react";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
 
@@ -23,26 +24,29 @@ import {
 
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
-  readonly label: string;
-  readonly sent: string;
+  readonly labelKey:
+    | "reviewVerdictComment"
+    | "reviewVerdictApprove"
+    | "reviewVerdictRequestChanges";
+  readonly sentKey: "reviewToastSubmitted" | "reviewToastApproved" | "reviewToastChangesRequested";
   readonly icon: ReactNode;
 }> = [
   {
     value: "comment",
-    label: "Comment",
-    sent: "Review submitted",
+    labelKey: "reviewVerdictComment",
+    sentKey: "reviewToastSubmitted",
     icon: <MessageSquareIcon className="size-3" />,
   },
   {
     value: "approve",
-    label: "Approve",
-    sent: "Pull request approved",
+    labelKey: "reviewVerdictApprove",
+    sentKey: "reviewToastApproved",
     icon: <CheckIcon className="size-3" />,
   },
   {
     value: "request-changes",
-    label: "Request changes",
-    sent: "Changes requested",
+    labelKey: "reviewVerdictRequestChanges",
+    sentKey: "reviewToastChangesRequested",
     icon: <XCircleIcon className="size-3" />,
   },
 ];
@@ -66,6 +70,7 @@ export function PullRequestReviewForm({
   onPendingChange: (pending: boolean) => void;
   onSubmitted: () => void;
 }) {
+  const { t } = useTranslation("pullRequests");
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const comments = usePendingReviewComments(reference);
   const reviewKey = pullRequestReviewKey(reference);
@@ -101,7 +106,7 @@ export function PullRequestReviewForm({
     onPendingChange(false);
     if (result._tag === "Failure") {
       // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      toastManager.add({ type: "error", title: t("reviewSubmitFailed") });
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,
@@ -111,7 +116,7 @@ export function PullRequestReviewForm({
       submittedComments.map((comment) => comment.id),
     );
     clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent });
+    toastManager.add({ type: "success", title: t(verdict.sentKey) });
     onSubmitted();
   };
 
@@ -129,10 +134,10 @@ export function PullRequestReviewForm({
         value={body}
         placeholder={
           requestChangesSummaryRequired && verdicts.includes("request-changes")
-            ? "Summarize your review (required to request changes)"
-            : "Summarize your review (optional)"
+            ? t("reviewSummaryRequired")
+            : t("reviewSummaryOptional")
         }
-        aria-label="Review summary"
+        aria-label={t("reviewSummaryLabel")}
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
       <div className="mt-2 flex justify-between gap-2">
@@ -143,10 +148,10 @@ export function PullRequestReviewForm({
             if (value !== null) setRequestedVerdict(value);
           }}
         >
-          <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
+          <SelectTrigger size="xs" className="w-auto min-w-0" aria-label={t("reviewVerdictLabel")}>
             <span className="flex items-center gap-1.5">
               {selectedVerdict?.icon}
-              {selectedVerdict?.label}
+              {selectedVerdict ? t(selectedVerdict.labelKey) : null}
             </span>
           </SelectTrigger>
           <SelectPopup side="top" alignItemWithTrigger={false}>
@@ -154,7 +159,7 @@ export function PullRequestReviewForm({
               <SelectItem key={verdict.value} value={verdict.value}>
                 <span className="flex items-center gap-1.5">
                   {verdict.icon}
-                  {verdict.label}
+                  {t(verdict.labelKey)}
                 </span>
               </SelectItem>
             ))}
@@ -167,7 +172,7 @@ export function PullRequestReviewForm({
             if (selectedVerdict !== undefined) void submit(selectedVerdict);
           }}
         >
-          {pending ? "Submitting..." : "Submit review"}
+          {pending ? t("reviewSubmitting") : t("reviewSubmit")}
         </Button>
       </div>
     </>
