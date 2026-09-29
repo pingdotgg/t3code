@@ -945,8 +945,9 @@ export function nativeMarkdownChunkSpacing(
 export function nativeMarkdownDocumentRuns(
   node: MarkdownNode,
   skills: ReadonlyArray<SelectableMarkdownSkill> = [],
+  depth = 0,
 ): ReadonlyArray<NativeMarkdownTextRun> {
-  const runs = appendDocumentBlock([], node);
+  const runs = appendDocumentBlock([], node, depth);
   while (runs.length > 0) {
     const lastIndex = runs.length - 1;
     const last = runs[lastIndex];
