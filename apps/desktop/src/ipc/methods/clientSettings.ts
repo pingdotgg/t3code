@@ -1,10 +1,11 @@
-import { ClientSettingsSchema } from "@t3tools/contracts";
+import { ClientSettingsSchema, SupportedLocale } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
+import * as DesktopApplicationMenu from "../../window/DesktopApplicationMenu.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -27,5 +28,15 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
     yield* clientSettings.set(settings);
     yield* snapShot.configure(settings);
+  }),
+});
+
+export const setInterfaceLocale = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_INTERFACE_LOCALE_CHANNEL,
+  payload: SupportedLocale,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.clientSettings.setInterfaceLocale")(function* (locale) {
+    const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+    yield* applicationMenu.setLocale(locale);
   }),
 });
