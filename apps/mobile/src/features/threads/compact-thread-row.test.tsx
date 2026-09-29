@@ -1,6 +1,13 @@
 import { createElement, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { StyleProp, ViewStyle } from "react-native";
 
@@ -661,6 +668,7 @@ describe("compact inbox row", () => {
         searchMatch={{
           environmentId: parent.environmentId,
           threadId: parent.id,
+          messageId: MessageId.make("message-needle"),
           projectId: parent.projectId,
           source: "user",
           snippet: "Needle",

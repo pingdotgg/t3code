@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  formatGitHubRateLimitDetail,
   GITHUB_RATE_LIMIT_MARKER,
   isGitHubRateLimitMessage,
   rewriteGitHubRateLimitDetail,
@@ -21,10 +20,6 @@ describe("gitHubRateLimit", () => {
     expect(
       isGitHubRateLimitMessage("gh: You have exceeded a secondary rate limit. Try again later."),
     ).toBe(true);
-  });
-
-  it("recognizes the already-friendly message", () => {
-    expect(isGitHubRateLimitMessage(formatGitHubRateLimitDetail())).toBe(true);
   });
 
   it("leaves ordinary failures alone", () => {

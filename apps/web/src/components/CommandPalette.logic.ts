@@ -2,6 +2,7 @@ import {
   normalizeThreadPullRequestSearchQuery,
   threadPullRequestSearchTerms,
 } from "@t3tools/shared/threadPullRequests";
+import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import {
   type KeybindingCommand,
   type FilesystemBrowseEntry,
@@ -20,11 +21,22 @@ export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
 export const ADDON_ICON_CLASS = "size-4";
 
+export type PaletteMatchSource =
+  | "Title"
+  | "Content"
+  | "Project"
+  | "Branch"
+  | "PR"
+  | "Path"
+  | "Env"
+  | "Command";
+
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
   readonly value: string;
   readonly searchTerms: ReadonlyArray<string>;
   readonly searchIndex?: CommandPaletteSearchIndex;
+  readonly searchTermSources?: ReadonlyArray<PaletteMatchSource>;
   readonly title: ReactNode;
   readonly description?: string;
   readonly timestamp?: string;
@@ -39,7 +51,6 @@ export interface CommandPaletteItem {
 
 export interface CommandPaletteSearchIndex {
   readonly normalizedTerms: ReadonlyArray<string>;
-  readonly haystack: string;
 }
 
 export interface CommandPaletteActionItem extends CommandPaletteItem {
@@ -61,7 +72,7 @@ export function buildTranscriptActionItems(input: {
   readonly matches: readonly TranscriptSearchItem[];
   readonly metadataGroups: readonly CommandPaletteGroup[];
   readonly icon: ReactNode;
-  readonly runThread: (ref: ScopedThreadRef) => Promise<void>;
+  readonly runThread: (ref: ScopedThreadRef & { messageId: string }) => Promise<void>;
 }): CommandPaletteActionItem[] {
   const metadataValues = new Set(
     input.metadataGroups.flatMap((group) => group.items.map((item) => item.value)),
@@ -75,15 +86,27 @@ export function buildTranscriptActionItems(input: {
       const context = [match.projectTitle, match.branch ? `#${match.branch}` : null]
         .filter((part): part is string => part !== null)
         .join(" · ");
+      const searchTerms = [match.title, match.excerpt];
+      const { searchIndex, searchTermSources } = buildPaletteSearchParts(searchTerms, [
+        "Title",
+        "Content",
+      ]);
       return {
         kind: "action",
         value: `transcript:${environmentId}:${match.threadId}`,
         environmentId,
-        searchTerms: [match.title, match.excerpt],
+        searchTerms,
+        searchIndex,
+        searchTermSources,
         title: match.title,
         description: `${context ? `${context} · ` : ""}${match.role === "user" ? "You" : "Assistant"}: ${match.excerpt}`,
         icon: input.icon,
-        run: () => input.runThread({ environmentId, threadId: match.threadId }),
+        run: () =>
+          input.runThread({
+            environmentId,
+            threadId: match.threadId,
+            messageId: match.messageId,
+          }),
       };
     });
 }
@@ -152,7 +175,25 @@ export function buildCommandPaletteSearchIndex(
     normalizedTerms: searchTerms
       .filter((term) => term.length > 0)
       .map((term) => normalizeSearchText(term)),
-    haystack: normalizeSearchText(searchTerms.join(" ")),
+  };
+}
+
+function buildPaletteSearchParts(
+  searchTerms: ReadonlyArray<string>,
+  sources: ReadonlyArray<PaletteMatchSource>,
+): { searchIndex: CommandPaletteSearchIndex; searchTermSources: PaletteMatchSource[] } {
+  const normalizedTerms: string[] = [];
+  const filteredSources: PaletteMatchSource[] = [];
+  for (const [index, term] of searchTerms.entries()) {
+    if (term.length === 0) continue;
+    normalizedTerms.push(normalizeSearchText(term));
+    filteredSources.push(sources[index] ?? "Command");
+  }
+  return {
+    searchIndex: {
+      normalizedTerms,
+    },
+    searchTermSources: filteredSources,
   };
 }
 
@@ -164,12 +205,18 @@ export function buildProjectActionItems(input: {
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => {
     const searchTerms = [project.name, project.cwd, project.environmentId];
+    const { searchIndex, searchTermSources } = buildPaletteSearchParts(searchTerms, [
+      "Title",
+      "Path",
+      "Env",
+    ]);
 
     return {
       kind: "action",
       value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
       searchTerms,
-      searchIndex: buildCommandPaletteSearchIndex(searchTerms),
+      searchIndex,
+      searchTermSources,
       title: project.name,
       environmentId: project.environmentId,
       description: project.cwd,
@@ -232,20 +279,29 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
+    const pullRequestTerms = threadPullRequestSearchTerms(thread);
     const searchTerms = [
       thread.title,
-      ...threadPullRequestSearchTerms(thread),
+      ...pullRequestTerms,
       projectTitle ?? ``,
       thread.branch ?? ``,
       thread.environmentId,
     ];
+    const { searchIndex, searchTermSources } = buildPaletteSearchParts(searchTerms, [
+      "Title",
+      ...pullRequestTerms.map(() => "PR" as PaletteMatchSource),
+      "Project",
+      "Branch",
+      "Env",
+    ]);
 
     return Object.assign(
       {
         kind: "action" as const,
         value: threadSearchValue(thread.environmentId, thread.id),
         searchTerms,
-        searchIndex: buildCommandPaletteSearchIndex(searchTerms),
+        searchIndex,
+        searchTermSources,
         title: thread.title,
         environmentId: thread.environmentId,
         description: descriptionParts.join(` · `),
@@ -265,41 +321,155 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   });
 }
 
-function rankNormalizedSearchFieldMatch(normalizedField: string, normalizedQuery: string): number {
-  if (normalizedField.length === 0 || !normalizedField.includes(normalizedQuery)) {
-    return Number.NEGATIVE_INFINITY;
-  }
-  if (normalizedField === normalizedQuery) {
-    return 3;
-  }
-  if (normalizedField.startsWith(normalizedQuery)) {
-    return 2;
-  }
-  return 1;
-}
-
 function getCommandPaletteSearchIndex(
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
 ): CommandPaletteSearchIndex {
   return item.searchIndex ?? buildCommandPaletteSearchIndex(item.searchTerms);
 }
 
-function rankCommandPaletteSearchIndexMatch(
-  index: CommandPaletteSearchIndex,
-  normalizedQuery: string,
-): number {
-  if (index.normalizedTerms.length === 0) {
-    return 0;
-  }
+function scorePaletteToken(field: string, token: string, fieldBase: number): number | null {
+  return scoreQueryMatch({
+    value: field,
+    query: token,
+    exactBase: fieldBase,
+    prefixBase: fieldBase + 2,
+    boundaryBase: fieldBase + 4,
+    includesBase: fieldBase + 6,
+    ...(token.length >= 3 ? { fuzzyBase: fieldBase + 100 } : {}),
+  });
+}
 
-  for (const [termIndex, normalizedField] of index.normalizedTerms.entries()) {
-    const fieldRank = rankNormalizedSearchFieldMatch(normalizedField, normalizedQuery);
-    if (fieldRank !== Number.NEGATIVE_INFINITY) {
-      return 1_000 - termIndex * 100 + fieldRank;
+function scorePaletteIndex(
+  index: CommandPaletteSearchIndex,
+  tokens: ReadonlyArray<string>,
+): { score: number; bestTermIndex: number; sourceTermIndex: number } | null {
+  if (index.normalizedTerms.length === 0 || tokens.length === 0) {
+    return null;
+  }
+  let total = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let sourceTermIndex = 0;
+  let bestTermIndex = Number.POSITIVE_INFINITY;
+  for (const token of tokens) {
+    let tokenBest: number | null = null;
+    let tokenBestIndex = -1;
+    for (const [termIndex, field] of index.normalizedTerms.entries()) {
+      const fieldScore = scorePaletteToken(field, token, termIndex * 10);
+      if (fieldScore === null) {
+        continue;
+      }
+      if (tokenBest === null || fieldScore < tokenBest) {
+        tokenBest = fieldScore;
+        tokenBestIndex = termIndex;
+      }
+      if (termIndex < bestTermIndex) {
+        bestTermIndex = termIndex;
+      }
+    }
+    if (tokenBest === null || tokenBestIndex < 0) {
+      return null;
+    }
+    total += tokenBest;
+    if (tokenBest < bestScore) {
+      bestScore = tokenBest;
+      sourceTermIndex = tokenBestIndex;
     }
   }
+  return { score: total, bestTermIndex, sourceTermIndex };
+}
 
-  return 0;
+export function tokenizePaletteQuery(normalizedQuery: string): string[] {
+  return normalizeSearchQuery(normalizedQuery)
+    .split(/\s+/u)
+    .filter((token) => token.length > 0);
+}
+
+export function getPaletteMatchSource(
+  item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
+  normalizedQuery: string,
+): PaletteMatchSource | null {
+  const tokens = tokenizePaletteQuery(
+    normalizeSearchText(normalizeThreadPullRequestSearchQuery(normalizedQuery) ?? normalizedQuery),
+  );
+  if (tokens.length === 0) {
+    return null;
+  }
+  const index = getCommandPaletteSearchIndex(item);
+  const scored = scorePaletteIndex(index, tokens);
+  if (!scored) {
+    return null;
+  }
+  const sources = item.searchTermSources;
+  if (sources && sources[scored.sourceTermIndex]) {
+    return sources[scored.sourceTermIndex] ?? null;
+  }
+  if (item.value.startsWith("transcript:")) {
+    return "Content";
+  }
+  if (item.value.startsWith("thread:") || item.value.startsWith("project:")) {
+    return "Title";
+  }
+  return null;
+}
+
+export interface PaletteHighlightPart {
+  readonly text: string;
+  readonly highlighted: boolean;
+  readonly start: number;
+}
+
+export function splitPaletteHighlightParts(text: string, query: string): PaletteHighlightPart[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.length === 0 || text.length === 0) {
+    return [{ text, highlighted: false, start: 0 }];
+  }
+  const normalizedText = text.toLowerCase();
+  const fullIndex = normalizedText.indexOf(normalizedQuery);
+  const tokens =
+    fullIndex === -1
+      ? normalizedQuery.split(/\s+/u).filter((token) => token.length > 0)
+      : [normalizedQuery];
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const token of tokens) {
+    if (token.length === 0) continue;
+    let cursor = 0;
+    while (cursor < normalizedText.length) {
+      const matchIndex = normalizedText.indexOf(token, cursor);
+      if (matchIndex === -1) break;
+      ranges.push({ start: matchIndex, end: matchIndex + token.length });
+      cursor = matchIndex + token.length;
+    }
+  }
+  if (ranges.length === 0) {
+    return [{ text, highlighted: false, start: 0 }];
+  }
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && range.start <= last.end) {
+      last.end = Math.max(last.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  const parts: PaletteHighlightPart[] = [];
+  let cursor = 0;
+  for (const range of merged) {
+    if (range.start > cursor) {
+      parts.push({ text: text.slice(cursor, range.start), highlighted: false, start: cursor });
+    }
+    parts.push({
+      text: text.slice(range.start, range.end),
+      highlighted: true,
+      start: range.start,
+    });
+    cursor = range.end;
+  }
+  if (cursor < text.length) {
+    parts.push({ text: text.slice(cursor), highlighted: false, start: cursor });
+  }
+  return parts;
 }
 
 export function filterCommandPaletteGroups(input: {
@@ -347,25 +517,38 @@ export function filterCommandPaletteGroups(input: {
     }
   }
 
+  const tokens = tokenizePaletteQuery(normalizedQuery);
+
   return searchableGroups.flatMap((group) => {
     const items = group.items
       .map((item, index) => {
         const searchIndex = getCommandPaletteSearchIndex(item);
-        if (!searchIndex.haystack.includes(normalizedQuery)) {
+        const scored = scorePaletteIndex(searchIndex, tokens);
+        if (!scored) {
           return null;
         }
 
         return {
           item,
           index,
-          rank: rankCommandPaletteSearchIndexMatch(searchIndex, normalizedQuery),
+          field: scored.bestTermIndex,
+          rank: scored.score,
         };
       })
       .filter(
-        (entry): entry is { item: (typeof group.items)[number]; index: number; rank: number } =>
-          entry !== null,
+        (
+          entry,
+        ): entry is {
+          item: (typeof group.items)[number];
+          index: number;
+          field: number;
+          rank: number;
+        } => entry !== null,
       )
-      .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
+      .toSorted(
+        (left, right) =>
+          left.field - right.field || left.rank - right.rank || left.index - right.index,
+      )
       .map((entry) => entry.item);
 
     if (items.length === 0) {
