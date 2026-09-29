@@ -240,7 +240,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Hookless title" }),
-        requireArg: "--config features.hooks=false",
+        requireArg: "--config features.codex_hooks=false --config features.hooks=false",
       },
       (textGeneration) =>
         textGeneration.generateThreadTitle({
