@@ -73,6 +73,27 @@ describe("compatibility banners", () => {
       },
     };
     expect(shouldShowProviderStatusBanner(broken, null)).toBe(true);
+    const timeoutOnly: ServerProvider = {
+      ...broken,
+      compatibilityAdvisory: {
+        ...broken.compatibilityAdvisory!,
+        status: "supported",
+        message: null,
+      },
+    };
+    expect(shouldShowProviderStatusBanner(broken, getProviderStatusBannerKey(timeoutOnly))).toBe(
+      true,
+    );
+    expect(shouldShowProviderStatusBanner(broken, getProviderStatusBannerKey(broken))).toBe(false);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...broken,
+          compatibilityAdvisory: { ...broken.compatibilityAdvisory!, message: "Use 1.14.20." },
+        },
+        getProviderStatusBannerKey(broken),
+      ),
+    ).toBe(true);
     expect(getProviderStatusMessage(broken)).toBe(message);
     expect(
       getProviderStatusMessage({

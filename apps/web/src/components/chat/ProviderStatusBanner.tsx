@@ -9,19 +9,25 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 /** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
-  return compatibility?.status === "unsupported" || compatibility?.status === "broken"
+  if (status.status === "error" && status.auth.status === "unauthenticated") return null;
+  return compatibility?.status === "broken" ||
+    (status.status === "ready" && compatibility?.status === "unsupported")
     ? compatibility
     : null;
 }
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   if (!status || status.status === "disabled") return null;
-  if (status.status === "ready") {
-    const incompatible = getIncompatibleVersion(status);
-    return incompatible
-      ? [status.instanceId, incompatible.status, status.version ?? ""].join("\u0000")
-      : null;
+  const incompatible = getIncompatibleVersion(status);
+  if (incompatible) {
+    return [
+      status.instanceId,
+      incompatible.status,
+      status.version ?? "",
+      incompatible.message ?? "",
+    ].join("\u0000");
   }
+  if (status.status === "ready") return null;
   // Antigravity checks saved credentials when a session starts. Its local
   // health check leaves auth unknown after a restart, which is not a failure.
   if (
@@ -97,11 +103,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
-  const compatibility = getIncompatibleVersion(status);
-  const incompatible =
-    !isUnauthenticated && (status.status === "ready" || compatibility?.status === "broken")
-      ? compatibility
-      : null;
+  const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
     ? `${providerName} is unauthenticated`
     : incompatible
