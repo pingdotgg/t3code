@@ -1,9 +1,7 @@
 import { CircularProgressIndicator, Host } from "@expo/ui/jetpack-compose";
 import { size as composeSize } from "@expo/ui/jetpack-compose/modifiers";
 import { StyleSheet, View, type ActivityIndicatorProps } from "react-native";
-import { withUniwind } from "uniwind";
-
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useResolveClassNames, withUniwind } from "uniwind";
 
 function AndroidActivityIndicator({
   animating = true,
@@ -15,7 +13,7 @@ function AndroidActivityIndicator({
   style,
   ...viewProps
 }: ActivityIndicatorProps) {
-  const { themeAppearance, themeVariables } = useAppearancePreferences();
+  const { color: primaryColor } = useResolveClassNames("text-primary");
   const diameter = typeof size === "number" ? size : size === "large" ? 36 : 20;
 
   return (
@@ -32,9 +30,9 @@ function AndroidActivityIndicator({
         style={{ width: diameter, height: diameter }}
       >
         {animating ? (
-          <Host colorScheme={themeAppearance} ignoreSafeAreaKeyboardInsets style={{ flex: 1 }}>
+          <Host ignoreSafeAreaKeyboardInsets style={{ flex: 1 }}>
             <CircularProgressIndicator
-              color={color ?? themeVariables["--color-primary"]}
+              color={color ?? primaryColor}
               modifiers={[composeSize(diameter, diameter)]}
               strokeWidth={diameter / 10}
             />
