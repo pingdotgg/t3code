@@ -21,6 +21,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  MessageCircle,
   Plus,
   TerminalSquare,
   Volume2,
@@ -103,6 +104,8 @@ interface RightPanelTabsProps {
    */
   previewRuntimeTabId?: ((tabId: string) => string) | undefined;
   terminalLabelsById: ReadonlyMap<string, string>;
+  /** Titles of the side chats open as tabs, by thread id. */
+  asideTitlesByThreadId?: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
@@ -577,6 +580,7 @@ function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  asideTitlesByThreadId: ReadonlyMap<string, string> | undefined,
 ): string {
   switch (surface.kind) {
     case "diff":
@@ -596,6 +600,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "aside":
+      return asideTitlesByThreadId?.get(surface.threadId) ?? "Side chat";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -679,6 +685,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "aside":
+      return <MessageCircle className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1088,7 +1096,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title = surfaceTitle(
+                surface,
+                props.previewSessions,
+                props.terminalLabelsById,
+                props.asideTitlesByThreadId,
+              );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.

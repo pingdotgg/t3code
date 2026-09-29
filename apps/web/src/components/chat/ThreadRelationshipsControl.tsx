@@ -28,6 +28,7 @@ import {
   BotIcon,
   CornerLeftUpIcon,
   GitForkIcon,
+  LinkIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -149,6 +150,9 @@ function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: Thread
   if (edge.kind === "transfer") return "Context transfer";
   if (edge.kind === "subagent") {
     return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
+  }
+  if (edge.kind === "parent") {
+    return edge.sourceThreadId === currentThreadId ? "Linked thread" : "Parent thread";
   }
   return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
 }
@@ -326,7 +330,9 @@ export function ThreadRelationshipsPanel(props: {
                 ? CornerLeftUpIcon
                 : isSubagent
                   ? BotIcon
-                  : GitForkIcon;
+                  : edge.kind === "parent"
+                    ? LinkIcon
+                    : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
               const agent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
               const threadTitle = relationshipThreadTitle({

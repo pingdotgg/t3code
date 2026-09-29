@@ -1528,6 +1528,11 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  /**
+   * Starts (or, with no question, reopens) a side chat. Absent when the thread
+   * cannot have one, which also hides `/side` and `/btw` from the slash menu.
+   */
+  onSideChatCommand?: ((question: string) => Promise<void>) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -2584,6 +2589,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/model",
           description: "Switch response model for this thread",
         },
+        ...(props.onSideChatCommand
+          ? ([
+              {
+                id: "slash:side",
+                type: "slash-command",
+                command: "side",
+                label: "/side",
+                description: "Ask a side question without interrupting this thread",
+              },
+              {
+                id: "slash:btw",
+                type: "slash-command",
+                command: "btw",
+                label: "/btw",
+                description: "Same as /side. Add a question to send it right away",
+              },
+            ] as const)
+          : []),
         ...(planModeUiEnabled
           ? ([
               {
@@ -2706,6 +2729,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     activeThreadId,
+    props.onSideChatCommand,
     compactSlashCommandAvailable,
     composerTrigger,
     environmentId,
@@ -3843,7 +3867,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [readComposerSnapshot, resolveComposerTrigger]);
 
-  const { onUsageLimitsCommand } = props;
+  const { onUsageLimitsCommand, onSideChatCommand } = props;
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -3872,6 +3896,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if ((item.command === "side" || item.command === "btw") && onSideChatCommand) {
+          // `/btw` waits for a question; `/side` opens right away.
+          const opensNow = item.command === "side";
+          const replacement = opensNow ? "" : "/btw ";
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            trigger.rangeEnd,
+            replacement,
+            {
+              expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+              focusEditorAfterReplace: !opensNow,
+            },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            if (opensNow) void onSideChatCommand("");
+          }
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -4004,6 +4047,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       handleInteractionModeChange,
       planModeUiEnabled,
       onUsageLimitsCommand,
+      onSideChatCommand,
       resolveActiveComposerTrigger,
     ],
   );

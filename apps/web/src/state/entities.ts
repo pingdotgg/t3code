@@ -116,6 +116,13 @@ export function useThreadProjection(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
+export function useEnvironmentSupportsSideChats(environmentId: EnvironmentId | null): boolean {
+  return (
+    useServerConfigs().get(environmentId as EnvironmentId)?.environment.capabilities
+      .threadSideChats === true
+  );
+}
+
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
@@ -198,6 +205,15 @@ export function readEnvironmentSupportsTitleRegeneration(environmentId: Environm
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadTitleRegeneration === true
+  );
+}
+
+/** Whether the environment's server understands side chats (sideChat, and parentThreadId on
+    thread.create). An older one would drop those fields and create an ordinary thread. */
+export function readEnvironmentSupportsSideChats(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSideChats === true
   );
 }
 

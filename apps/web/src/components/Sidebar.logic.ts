@@ -508,15 +508,18 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
 }
 
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
-    environmentId: string;
-    projectId: string;
-  },
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> &
+    Partial<Pick<SidebarThreadSummary, "sideChat">> & {
+      environmentId: string;
+      projectId: string;
+    },
 >(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
       !isSidebarSubagentThread(thread) &&
+      // Side chats live in the right panel and the parent's details panel.
+      !thread.sideChat &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );

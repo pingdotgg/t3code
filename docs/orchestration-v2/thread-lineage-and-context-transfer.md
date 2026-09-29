@@ -270,6 +270,18 @@ The first backend slice implements lazy same-provider fork resolution:
 This keeps the runtime aligned with the architecture while making portable context explicit and
 auditable through `ContextTransfer` and `ContextHandoff` records.
 
+## Linked Threads And Side Chats
+
+Lineage and presentation are separate facts. `thread.create` accepts a `parentThreadId` to link a
+thread under another one without any context transfer: lineage records the parent and leaves
+`relationshipToParent` null, so a thread that inherited nothing is never called a fork.
+
+A side chat is an ordinary thread with the `sideChat` flag, which only means "open in the right
+panel, keep out of the sidebar, discard on close". It is either a `thread.fork` at `latest_stable`
+(shared history) or a linked thread (none). The flag does not select a relationship kind, and
+`thread.metadata.update` clears it to promote the thread. Fork copies the source thread, so it
+sets the flag explicitly instead of inheriting it.
+
 ## Relationship To Provider Switching
 
 Provider switching is a context transfer where `sourceThreadId === targetThreadId` and the target provider differs from the current active provider.

@@ -4,8 +4,14 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { QuoteIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MessageCircleQuestionIcon, QuoteIcon } from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -22,10 +28,13 @@ export function AssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,
+  onAsk,
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  /** Quote the selection into a side chat instead of this thread's composer. */
+  onAsk?: (citation: AssistantCitation) => boolean;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
@@ -33,10 +42,11 @@ export function AssistantSelectionToolbar({
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
+  const groupRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
 
   useLayoutEffect(() => {
-    const toolbar = toolbarRef.current;
+    const toolbar = groupRef.current;
     if (!toolbar || !selection) return;
     const rect = toolbar.getBoundingClientRect();
     toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
@@ -79,7 +89,7 @@ export function AssistantSelectionToolbar({
     };
     const actions = observeSelectionActions({
       element: viewport,
-      getActionElement: () => toolbarRef.current,
+      getActionElement: () => groupRef.current,
       onSelection: update,
       onDismiss: clear,
     });
@@ -95,7 +105,7 @@ export function AssistantSelectionToolbar({
         event.isComposing ||
         event.defaultPrevented ||
         !toolbar ||
-        toolbar.contains(event.target as Node)
+        groupRef.current?.contains(event.target as Node)
       ) {
         return;
       }
@@ -126,29 +136,54 @@ export function AssistantSelectionToolbar({
     dismiss();
     return true;
   };
+  const ask = () => {
+    if (tooLong || !onAsk?.(selection.citation)) return false;
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+    return true;
+  };
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      dismiss();
+    }
+  };
   return createPortal(
-    <Button
-      ref={toolbarRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+    <div
+      ref={groupRef}
+      className="fixed z-50 flex max-w-[calc(100vw-1rem)] gap-1"
       style={{ left: selection.position.x, top: selection.position.y }}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          dismiss();
-        }
-      }}
     >
-      <QuoteIcon aria-hidden="true" className="size-3.5" />
-      {tooLong ? "Shorten selection" : "Cite"}
-    </Button>,
+      <Button
+        ref={toolbarRef}
+        type="button"
+        size="xs"
+        variant="glass"
+        disabled={tooLong}
+        aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={cite}
+        onKeyDown={onKeyDown}
+      >
+        <QuoteIcon aria-hidden="true" className="size-3.5" />
+        {tooLong ? "Shorten selection" : "Cite"}
+      </Button>
+      {onAsk && !tooLong ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="glass"
+          aria-label="Ask about this selection in a side chat"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={ask}
+          onKeyDown={onKeyDown}
+        >
+          <MessageCircleQuestionIcon aria-hidden="true" className="size-3.5" />
+          Ask
+        </Button>
+      ) : null}
+    </div>,
     document.body,
   );
 }
