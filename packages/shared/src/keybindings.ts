@@ -574,7 +574,7 @@ export function matchesShortcutModifiers(
   shortcut: KeybindingShortcut,
   platform: string,
 ): boolean {
-  const useMetaForMod = /mac/i.test(platform);
+  const useMetaForMod = /mac|iphone|ipad|ipod/i.test(platform);
   const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
   const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
   return (
@@ -591,7 +591,7 @@ function matchesShortcut(
   platform: string,
 ): boolean {
   if (
-    !/mac/i.test(platform) &&
+    !/mac|iphone|ipad|ipod/i.test(platform) &&
     event.getModifierState?.("AltGraph") &&
     !/^[a-z0-9]$/i.test(event.key)
   )
