@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { searchSettings, settingsSearchId } from "./settingsSearch";
+
+vi.mock("../../env", () => ({ isElectron: true }));
 
 describe("settings search", () => {
   it("finds settings across pages by title and related terms, preferring exact titles", () => {
@@ -22,5 +24,25 @@ describe("settings search", () => {
     expect(settingsSearchId("UI density")).toBe("setting-ui-density");
     expect(searchSettings("  ")).toEqual([]);
     expect(searchSettings("not-a-real-setting")).toEqual([]);
+  });
+
+  it("finds font and device settings with plural queries", () => {
+    expect(searchSettings("fonts").some((item) => item.title === "Interface font")).toBe(true);
+    expect(searchSettings("devices").some((item) => item.title === "Device support")).toBe(true);
+  });
+
+  it("finds visible settings added outside the main row list", () => {
+    expect(searchSettings("update track")[0]).toMatchObject({
+      title: "Update track",
+      id: "setting-update-track",
+      to: "/settings/general",
+    });
+    expect(searchSettings("local source", { localRebuildEnabled: true })[0]).toMatchObject({
+      title: "Local source",
+      id: "setting-local-source",
+    });
+    expect(searchSettings("local source")).toEqual([]);
+    expect(searchSettings("sidebar icon size")[0]?.title).toBe("Sidebar icon size");
+    expect(searchSettings("normal message preview")[0]?.title).toBe("Normal message preview");
   });
 });

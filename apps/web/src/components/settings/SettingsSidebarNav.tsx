@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
+import { useLocalRebuildState } from "../../hooks/useLocalRebuild";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -59,7 +60,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const localRebuildEnabled = useLocalRebuildState()?.enabled === true;
+  const results = useMemo(
+    () => searchSettings(query, { localRebuildEnabled }),
+    [query, localRebuildEnabled],
+  );
   const isSearching = query.trim().length > 0;
 
   useEffect(() => {

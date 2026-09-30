@@ -1,3 +1,5 @@
+import { isElectron } from "../../env";
+
 export type SettingsPath =
   | "/settings/general"
   | "/settings/connections"
@@ -10,6 +12,8 @@ export interface SettingsSearchItem {
   readonly to: SettingsPath;
   readonly id: string;
   readonly terms?: string;
+  readonly desktopOnly?: boolean;
+  readonly localRebuildOnly?: boolean;
 }
 
 export function settingsSearchId(title: string) {
@@ -63,9 +67,13 @@ const settingsByPage: ReadonlyArray<{
       "Status line font size",
       "Input font size",
       "Sidebar font size",
+      "Sidebar icon size",
       "Sidebar metadata font size",
       "Sidebar row spacing",
       "Tool output font size",
+      "Normal message preview",
+      "Cross-thread message preview",
+      "Monitoring message preview",
       "Automatically monitor associated PRs",
       "Automatic maintenance chats",
       "Default list state",
@@ -146,6 +154,24 @@ export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     })),
   ),
   {
+    title: "Update track",
+    to: "/settings/general",
+    id: settingsSearchId("Update track"),
+    desktopOnly: true,
+  },
+  ...["Local source", "Check for source updates"].map((title) => ({
+    title,
+    to: "/settings/general" as const,
+    id: settingsSearchId(title),
+    desktopOnly: true,
+    localRebuildOnly: true,
+  })),
+  {
+    title: "Version",
+    to: "/settings/general",
+    id: "section-about",
+  },
+  {
     title: "Custom workflows",
     to: "/settings/workflows",
     id: "section-custom-workflows",
@@ -168,15 +194,30 @@ function normalize(value: string) {
     .replace(/\s+/g, " ");
 }
 
-export function searchSettings(query: string): ReadonlyArray<SettingsSearchItem> {
+export function searchSettings(
+  query: string,
+  availability: { readonly localRebuildEnabled?: boolean } = {},
+): ReadonlyArray<SettingsSearchItem> {
   const text = normalize(query);
   if (!text) return [];
   const tokens = text.split(" ");
   return SETTINGS_SEARCH_ITEMS.flatMap((item, index) => {
+    if (item.desktopOnly && !isElectron) return [];
+    if (item.localRebuildOnly && !availability.localRebuildEnabled) return [];
     const title = normalize(item.title);
     const terms = normalize(item.terms ?? "");
     const page = item.to.slice("/settings/".length).replaceAll("-", " ");
-    if (!tokens.every((token) => [title, terms, page].some((field) => field.includes(token)))) {
+    if (
+      !tokens.every((token) => {
+        const singular =
+          token.length > 3 && token.endsWith("s") && !token.endsWith("ss")
+            ? token.slice(0, -1)
+            : token;
+        return [title, terms, page].some(
+          (field) => field.includes(token) || field.includes(singular),
+        );
+      })
+    ) {
       return [];
     }
     const rank = title === text ? 4 : title.startsWith(text) ? 3 : title.includes(text) ? 2 : 1;
