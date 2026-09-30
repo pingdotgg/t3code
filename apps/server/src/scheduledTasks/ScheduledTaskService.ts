@@ -651,11 +651,14 @@ export const layer = Layer.effect(
         missedRunAt: task.nextRunAt,
         rescheduledTo: next,
       });
+      // Guarded on the snapshot's next_run_at: an edit that already re-aimed
+      // the task must not be overwritten from the stale snapshot.
       yield* sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
         WHERE task_id = ${task.id}
+          AND next_run_at IS ${task.nextRunAt}
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
@@ -858,13 +861,22 @@ export const layer = Layer.effect(
           now,
         );
         // RETURNING so a task deleted between the load and this UPDATE is a
-        // visible not-found error, not a false success.
+        // visible not-found error, not a false success. Enabling rechecks the
+        // cap against the live row: a run that finished after the load may
+        // have just reached it.
         const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
           SET enabled = ${enabled ? 1 : 0},
               next_run_at = ${next},
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
+            AND (
+              ${enabled ? 0 : 1}
+              OR NOT (
+                json_extract(schedule_json, '$.maxRuns') IS NOT NULL
+                AND run_count >= json_extract(schedule_json, '$.maxRuns')
+              )
+            )
           RETURNING task_id
         `.pipe(
           Effect.mapError((cause) =>
@@ -872,7 +884,12 @@ export const layer = Layer.effect(
           ),
         );
         if (updated.length === 0) {
-          return yield* taskError("Schedule task not found.", { taskId: input.id });
+          // Deleted, or capped since the load: report the row as it is now.
+          const current = yield* findTask(input.id);
+          if (current === null) {
+            return yield* taskError("Schedule task not found.", { taskId: input.id });
+          }
+          return { task: current };
         }
         yield* notifyChanged;
         return {

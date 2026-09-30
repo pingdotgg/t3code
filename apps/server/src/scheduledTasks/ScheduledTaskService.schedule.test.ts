@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
@@ -211,5 +212,72 @@ it.effect("a maxRuns cap pauses the task when reached and re-arms when raised", 
       expect(uncapped.task.enabled).toBe(true);
       expect(uncapped.task.nextRunAt).toBe(halfHourLater);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(launchingDependencies))));
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("skips a due task whose window closed while an earlier dispatch ran", () =>
+  Effect.gen(function* () {
+    const zone = { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true };
+    const at = (hour: number, minute: number, day = 28) =>
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month: 9, day, hour, minute, second: 0, millisecond: 0 },
+        zone,
+      );
+    yield* TestClock.setTime(DateTime.toEpochMillis(at(16, 29)));
+    let launches = 0;
+    const dependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService)({
+        launch: () =>
+          Effect.gen(function* () {
+            launches += 1;
+            // The first dispatch is slow: it finishes after the window closed.
+            yield* TestClock.setTime(DateTime.toEpochMillis(at(17, 10)));
+            return {
+              threadId: ThreadId.make("thread:scheduled-run"),
+              projection: {} as unknown as OrchestrationV2ThreadProjection,
+              resumed: false,
+            };
+          }),
+      }),
+      Layer.mock(ThreadManagementService)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const create = (commandId: string) =>
+        service.upsert({
+          commandId: CommandId.make(commandId),
+          title: commandId,
+          prompt: "Check the queue.",
+          enabled: true,
+          schedule: {
+            type: "interval",
+            everyMs: 1_800_000,
+            weekdays: [1, 2, 3, 4, 5],
+            window: { start: "09:00", end: "17:00" },
+          },
+          projectId: ProjectId.make("project-window-dispatch"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+      yield* create("window-a");
+      yield* create("window-b");
+
+      // Both come due at 16:59, inside the window; the poll then runs one
+      // task and must skip the other because 17:10 is past the close.
+      yield* TestClock.setTime(DateTime.toEpochMillis(at(16, 59)));
+      yield* TestClock.adjust("5 seconds");
+      // Wait on the change stream until both tasks are re-aimed at tomorrow.
+      const nextDay = DateTime.formatIso(DateTime.toUtc(at(9, 0, 29)));
+      yield* service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.every((task) => task.nextRunAt === nextDay)),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      expect(launches).toBe(1);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
