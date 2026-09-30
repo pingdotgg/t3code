@@ -32,6 +32,9 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
+const encodeRunPayload = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ rootNodeId: NodeId })),
+);
 
 const launchingDependencies = Layer.mergeAll(
   NodeCrypto.layer,
@@ -368,7 +371,7 @@ it.effect(
           status: "running",
           requested_at: now,
           completed_at: null,
-          payload_json: JSON.stringify({ rootNodeId }),
+          payload_json: yield* encodeRunPayload({ rootNodeId }),
         })}`;
         const scope: McpInvocationScope = {
           environmentId: EnvironmentId.make("environment:mcp-real-cap"),
