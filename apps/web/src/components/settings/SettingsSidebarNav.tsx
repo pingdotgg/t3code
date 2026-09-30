@@ -69,18 +69,31 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        (event.key !== "/" && (event.key.length !== 1 || event.key === " "))
+      ) {
+        return;
+      }
       const target = event.target;
       if (
         target instanceof HTMLElement &&
         (target.closest(
-          'input, textarea, [contenteditable="true"], [role="dialog"], [aria-modal="true"], [data-slot$="popup"]',
+          'input, textarea, select, [contenteditable], [role="textbox"], [role="combobox"], [role="dialog"], [aria-modal="true"], [data-slot$="popup"]',
         ) ||
           target.isContentEditable)
       ) {
         return;
       }
       event.preventDefault();
+      if (event.key !== "/") {
+        setQuery(event.key);
+        setActiveResultIndex(0);
+      }
       if (isMobile) setOpenMobile(true);
       else if (!open) setOpen(true);
       requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -90,10 +103,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   }, [isMobile, open, setOpen, setOpenMobile]);
 
   useEffect(() => {
+    if (!isSearching) return;
     document
       .getElementById(`settings-search-result-${activeResultIndex}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeResultIndex, results]);
+  }, [activeResultIndex, isSearching, results]);
 
   const clearSearch = useCallback(() => {
     setQuery("");
