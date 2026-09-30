@@ -12,14 +12,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import {
-  ContextHandoffServiceV2,
-  layer as contextHandoffServiceLayer,
-  providerMessageWithContextHandoff,
-} from "./ContextHandoffService.ts";
-import { layer as idAllocatorLayer } from "./IdAllocator.ts";
+import * as ContextHandoffService from "./ContextHandoffService.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 
-const TestLayer = contextHandoffServiceLayer.pipe(Layer.provide(idAllocatorLayer));
+const TestLayer = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
 function importedItem(
   input:
@@ -74,7 +70,7 @@ function importedItem(
 it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
   it.effect("prepares imported history for the first native v2 turn", () =>
     Effect.gen(function* () {
-      const service = yield* ContextHandoffServiceV2;
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareLegacyImport({
         threadId: ThreadId.make("thread:legacy-context"),
         targetRunId: RunId.make("run:first-v2"),
@@ -96,7 +92,7 @@ it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
       assert.deepStrictEqual(handoff.fromProviderThreadIds, []);
       assert.include(handoff.summaryText, "What did we decide?");
       assert.include(handoff.summaryText, "keep the migration lightweight");
-      const providerMessage = providerMessageWithContextHandoff({
+      const providerMessage = ContextHandoffService.providerMessageWithContextHandoff({
         handoff,
         userText: "Continue from there.",
       });
@@ -107,7 +103,7 @@ it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
 
   it.effect("preserves role attribution when truncating imported history", () =>
     Effect.gen(function* () {
-      const service = yield* ContextHandoffServiceV2;
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareLegacyImport({
         threadId: ThreadId.make("thread:legacy-context"),
         targetRunId: RunId.make("run:first-v2"),
@@ -132,7 +128,7 @@ it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
 
   it.effect("retains the newest oversized import even when it has no whitespace", () =>
     Effect.gen(function* () {
-      const service = yield* ContextHandoffServiceV2;
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
       const handoff = yield* service.prepareLegacyImport({
         threadId: ThreadId.make("thread:legacy-context"),
         targetRunId: RunId.make("run:first-v2"),

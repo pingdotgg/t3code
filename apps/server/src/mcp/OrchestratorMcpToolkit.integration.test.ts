@@ -50,20 +50,17 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
-import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { layer as threadManagementServiceLayer } from "../orchestration-v2/ThreadManagementService.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
-import { makeLayer as makeProviderAdapterRegistryLayer } from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import {
-  type ProviderContinuationRequest,
-  ProviderContinuationRequests,
-} from "../orchestration-v2/ProviderContinuationRequests.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
 import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import {
   makeOrchestratorV2ProviderReplayLayer,
@@ -74,7 +71,7 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
@@ -399,7 +396,7 @@ function makeDeterministicAdapter(input: {
 }
 
 function waitForProjection(
-  orchestrator: OrchestratorV2Shape,
+  orchestrator: Orchestrator.OrchestratorV2Shape,
   threadId: ThreadId,
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
@@ -458,8 +455,8 @@ function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask
 }
 
 const unusedScheduledTaskStubLayer = Layer.succeed(
-  ScheduledTaskService,
-  ScheduledTaskService.of({
+  ScheduledTaskService.ScheduledTaskService,
+  ScheduledTaskService.ScheduledTaskService.of({
     list: () => Effect.succeed({ tasks: [] }),
     subscribeList: () => Stream.succeed({ tasks: [] }),
     upsert: () => Effect.die("ScheduledTaskService.upsert is unused in this test"),
@@ -481,7 +478,7 @@ describe("orchestrator MCP toolkit", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
-          const registryLayer = makeProviderAdapterRegistryLayer([
+          const registryLayer = ProviderAdapterRegistry.makeLayer([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
               driver: ProviderDriverKind.make("codex"),
@@ -520,14 +517,17 @@ describe("orchestrator MCP toolkit", () => {
           ]);
           // Captures parent-wake offers made when a delegated child
           // terminalizes after the parent run settled.
-          const continuationOffers = yield* Ref.make<ReadonlyArray<ProviderContinuationRequest>>(
-            [],
+          const continuationOffers = yield* Ref.make<
+            ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+          >([]);
+          const continuationProbeLayer = Layer.succeed(
+            ProviderContinuationRequests.ProviderContinuationRequests,
+            {
+              offer: (request) =>
+                Ref.update(continuationOffers, (existing) => [...existing, request]),
+              take: Effect.never,
+            },
           );
-          const continuationProbeLayer = Layer.succeed(ProviderContinuationRequests, {
-            offer: (request) =>
-              Ref.update(continuationOffers, (existing) => [...existing, request]),
-            take: Effect.never,
-          });
           // Offers land after the finalize projection writes, so poll briefly
           // instead of asserting counts immediately.
           const waitForContinuationOffers = (count: number) =>
@@ -567,7 +567,7 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(Layer.provide(continuationProbeLayer));
           const orchestrationLayer = Layer.merge(
             orchestratorLayer,
-            threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+            ThreadManagementService.layer.pipe(Layer.provide(orchestratorLayer)),
           );
           const providerRegistryLayer = makeProviderRegistryLayer([
             makeProviderSnapshot({
@@ -602,17 +602,23 @@ describe("orchestrator MCP toolkit", () => {
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
           const runNowInputs = yield* Ref.make<
-            ReadonlyArray<Parameters<ScheduledTaskService["Service"]["runNow"]>[0]>
+            ReadonlyArray<
+              Parameters<ScheduledTaskService.ScheduledTaskService["Service"]["runNow"]>[0]
+            >
           >([]);
           const upsertInputs = yield* Ref.make<
-            ReadonlyArray<Parameters<ScheduledTaskService["Service"]["upsert"]>[0]>
+            ReadonlyArray<
+              Parameters<ScheduledTaskService.ScheduledTaskService["Service"]["upsert"]>[0]
+            >
           >([]);
           const updateInputs = yield* Ref.make<
-            ReadonlyArray<Parameters<ScheduledTaskService["Service"]["update"]>[0]>
+            ReadonlyArray<
+              Parameters<ScheduledTaskService.ScheduledTaskService["Service"]["update"]>[0]
+            >
           >([]);
           const scheduledTaskStubLayer = Layer.succeed(
-            ScheduledTaskService,
-            ScheduledTaskService.of({
+            ScheduledTaskService.ScheduledTaskService,
+            ScheduledTaskService.ScheduledTaskService.of({
               list: () => Ref.get(scheduledStore).pipe(Effect.map((tasks) => ({ tasks }))),
               subscribeList: () => Stream.empty,
               upsert: (input) =>
@@ -692,7 +698,7 @@ describe("orchestrator MCP toolkit", () => {
           );
 
           yield* Effect.gen(function* () {
-            const orchestrator = yield* OrchestratorV2;
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
               type: "thread.create",
@@ -1120,7 +1126,7 @@ describe("orchestrator MCP toolkit", () => {
               streaming: false,
               ordinal: 999,
             };
-            yield* (yield* EventSinkV2).write({
+            yield* (yield* EventSink.EventSinkV2).write({
               events: [
                 {
                   id: EventId.make("event:oversized-retrieval"),
@@ -3646,7 +3652,7 @@ describe("orchestrator MCP toolkit", () => {
         );
         const orchestrationLayer = Layer.merge(
           orchestratorLayer,
-          threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+          ThreadManagementService.layer.pipe(Layer.provide(orchestratorLayer)),
         );
         const providerRegistryLayer = makeProviderRegistryLayer([
           makeProviderSnapshot({
@@ -3667,7 +3673,7 @@ describe("orchestrator MCP toolkit", () => {
         );
 
         yield* Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
           const server = yield* McpServer.McpServer;
           const parentCreate = yield* orchestrator.dispatch({
             type: "thread.create",

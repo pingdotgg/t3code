@@ -19,16 +19,16 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import {
   ProviderAdapterSteerRunError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
 } from "./ProviderAdapter.ts";
-import { makeSingleLayer } from "./ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
@@ -155,8 +155,8 @@ for (const mailbox of [false, true]) {
                 }),
             };
             yield* Effect.gen(function* () {
-              const orchestrator = yield* OrchestratorV2;
-              const worker = yield* OrchestrationEffectWorkerV2;
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
+              const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
               const threadId = ThreadId.make("thread:steering-completion");
               const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
                 orchestrator.streamDomainEvents.pipe(
@@ -200,7 +200,7 @@ for (const mailbox of [false, true]) {
               const messageId = MessageId.make("message:steering");
               const taskId = NodeId.make("task:mailbox");
               if (mailbox) {
-                const sink = yield* EventSinkV2;
+                const sink = yield* EventSink.EventSinkV2;
                 const current = yield* orchestrator.getThreadProjection(threadId);
                 const parentRun = current.runs.find((run) => run.id === first.runId)!;
                 const now = yield* DateTime.now;
@@ -391,7 +391,7 @@ for (const mailbox of [false, true]) {
               Effect.provide(
                 makeOrchestratorV2ReplayLayerWithRegistry(
                   { name: `steering-completion-${timing}` },
-                  makeSingleLayer(adapter),
+                  ProviderAdapterRegistry.makeSingleLayer(adapter),
                   { runEffectWorker: false },
                 ),
               ),

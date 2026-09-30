@@ -18,7 +18,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
   THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
@@ -155,7 +155,7 @@ describe("orchestration V2 thread fork", () => {
         );
 
         const materialized = yield* Effect.gen(function* () {
-          const ids = yield* IdAllocatorV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
           const projectId = yield* ids.allocate.project({ fixtureName: "thread-fork-native" });
           const sourceThreadId = yield* ids.allocate.thread({
             fixtureName: "thread-fork-native-source",
@@ -238,7 +238,7 @@ describe("orchestration V2 thread fork", () => {
             targetThreadId,
             commands,
           };
-        }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+        }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
 
         const result = yield* runOrchestratorV2ProviderReplayScenario(
           {
@@ -331,7 +331,7 @@ describe("orchestration V2 thread fork", () => {
         );
 
         const materialized = yield* Effect.gen(function* () {
-          const ids = yield* IdAllocatorV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
           const projectId = yield* ids.allocate.project({ fixtureName: "thread-fork-native" });
           const sourceThreadId = yield* ids.allocate.thread({
             fixtureName: "thread-fork-native-source",
@@ -404,7 +404,7 @@ describe("orchestration V2 thread fork", () => {
             targetThreadId,
             commands,
           };
-        }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+        }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
 
         const result = yield* runOrchestratorV2ProviderReplayScenario(
           {
@@ -469,7 +469,7 @@ describe("orchestration V2 thread fork", () => {
       );
 
       const materialized = yield* Effect.gen(function* () {
-        const ids = yield* IdAllocatorV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
         const projectId = yield* ids.allocate.project({
           fixtureName: "thread-fork-native-prior-turn",
         });
@@ -560,7 +560,7 @@ describe("orchestration V2 thread fork", () => {
           targetThreadId,
           commands,
         };
-      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
 
       const result = yield* runOrchestratorV2ProviderReplayScenario(
         {
@@ -648,7 +648,7 @@ describe("orchestration V2 thread fork", () => {
       );
 
       const materialized = yield* Effect.gen(function* () {
-        const ids = yield* IdAllocatorV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
         const projectId = yield* ids.allocate.project({
           fixtureName: "thread-fork-native-prior-turn",
         });
@@ -739,7 +739,7 @@ describe("orchestration V2 thread fork", () => {
           targetThreadId,
           commands,
         };
-      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
 
       const result = yield* runOrchestratorV2ProviderReplayScenario(
         {
@@ -800,7 +800,7 @@ describe("orchestration V2 thread fork", () => {
       );
 
       const materialized = yield* Effect.gen(function* () {
-        const ids = yield* IdAllocatorV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
         const projectId = yield* ids.allocate.project({
           fixtureName: "thread-fork-native-prior-turn-source-rollback",
         });
@@ -918,7 +918,7 @@ describe("orchestration V2 thread fork", () => {
           secondRunId,
           commands,
         };
-      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
 
       const result = yield* runOrchestratorV2ProviderReplayScenario(
         {
@@ -1009,7 +1009,7 @@ describe("orchestration V2 thread fork", () => {
       );
 
       const materialized = yield* Effect.gen(function* () {
-        const ids = yield* IdAllocatorV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
         const projectId = yield* ids.allocate.project({
           fixtureName: "thread-fork-native-fork-local-rollback",
         });
@@ -1135,7 +1135,7 @@ describe("orchestration V2 thread fork", () => {
           targetSecondRunId,
           commands,
         };
-      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
 
       const result = yield* runOrchestratorV2ProviderReplayScenario(
         {

@@ -14,18 +14,12 @@ import * as Layer from "effect/Layer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
 
-import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
-import {
-  ThreadManagementService,
-  ThreadManagementThreadNotFoundError,
-} from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
-import {
-  layer as orchestratorMcpServiceLayer,
-  OrchestratorMcpService,
-} from "./OrchestratorMcpService.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 const projectId = ProjectId.make("project-mcp-orchestrator-detail");
@@ -124,32 +118,32 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = orchestratorMcpServiceLayer.pipe(
+  const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) =>
             threadId === parentThreadId
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${threadId}`),
-        } satisfies Partial<ThreadManagementService["Service"]>),
-        Layer.mock(ProviderRegistry)({
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
-        } satisfies Partial<ProviderRegistry["Service"]>),
-        Layer.mock(ScheduledTaskService)({
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
-        } satisfies Partial<ScheduledTaskService["Service"]>),
-        Layer.mock(ProviderAdapterRegistryV2)({
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
-        } satisfies Partial<ProviderAdapterRegistryV2["Service"]>),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
         NodeCrypto.layer,
       ),
     ),
   );
 
   await Effect.gen(function* () {
-    const service = yield* OrchestratorMcpService;
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
     const result = yield* service.readThread(makeScope(), { threadId: parentThreadId });
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
@@ -177,32 +171,32 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = orchestratorMcpServiceLayer.pipe(
+  const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) =>
             threadId === parentThreadId
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${threadId}`),
-        } satisfies Partial<ThreadManagementService["Service"]>),
-        Layer.mock(ProviderRegistry)({
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
-        } satisfies Partial<ProviderRegistry["Service"]>),
-        Layer.mock(ScheduledTaskService)({
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
-        } satisfies Partial<ScheduledTaskService["Service"]>),
-        Layer.mock(ProviderAdapterRegistryV2)({
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
-        } satisfies Partial<ProviderAdapterRegistryV2["Service"]>),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
         NodeCrypto.layer,
       ),
     ),
   );
 
   await Effect.gen(function* () {
-    const service = yield* OrchestratorMcpService;
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
     const result = yield* service.readThread(makeScope(), { threadId: parentThreadId });
     expect(result.thread.status).toBe("waiting");
     expect(result.thread.activeRunId).toBe(activeRunId);
@@ -287,33 +281,33 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = orchestratorMcpServiceLayer.pipe(
+  const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
             if (threadId === childThreadId) return Effect.succeed(childProjection);
             return Effect.die(`unexpected thread ${threadId}`);
           },
-        } satisfies Partial<ThreadManagementService["Service"]>),
-        Layer.mock(ProviderRegistry)({
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
-        } satisfies Partial<ProviderRegistry["Service"]>),
-        Layer.mock(ScheduledTaskService)({
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
-        } satisfies Partial<ScheduledTaskService["Service"]>),
-        Layer.mock(ProviderAdapterRegistryV2)({
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
-        } satisfies Partial<ProviderAdapterRegistryV2["Service"]>),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
         NodeCrypto.layer,
       ),
     ),
   );
 
   await Effect.gen(function* () {
-    const service = yield* OrchestratorMcpService;
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
     const result = yield* service.taskStatus(makeScope(), taskId);
     expect(result.providerInstanceId).toBe(customCodexInstanceId);
     expect(result.providerInstanceId).not.toBe(ProviderInstanceId.make(String(codexDriver)));
@@ -406,10 +400,10 @@ it("readThread reaches a thread the user attached as context, but not one an age
       updatedAt: now,
     }) as unknown as OrchestrationV2ThreadProjection;
 
-  const layer = orchestratorMcpServiceLayer.pipe(
+  const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
             if (threadId === foreignThreadId || threadId === agentOnlyThreadId) {
@@ -425,28 +419,28 @@ it("readThread reaches a thread the user attached as context, but not one an age
             }),
           getProjectThreadRecords: (input) =>
             Effect.fail(
-              new ThreadManagementThreadNotFoundError({
+              new ThreadManagementService.ThreadManagementThreadNotFoundError({
                 projectId: input.projectId,
                 threadId: input.threadId,
               }),
             ),
-        } satisfies Partial<ThreadManagementService["Service"]>),
-        Layer.mock(ProviderRegistry)({
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
-        } satisfies Partial<ProviderRegistry["Service"]>),
-        Layer.mock(ScheduledTaskService)({
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
-        } satisfies Partial<ScheduledTaskService["Service"]>),
-        Layer.mock(ProviderAdapterRegistryV2)({
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
-        } satisfies Partial<ProviderAdapterRegistryV2["Service"]>),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
         NodeCrypto.layer,
       ),
     ),
   );
 
   await Effect.gen(function* () {
-    const service = yield* OrchestratorMcpService;
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
     const attached = yield* service.readThread(makeScope(), { threadId: foreignThreadId });
     expect(attached.thread.threadId).toBe(foreignThreadId);
     expect(attached.items.map((item) => item.text)).toEqual(["Foreign thread said hello"]);

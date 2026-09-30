@@ -53,11 +53,11 @@
     {
       "driver": "opencode",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=1.14.19 <2.0.0",
-      "recommendedVersion": "1.14.19",
+      "recommendedRange": ">=2.0.18",
       "ranges": [
-        { "range": ">=2.0.0", "status": "broken" },
-        { "range": ">=1.14.19 <2.0.0", "status": "supported" },
+        { "range": ">=2.0.18", "status": "supported" },
+        { "range": ">=2.0.0 <2.0.18", "status": "unsupported" },
+        { "range": ">=1.14.19 <2.0.0", "status": "graceful" },
         { "range": "<1.14.19", "status": "broken" }
       ]
     },

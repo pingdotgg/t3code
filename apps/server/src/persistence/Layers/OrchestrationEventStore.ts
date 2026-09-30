@@ -29,11 +29,7 @@ import {
   toPersistenceSqlError,
   type OrchestrationEventStoreError,
 } from "../Errors.ts";
-import {
-  OrchestrationEventStore,
-  type OrchestrationEventStoreShape,
-  type UnsequencedProjectEvent,
-} from "../Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
 
 const encodeProjectIcon = Schema.encodeSync(ProjectIconOverride);
 const decodeProjectEvent = Schema.decodeUnknownEffect(ApplicationProjectEvent);
@@ -160,7 +156,9 @@ function rowToApplicationStoredEvent(
   return row.aggregate_kind === "project" ? rowToProjectEvent(row) : rowToV2StoredEvent(row);
 }
 
-function inferActorKind(event: UnsequencedProjectEvent): typeof ActorKind.Type {
+function inferActorKind(
+  event: OrchestrationEventStore.UnsequencedProjectEvent,
+): typeof ActorKind.Type {
   if (event.commandId !== null && event.commandId.startsWith("provider:")) {
     return "provider";
   }
@@ -251,30 +249,31 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
-  const appendProjectEvent: OrchestrationEventStoreShape["appendProjectEvent"] = (event) =>
-    appendProjectEventRow({
-      eventId: event.eventId,
-      streamId: event.aggregateId,
-      type: event.type,
-      causationEventId: event.causationEventId,
-      correlationId: event.correlationId,
-      actorKind: inferActorKind(event),
-      occurredAt: event.occurredAt,
-      commandId: event.commandId,
-      payloadJson:
-        event.type === "project.deleted" || !event.payload.projectIcon
-          ? event.payload
-          : { ...event.payload, projectIcon: encodeProjectIcon(event.payload.projectIcon) },
-      metadataJson: event.metadata,
-    }).pipe(
-      Effect.flatMap((row) => decodeProjectEvent(row)),
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "OrchestrationEventStore.appendProjectEvent:insert",
-          "OrchestrationEventStore.appendProjectEvent:decode",
+  const appendProjectEvent: OrchestrationEventStore.OrchestrationEventStoreShape["appendProjectEvent"] =
+    (event) =>
+      appendProjectEventRow({
+        eventId: event.eventId,
+        streamId: event.aggregateId,
+        type: event.type,
+        causationEventId: event.causationEventId,
+        correlationId: event.correlationId,
+        actorKind: inferActorKind(event),
+        occurredAt: event.occurredAt,
+        commandId: event.commandId,
+        payloadJson:
+          event.type === "project.deleted" || !event.payload.projectIcon
+            ? event.payload
+            : { ...event.payload, projectIcon: encodeProjectIcon(event.payload.projectIcon) },
+        metadataJson: event.metadata,
+      }).pipe(
+        Effect.flatMap((row) => decodeProjectEvent(row)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "OrchestrationEventStore.appendProjectEvent:insert",
+            "OrchestrationEventStore.appendProjectEvent:decode",
+          ),
         ),
-      ),
-    );
+      );
 
   const readApplicationRows = (input: {
     readonly afterSequence: number;
@@ -324,13 +323,14 @@ const makeEventStore = Effect.gen(function* () {
       LIMIT ${input.limit}
     `;
 
-  const appendAgentEvents: OrchestrationEventStoreShape["appendAgentEvents"] = (input) =>
-    Effect.forEach(
-      input.events,
-      (event) =>
-        Effect.gen(function* () {
-          const encoded = yield* encodeV2EventJson(event);
-          const rows = yield* sql<{ readonly sequence: number }>`
+  const appendAgentEvents: OrchestrationEventStore.OrchestrationEventStoreShape["appendAgentEvents"] =
+    (input) =>
+      Effect.forEach(
+        input.events,
+        (event) =>
+          Effect.gen(function* () {
+            const encoded = yield* encodeV2EventJson(event);
+            const rows = yield* sql<{ readonly sequence: number }>`
             INSERT INTO orchestration_events (
               event_id,
               aggregate_kind,
@@ -370,23 +370,25 @@ const makeEventStore = Effect.gen(function* () {
             )
             RETURNING sequence
           `;
-          return yield* decodeV2StoredEvent({
-            sequence: rows[0]?.sequence,
-            commandId: input.commandId ?? null,
-            event,
-          });
-        }),
-      { concurrency: 1 },
-    ).pipe(
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "OrchestrationEventStore.appendAgentEvents:insert",
-          "OrchestrationEventStore.appendAgentEvents:decode",
+            return yield* decodeV2StoredEvent({
+              sequence: rows[0]?.sequence,
+              commandId: input.commandId ?? null,
+              event,
+            });
+          }),
+        { concurrency: 1 },
+      ).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "OrchestrationEventStore.appendAgentEvents:insert",
+            "OrchestrationEventStore.appendAgentEvents:decode",
+          ),
         ),
-      ),
-    );
+      );
 
-  const readAgentEvents: OrchestrationEventStoreShape["readAgentEvents"] = (input) => {
+  const readAgentEvents: OrchestrationEventStore.OrchestrationEventStoreShape["readAgentEvents"] = (
+    input,
+  ) => {
     const totalLimit =
       input?.limit === undefined ? Number.MAX_SAFE_INTEGER : Math.max(0, Math.floor(input.limit));
     if (totalLimit === 0) {
@@ -434,12 +436,13 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
-  const getAgentReplayStats: OrchestrationEventStoreShape["getAgentReplayStats"] = (input) =>
-    sql<{
-      readonly eventCount: number;
-      readonly rawPayloadBytes: number;
-      readonly hasCreateEvent: number;
-    }>`
+  const getAgentReplayStats: OrchestrationEventStore.OrchestrationEventStoreShape["getAgentReplayStats"] =
+    (input) =>
+      sql<{
+        readonly eventCount: number;
+        readonly rawPayloadBytes: number;
+        readonly hasCreateEvent: number;
+      }>`
       SELECT
         COUNT(*) AS "eventCount",
         COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes",
@@ -456,15 +459,17 @@ const makeEventStore = Effect.gen(function* () {
         LIMIT ${Math.max(0, Math.floor(input.maxEvents)) + 1}
       )
     `.pipe(
-      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
-      Effect.map((rows) => ({
-        eventCount: rows[0]?.eventCount ?? 0,
-        rawPayloadBytes: rows[0]?.rawPayloadBytes ?? 0,
-        hasCreateEvent: (rows[0]?.hasCreateEvent ?? 0) !== 0,
-      })),
-    );
+        Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getAgentReplayStats:query")),
+        Effect.map((rows) => ({
+          eventCount: rows[0]?.eventCount ?? 0,
+          rawPayloadBytes: rows[0]?.rawPayloadBytes ?? 0,
+          hasCreateEvent: (rows[0]?.hasCreateEvent ?? 0) !== 0,
+        })),
+      );
 
-  const getReplayStats: OrchestrationEventStoreShape["getReplayStats"] = (input) =>
+  const getReplayStats: OrchestrationEventStore.OrchestrationEventStoreShape["getReplayStats"] = (
+    input,
+  ) =>
     sql<{ readonly eventCount: number; readonly rawPayloadBytes: number }>`
       SELECT
         COUNT(*) AS "eventCount",
@@ -484,8 +489,9 @@ const makeEventStore = Effect.gen(function* () {
       })),
     );
 
-  const latestAgentSequence: OrchestrationEventStoreShape["latestAgentSequence"] = (threadId) =>
-    sql<{ readonly sequence: number | null }>`
+  const latestAgentSequence: OrchestrationEventStore.OrchestrationEventStoreShape["latestAgentSequence"] =
+    (threadId) =>
+      sql<{ readonly sequence: number | null }>`
       SELECT MAX(sequence) AS sequence
       FROM orchestration_events
       ${
@@ -497,9 +503,9 @@ const makeEventStore = Effect.gen(function* () {
         AND aggregate_kind = 'thread'
         ${threadId === undefined ? sql`` : sql`AND stream_id = ${threadId}`}
     `.pipe(
-      Effect.map((rows) => rows[0]?.sequence ?? 0),
-      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
-    );
+        Effect.map((rows) => rows[0]?.sequence ?? 0),
+        Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.latestAgentSequence:query")),
+      );
 
   // The OR planner otherwise scans every V2 event instead of seeking the final sequence.
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
@@ -562,7 +568,7 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
-  const streamProjectedApplicationEvents: OrchestrationEventStoreShape["streamProjectedApplicationEvents"] =
+  const streamProjectedApplicationEvents: OrchestrationEventStore.OrchestrationEventStoreShape["streamProjectedApplicationEvents"] =
     (input) =>
       replayAndBufferProjectedLiveEvents({
         subscribe: PubSub.subscribe(committedEvents),
@@ -582,9 +588,8 @@ const makeEventStore = Effect.gen(function* () {
         ),
       );
 
-  const streamApplicationEvents: OrchestrationEventStoreShape["streamApplicationEvents"] = (
-    input,
-  ) => streamProjectedApplicationEvents({ ...input, project: (event) => event });
+  const streamApplicationEvents: OrchestrationEventStore.OrchestrationEventStoreShape["streamApplicationEvents"] =
+    (input) => streamProjectedApplicationEvents({ ...input, project: (event) => event });
 
   return {
     appendProjectEvent,
@@ -598,7 +603,10 @@ const makeEventStore = Effect.gen(function* () {
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
     streamProjectedApplicationEvents,
-  } satisfies OrchestrationEventStoreShape;
+  } satisfies OrchestrationEventStore.OrchestrationEventStoreShape;
 });
 
-export const OrchestrationEventStoreLive = Layer.effect(OrchestrationEventStore, makeEventStore);
+export const OrchestrationEventStoreLive = Layer.effect(
+  OrchestrationEventStore.OrchestrationEventStore,
+  makeEventStore,
+);

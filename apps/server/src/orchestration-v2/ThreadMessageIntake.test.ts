@@ -24,7 +24,7 @@ import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
 const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
@@ -32,7 +32,7 @@ const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 const failingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
-  Layer.mock(ThreadManagementService)({
+  Layer.mock(ThreadManagementService.ThreadManagementService)({
     dispatch: (command) => {
       captured.push(command);
       return Effect.fail(
@@ -350,7 +350,7 @@ it.effect("releases claimed copies when the command was already rejected", () =>
       },
     }).pipe(
       Effect.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: (command) =>
             Effect.fail(
               new OrchestratorCommandPreviouslyRejectedError({
@@ -420,7 +420,7 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
       },
     }).pipe(
       Effect.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -476,7 +476,7 @@ it.effect("releases claimed copies when the recorded answer has no attachments",
       },
     }).pipe(
       Effect.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -527,7 +527,7 @@ it.effect("releases claimed copies when the recorded answer was text-only", () =
       },
     }).pipe(
       Effect.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
         }),
       ),
@@ -585,7 +585,7 @@ it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
       },
     }).pipe(
       Effect.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           // A fresh commit records exactly the attachments this attempt claimed.
           dispatch: (command) =>
             Effect.succeed({
@@ -707,7 +707,7 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
     );
     const retry = yield* dispatchCommand(command).pipe(
       Effect.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: (dispatched) => {
             captured.push(dispatched);
             return Effect.succeed({ sequence: 1, storedEvents: [] });

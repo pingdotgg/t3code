@@ -22,16 +22,15 @@ import {
   createEnvironmentQueryAtomFamily,
 } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
-import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
+import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 
 export {
   type PullRequestDiffLoadError,
   PullRequestDiffCredentialRejectedError,
-  PullRequestDiffLoader,
-  pullRequestDiffLoaderLayer,
 } from "./pullRequestDiffHttp.ts";
+export * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 
 /** @public Required to name the error in consumers' inferred pull request results. */
 export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
@@ -155,7 +154,10 @@ export function pullRequestDetailToVcsStatus(
  * pull request are order-sensitive. Confirmed label and reviewer edits update cached state.
  */
 export function createPullRequestEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | PullRequestDiffLoader | R, E>,
+  runtime: Atom.AtomRuntime<
+    EnvironmentRegistry | PullRequestDiffLoader.PullRequestDiffLoader | R,
+    E
+  >,
 ) {
   const refreshes = createPullRequestRefreshAtomFamily(runtime);
   const commandScheduler = createAtomCommandScheduler();
@@ -261,8 +263,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       execute: (input: PullRequestDiffInput) =>
         Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor;
-          const loader = yield* PullRequestDiffLoader;
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
           const prepared = yield* SubscriptionRef.get(supervisor.prepared);
           if (Option.isNone(prepared)) {
             return yield* new EnvironmentHttpConnectionNotReadyError({

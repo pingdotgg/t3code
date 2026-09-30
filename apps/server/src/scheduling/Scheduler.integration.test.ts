@@ -18,13 +18,13 @@ import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
-import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
-import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { workerLive as recoveryWorker } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Scheduler from "./Scheduler.ts";
 
 it.effect.each(["on time", "after restart"])(
@@ -87,13 +87,13 @@ it.effect.each(["on time", "after restart"])(
       const receipts = yield* Queue.unbounded<"task" | "retry">();
       const dependencies = Layer.mergeAll(
         NodeCrypto.layer,
-        Layer.mock(ThreadLaunchService)({
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: () =>
             Queue.offer(receipts, "task").pipe(
               Effect.andThen(Effect.die("fixture dispatch failure")),
             ),
         }),
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: (command) =>
             Ref.update(commands, (all) => [...all, command]).pipe(
               Effect.andThen(
@@ -103,18 +103,20 @@ it.effect.each(["on time", "after restart"])(
               Effect.as({ sequence: 1, storedEvents: [] }),
             ),
         }),
-        Layer.mock(ProjectionStoreV2)({
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getLimitRecoveryCandidates: () =>
             Ref.get(current).pipe(
               Effect.map((shell) => (shell.status === "failed" ? [shell] : [])),
             ),
         }),
-        Layer.mock(ServerSettingsService)({ getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        }),
       );
-      const workers = Layer.mergeAll(ScheduledTasks.layer, recoveryWorker).pipe(
-        Layer.provide(dependencies),
-        Layer.provide(Scheduler.layer),
-      );
+      const workers = Layer.mergeAll(
+        ScheduledTasks.layer,
+        UsageLimitRecoveryWorker.workerLive,
+      ).pipe(Layer.provide(dependencies), Layer.provide(Scheduler.layer));
       yield* Effect.gen(function* () {
         const tasks = yield* ScheduledTasks.ScheduledTaskService;
         const { task } = yield* tasks.upsert({

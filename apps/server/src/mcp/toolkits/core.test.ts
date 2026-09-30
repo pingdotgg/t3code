@@ -16,7 +16,7 @@ import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
-import { McpInvocationContext, type McpInvocationScope } from "../McpInvocationContext.ts";
+import * as McpInvocationContext from "../McpInvocationContext.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
@@ -76,7 +76,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
 });
 
 const threadId = ThreadId.make("mcp-core-thread");
-const scope: McpInvocationScope = {
+const scope: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("mcp-core-environment"),
   threadId,
   providerSessionId: "mcp-core-session",
@@ -104,7 +104,10 @@ it.effect("checks capability before accessing services through the production re
     const result = yield* server
       .callTool({ name: "t3_thread_organize", arguments: { action: "pin" } })
       .pipe(
-        Effect.provideService(McpInvocationContext, { ...scope, capabilities: new Set<never>() }),
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...scope,
+          capabilities: new Set<never>(),
+        }),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
     expect(result.structuredContent).toMatchObject({ code: "capability_denied" });
@@ -125,7 +128,7 @@ it.effect("returns a bounded public failure without serializing storage causes",
     const result = yield* server
       .callTool({ name: "t3_thread_organize", arguments: { action: "pin" } })
       .pipe(
-        Effect.provideService(McpInvocationContext, scope),
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
     expect(result.structuredContent).toEqual({

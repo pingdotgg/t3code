@@ -4,7 +4,7 @@ import { OrchestrationV2Command, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { materializeFixtureInput } from "./fixtures/shared.ts";
@@ -51,7 +51,7 @@ describe("orchestrator replay fixture contract", () => {
               fixtureInput: fixture.buildInput(),
               driver: provider.driver,
               modelSelection: provider.modelSelection,
-            }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+            }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
             const firstCommand = materialized.commands[0];
 
             assert.equal(transcript.scenario, provider.recordedScenario ?? fixture.name);

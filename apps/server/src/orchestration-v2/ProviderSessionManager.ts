@@ -32,10 +32,10 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { IdAllocatorV2 } from "./IdAllocator.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
-import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
   ProviderAdapterEventStreamError,
   ProviderAdapterV2RuntimePolicy,
@@ -44,8 +44,8 @@ import {
   type ProviderAdapterV2EventSubscription,
   type ProviderAdapterV2SessionRuntime,
 } from "./ProviderAdapter.ts";
-import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -293,18 +293,18 @@ export const layerWithOptions = (
 ): Layer.Layer<
   ProviderSessionManagerV2,
   never,
-  | EventSinkV2
+  | EventSink.EventSinkV2
   | FileSystem.FileSystem
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
   | McpSessionRegistry.McpSessionRegistry
-  | ProjectionStoreV2
-  | ProviderEventIngestorV2
-  | ProviderAdapterRegistryV2
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderEventIngestor.ProviderEventIngestorV2
+  | ProviderAdapterRegistry.ProviderAdapterRegistryV2
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
-      const registry = yield* ProviderAdapterRegistryV2;
+      const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const fileSystem = yield* FileSystem.FileSystem;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       /**
@@ -317,10 +317,10 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const providerEventIngestor = yield* ProviderEventIngestorV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
           if (Option.isNone(serverSettings)) return { browser: true, device: false };

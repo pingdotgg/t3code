@@ -27,26 +27,18 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 
-import { SecretStoreReadError, ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
-import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import {
-  layerMemory as projectionStoreMemoryLayer,
-  ProjectionStoreV2,
-} from "../orchestration-v2/ProjectionStore.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { ProjectService } from "../project/ProjectService.ts";
-import {
-  make,
-  makeAgentAwarenessPublishWorker,
-  resolveAgentAwarenessRelayActiveThreadIds,
-  shouldPublishAgentAwarenessEvent,
-} from "./AgentAwarenessRelay.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -109,7 +101,7 @@ describe("startup agent activity", () => {
     const newCompleted = ThreadId.make("new-completed");
     const oldFailed = ThreadId.make("old-failed");
     const newFailed = ThreadId.make("new-failed");
-    const ids = resolveAgentAwarenessRelayActiveThreadIds({
+    const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
       environmentId: EnvironmentId.make("relay-env"),
       startedAt,
       projects: [{ id: PROJECT_ID, title: "Project" }],
@@ -165,13 +157,16 @@ const makeTestRelay = Effect.fnUntraced(function* (
         ],
   );
   const secretReads: string[] = [];
-  const secrets = ServerSecretStore.of({
+  const secrets = ServerSecretStore.ServerSecretStore.of({
     get: (name) =>
       Effect.suspend(() => {
         secretReads.push(name);
         if (options.failSecretRead?.(name)) {
           return Effect.fail(
-            new SecretStoreReadError({ resource: name, cause: "temporary read failure" }),
+            new ServerSecretStore.SecretStoreReadError({
+              resource: name,
+              cause: "temporary read failure",
+            }),
           );
         }
         return Effect.succeed(Option.fromUndefinedOr(values.get(name)));
@@ -185,7 +180,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const shellReads: ThreadId[] = [];
   // Catch-up publishes read the whole shell once each.
   const catchUp = { shellSnapshotReads: 0 };
-  const threads = ThreadManagementService.of({
+  const threads = ThreadManagementService.ThreadManagementService.of({
     getThreadShell: (threadId) =>
       Effect.sync(() => shellReads.push(threadId)).pipe(
         Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
@@ -243,14 +238,14 @@ const makeTestRelay = Effect.fnUntraced(function* (
     },
     { preconnect: () => {} },
   );
-  const relay = yield* make.pipe(
-    Effect.provideService(ServerSecretStore, secrets),
-    Effect.provideService(ThreadManagementService, threads),
-    Effect.provideService(ServerEnvironment, {
+  const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+    Effect.provideService(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-environment")),
       getDescriptor: unused(),
     }),
-    Effect.provideService(ProjectService, {
+    Effect.provideService(ProjectService.ProjectService, {
       create: unused,
       bootstrap: unused,
       update: unused,
@@ -288,7 +283,7 @@ describe("AgentAwarenessRelay", () => {
       "thread.visited",
       "thread.pinned",
     ] as const) {
-      assert.isFalse(shouldPublishAgentAwarenessEvent({ type }));
+      assert.isFalse(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
     for (const type of [
       "run.created",
@@ -304,18 +299,20 @@ describe("AgentAwarenessRelay", () => {
       "thread.unarchived",
       "thread.deleted",
     ] as const) {
-      assert.isTrue(shouldPublishAgentAwarenessEvent({ type }));
+      assert.isTrue(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
   });
 
   it("does not publish imported thread creation as new agent activity", () => {
     assert.isFalse(
-      shouldPublishAgentAwarenessEvent({
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
         type: "thread.created",
         payload: { historyOrigin: "v1_import" },
       }),
     );
-    assert.isTrue(shouldPublishAgentAwarenessEvent({ type: "thread.created", payload: {} }));
+    assert.isTrue(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type: "thread.created", payload: {} }),
+    );
   });
 
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
@@ -326,7 +323,7 @@ describe("AgentAwarenessRelay", () => {
       const releaseRerun = yield* Deferred.make<void>();
       const processed: Array<{ threadId: ThreadId; revision: number }> = [];
       let revision = 1;
-      const worker = yield* makeAgentAwarenessPublishWorker((threadId) =>
+      const worker = yield* AgentAwarenessRelay.makeAgentAwarenessPublishWorker((threadId) =>
         Effect.gen(function* () {
           const currentRevision = revision;
           const index = processed.length;
@@ -687,7 +684,7 @@ describe("AgentAwarenessRelay", () => {
   );
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
       // The relay pulls the next event only after it has handled the previous one.
       const pulls = yield* Queue.unbounded<void>();
@@ -843,12 +840,12 @@ describe("AgentAwarenessRelay", () => {
         publications.map((publication) => publication.state?.phase),
         ["running", "completed"],
       );
-    }).pipe(Effect.scoped, Effect.provide(projectionStoreMemoryLayer)),
+    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
 });
 
 describe.sequential("startup catch-up", () => {
-  const link = (secrets: ServerSecretStore["Service"]) =>
+  const link = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
     Effect.all(
       [
         secrets.set(RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")),
@@ -857,7 +854,7 @@ describe.sequential("startup catch-up", () => {
       ],
       { discard: true },
     );
-  const enablePublishing = (secrets: ServerSecretStore["Service"]) =>
+  const enablePublishing = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
     secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
   const linkChecks = (secretReads: ReadonlyArray<string>) =>
     secretReads.filter((name) => name === RELAY_URL_SECRET).length;

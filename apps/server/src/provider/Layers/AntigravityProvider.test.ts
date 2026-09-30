@@ -18,7 +18,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import {
   buildAntigravityModelsFromSession,
@@ -110,7 +110,7 @@ const testLayer = Layer.merge(
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     shouldRunScopeWork: () => Effect.succeed(false),
   }),
-  ServerSettingsService.layerTest(),
+  ServerSettings.layerTest(),
 );
 
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;

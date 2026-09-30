@@ -22,10 +22,10 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
-import { PullRequestService } from "../pullRequest/PullRequestService.ts";
-import { ServerActivation } from "../serverActivation.ts";
-import { OrchestratorV2, type OrchestratorV2Shape } from "./Orchestrator.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as ServerActivation from "../serverActivation.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
 import type { PullRequestTestThread } from "./testkit/pullRequestFixtures.ts";
 
@@ -152,7 +152,7 @@ function makeSummary(
 }
 
 interface HarnessOptions {
-  readonly invalidate?: PullRequestService["Service"]["invalidate"];
+  readonly invalidate?: PullRequestService.PullRequestService["Service"]["invalidate"];
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
@@ -172,21 +172,24 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
 
-  const summary: PullRequestService["Service"]["summary"] = (input, readOptions) =>
+  const summary: PullRequestService.PullRequestService["Service"]["summary"] = (
+    input,
+    readOptions,
+  ) =>
     Effect.gen(function* () {
       assert.strictEqual(readOptions?.recoverTransientFailure, false);
       yield* Ref.update(summaryCalls, (calls) => [...calls, input]);
       return yield* options.summary?.(input) ?? Effect.succeed(makeSummary(input));
     });
 
-  const stack: PullRequestService["Service"]["stack"] = (input, readOptions) =>
+  const stack: PullRequestService.PullRequestService["Service"]["stack"] = (input, readOptions) =>
     Effect.gen(function* () {
       assert.strictEqual(readOptions?.includeDetails, false);
       yield* Ref.update(stackCalls, (calls) => [...calls, input]);
       return yield* options.stack?.(input) ?? Effect.succeed(null);
     });
 
-  const dispatch: OrchestratorV2Shape["dispatch"] = (command) => {
+  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
     if (command.type === "thread.pull-request-link.sync") {
       return Ref.update(syncCommands, (recorded) => [...recorded, command]).pipe(
         Effect.as({ sequence: 1, storedEvents: [] }),
@@ -201,12 +204,12 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   };
 
   const dependencies = Layer.mergeAll(
-    Layer.mock(PullRequestService)({
+    Layer.mock(PullRequestService.PullRequestService)({
       summary,
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
     }),
-    Layer.mock(ProjectionStoreV2)({
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
       // Mirrors the store's filter: active threads that have at least one link.
       getThreadsWithPullRequests: () =>
         Queue.offer(snapshotReads, undefined).pipe(
@@ -224,7 +227,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
           ),
         ),
     }),
-    Layer.mock(OrchestratorV2)({
+    Layer.mock(Orchestrator.OrchestratorV2)({
       getShellSnapshot: () =>
         Ref.update(shellSnapshotReads, (count) => count + 1).pipe(
           Effect.andThen(Effect.die(new Error("pull request sync must not read the shell"))),
@@ -232,7 +235,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       dispatch,
       streamDomainEvents: Stream.empty,
     }),
-    Layer.succeed(ServerActivation, Deferred.await(activation)),
+    Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
   );
 

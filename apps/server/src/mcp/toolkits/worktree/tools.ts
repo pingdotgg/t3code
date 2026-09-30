@@ -8,15 +8,18 @@ import {
   WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { GitWorkflowService } from "../../../git/GitWorkflowService.ts";
-import { ProjectService } from "../../../project/ProjectService.ts";
-import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { WorktreeMcpService } from "../../WorktreeMcpService.ts";
+import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 
-const dependencies = [McpInvocationContext.McpInvocationContext, WorktreeMcpService];
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  WorktreeMcpService.WorktreeMcpService,
+];
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
@@ -66,9 +69,9 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   failureMode: "return",
   dependencies: [
     McpInvocationContext.McpInvocationContext,
-    ThreadManagementService,
-    ProjectService,
-    GitWorkflowService,
+    ThreadManagementService.ThreadManagementService,
+    ProjectService.ProjectService,
+    GitWorkflowService.GitWorkflowService,
   ],
 })
   .annotate(Tool.Readonly, true)

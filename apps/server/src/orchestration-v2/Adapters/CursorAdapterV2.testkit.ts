@@ -19,27 +19,12 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../../config.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as ServerConfig from "../../config.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
-import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import {
-  CURSOR_AGENT_SDK_PROTOCOL,
-  CURSOR_PROVIDER,
-  CursorAgentSdkRunner,
-  CursorAgentSdkRunnerError,
-  isCursorCancellationError,
-  loggedCursorAgentOptions,
-  loggedCursorSendOptions,
-  makeCursorAgentSdkRunner,
-  type CursorAgentSdkOpenInput,
-  type CursorAgentSdkProtocolLogEvent,
-  type CursorAgentSdkRun,
-  type CursorAgentSdkRunnerShape,
-  type CursorAgentSdkSendInput,
-  type CursorAgentSdkSession,
-} from "./CursorAgentSdk.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
   CURSOR_DRIVER_KIND,
@@ -51,8 +36,8 @@ import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
 
 const CursorAgentSdkReplayTranscript = Schema.Struct({
-  provider: Schema.Literal(CURSOR_PROVIDER),
-  protocol: Schema.Literal(CURSOR_AGENT_SDK_PROTOCOL),
+  provider: Schema.Literal(CursorAgentSdk.CURSOR_PROVIDER),
+  protocol: Schema.Literal(CursorAgentSdk.CURSOR_AGENT_SDK_PROTOCOL),
   version: Schema.String,
   scenario: Schema.String,
   metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -139,7 +124,7 @@ export const CursorAgentSdkReplayError = Schema.Union([
 ]);
 export type CursorAgentSdkReplayError = typeof CursorAgentSdkReplayError.Type;
 const isCursorAgentSdkReplayError = Schema.is(CursorAgentSdkReplayError);
-const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
+const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
 export const CursorOrchestratorReplayHarnessError = Schema.Union([
   CursorAgentSdkReplayError,
@@ -147,9 +132,9 @@ export const CursorOrchestratorReplayHarnessError = Schema.Union([
 ]);
 export type CursorOrchestratorReplayHarnessError = typeof CursorOrchestratorReplayHarnessError.Type;
 
-type CursorProtocolPayload = CursorAgentSdkProtocolLogEvent["payload"];
+type CursorProtocolPayload = CursorAgentSdk.CursorAgentSdkProtocolLogEvent["payload"];
 type CursorOutgoingFrame = Extract<
-  CursorAgentSdkProtocolLogEvent,
+  CursorAgentSdk.CursorAgentSdkProtocolLogEvent,
   { readonly direction: "outgoing" }
 >["payload"];
 
@@ -214,11 +199,11 @@ function replayRunnerError(
   transcript: CursorAgentSdkReplayTranscript,
   cause: unknown,
   method: string,
-): CursorAgentSdkRunnerError {
+): CursorAgentSdk.CursorAgentSdkRunnerError {
   if (isCursorAgentSdkRunnerError(cause)) {
     return cause;
   }
-  return new CursorAgentSdkRunnerError({
+  return new CursorAgentSdk.CursorAgentSdkRunnerError({
     method,
     cause: isCursorAgentSdkReplayError(cause)
       ? cause
@@ -232,7 +217,7 @@ function replayRunnerError(
 
 export function makeCursorAgentSdkReplayRunner(
   transcript: CursorAgentSdkReplayTranscript,
-): CursorAgentSdkRunnerShape {
+): CursorAgentSdk.CursorAgentSdkRunnerShape {
   let cursor = 0;
   let failure: CursorAgentSdkReplayError | null = null;
   let cursorAdvanced = makeSignal();
@@ -308,7 +293,7 @@ export function makeCursorAgentSdkReplayRunner(
 
   const waitForRun = <Error>(
     runId: string,
-    sendInput: CursorAgentSdkSendInput<Error>,
+    sendInput: CursorAgentSdk.CursorAgentSdkSendInput<Error>,
   ): Effect.Effect<RunResult, CursorAgentSdkReplayError> =>
     Effect.gen(function* () {
       while (true) {
@@ -424,17 +409,17 @@ export function makeCursorAgentSdkReplayRunner(
     });
 
   return {
-    open: (input: CursorAgentSdkOpenInput) =>
+    open: (input: CursorAgentSdk.CursorAgentSdkOpenInput) =>
       Effect.try({
         try: () => {
           assertOutbound({
             type: "agent.open",
             operation: input.operation,
             ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
-            options: loggedCursorAgentOptions(input.options),
+            options: CursorAgentSdk.loggedCursorAgentOptions(input.options),
           });
           const opened = consumeInbound("agent.opened");
-          const session: CursorAgentSdkSession = {
+          const session: CursorAgentSdk.CursorAgentSdkSession = {
             agentId: opened.agentId,
             send: (sendInput) =>
               Effect.try({
@@ -442,10 +427,10 @@ export function makeCursorAgentSdkReplayRunner(
                   assertOutbound({
                     type: "run.start",
                     message: sendInput.message,
-                    options: loggedCursorSendOptions(sendInput.options),
+                    options: CursorAgentSdk.loggedCursorSendOptions(sendInput.options),
                   });
                   const started = consumeInbound("run.started");
-                  const run: CursorAgentSdkRun = {
+                  const run: CursorAgentSdk.CursorAgentSdkRun = {
                     runId: started.runId,
                     agentId: started.agentId,
                     wait: waitForRun(started.runId, sendInput).pipe(
@@ -510,20 +495,20 @@ export function makeCursorAgentSdkReplayRunner(
 function makeCursorAgentSdkReplayLayer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
     readonly assertCompleteOnFinalize?: boolean;
   },
-): Layer.Layer<CursorAgentSdkRunner> {
+): Layer.Layer<CursorAgentSdk.CursorAgentSdkRunner> {
   const runner = options?.runner ?? makeCursorAgentSdkReplayRunner(transcript);
   return Layer.effect(
-    CursorAgentSdkRunner,
+    CursorAgentSdk.CursorAgentSdkRunner,
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
         options?.assertCompleteOnFinalize === false
           ? Effect.void
           : runner.assertComplete.pipe(Effect.orDie),
       );
-      return CursorAgentSdkRunner.of(runner);
+      return CursorAgentSdk.CursorAgentSdkRunner.of(runner);
     }),
   );
 }
@@ -531,7 +516,7 @@ function makeCursorAgentSdkReplayLayer(
 function makeReplayServerConfig(
   scenario: string,
 ): Effect.Effect<
-  ServerConfig["Service"],
+  ServerConfig.ServerConfig["Service"],
   PlatformError.PlatformError,
   FileSystem.FileSystem | Path.Path
 > {
@@ -616,12 +601,12 @@ function makeReplayServerConfig(
 export function makeCursorProviderAdapterRegistryReplayLayer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
   const serverConfigLayer = Layer.effect(
-    ServerConfig,
+    ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   // Skill discovery also scans user roots under HOME; an empty HOME keeps
@@ -634,7 +619,7 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
       return { HOME: home };
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return makeProviderAdapterRegistryDriverLayer({
+  return ProviderAdapterRegistry.makeDriverLayer({
     drivers: [CursorAdapterV2Driver],
     configMap: {
       [CURSOR_DEFAULT_INSTANCE_ID]: {
@@ -648,7 +633,7 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
         serverConfigLayer,
         hostEnvironmentLayer,
         NodeServices.layer,
-        idAllocatorLayer,
+        IdAllocator.layer,
       ),
     ),
   );
@@ -670,7 +655,7 @@ export const CursorOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
   CursorAgentSdkReplayTranscript,
   CursorOrchestratorReplayHarnessError
 > = {
-  driver: CURSOR_PROVIDER,
+  driver: CursorAgentSdk.CURSOR_PROVIDER,
   decodeTranscript: (transcript) =>
     decodeCursorAgentSdkReplayTranscript(transcript).pipe(
       Effect.mapError(
@@ -883,7 +868,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
   let awaitingToolStart = input.interruptAfterToolStart === true;
   let heldUntilCancel: Array<ProviderReplayEntry> | undefined;
 
-  const recordFrame = (event: CursorAgentSdkProtocolLogEvent) =>
+  const recordFrame = (event: CursorAgentSdk.CursorAgentSdkProtocolLogEvent) =>
     Effect.sync(() => {
       const frame = event.payload;
       if (frame.type === "agent.open") {
@@ -915,7 +900,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         heldUntilCancel = [];
       }
     });
-  const runner = makeCursorAgentSdkRunner(() => recordFrame);
+  const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
 
   const awaitSignal = (signal: Deferred.Deferred<void>, description: string) =>
     Deferred.await(signal).pipe(
@@ -926,7 +911,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     );
 
   const runPrompt = Effect.fnUntraced(function* (
-    session: CursorAgentSdkSession,
+    session: CursorAgentSdk.CursorAgentSdkSession,
     prompt: string,
     index: number,
   ) {
@@ -976,7 +961,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
       Effect.catchIf(
         (error) =>
           (input.interruptAfterToolStart === true || interruptAfterRunStart) &&
-          isCursorCancellationError(error.cause),
+          CursorAgentSdk.isCursorCancellationError(error.cause),
         (error) =>
           Effect.sync(() => {
             entries.push({
@@ -989,7 +974,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     );
   });
 
-  const runPrompts = (session: CursorAgentSdkSession, from: number, to: number) =>
+  const runPrompts = (session: CursorAgentSdk.CursorAgentSdkSession, from: number, to: number) =>
     Effect.forEach(
       input.prompts.slice(from, to),
       (prompt, offset) => runPrompt(session, prompt, from + offset),
@@ -1000,7 +985,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
     open:
       | { readonly operation: "create" }
       | { readonly operation: "resume"; readonly agentId: string },
-    use: (session: CursorAgentSdkSession) => Effect.Effect<A, E>,
+    use: (session: CursorAgentSdk.CursorAgentSdkSession) => Effect.Effect<A, E>,
   ) =>
     Effect.acquireUseRelease(
       runner.open({
@@ -1024,8 +1009,8 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
   }
 
   return {
-    provider: CURSOR_PROVIDER,
-    protocol: CURSOR_AGENT_SDK_PROTOCOL,
+    provider: CursorAgentSdk.CURSOR_PROVIDER,
+    protocol: CursorAgentSdk.CURSOR_AGENT_SDK_PROTOCOL,
     version: "1",
     scenario: input.scenario,
     metadata: {

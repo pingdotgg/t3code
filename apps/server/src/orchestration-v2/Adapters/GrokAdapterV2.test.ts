@@ -22,17 +22,14 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "../../provider/Layers/GrokProvider.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import * as ProviderInstanceRegistry from "../../provider/Services/ProviderInstanceRegistry.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
-import {
-  layerFromProjectStore as runtimePolicyLayerFromProjectStore,
-  RuntimePolicyV2,
-} from "../RuntimePolicy.ts";
+import * as RuntimePolicy from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import {
   AcpProviderCapabilitiesV2,
@@ -317,7 +314,7 @@ describe("Grok launch permission mode", () => {
   const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-grok-v2-launch-",
   }).pipe(Layer.provide(NodeServices.layer));
-  const testLayer = Layer.mergeAll(NodeServices.layer, idAllocatorLayer, serverConfigLayer);
+  const testLayer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, serverConfigLayer);
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
@@ -344,8 +341,8 @@ describe("Grok launch permission mode", () => {
         childProcessSpawner,
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
-        idAllocator: yield* IdAllocatorV2,
-        serverConfig: yield* ServerConfig,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
         selfInvocation: yield* resolveSelfInvocation(),
       });
       yield* adapter
@@ -395,7 +392,7 @@ describe("Grok launch permission mode", () => {
       const threadId = ThreadId.make("grok-launch-test");
       const modelSelection = { instanceId, model: "grok-build" } as const;
       const resolved = yield* Effect.gen(function* () {
-        const runtimePolicy = yield* RuntimePolicyV2;
+        const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
         return yield* runtimePolicy.resolve({
           thread: {
             createdBy: "user",
@@ -424,14 +421,14 @@ describe("Grok launch permission mode", () => {
         });
       }).pipe(
         Effect.provide(
-          runtimePolicyLayerFromProjectStore.pipe(
+          RuntimePolicy.layerFromProjectStore.pipe(
             Layer.provide(
               Layer.mock(ProjectStore.ProjectStoreV2)({
                 get: () => Effect.die("the thread has a worktree"),
               }),
             ),
             Layer.provide(
-              Layer.mock(ProviderInstanceRegistry)({
+              Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                 getInstance: () =>
                   Effect.succeed({
                     snapshot: { getSnapshot: Effect.succeed(snapshot) },

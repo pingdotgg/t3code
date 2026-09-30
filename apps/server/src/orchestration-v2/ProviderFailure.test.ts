@@ -17,7 +17,7 @@ import {
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
 } from "./ProviderFailure.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 
@@ -170,7 +170,7 @@ it("does not serialize arbitrary provider causes", () => {
 
 it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>
   Effect.gen(function* () {
-    const idAllocator = yield* IdAllocatorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const driver = ProviderDriverKind.make("codex");
     const runId = RunId.make("run:provider-failure-id");
     const base = {
@@ -205,5 +205,5 @@ it.effect("keys terminal failure items by provider turn across retries and fallb
     assert.notEqual(firstAttempt.id, retriedAttempt.id);
     assert.equal(firstAttempt.id, ingestorFallback.id);
     assert.equal(firstAttempt.ordinal, 101);
-  }).pipe(Effect.provide(idAllocatorLayer)),
+  }).pipe(Effect.provide(IdAllocator.layer)),
 );

@@ -10,13 +10,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
-import { layer as idAllocatorLayer } from "../orchestration-v2/IdAllocator.ts";
-import { OrchestratorProjectionError, OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
-import { ProviderSessionRuntimeRepository } from "../persistence/ProviderSessionRuntime.ts";
-import { AgentSessionImporter, layer } from "./AgentSessionImporter.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
+import * as AgentSessionImporter from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
-import { ProjectService } from "./ProjectService.ts";
+import * as ProjectService from "./ProjectService.ts";
 
 const projectId = ProjectId.make("agent-session-import-project");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -59,25 +59,25 @@ it.effect("imports messages once and preserves the provider native resume bindin
         },
       }),
   });
-  const testLayer = layer.pipe(
+  const testLayer = AgentSessionImporter.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(AgentSessionScanner.AgentSessionScanner, scanner),
-        Layer.mock(ProjectService)({
+        Layer.mock(ProjectService.ProjectService)({
           getById: () =>
             Effect.succeed(
               Option.some({ id: projectId, workspaceRoot: "/workspace/project" } as never),
             ),
         }),
-        Layer.mock(OrchestratorV2)({
+        Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>
             imported
               ? Effect.succeed({
                   thread: { id: threadId, projectId, historyOrigin: "v1_import" },
                 } as never)
-              : Effect.fail(new OrchestratorProjectionError({ threadId })),
+              : Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId })),
         }),
-        Layer.mock(EventSinkV2)({
+        Layer.mock(EventSink.EventSinkV2)({
           write: (input) =>
             Effect.sync(() => {
               writes.push(input.events);
@@ -85,18 +85,18 @@ it.effect("imports messages once and preserves the provider native resume bindin
               return [];
             }),
         }),
-        Layer.mock(ProviderSessionRuntimeRepository)({
+        Layer.mock(ProviderSessionRuntime.ProviderSessionRuntimeRepository)({
           list: () => Effect.succeed([]),
           upsert: (input) => Effect.sync(() => void upserts.push(input)),
           recordImportedTranscript: (input) => Effect.sync(() => void recorded.push(input)),
         }),
-        idAllocatorLayer,
+        IdAllocator.layer,
       ),
     ),
   );
 
   return Effect.gen(function* () {
-    const importer = yield* AgentSessionImporter;
+    const importer = yield* AgentSessionImporter.AgentSessionImporter;
     expect(yield* importer.importRecentAgentThreads({ projectId })).toEqual({
       importedCount: 1,
       skippedCount: 0,

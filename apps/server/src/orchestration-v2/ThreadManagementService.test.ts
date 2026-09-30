@@ -18,26 +18,9 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
-import {
-  LegacyV1ThreadImporter,
-  LegacyV1ThreadImportError,
-} from "./legacy/LegacyV1ThreadImporter.ts";
-import { OrchestratorProjectionError, OrchestratorV2 } from "./Orchestrator.ts";
-import {
-  existingThreadIdsForCommand,
-  layer,
-  layerWithLegacyImporter,
-  ThreadManagementDurableRunProjectionError,
-  ThreadManagementProjectThreadsListError,
-  ThreadManagementProjectionLoadError,
-  ThreadManagementRunNotFoundError,
-  ThreadManagementService,
-  ThreadManagementThreadNotFoundError,
-  ThreadManagementThreadNotInterruptibleError,
-  ThreadManagementThreadArchivedError,
-  ThreadManagementNoSteerableRunError,
-  withCreationProvenance,
-} from "./ThreadManagementService.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -59,7 +42,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   };
 
   expect(
-    withCreationProvenance(command, {
+    ThreadManagementService.withCreationProvenance(command, {
       createdBy: "user",
       creationSource: "web",
     }),
@@ -78,7 +61,7 @@ it("leaves commands that do not create durable authored content unchanged", () =
   };
 
   expect(
-    withCreationProvenance(command, {
+    ThreadManagementService.withCreationProvenance(command, {
       createdBy: "user",
       creationSource: "web",
     }),
@@ -91,7 +74,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   const parentThreadId = ThreadId.make("thread:thread-management:parent");
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.create",
       createdBy: "user",
       creationSource: "web",
@@ -111,7 +94,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.archive",
       commandId: CommandId.make("command:thread-management:archive"),
       threadId: targetThreadId,
@@ -121,7 +104,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   // Read-state commands skip transcript hydration entirely: they fire on
   // every activity bump while a thread is open and never touch messages.
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.visit",
       commandId: CommandId.make("command:thread-management:visit"),
       threadId: targetThreadId,
@@ -130,7 +113,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.mark-unread",
       commandId: CommandId.make("command:thread-management:mark-unread"),
       threadId: targetThreadId,
@@ -138,7 +121,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.fork",
       createdBy: "user",
       creationSource: "web",
@@ -153,7 +136,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([sourceThreadId]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.merge_back",
       createdBy: "user",
       creationSource: "web",
@@ -168,7 +151,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([sourceThreadId, targetThreadId]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "delegated_task.request",
       createdBy: "agent",
       creationSource: "provider",
@@ -187,7 +170,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([parentThreadId]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "delegated_task.wake-policy",
       commandId: CommandId.make("command:thread-management:wake-policy"),
       parentThreadId,
@@ -197,7 +180,7 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
   ).toEqual([parentThreadId]);
 
   expect(
-    existingThreadIdsForCommand({
+    ThreadManagementService.existingThreadIdsForCommand({
       type: "thread.created.record",
       commandId: CommandId.make("command:thread-management:record"),
       parentThreadId,
@@ -216,24 +199,27 @@ it("derives thread management messages from structural error attributes", () => 
   const messageId = MessageId.make("message:thread-management:errors");
   const infrastructureCause = new Error("private sqlite detail");
 
-  const threadNotFound = new ThreadManagementThreadNotFoundError({
+  const threadNotFound = new ThreadManagementService.ThreadManagementThreadNotFoundError({
     projectId,
     threadId,
   });
   expect(threadNotFound).toMatchObject({ projectId, threadId });
   expect(threadNotFound.message).toBe(`Thread ${threadId} was not found in project ${projectId}.`);
 
-  const runNotFound = new ThreadManagementRunNotFoundError({ threadId, runId });
+  const runNotFound = new ThreadManagementService.ThreadManagementRunNotFoundError({
+    threadId,
+    runId,
+  });
   expect(runNotFound).toMatchObject({ threadId, runId });
   expect(runNotFound.message).toBe(`Run ${runId} does not belong to thread ${threadId}.`);
 
-  const archived = new ThreadManagementThreadArchivedError({
+  const archived = new ThreadManagementService.ThreadManagementThreadArchivedError({
     threadId,
   });
   expect(archived).toMatchObject({ threadId });
   expect(archived.message).toBe(`Thread ${threadId} is archived and cannot receive messages.`);
 
-  const notSteerable = new ThreadManagementNoSteerableRunError({
+  const notSteerable = new ThreadManagementService.ThreadManagementNoSteerableRunError({
     threadId,
     mode: "restart",
   });
@@ -245,14 +231,14 @@ it("derives thread management messages from structural error attributes", () => 
     `Thread ${threadId} has no running turn that can be restarted.`,
   );
 
-  const notInterruptible = new ThreadManagementThreadNotInterruptibleError({
+  const notInterruptible = new ThreadManagementService.ThreadManagementThreadNotInterruptibleError({
     threadId,
     runId,
   });
   expect(notInterruptible).toMatchObject({ threadId, runId });
   expect(notInterruptible.message).toBe(`Run ${runId} is not currently interruptible.`);
 
-  const listFailure = new ThreadManagementProjectThreadsListError({
+  const listFailure = new ThreadManagementService.ThreadManagementProjectThreadsListError({
     projectId,
     cause: infrastructureCause,
   });
@@ -260,10 +246,11 @@ it("derives thread management messages from structural error attributes", () => 
   expect(listFailure.message).toBe(`Unable to list threads in project ${projectId}.`);
   expect(listFailure.message).not.toContain(infrastructureCause.message);
 
-  const durableProjectionFailure = new ThreadManagementDurableRunProjectionError({
-    threadId,
-    messageId,
-  });
+  const durableProjectionFailure =
+    new ThreadManagementService.ThreadManagementDurableRunProjectionError({
+      threadId,
+      messageId,
+    });
   expect(durableProjectionFailure).toMatchObject({ threadId, messageId });
   expect(durableProjectionFailure.message).toBe(
     `Message ${messageId} was accepted on thread ${threadId} without a durable run projection.`,
@@ -274,23 +261,23 @@ it.effect("classifies projection infrastructure failures separately from a missi
   const projectId = ProjectId.make("project:thread-management:projection-failure");
   const threadId = ThreadId.make("thread:thread-management:projection-failure");
   const infrastructureCause = new Error("sqlite read failed");
-  const projectionError = new OrchestratorProjectionError({
+  const projectionError = new Orchestrator.OrchestratorProjectionError({
     threadId,
     cause: infrastructureCause,
   });
-  const testLayer = layer.pipe(
+  const testLayer = ThreadManagementService.layer.pipe(
     Layer.provide(
-      Layer.mock(OrchestratorV2)({
+      Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.fail(projectionError),
       }),
     ),
   );
 
   return Effect.gen(function* () {
-    const service = yield* ThreadManagementService;
+    const service = yield* ThreadManagementService.ThreadManagementService;
     const error = yield* Effect.flip(service.getProjectThread({ projectId, threadId }));
 
-    expect(error).toBeInstanceOf(ThreadManagementProjectionLoadError);
+    expect(error).toBeInstanceOf(ThreadManagementService.ThreadManagementProjectionLoadError);
     expect(error).toMatchObject({
       projectId,
       threadId,
@@ -311,19 +298,19 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
       deletedAt: null,
     },
   } as OrchestrationV2ThreadProjection;
-  const testLayer = layer.pipe(
+  const testLayer = ThreadManagementService.layer.pipe(
     Layer.provide(
-      Layer.mock(OrchestratorV2)({
+      Layer.mock(Orchestrator.OrchestratorV2)({
         getThreadProjection: () => Effect.succeed(projection),
       }),
     ),
   );
 
   return Effect.gen(function* () {
-    const service = yield* ThreadManagementService;
+    const service = yield* ThreadManagementService.ThreadManagementService;
     const error = yield* Effect.flip(service.getProjectThread({ projectId, threadId }));
 
-    expect(error).toBeInstanceOf(ThreadManagementThreadNotFoundError);
+    expect(error).toBeInstanceOf(ThreadManagementService.ThreadManagementThreadNotFoundError);
     expect(error).toMatchObject({ projectId, threadId });
     expect("cause" in error).toBe(false);
   }).pipe(Effect.provide(testLayer));
@@ -331,28 +318,28 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
 
 it.effect("preserves failed legacy materialization when reading checkpoint context", () => {
   const threadId = ThreadId.make("thread:thread-management:checkpoint-import-failure");
-  const importError = new LegacyV1ThreadImportError({
+  const importError = new LegacyV1ThreadImporter.LegacyV1ThreadImportError({
     threadId,
     operation: "hydrate transcript for",
     cause: new Error("checkpoint import failed"),
   });
-  const testLayer = layerWithLegacyImporter.pipe(
+  const testLayer = ThreadManagementService.layerWithLegacyImporter.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(OrchestratorV2)({
+        Layer.mock(Orchestrator.OrchestratorV2)({
           getCheckpointContext: () =>
             Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
         }),
-        Layer.mock(LegacyV1ThreadImporter)({
+        Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
           ensureTranscript: () => Effect.fail(importError),
         }),
       ),
     ),
   );
   return Effect.gen(function* () {
-    const service = yield* ThreadManagementService;
+    const service = yield* ThreadManagementService.ThreadManagementService;
     const error = yield* service.getCheckpointContext(threadId).pipe(Effect.flip);
-    expect(error).toBeInstanceOf(OrchestratorProjectionError);
+    expect(error).toBeInstanceOf(Orchestrator.OrchestratorProjectionError);
     expect(error).toMatchObject({ threadId, cause: importError });
   }).pipe(Effect.provide(testLayer));
 });
@@ -378,9 +365,9 @@ for (const scenario of [
           thread: { id: threadId, projectId, deletedAt: null },
           runs: status === "missing" ? [] : [{ id: runId, status }],
         }) as unknown as OrchestrationV2ThreadProjection;
-      const testLayer = layer.pipe(
+      const testLayer = ThreadManagementService.layer.pipe(
         Layer.provide(
-          Layer.mock(OrchestratorV2)({
+          Layer.mock(Orchestrator.OrchestratorV2)({
             getThreadRecords: () =>
               Effect.gen(function* () {
                 reads += 1;
@@ -398,7 +385,9 @@ for (const scenario of [
           }),
         ),
       );
-      const service = yield* ThreadManagementService.pipe(Effect.provide(testLayer));
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(testLayer),
+      );
       const fiber = yield* service
         .waitForThread({
           projectId,
@@ -414,7 +403,7 @@ for (const scenario of [
       if (scenario.finalStatus === "missing") {
         expect(result._tag).toBe("Failure");
         expect(result).toMatchObject({
-          failure: expect.any(ThreadManagementRunNotFoundError),
+          failure: expect.any(ThreadManagementService.ThreadManagementRunNotFoundError),
         });
         expect(result).toMatchObject({
           failure: { threadId, runId },

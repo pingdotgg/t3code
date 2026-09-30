@@ -49,16 +49,13 @@ import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "../../provider/Layers/ProviderEventLoggers.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
-import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
-import { OrchestratorV2 } from "../Orchestrator.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as IdAllocator from "../IdAllocator.ts";
+import * as EffectWorker from "../EffectWorker.ts";
+import * as Orchestrator from "../Orchestrator.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
@@ -69,28 +66,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
-import {
-  buildCodexTurnStartParams,
-  canReuseCodexContextUsage,
-  CODEX_DEFAULT_INSTANCE_ID,
-  CODEX_DRIVER_KIND,
-  CODEX_THREAD_CONFIG,
-  codexBackgroundCommandDetail,
-  codexFileChangeApprovalPrompt,
-  codexProviderTurnTokenUsage,
-  codexSkillMentionText,
-  codexThreadRuntimeParams,
-  CodexAppServerClientFactory,
-  codexAppServerClientFactoryFromSettingsLayer,
-  type CodexAppServerClientFactoryShape,
-  createCodexAdapterV2,
-  makeCodexAdapterV2,
-  makeCodexAppServerProtocolLogger,
-  makeCodexAppServerSpawnCommand,
-  projectCodexDynamicToolItem,
-  resolveCodexForkBoundary,
-  resolveCodexRollbackTurnCount,
-} from "./CodexAdapterV2.ts";
+import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import {
   makeReplayServerConfig,
   makeCodexProviderAdapterRegistryReplayLayer,
@@ -110,10 +86,10 @@ describe("Codex context usage compatibility", () => {
   };
   it("retains measured usage for reasoning-only changes in either direction", () => {
     const low: ModelSelection = { ...previous, options: [{ id: "reasoningEffort", value: "low" }] };
-    assert.isTrue(canReuseCodexContextUsage(previous, low));
-    assert.isTrue(canReuseCodexContextUsage(low, previous));
+    assert.isTrue(CodexAdapterV2.canReuseCodexContextUsage(previous, low));
+    assert.isTrue(CodexAdapterV2.canReuseCodexContextUsage(low, previous));
     assert.isTrue(
-      canReuseCodexContextUsage(low, {
+      CodexAdapterV2.canReuseCodexContextUsage(low, {
         ...low,
         options: [{ id: "reasoningEffort", value: "high" }],
       }),
@@ -126,7 +102,7 @@ describe("Codex context usage compatibility", () => {
       { ...previous, options: [{ id: "contextWindow", value: "32k" }] },
       { ...previous, options: [{ id: "customOption", value: "value" }] },
     ])
-      assert.isFalse(canReuseCodexContextUsage(previous, next));
+      assert.isFalse(CodexAdapterV2.canReuseCodexContextUsage(previous, next));
   });
 });
 
@@ -142,26 +118,33 @@ describe("CodexAdapterV2 file change approvals", () => {
       },
     };
     assert.equal(
-      codexFileChangeApprovalPrompt({ reason: "  Update configuration. ", fileChanges }),
+      CodexAdapterV2.codexFileChangeApprovalPrompt({
+        reason: "  Update configuration. ",
+        fileChanges,
+      }),
       "Update configuration.",
     );
     assert.equal(
-      codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
+      CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
       "add /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
     );
   });
 
   it("falls back to a nonblank grant root and omits empty details", () => {
     assert.equal(
-      codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
+      CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
       "/workspace",
     );
     assert.equal(
-      codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
+      CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
       "/workspace",
     );
     assert.isUndefined(
-      codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " ", fileChanges: {} }),
+      CodexAdapterV2.codexFileChangeApprovalPrompt({
+        reason: " ",
+        grantRoot: " ",
+        fileChanges: {},
+      }),
     );
   });
 
@@ -172,7 +155,7 @@ describe("CodexAdapterV2 file change approvals", () => {
         { type: "add" as const, content: "" },
       ]),
     );
-    const detail = codexFileChangeApprovalPrompt({ fileChanges });
+    const detail = CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges });
     assert.equal(detail?.split("\n").length, 21);
     assert.isTrue(detail?.startsWith("add /tmp/file-00.ts") ?? false);
     assert.isTrue(detail?.endsWith("+5 more") ?? false);
@@ -182,7 +165,7 @@ describe("CodexAdapterV2 file change approvals", () => {
 
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
-    const usage = codexProviderTurnTokenUsage(
+    const usage = CodexAdapterV2.codexProviderTurnTokenUsage(
       {
         total: {
           totalTokens: 180_000,
@@ -422,7 +405,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       const build = (
         runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
       ) =>
-        buildCodexTurnStartParams({
+        CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: `native-${runtimeMode}`,
           codexInput: [{ type: "text", text: "test" }],
           runtimePolicy: {
@@ -458,7 +441,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("preserves explicit Codex turn policy overrides", () =>
     Effect.gen(function* () {
-      const params = yield* buildCodexTurnStartParams({
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-override",
         codexInput: [{ type: "text", text: "test" }],
         runtimePolicy: {
@@ -483,7 +466,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("adds default-mode developer instructions when the T3 MCP server is attached", () =>
     Effect.gen(function* () {
-      const params = yield* buildCodexTurnStartParams({
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-orchestration-instructions",
         codexInput: [{ type: "text", text: "delegate this task" }],
         runtimePolicy: {
@@ -512,7 +495,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("omits default-mode collaboration settings without the T3 MCP server", () =>
     Effect.gen(function* () {
-      const params = yield* buildCodexTurnStartParams({
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-default-without-t3-mcp",
         codexInput: [{ type: "text", text: "implement this task" }],
         runtimePolicy: {
@@ -533,7 +516,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("adds T3 plan-mode developer instructions when the T3 MCP server is attached", () =>
     Effect.gen(function* () {
-      const params = yield* buildCodexTurnStartParams({
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-plan-with-t3-mcp",
         codexInput: [{ type: "text", text: "plan this task" }],
         runtimePolicy: {
@@ -559,7 +542,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("keeps Codex in plan mode without referencing unavailable T3 MCP tools", () =>
     Effect.gen(function* () {
-      const params = yield* buildCodexTurnStartParams({
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-plan-without-t3-mcp",
         codexInput: [{ type: "text", text: "plan this task" }],
         runtimePolicy: {
@@ -581,7 +564,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
   it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
     Effect.gen(function* () {
-      const params = yield* buildCodexTurnStartParams({
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-model-options",
         codexInput: [{ type: "text", text: "test" }],
         runtimePolicy: {
@@ -608,7 +591,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
 
       // ChatGPT token sharing rejects service tiers, so managed sessions drop a stale pick.
-      const managed = yield* buildCodexTurnStartParams({
+      const managed = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-model-options",
         codexInput: [{ type: "text", text: "test" }],
         runtimePolicy: {
@@ -643,7 +626,7 @@ describe("CodexAdapterV2 process spawning", () => {
 
     try {
       assert.deepEqual(
-        codexThreadRuntimeParams({
+        CodexAdapterV2.codexThreadRuntimeParams({
           threadId,
           modelSelection: { model: "gpt-5.4" },
           runtimePolicy: {
@@ -675,7 +658,7 @@ describe("CodexAdapterV2 process spawning", () => {
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
-      const command = yield* makeCodexAppServerSpawnCommand({
+      const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
         command: "codex",
         args: ["app-server", "argument with spaces"],
         cwd: "C:\\workspace",
@@ -709,7 +692,7 @@ describe("CodexAdapterV2 process spawning", () => {
 
   it.effect("uses direct execution for native executables", () =>
     Effect.gen(function* () {
-      const command = yield* makeCodexAppServerSpawnCommand({
+      const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
         command: "codex.exe",
         args: ["app-server"],
       });
@@ -736,15 +719,18 @@ describe("CodexAdapterV2 process spawning", () => {
           PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
         );
       });
-      const factory = yield* CodexAppServerClientFactory.pipe(
-        Effect.provide(codexAppServerClientFactoryFromSettingsLayer),
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+        Effect.provide(CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+        Effect.provideService(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
       );
       const open = (environment: NodeJS.ProcessEnv) =>
         factory
           .open({
-            instanceId: CODEX_DEFAULT_INSTANCE_ID,
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
             threadId: ThreadId.make("thread-launch-args"),
             providerSessionId: ProviderSessionId.make("provider-session-launch-args"),
             runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
@@ -780,8 +766,8 @@ describe("CodexAdapterV2 process spawning", () => {
         );
       });
       const path = yield* Path.Path;
-      const adapter = yield* createCodexAdapterV2({
-        instanceId: CODEX_DEFAULT_INSTANCE_ID,
+      const adapter = yield* CodexAdapterV2.createCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         displayName: undefined,
         environment: [],
         enabled: true,
@@ -789,12 +775,15 @@ describe("CodexAdapterV2 process spawning", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
-            codexAppServerClientFactoryFromSettingsLayer,
+            CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
             ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-binary-home-" }),
           ),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(ProviderEventLoggers, NoOpProviderEventLoggers),
+        Effect.provideService(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
       );
 
       yield* adapter
@@ -808,7 +797,7 @@ describe("CodexAdapterV2 process spawning", () => {
 
       assert.deepEqual(spawnedCommands, [path.join(NodeOS.homedir(), "bin", "codex")]);
     }).pipe(
-      Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+      Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
       Effect.provideService(HostProcessPlatform, "linux"),
     ),
   );
@@ -828,16 +817,22 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
       },
       result: { content: [] },
     };
-    assert.equal(projectCodexDynamicToolItem(call).title, "Inspect Saga music screen");
     assert.equal(
-      projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }).title,
+      CodexAdapterV2.projectCodexDynamicToolItem(call).title,
+      "Inspect Saga music screen",
+    );
+    assert.equal(
+      CodexAdapterV2.projectCodexDynamicToolItem({ ...call, arguments: { title: "  " } }).title,
       undefined,
     );
-    assert.equal(projectCodexDynamicToolItem({ ...call, server: "github" }).title, undefined);
+    assert.equal(
+      CodexAdapterV2.projectCodexDynamicToolItem({ ...call, server: "github" }).title,
+      undefined,
+    );
   });
 
   it("preserves native browser and app icons alongside MCP tool output", () => {
-    const browser = projectCodexDynamicToolItem({
+    const browser = CodexAdapterV2.projectCodexDynamicToolItem({
       type: "mcpToolCall",
       id: "browser",
       server: "browser",
@@ -865,7 +860,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
       faviconUrl: "https://example.com/icon.png",
     });
     assert.equal(browser.toolSource?.name, "Chrome");
-    const app = projectCodexDynamicToolItem({
+    const app = CodexAdapterV2.projectCodexDynamicToolItem({
       type: "mcpToolCall",
       id: "app",
       server: "computer",
@@ -890,7 +885,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
   });
 
   it("preserves MCP arguments and prefers structured output", () => {
-    const projection = projectCodexDynamicToolItem({
+    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
       type: "mcpToolCall",
       id: "call-create-threads",
       server: "t3-code",
@@ -920,7 +915,7 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
   });
 
   it("preserves namespaced dynamic tool output", () => {
-    const projection = projectCodexDynamicToolItem({
+    const projection = CodexAdapterV2.projectCodexDynamicToolItem({
       type: "dynamicToolCall",
       id: "call-dynamic",
       namespace: "workspace",
@@ -957,7 +952,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
       };
       const threadId = ThreadId.make("thread-1");
       const providerSessionId = ProviderSessionId.make("provider-session-1");
-      const protocolLogger = makeCodexAppServerProtocolLogger({
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
         nativeEventLogger: logger,
         threadId,
         providerSessionId,
@@ -1013,7 +1008,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
   it.effect("filters streaming frames before redaction without losing decode failures", () =>
     Effect.gen(function* () {
       const writes: Array<unknown> = [];
-      const protocolLogger = makeCodexAppServerProtocolLogger({
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
         nativeEventLogger: {
           filePath: "/tmp/events.log",
           write: (event) =>
@@ -1060,7 +1055,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
   it.effect("retains redacted failures when large payloads are summarized", () =>
     Effect.gen(function* () {
       const writes: Array<unknown> = [];
-      const protocolLogger = makeCodexAppServerProtocolLogger({
+      const protocolLogger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
         nativeEventLogger: {
           filePath: "/tmp/events.log",
           write: (event) =>
@@ -1110,13 +1105,13 @@ describe("CodexAdapterV2 rollback mapping", () => {
       const providerThreadId = ProviderThreadId.make("provider-thread-codex-rollback");
       const providerThread: OrchestrationV2ProviderThread = {
         id: providerThreadId,
-        driver: CODEX_DRIVER_KIND,
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
         providerInstanceId: ProviderInstanceId.make("codex"),
         providerSessionId: ProviderSessionId.make("provider-session-codex-rollback"),
         appThreadId: ThreadId.make("thread-codex-rollback"),
         ownerNodeId: null,
         nativeThreadRef: {
-          driver: CODEX_DRIVER_KIND,
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
           nativeId: "native-thread-codex-rollback",
           strength: "strong",
         },
@@ -1139,7 +1134,7 @@ describe("CodexAdapterV2 rollback mapping", () => {
         nodeId: NodeId.make(`node-${id}`),
         runAttemptId: RunAttemptId.make(`run-attempt-${id}`),
         nativeTurnRef: {
-          driver: CODEX_DRIVER_KIND,
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
           nativeId: `native-${id}`,
           strength: "strong",
         },
@@ -1153,7 +1148,7 @@ describe("CodexAdapterV2 rollback mapping", () => {
       const runningTurn = providerTurn("provider-turn-running", 3, "running");
       const interruptedTurn = providerTurn("provider-turn-interrupted", 4, "interrupted");
 
-      const numTurns = yield* resolveCodexRollbackTurnCount({
+      const numTurns = yield* CodexAdapterV2.resolveCodexRollbackTurnCount({
         providerThread,
         target: {
           type: "provider_turn",
@@ -1173,13 +1168,13 @@ describe("CodexAdapterV2 fork boundary", () => {
   const providerThreadId = ProviderThreadId.make("provider-thread-codex-fork-boundary");
   const makeProviderThread = (now: DateTime.Utc): OrchestrationV2ProviderThread => ({
     id: providerThreadId,
-    driver: CODEX_DRIVER_KIND,
+    driver: CodexAdapterV2.CODEX_DRIVER_KIND,
     providerInstanceId: ProviderInstanceId.make("codex"),
     providerSessionId: ProviderSessionId.make("provider-session-codex-fork-boundary"),
     appThreadId: ThreadId.make("thread-codex-fork-boundary"),
     ownerNodeId: null,
     nativeThreadRef: {
-      driver: CODEX_DRIVER_KIND,
+      driver: CodexAdapterV2.CODEX_DRIVER_KIND,
       nativeId: "native-thread-codex-fork-boundary",
       strength: "strong",
     },
@@ -1204,8 +1199,8 @@ describe("CodexAdapterV2 fork boundary", () => {
     runAttemptId: RunAttemptId.make(`run-attempt-${id}`),
     nativeTurnRef:
       nativeId === null
-        ? { driver: CODEX_DRIVER_KIND, nativeId: null, strength: "none" }
-        : { driver: CODEX_DRIVER_KIND, nativeId, strength: "strong" },
+        ? { driver: CodexAdapterV2.CODEX_DRIVER_KIND, nativeId: null, strength: "none" }
+        : { driver: CodexAdapterV2.CODEX_DRIVER_KIND, nativeId, strength: "strong" },
     ordinal,
     status: "completed",
     startedAt: now,
@@ -1218,7 +1213,7 @@ describe("CodexAdapterV2 fork boundary", () => {
       const firstTurn = makeProviderTurn("provider-turn-first", 1, "native-turn-first", now);
       const secondTurn = makeProviderTurn("provider-turn-second", 2, "native-turn-second", now);
 
-      const boundary = yield* resolveCodexForkBoundary({
+      const boundary = yield* CodexAdapterV2.resolveCodexForkBoundary({
         sourceProviderThread: makeProviderThread(now),
         sourceProviderTurns: [firstTurn, secondTurn],
         providerTurnId: firstTurn.id,
@@ -1238,7 +1233,7 @@ describe("CodexAdapterV2 fork boundary", () => {
       const firstTurn = makeProviderTurn("provider-turn-first", 1, "native-turn-first", now);
       const secondTurn = makeProviderTurn("provider-turn-second", 2, "native-turn-second", now);
 
-      const boundary = yield* resolveCodexForkBoundary({
+      const boundary = yield* CodexAdapterV2.resolveCodexForkBoundary({
         sourceProviderThread: makeProviderThread(now),
         sourceProviderTurns: [firstTurn, secondTurn],
         providerTurnId: secondTurn.id,
@@ -1258,7 +1253,7 @@ describe("CodexAdapterV2 fork boundary", () => {
       const firstTurn = makeProviderTurn("provider-turn-first", 1, null, now);
       const secondTurn = makeProviderTurn("provider-turn-second", 2, "native-turn-second", now);
 
-      const boundary = yield* resolveCodexForkBoundary({
+      const boundary = yield* CodexAdapterV2.resolveCodexForkBoundary({
         sourceProviderThread: makeProviderThread(now),
         sourceProviderTurns: [firstTurn, secondTurn],
         providerTurnId: firstTurn.id,
@@ -1278,7 +1273,7 @@ describe("CodexAdapterV2 fork boundary", () => {
       };
       const secondTurn = makeProviderTurn("provider-turn-second", 2, "native-turn-second", now);
 
-      const boundary = yield* resolveCodexForkBoundary({
+      const boundary = yield* CodexAdapterV2.resolveCodexForkBoundary({
         sourceProviderThread: makeProviderThread(now),
         sourceProviderTurns: [firstTurn, secondTurn],
         providerTurnId: firstTurn.id,
@@ -1293,7 +1288,7 @@ describe("CodexAdapterV2 fork boundary", () => {
     Effect.gen(function* () {
       const now = yield* DateTime.now;
 
-      const boundary = yield* resolveCodexForkBoundary({
+      const boundary = yield* CodexAdapterV2.resolveCodexForkBoundary({
         sourceProviderThread: makeProviderThread(now),
         targetThreadId: ThreadId.make("thread-codex-fork-target"),
       });
@@ -1308,7 +1303,7 @@ describe("CodexAdapterV2 fork boundary", () => {
       const firstTurn = makeProviderTurn("provider-turn-first", 1, "native-turn-first", now);
 
       const error = yield* Effect.flip(
-        resolveCodexForkBoundary({
+        CodexAdapterV2.resolveCodexForkBoundary({
           sourceProviderThread: makeProviderThread(now),
           sourceProviderTurns: [firstTurn],
           providerTurnId: ProviderTurnId.make("provider-turn-missing"),
@@ -1337,7 +1332,7 @@ describe("CodexAdapterV2 skill mentions", () => {
       ["5€review", "5€review"],
     ];
     for (const [text, expected] of cases) {
-      assert.equal(codexSkillMentionText(text), expected, text);
+      assert.equal(CodexAdapterV2.codexSkillMentionText(text), expected, text);
     }
   });
 });
@@ -1345,7 +1340,7 @@ describe("CodexAdapterV2 skill mentions", () => {
 describe("CodexAdapterV2 background command detail", () => {
   it("summarizes command, exit code, and output tail", () => {
     assert.equal(
-      codexBackgroundCommandDetail({
+      CodexAdapterV2.codexBackgroundCommandDetail({
         command: "sleep 20 && echo CODEX_BG_WAKE_DONE",
         exitCode: 0,
         aggregatedOutput: "CODEX_BG_WAKE_DONE\n",
@@ -1357,7 +1352,7 @@ describe("CodexAdapterV2 background command detail", () => {
 
   it("omits the output section and exit code when absent", () => {
     assert.equal(
-      codexBackgroundCommandDetail({
+      CodexAdapterV2.codexBackgroundCommandDetail({
         command: "sleep 20",
         exitCode: null,
         aggregatedOutput: null,
@@ -1367,7 +1362,7 @@ describe("CodexAdapterV2 background command detail", () => {
   });
 
   it("truncates long commands and keeps only the output tail", () => {
-    const detail = codexBackgroundCommandDetail({
+    const detail = CodexAdapterV2.codexBackgroundCommandDetail({
       command: "x".repeat(300),
       exitCode: 1,
       aggregatedOutput: `${"y".repeat(2000)}TAIL`,
@@ -1381,7 +1376,7 @@ describe("CodexAdapterV2 background command detail", () => {
 
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 const CODEX_TEST_MODEL_SELECTION = {
-  instanceId: CODEX_DEFAULT_INSTANCE_ID,
+  instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
   model: "gpt-5.4",
 } satisfies ModelSelection;
 const CODEX_TEST_RUNTIME_POLICY = ProviderAdapterV2RuntimePolicy.make({
@@ -1401,7 +1396,7 @@ function makeCodexTestAppThread(input: {
     id: input.threadId,
     projectId: ProjectId.make(`project-${input.threadId}`),
     title: "Codex continuation test",
-    providerInstanceId: CODEX_DEFAULT_INSTANCE_ID,
+    providerInstanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
     modelSelection: CODEX_TEST_MODEL_SELECTION,
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -1510,7 +1505,11 @@ function codexReplayPreamble(input: {
     {
       type: "expect_outbound",
       label: "thread/start",
-      frame: { id: 2, method: "thread/start", params: { config: CODEX_THREAD_CONFIG } },
+      frame: {
+        id: 2,
+        method: "thread/start",
+        params: { config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+      },
     },
     {
       type: "emit_inbound",
@@ -1624,16 +1623,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const continuationRequests: Array<ProviderContinuationRequest> = [];
-      const clientFactory: CodexAppServerClientFactoryShape = {
+      const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
           Layer.build(CodexReplay.layerReplay(transcript)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterOpenSessionError({
-                  driver: CODEX_DRIVER_KIND,
+                  driver: CodexAdapterV2.CODEX_DRIVER_KIND,
                   providerSessionId: openInput.providerSessionId,
                   cause,
                 }),
@@ -1658,8 +1657,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ),
           ),
       };
-      const adapter = makeCodexAdapterV2({
-        instanceId: CODEX_DEFAULT_INSTANCE_ID,
+      const adapter = CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
@@ -1830,7 +1829,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.equal(requests.filter((method) => method === "turn/start").length, 1);
         assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     );
   }
 
@@ -1864,7 +1863,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("unsubscribes from the native thread when it is unloaded", () =>
@@ -1902,7 +1901,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.isDefined(harness.runtime.unloadThread);
       yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
       assert.deepEqual(requests, ["initialize", "thread/start", "thread/unsubscribe"]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("keeps the app-server failure as the cause when an unload is rejected", () =>
@@ -1936,7 +1935,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(error._tag, "ProviderAdapterProtocolError");
       const cause = error._tag === "ProviderAdapterProtocolError" ? error.cause : undefined;
       assert.equal((cause as { _tag?: string } | undefined)?._tag, "CodexAppServerRequestError");
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
@@ -2015,8 +2014,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: prompt,
         }),
       );
-      const providerTurnId = (yield* IdAllocatorV2).derive.providerTurn({
-        driver: CODEX_DRIVER_KIND,
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
         nativeTurnId,
       });
       const interrupt = yield* harness.runtime
@@ -2030,7 +2029,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("settles Stop when a queued native turn fails before starting", () =>
@@ -2096,8 +2095,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: prompt,
         }),
       );
-      const providerTurnId = (yield* IdAllocatorV2).derive.providerTurn({
-        driver: CODEX_DRIVER_KIND,
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
         nativeTurnId,
       });
       const interrupt = yield* harness.runtime
@@ -2112,7 +2111,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(interruptSent, "A terminal native turn must not receive turn/interrupt");
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("bounds Stop when a queued native turn never starts", () =>
@@ -2158,8 +2157,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: prompt,
         }),
       );
-      const providerTurnId = (yield* IdAllocatorV2).derive.providerTurn({
-        driver: CODEX_DRIVER_KIND,
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
         nativeTurnId,
       });
       const interrupt = yield* harness.runtime
@@ -2172,7 +2171,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(interruptSent, "An unstarted native turn must not receive turn/interrupt");
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("sends currency-sigil skill mentions to Codex as $ mentions", () =>
@@ -2221,8 +2220,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId: harness.threadId,
         runId: turnInput.runId,
         providerThread: harness.providerThread,
-        providerTurnId: (yield* IdAllocatorV2).derive.providerTurn({
-          driver: CODEX_DRIVER_KIND,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
           nativeTurnId,
         }),
         message: {
@@ -2231,7 +2230,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: "then £ship it",
         },
       });
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   const assistantMessages = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
@@ -2373,7 +2372,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
         }
         assert.isEmpty(assistantMessages(harness.events));
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -2382,7 +2381,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
-        const params = yield* buildCodexTurnStartParams({
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
@@ -2470,7 +2469,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         yield* harness.firstTerminal;
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -2546,7 +2545,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.equal(items[0]?.id, items[1]?.id);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -2573,7 +2572,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 params: {
                   threadId: nativeThreadId,
                   excludeTurns: true,
-                  config: CODEX_THREAD_CONFIG,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
                 },
               },
             },
@@ -2594,7 +2593,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
         assert.equal(resumed.status, "idle");
         assert.equal(DateTime.toEpochMillis(resumed.updatedAt), 1782622450000);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -2622,7 +2621,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 params: {
                   threadId: nativeThreadId,
                   excludeTurns: true,
-                  config: CODEX_THREAD_CONFIG,
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
                 },
               },
             },
@@ -2676,7 +2675,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           restartContinuationOfRunId: RunId.make("run-before-restart"),
         });
         assert.equal(resumed.nativeThreadRef?.nativeId, nativeThreadId);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -2824,7 +2823,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isAtLeast(recoveredIndex, 0);
         assert.isAbove(resumedCommandIndex, recoveredIndex);
         assert.isAbove(terminalIndex, resumedCommandIndex);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -2923,7 +2922,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["compaction", 1782622565000],
           ],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3086,7 +3085,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             );
           }
           assert.deepEqual(assistantMessages(harness.events), []);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
     );
   }
@@ -3216,7 +3215,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3260,7 +3259,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3382,7 +3381,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           new Set(assistantMessages(harness.events).map((event) => event.message.id)).size,
           1,
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3410,7 +3409,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           [""],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3439,7 +3438,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           [""],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3468,7 +3467,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["Working on it.", ""],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3497,7 +3496,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3526,7 +3525,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3555,7 +3554,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assistantMessages(harness.events).map((event) => event.message.text),
           ["", "CODEX_RECOVERY_OK"],
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -3682,7 +3681,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const request = harness.continuationRequests[0];
           assert.equal(request?.threadId, harness.threadId);
           assert.equal(request?.providerThreadId, harness.providerThread.id);
-          assert.equal(request?.driver, CODEX_DRIVER_KIND);
+          assert.equal(request?.driver, CodexAdapterV2.CODEX_DRIVER_KIND);
           assert.deepEqual(request?.notification, {
             source: { kind: "command" },
             outcome: "completed",
@@ -3711,7 +3710,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.lengthOf(harness.terminalEvents(), 1);
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );
 
@@ -3852,7 +3851,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.lengthOf(harness.terminalEvents(), 1);
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
           assert.lengthOf(harness.continuationRequests, 0);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
     );
     if (terminated === true) {
@@ -3898,8 +3897,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               0,
             );
             yield* Effect.gen(function* () {
-              const orchestrator = yield* OrchestratorV2;
-              const worker = yield* OrchestrationEffectWorkerV2;
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
+              const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
               const threadId = ThreadId.make("thread:background-stop");
               yield* orchestrator.dispatch({
                 type: "thread.create",
@@ -4095,7 +4094,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.lengthOf(harness.continuationRequests, 0);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.terminalEvents(), 1);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -4376,7 +4375,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.isAtLeast(commandUpdates.length, 2, "start + interrupt terminalization");
         assert.equal(commandUpdates[commandUpdates.length - 1]?.turnItem.status, "interrupted");
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -4595,7 +4594,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -4676,7 +4675,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted root terminal");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -4760,7 +4759,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted root terminal");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -4862,7 +4861,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(lateChildUpdates.at(-1)?.providerTurn.status, "interrupted");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -5023,7 +5022,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -5280,7 +5279,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           commandUpdatesBeforeLateEvents.length,
           "late starts and completions must not project after timeout",
         );
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -5383,7 +5382,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted terminal");
         assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -5620,7 +5619,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             assert.isDefined(item);
           }
           if (scenario.name === "retry") assert.equal(terminal.retry?.attempt, 1);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
     );
   }
@@ -5719,7 +5718,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.continuationRequests, 0);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -5961,7 +5960,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.lengthOf(harness.terminalEvents(), 1);
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );
 
@@ -6173,7 +6172,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* TestClock.adjust("100 millis");
         yield* harness.firstTerminal;
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -6246,7 +6245,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* Deferred.succeed(releaseMetadata, undefined);
           yield* TestClock.adjust("30 seconds");
           assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );
 
@@ -6308,7 +6307,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.lengthOf(harness.continuationRequests, 0);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -6388,7 +6387,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isNull(row?.completedAt);
         assert.isNotNull(row?.startedAt);
         assert.equal(DateTime.toEpochMillis(row!.startedAt!), 1782622470000);
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
 
@@ -6549,7 +6548,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               DateTime.toEpochMillis(first.subagent.completedAt!),
             );
           }
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
     );
   }
@@ -6606,8 +6605,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     runAttemptId: RunAttemptId.make(`run-attempt-${input.id}`),
     nativeTurnRef:
       input.nativeId === null
-        ? { driver: CODEX_DRIVER_KIND, nativeId: null, strength: "none" }
-        : { driver: CODEX_DRIVER_KIND, nativeId: input.nativeId, strength: "strong" },
+        ? { driver: CodexAdapterV2.CODEX_DRIVER_KIND, nativeId: null, strength: "none" }
+        : {
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeId: input.nativeId,
+            strength: "strong",
+          },
     ordinal: input.ordinal,
     status: "completed",
     startedAt: input.now,
@@ -6694,7 +6697,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         "thread/rollback",
         "thread/rollback must not be sent to a legacy Codex thread",
       );
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect(
@@ -6718,7 +6721,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame: {
                 id: 3,
                 method: "thread/fork",
-                params: { threadId: nativeThreadId, config: CODEX_THREAD_CONFIG },
+                params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
               },
             },
             {
@@ -6833,7 +6836,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.notEqual(forkedProviderThread.id, harness.providerThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, firstTurn.id);
         assert.deepEqual(outbound.slice(-2), ["thread/turns/list", "thread/revert"]);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect(
@@ -6857,7 +6860,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame: {
                 id: 3,
                 method: "thread/fork",
-                params: { threadId: nativeThreadId, config: CODEX_THREAD_CONFIG },
+                params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
               },
             },
             {
@@ -6935,7 +6938,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "thread/rollback",
           "thread/rollback must not be sent to a legacy Codex fork",
         );
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("propagates native thread/fork failures as typed fork errors", () =>
@@ -6959,7 +6962,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               params: {
                 threadId: nativeThreadId,
                 lastTurnId: "native-turn-first",
-                config: CODEX_THREAD_CONFIG,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
               },
             },
           },
@@ -6991,6 +6994,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
       assert.instanceOf(error, ProviderAdapterForkThreadError);
       assert.include(errorCauseChainText(error), "fork exploded");
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 });

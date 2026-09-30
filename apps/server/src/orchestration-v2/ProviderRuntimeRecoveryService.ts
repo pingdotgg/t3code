@@ -17,8 +17,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import {
   cancelledRosterTaskWork,
@@ -66,7 +65,7 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
 
-function nonterminalRuns(projection: ProjectionRuntimeRecoveryState) {
+function nonterminalRuns(projection: ProjectionStore.ProjectionRuntimeRecoveryState) {
   return projection.runs.filter((run) => {
     const status: string = run.status;
     return (
@@ -108,7 +107,7 @@ function providerThreadHasPendingBackgroundTasks(
  */
 function resolveStaleBackgroundItemProviderInstanceId(
   item: OrchestrationV2ThreadProjection["turnItems"][number],
-  projection: ProjectionRuntimeRecoveryState,
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
 ): OrchestrationV2ThreadProjection["thread"]["providerInstanceId"] {
   if (item.runId !== null) {
     const run = projection.runs.find((candidate) => candidate.id === item.runId);
@@ -135,7 +134,7 @@ function resolveStaleBackgroundItemProviderInstanceId(
  * record for their next turn.
  */
 function providerThreadsWithOpenBackgroundWork(
-  projection: ProjectionRuntimeRecoveryState,
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
 ): ReadonlySet<ProviderThreadId> {
   const ids = new Set<ProviderThreadId>();
   for (const item of projection.turnItems ?? []) {
@@ -159,7 +158,7 @@ function providerThreadsWithOpenBackgroundWork(
  * the next run on the same provider thread delivers it with its input.
  */
 function latestStartedRun(
-  projection: ProjectionRuntimeRecoveryState,
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
   providerThreadId: ProviderThreadId,
 ) {
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | undefined>(
@@ -175,14 +174,14 @@ function latestStartedRun(
 }
 
 export const make = Effect.gen(function* () {
-  const settings = yield* ServerSettingsService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
-      projection: ProjectionRuntimeRecoveryState,
+      projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
     ) {
