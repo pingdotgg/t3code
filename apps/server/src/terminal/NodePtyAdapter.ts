@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as PtyAdapter from "./PtyAdapter.ts";
+import { taskScopeCommand } from "../process/taskScope.ts";
 
 export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
   "NodePtyModuleLoadError",
@@ -271,7 +272,8 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* () {
           : input.env;
       const ptyProcess = yield* Effect.try({
         try: () => {
-          const nativeProcess = nodePty.spawn(input.shell, input.args ?? [], {
+          const command = taskScopeCommand(input.shell, input.args ?? [], platform);
+          const nativeProcess = nodePty.spawn(command.command, [...command.args], {
             cwd: input.cwd,
             cols: input.cols,
             rows: input.rows,

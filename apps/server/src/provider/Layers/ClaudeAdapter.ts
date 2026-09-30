@@ -9,6 +9,8 @@
  */
 
 import * as NodeUtil from "node:util";
+import * as NodeChildProcess from "node:child_process";
+import { taskScopeCommand } from "../../process/taskScope.ts";
 import {
   type CanUseTool,
   query,
@@ -70,7 +72,7 @@ import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
-import { HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
+import { HostProcessIsExecutable, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -2074,6 +2076,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   claudeSettings: ClaudeSettings,
   options?: ClaudeAdapterLiveOptions,
 ) {
+  const platform = yield* HostProcessPlatform;
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("claudeAgent");
   const modelCatalogEffect = (
     options?.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG)
@@ -2108,7 +2111,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }) =>
       query({
         prompt: input.prompt,
-        options: input.options,
+        options: {
+          ...input.options,
+          ...(platform === "linux"
+            ? {
+                spawnClaudeCodeProcess: (spawnOptions) => {
+                  const command = taskScopeCommand(
+                    spawnOptions.command,
+                    spawnOptions.args,
+                    platform,
+                  );
+                  const child = NodeChildProcess.spawn(command.command, [...command.args], {
+                    cwd: spawnOptions.cwd,
+                    env: spawnOptions.env,
+                    signal: spawnOptions.signal,
+                    stdio: ["pipe", "pipe", "pipe"],
+                  });
+                  child.stderr.setEncoding("utf8");
+                  child.stderr.on("data", (chunk: string) => input.options.stderr?.(chunk));
+                  return child;
+                },
+              }
+            : {}),
+        },
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
