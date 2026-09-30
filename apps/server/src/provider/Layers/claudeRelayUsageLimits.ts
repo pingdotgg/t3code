@@ -24,13 +24,20 @@ const ZAI_HOSTS = new Set(["api.z.ai", "open.bigmodel.cn", "dev.bigmodel.cn"]);
 
 const ZaiQuotaLimit = Schema.Struct({
   type: Schema.String,
-  unit: Schema.optional(Schema.Finite),
-  number: Schema.optional(Schema.Finite),
-  percentage: Schema.optional(Schema.Finite),
-  nextResetTime: Schema.optional(Schema.Finite),
+  unit: Schema.optional(Schema.NullOr(Schema.Finite)),
+  number: Schema.optional(Schema.NullOr(Schema.Finite)),
+  percentage: Schema.optional(Schema.NullOr(Schema.Finite)),
+  nextResetTime: Schema.optional(Schema.NullOr(Schema.Finite)),
 });
+const decodeZaiQuotaLimit = Schema.decodeUnknownOption(ZaiQuotaLimit);
 const ZaiQuotaResponse = Schema.Struct({
-  data: Schema.optional(Schema.Struct({ limits: Schema.optional(Schema.Array(ZaiQuotaLimit)) })),
+  success: Schema.optional(Schema.Boolean),
+  code: Schema.optional(Schema.Finite),
+  data: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ limits: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))) }),
+    ),
+  ),
 });
 
 /** Z.ai's `unit` codes for the windows it is known to report. */
@@ -52,8 +59,8 @@ const ZAI_UNITS: Readonly<
   }),
 };
 
-function isoFromEpochMillis(value: number | undefined): string | undefined {
-  if (value === undefined || value <= 0) return undefined;
+function isoFromEpochMillis(value: number | null | undefined): string | undefined {
+  if (value == null || value <= 0) return undefined;
   const dt = DateTime.make(value);
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
@@ -80,29 +87,42 @@ export function zaiQuotaResponseToLimits(
   response: typeof ZaiQuotaResponse.Type,
   checkedAt: string,
 ): ServerProviderUsageLimits {
+  const failed = () =>
+    makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "probeFailed",
+      message: "Z.ai could not read usage limits.",
+    });
+  if (response.success === false || (response.code !== undefined && response.code !== 200)) {
+    return failed();
+  }
   const windows: ServerProviderUsageWindow[] = [];
-  for (const [index, limit] of (response.data?.limits ?? []).entries()) {
-    if (limit.percentage === undefined) continue;
+  for (const [index, rawLimit] of (response.data?.limits ?? []).entries()) {
+    const decoded = decodeZaiQuotaLimit(rawLimit);
+    if (Option.isNone(decoded)) continue;
+    const limit = decoded.value;
+    const type = limit.type.trim();
+    if (!type || limit.percentage == null) continue;
     const count = limit.number ?? 1;
-    const shape = limit.unit === undefined ? undefined : ZAI_UNITS[limit.unit]?.(count);
-    const tools = limit.type === "TIME_LIMIT";
+    const shape =
+      limit.unit == null || limit.number == null || count <= 0
+        ? undefined
+        : ZAI_UNITS[limit.unit]?.(count);
+    const duration = shape?.windowDurationMins;
+    const tools = type === "TIME_LIMIT";
     const resetsAt = isoFromEpochMillis(limit.nextResetTime);
     windows.push({
-      id: uniqueWindowId(
-        windows,
-        `${limit.type.toLowerCase()}_${limit.unit ?? "x"}_${count}`,
-        index,
-      ),
+      id: uniqueWindowId(windows, `${type.toLowerCase()}_${limit.unit ?? "x"}_${count}`, index),
       kind: tools ? "other" : (shape?.kind ?? "other"),
       label: tools ? "Tool calls" : (shape?.label ?? "Quota"),
       usedPercent: clampPercent(limit.percentage),
-      ...(shape && !tools ? { windowDurationMins: shape.windowDurationMins } : {}),
+      ...(duration !== undefined && Number.isSafeInteger(duration) && duration > 0 && !tools
+        ? { windowDurationMins: duration }
+        : {}),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
-  return windows.length === 0
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-    : makeUsageLimits({ checkedAt, windows });
+  return windows.length === 0 ? failed() : makeUsageLimits({ checkedAt, windows });
 }
 
 /** Every supported relay is a public HTTPS service; anything else never receives the token. */
