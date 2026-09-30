@@ -1,3 +1,4 @@
+import { ChatGPTSetupSection } from "./ChatGPTSetupSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
@@ -936,7 +937,14 @@ export function EnvironmentProviderSettings({
         onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
         readOnly={readOnly}
         setup={
-          mode === "editor" && row.driver === "antigravity" ? (
+          mode === "editor" && row.driver === "chatgptWeb" ? (
+            <ChatGPTSetupSection
+              environmentId={environmentId}
+              instanceId={row.instanceId}
+              enabled={resolveProviderInstanceEnabled(row.instance)}
+              readOnly={readOnly}
+            />
+          ) : mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}
               environmentLabel={environmentLabel}

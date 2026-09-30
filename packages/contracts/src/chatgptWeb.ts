@@ -15,14 +15,6 @@ const limit = (value: string, maximum: number, title: string, description: strin
   );
 
 export const ChatGPTWebSettings = Schema.Struct({
-  firefoxProfile: TrimmedString.pipe(
-    Schema.withDecodingDefault(Effect.succeed("")),
-    Schema.annotateKey({
-      title: "Firefox profile folder",
-      description:
-        "Firefox profile on this environment with ChatGPT signed in. Blank uses the default profile. Only ChatGPT cookies are copied; your browser stays open.",
-    }),
-  ),
   firefoxBinary: TrimmedString.pipe(
     Schema.withDecodingDefault(Effect.succeed("firefox")),
     Schema.annotateKey({
@@ -35,7 +27,7 @@ export const ChatGPTWebSettings = Schema.Struct({
     Schema.annotateKey({
       title: "Run Firefox in background",
       description:
-        "Uses standard Firefox automation. Turn off to see sign-in or browser challenges on the environment's desktop.",
+        "Sign-in always opens an interactive Firefox window on the environment desktop. After sign-in, restart Firefox in background mode.",
       providerSettingsForm: { control: "switch" },
     }),
   ),

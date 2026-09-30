@@ -10,6 +10,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as NodeTimers from "node:timers";
+import * as NodeTimersPromises from "node:timers/promises";
 
 const COMPOSER = '[contenteditable="true"][role="textbox"], #prompt-textarea';
 const Cookie = Schema.Struct({
@@ -45,6 +46,11 @@ const decodeOutput = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({ text: Schema.optional(Schema.String), error: Schema.optional(Schema.Boolean) }),
   ),
+);
+const decodeBrowserCookies = Schema.decodeUnknownSync(
+  Schema.Struct({
+    cookies: Schema.Array(Schema.Struct({ name: Schema.String, domain: Schema.String })),
+  }),
 );
 const decodePoint = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.NullOr(Schema.Struct({ x: Schema.Number, y: Schema.Number }))),
@@ -166,6 +172,7 @@ export class FirefoxChatGPT {
     binary: string;
     headless: boolean;
     platform?: NodeJS.Platform;
+    sessionFile?: string;
   };
 
   constructor(options: {
@@ -173,6 +180,7 @@ export class FirefoxChatGPT {
     binary: string;
     headless: boolean;
     platform?: NodeJS.Platform;
+    sessionFile?: string;
   }) {
     this.options = options;
   }
@@ -219,22 +227,33 @@ export class FirefoxChatGPT {
     return result.result?.value ?? "";
   }
 
-  private async start() {
+  private async start(headless = this.options.headless) {
     if (this.socket?.readyState === WebSocket.OPEN) return;
-    await this.close();
     const snapRoot = NodePath.join(NodeOS.homedir(), "snap/firefox/common");
     const root = await NodeFSP.access(snapRoot).then(
       () => snapRoot,
       () => NodeOS.tmpdir(),
     );
-    this.directory = await NodeFSP.mkdtemp(NodePath.join(root, "t3-chatgpt-browser-"));
+    if (!this.directory) {
+      this.directory = await NodeFSP.mkdtemp(NodePath.join(root, "t3-chatgpt-browser-"));
+      if (this.options.sessionFile) {
+        await NodeFSP.copyFile(
+          this.options.sessionFile,
+          NodePath.join(this.directory, "cookies.sqlite"),
+        ).catch((error: unknown) => {
+          if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT")
+            throw error;
+        });
+      } else if (this.options.profile) {
+        const profile = await resolveFirefoxProfile(this.options.profile, this.options.platform);
+        await readChatGPTCookies(profile, NodePath.join(this.directory, "cookies.sqlite"));
+      }
+    }
     try {
-      const profile = await resolveFirefoxProfile(this.options.profile, this.options.platform);
-      await readChatGPTCookies(profile, NodePath.join(this.directory, "cookies.sqlite"));
       this.child = NodeChildProcess.spawn(
         this.options.binary,
         [
-          ...(this.options.headless ? ["--headless"] : []),
+          ...(headless ? ["--headless"] : []),
           "--no-remote",
           "--profile",
           this.directory,
@@ -323,8 +342,82 @@ export class FirefoxChatGPT {
     }
   }
 
+  /** Sign-in is explicit and visible. Restart only our Firefox process after authentication. */
+  async signIn(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const abort = () => {
+      void this.close().catch(() => undefined);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await this.stopProcess();
+      await this.start(false);
+      await this.command("browsingContext.navigate", {
+        context: this.context,
+        url: "https://chatgpt.com/",
+        wait: "complete",
+      });
+      const deadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 600_000;
+      let authenticated = false;
+      while (DateTime.toEpochMillis(DateTime.nowUnsafe()) < deadline) {
+        signal.throwIfAborted();
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN)
+          throw new Error("Firefox sign-in window was closed. Start sign-in again.");
+        // Login redirects replace the JS realm. Inspect the new document after each redirect.
+        const ready = await this.evaluate(
+          `String(location.origin === 'https://chatgpt.com' && !!document.querySelector(${JSON.stringify(COMPOSER)}) && !document.querySelector('[data-testid="login-button"]'))`,
+        ).catch(() => "false");
+        if (ready === "true") {
+          const result = await this.command("storage.getCookies", {
+            partition: { type: "context", context: this.context },
+          });
+          const cookies = decodeBrowserCookies(result).cookies;
+          authenticated = cookies.some(
+            (cookie) =>
+              cookie.name.includes("session-token") &&
+              (cookie.domain === "chatgpt.com" || cookie.domain === ".chatgpt.com"),
+          );
+          if (authenticated) break;
+        }
+        await NodeTimersPromises.setTimeout(500, undefined, { signal });
+      }
+      if (!authenticated)
+        throw new Error("Firefox sign-in timed out after 10 minutes. Start sign-in again.");
+      // Closing Firefox flushes its cookie database before storing the restricted session copy.
+      await this.stopProcess();
+      signal.throwIfAborted();
+      if (this.options.sessionFile && this.directory) {
+        await readChatGPTCookies(this.directory, this.options.sessionFile);
+      }
+      await this.start(this.options.headless);
+      signal.throwIfAborted();
+    } catch (error) {
+      await this.close();
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async hasSession(): Promise<boolean> {
+    if (!this.options.sessionFile) return false;
+    return NodeFSP.access(this.options.sessionFile).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  async signOut(): Promise<void> {
+    await this.close();
+    if (this.options.sessionFile) await NodeFSP.rm(this.options.sessionFile, { force: true });
+  }
+
   async complete(prompt: string, signal: AbortSignal): Promise<string> {
     signal.throwIfAborted();
+    if (this.options.sessionFile && !(await this.hasSession()))
+      throw new Error(
+        "Sign in to ChatGPT Web in Settings > Providers first. Firefox will open on the environment desktop.",
+      );
     const abort = () => {
       void this.close().catch(() => undefined);
     };
@@ -352,7 +445,7 @@ export class FirefoxChatGPT {
       );
       if (ready !== "ready")
         throw new Error(
-          "ChatGPT needs sign-in or a browser check. Open ChatGPT in Firefox, then reconnect the provider. No request retried.",
+          "ChatGPT needs sign-in or a browser check. Use Sign in in ChatGPT Web provider settings to open interactive Firefox. No request retried.",
         );
       await this.evaluate(`(() => {
         const composer = document.querySelector(${JSON.stringify(COMPOSER)});
@@ -453,7 +546,7 @@ export class FirefoxChatGPT {
     return this.closing;
   }
 
-  private async dispose() {
+  private async stopProcess() {
     this.socket?.close();
     this.socket = undefined;
     const child = this.child;
@@ -470,6 +563,10 @@ export class FirefoxChatGPT {
         child.kill("SIGTERM");
       });
     }
+  }
+
+  private async dispose() {
+    await this.stopProcess();
     const directory = this.directory;
     this.directory = undefined;
     if (directory) await NodeFSP.rm(directory, { recursive: true, force: true });

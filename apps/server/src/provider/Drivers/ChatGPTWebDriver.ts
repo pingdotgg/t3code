@@ -17,6 +17,7 @@ import { ServerConfig } from "../../config.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { defaultProviderContinuationIdentity, type ProviderDriver } from "../ProviderDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./OpenCodeDriver.ts";
+import { makeChatGPTAuth } from "../chatgpt/ChatGPTAuth.ts";
 import { FirefoxChatGPT } from "../chatgpt/FirefoxChatGPT.ts";
 import { ChatGPTRateLimit } from "../chatgpt/ChatGPTRateLimit.ts";
 import { startChatGPTBridge } from "../chatgpt/ChatGPTBridge.ts";
@@ -49,15 +50,17 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
       yield* fileSystem
         .makeDirectory(root, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError(fail));
+      const browser = new FirefoxChatGPT({
+        profile: "",
+        binary: settings.firefoxBinary,
+        headless: settings.headless,
+        platform,
+        sessionFile: path.join(root, "session.sqlite"),
+      });
+      const auth = yield* makeChatGPTAuth(input.instanceId, browser);
       const bridge = yield* Effect.acquireRelease(
         Effect.tryPromise({
           try: async () => {
-            const browser = new FirefoxChatGPT({
-              profile: settings.firefoxProfile,
-              binary: settings.firefoxBinary,
-              headless: settings.headless,
-              platform,
-            });
             const limiter = new ChatGPTRateLimit(path.join(root, "rate.sqlite"), {
               minimumIntervalSeconds: Number(settings.minimumIntervalSeconds),
               requestsPerHour: Number(settings.requestsPerHour),
@@ -144,10 +147,11 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
         badgeLabel: "Experimental",
         continuation: { groupKey: continuationIdentity.continuationKey },
         reportsContextWindow: false,
+        setup: { canAuthenticate: true, canInstall: false },
         auth: {
           status: "unknown",
           type: "firefox",
-          label: "Firefox session · verified when sending",
+          label: "Firefox session · sign in below",
         },
         message:
           value.status === "ready"
@@ -164,6 +168,17 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
         ],
         slashCommands: [],
       });
+      const authenticatedSnapshot = (value: ServerProvider) =>
+        Effect.promise(async () => ({
+          ...snapshot(value),
+          auth: {
+            status: (await browser.hasSession())
+              ? ("authenticated" as const)
+              : ("unauthenticated" as const),
+            type: "firefox",
+            label: "ChatGPT website session",
+          },
+        }));
       const session = (value: ProviderSession): ProviderSession => ({ ...value, provider: DRIVER });
       const event = (value: ProviderRuntimeEvent): ProviderRuntimeEvent => {
         if (value.type === "turn.completed" && value.payload.tokenUsage) {
@@ -180,19 +195,24 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
       };
       return {
         ...base,
+        auth: auth.controller,
         driverKind: DRIVER,
         continuationIdentity,
         snapshot: {
           ...base.snapshot,
           resolveMaintenance: () =>
             Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
-          getSnapshot: base.snapshot.getSnapshot.pipe(Effect.map(snapshot)),
-          refresh: base.snapshot.refresh.pipe(Effect.map(snapshot)),
-          streamChanges: base.snapshot.streamChanges.pipe(Stream.map(snapshot)),
+          getSnapshot: base.snapshot.getSnapshot.pipe(Effect.flatMap(authenticatedSnapshot)),
+          refresh: base.snapshot.refresh.pipe(Effect.flatMap(authenticatedSnapshot)),
+          streamChanges: Stream.merge(
+            base.snapshot.streamChanges,
+            auth.changes.pipe(Stream.mapEffect(() => base.snapshot.getSnapshot)),
+          ).pipe(Stream.mapEffect(authenticatedSnapshot)),
         },
         ...(base.snapshotForCwd
           ? {
-              snapshotForCwd: (cwd: string) => base.snapshotForCwd!(cwd).pipe(Effect.map(snapshot)),
+              snapshotForCwd: (cwd: string) =>
+                base.snapshotForCwd!(cwd).pipe(Effect.flatMap(authenticatedSnapshot)),
             }
           : {}),
         adapter: {
