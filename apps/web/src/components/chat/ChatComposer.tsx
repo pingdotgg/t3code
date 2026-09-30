@@ -2171,7 +2171,7 @@ export const ChatComposer = memo(
         ) : null}
         <div
           className={cn(
-            "group relative z-10 rounded-[22px] p-px transition-colors duration-200",
+            "group relative z-10 rounded-[22px] bg-(--chat-composer-outline) p-px transition-colors duration-200",
             composerProviderState.composerFrameClassName,
           )}
           onDragEnter={editingQueuedTurn ? undefined : onComposerDragEnter}
@@ -2183,7 +2183,7 @@ export const ChatComposer = memo(
             ref={composerSurfaceRef}
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "rounded-[20px] bg-card transition-[background-color] duration-200 has-focus-visible:ring-1 has-focus-visible:ring-ring/45",
+              "rounded-[20px] bg-(--chat-composer-surface) transition-[background-color] duration-200 has-focus-visible:ring-1 has-focus-visible:ring-ring/45",
               isDragOverComposer ? "bg-accent/45 ring-1 ring-primary/70" : null,
               composerProviderState.composerSurfaceClassName,
             )}
@@ -2267,7 +2267,7 @@ export const ChatComposer = memo(
                     "composer-input-font min-w-0 flex-1 truncate bg-transparent p-0 text-left focus:outline-none",
                     (activePendingProgress ? activePendingProgress.customAnswer : prompt.trim())
                       ? "text-foreground"
-                      : "text-muted-foreground/35",
+                      : "text-muted-foreground",
                   )}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={expandMobileComposer}

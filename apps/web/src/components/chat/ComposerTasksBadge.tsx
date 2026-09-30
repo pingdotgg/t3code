@@ -30,7 +30,7 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
   return (
     <section
       data-composer-tasks="true"
-      className="relative z-0 mx-1.5 -mb-3 min-w-0 rounded-t-2xl border border-border/70 bg-card pb-3 text-sm shadow-sm sm:mx-3"
+      className="relative z-0 mx-1.5 -mb-3 min-w-0 rounded-t-2xl border border-(--chat-composer-outline) bg-(--chat-composer-surface) pb-3 text-sm shadow-sm dark:shadow-none sm:mx-3"
     >
       <button
         type="button"
@@ -42,7 +42,7 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
       >
         <ListTodoIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <span className="shrink-0 text-muted-foreground">Tasks</span>
-        <span className="min-w-0 flex-1 truncate font-medium text-foreground/85">
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/80">
           {current.step}
         </span>
         <span className="shrink-0 text-muted-foreground tabular-nums">
@@ -85,7 +85,7 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
                     ? "text-success"
                     : step.status === "inProgress"
                       ? "text-primary"
-                      : "text-muted-foreground/50",
+                      : "text-muted-foreground/40",
                 )}
               >
                 {step.status === "completed" ? (
@@ -110,7 +110,7 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
               <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
                 {statusLabels[step.status]}
               </span>
-              <span className="w-8 shrink-0 text-right text-xs text-muted-foreground/70">
+              <span className="w-8 shrink-0 text-right text-xs text-muted-foreground/45">
                 {step.status === "inProgress" ? "now" : null}
               </span>
             </li>
