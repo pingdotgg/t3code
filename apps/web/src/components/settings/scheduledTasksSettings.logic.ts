@@ -82,7 +82,7 @@ export interface DraftState {
 }
 
 /** Minutes since midnight; accepts the padded and unpadded forms the contract allows. */
-export function timeOfDayMinutes(value: string): number | null {
+function timeOfDayMinutes(value: string): number | null {
   if (!/^([01]?\d|2[0-3]):([0-5]\d)$/.test(value.trim())) return null;
   const [hours, minutes] = value.split(":").map(Number);
   return (hours ?? 0) * 60 + (minutes ?? 0);
@@ -107,7 +107,7 @@ export function maxRunsFromDraft(value: string): number | null | undefined {
  * are part of its base shape, so only the cap applies. An invalid cap yields
  * no restrictions; submit blocks on it separately.
  */
-export function scheduleRestrictionsFromDraft(
+function scheduleRestrictionsFromDraft(
   draft: DraftState,
 ): Pick<Extract<ScheduledTaskSchedule, { type: "interval" }>, "weekdays" | "window" | "maxRuns"> {
   const maxRuns = maxRunsFromDraft(draft.maxRuns);

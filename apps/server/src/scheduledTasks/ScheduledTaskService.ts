@@ -416,10 +416,10 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
-      readonly capped: boolean;
     }) =>
-      // Reaching maxRuns pauses the task in the same statement; the CASE keeps
-      // a single preparable statement for both the capped and normal paths.
+      // Reaching maxRuns pauses the task in the same statement. The cap is read
+      // from the row being updated, so an edit that lands while the run is in
+      // flight decides the final enabled state.
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
@@ -427,7 +427,10 @@ export const layer = Layer.effect(
             last_run_status = ${input.status},
             last_run_error = ${input.error},
             run_count = run_count + 1,
-            enabled = CASE WHEN ${input.capped ? 1 : 0} THEN 0 ELSE enabled END
+            enabled = CASE
+              WHEN json_extract(schedule_json, '$.maxRuns') IS NOT NULL
+                AND run_count + 1 >= json_extract(schedule_json, '$.maxRuns')
+              THEN 0 ELSE enabled END
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
           AND last_run_at = ${input.startedAtIso}
@@ -453,7 +456,6 @@ export const layer = Layer.effect(
         const source = Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
         // The stuck attempt counts toward maxRuns like any other run.
         const runCountAfter = source.runCount + 1;
-        const capped = capReached(source.schedule, runCountAfter);
         yield* sql`
           UPDATE scheduled_tasks
           SET last_run_status = 'failed',
@@ -461,7 +463,10 @@ export const layer = Layer.effect(
               next_run_at = ${nextRunAt({ ...source, runCount: runCountAfter }, now)},
               updated_at = ${iso(now)},
               run_count = run_count + 1,
-              enabled = CASE WHEN ${capped ? 1 : 0} THEN 0 ELSE enabled END
+              enabled = CASE
+              WHEN json_extract(schedule_json, '$.maxRuns') IS NOT NULL
+                AND run_count + 1 >= json_extract(schedule_json, '$.maxRuns')
+              THEN 0 ELSE enabled END
           WHERE task_id = ${task.id} AND last_run_status = 'running'
         `;
         yield* notifyChanged;
@@ -604,7 +609,6 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
-            capped,
           });
           yield* notifyChanged;
         }
@@ -657,11 +661,15 @@ export const layer = Layer.effect(
       yield* Effect.forEach(
         due,
         ({ task, dueAt }) =>
-          (isMissedFixedTimeRun(task.schedule, dueAt, now) ||
-          isOutsideIntervalRestrictions(task.schedule, now)
-            ? rescheduleMissedRun(task, now)
-            : runTask(task, "scheduled")
-          ).pipe(
+          Effect.gen(function* () {
+            // Earlier tasks in this batch can take a while: judge each task's
+            // window against the moment it is about to dispatch, not the poll.
+            const current = yield* localNow;
+            return yield* isMissedFixedTimeRun(task.schedule, dueAt, current) ||
+            isOutsideIntervalRestrictions(task.schedule, current)
+              ? rescheduleMissedRun(task, current)
+              : runTask(task, "scheduled");
+          }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
             ),
@@ -692,7 +700,6 @@ export const layer = Layer.effect(
               // cap releases the row paused instead of re-arming it.
               const source = decoded.success;
               const runCountAfter = source.runCount + 1;
-              const capped = capReached(source.schedule, runCountAfter);
               yield* sql`
                 UPDATE scheduled_tasks
                 SET last_run_status = 'failed',
@@ -700,7 +707,10 @@ export const layer = Layer.effect(
                     next_run_at = ${nextRunAt({ ...source, runCount: runCountAfter }, now)},
                     updated_at = ${iso(now)},
                     run_count = run_count + 1,
-                    enabled = CASE WHEN ${capped ? 1 : 0} THEN 0 ELSE enabled END
+                    enabled = CASE
+              WHEN json_extract(schedule_json, '$.maxRuns') IS NOT NULL
+                AND run_count + 1 >= json_extract(schedule_json, '$.maxRuns')
+              THEN 0 ELSE enabled END
                 WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
               `;
               return;

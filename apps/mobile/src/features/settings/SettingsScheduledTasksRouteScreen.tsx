@@ -104,8 +104,9 @@ function describeSchedule(task: ScheduledTask): string {
 function formatTime(value: string): string {
   const [hours, minutes] = value.split(":").map(Number);
   if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return value;
-  const time = new Date();
-  time.setHours(hours ?? 9, minutes ?? 0, 0, 0);
+  // A fixed midwinter date: today's date could skip this wall-clock time at a
+  // spring-forward, and the label would silently shift an hour.
+  const time = new Date(2000, 0, 1, hours ?? 9, minutes ?? 0, 0, 0);
   return time.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 

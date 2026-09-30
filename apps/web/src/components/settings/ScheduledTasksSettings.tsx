@@ -167,7 +167,8 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
     const days =
       schedule.weekdays === undefined || schedule.weekdays.length === 0
         ? ""
-        : schedule.weekdays.length === 5 && schedule.weekdays.every((day) => day >= 1 && day <= 5)
+        : new Set(schedule.weekdays).size === 5 &&
+            schedule.weekdays.every((day) => day >= 1 && day <= 5)
           ? " · weekdays"
           : ` · ${schedule.weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ")}`;
     const window =
