@@ -100,4 +100,24 @@ describe("composer list renumbering", () => {
   it("keeps zero padding when renumbering", () => {
     expect(enterAt("01. a\n02. b", 5)).toBe("01. a\n02. \n03. b");
   });
+
+  it("does not add zero padding to wider unpadded numbers", () => {
+    expect(enterAt("1. a\n10. b", 4)).toBe("1. a\n2. \n3. b");
+  });
+
+  it("compares indentation by width so tab-indented children are skipped", () => {
+    expect(enterAt("  1. a\n\t- child\n  2. b", 6)).toBe("  1. a\n  2. \n\t- child\n  3. b");
+  });
+
+  it("leaves lines inside a multiline quoted mention alone", () => {
+    const value = '1. @"file\n2. name" \n2. b';
+    expect(enterAt(value, 3)).toBe('1. \n2. @"file\n2. name" \n3. b');
+  });
+
+  it("returns an expanded caret offset when a chip precedes the caret", () => {
+    const value = "1. @README.md go\n2. next";
+    const edit = listContinuationForEnter(value, value.indexOf(" go"))!;
+    expect(applyEdit(value, edit)).toBe("1. @README.md\n2.  go\n3. next");
+    expect(edit.cursorAfter).toBe(value.indexOf(" go") + "\n2. ".length);
+  });
 });
