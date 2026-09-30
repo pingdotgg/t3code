@@ -24,9 +24,8 @@ export type StreamSinkError =
  * `BatchRetryExhaustedError` carrying the stranded records.
  *
  * Provide the implementation with `Effect.provide(AWS.Kinesis.StreamSinkHttp)`.
- * @binding
- * @section Writing Streams of Records
- * @example Run an Effect Stream into a Kinesis Stream
+ * ### Writing Streams of Records
+ * **Example:** Run an Effect Stream into a Kinesis Stream
  * ```typescript
  * // init — bind the sink to the stream
  * const sink = yield* AWS.Kinesis.StreamSink(stream);
@@ -39,6 +38,8 @@ export type StreamSinkError =
  *   })),
  * ).pipe(Stream.run(sink));
  * ```
+ *
+ * @binding
  */
 export interface StreamSink extends Binding.Service<
   StreamSink,

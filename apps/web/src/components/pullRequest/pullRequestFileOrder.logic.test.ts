@@ -1,7 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { diffFileTier, orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 
 /** Only the path and the patch's own lines matter here; the viewer fills the rest in. */
 function file(name: string, additionLines: ReadonlyArray<string> = []): FileDiffMetadata {
@@ -12,34 +12,31 @@ function order(files: ReadonlyArray<FileDiffMetadata>): Array<string> {
   return orderDiffFiles(files).map((entry) => entry.name);
 }
 
-describe("diffFileTier", () => {
-  it("puts lockfiles, snapshots and build output last", () => {
-    expect(diffFileTier("pnpm-lock.yaml")).toBe("generated");
-    expect(diffFileTier("apps/web/package-lock.json")).toBe("generated");
-    expect(diffFileTier("src/__snapshots__/app.ts")).toBe("generated");
-    expect(diffFileTier("src/app.test.ts.snap")).toBe("generated");
-    expect(diffFileTier("src/api.generated.ts")).toBe("generated");
-    expect(diffFileTier("public/app.min.js")).toBe("generated");
-    expect(diffFileTier("dist/app.js")).toBe("generated");
-    expect(diffFileTier("packages/core/vendor/lib.js")).toBe("generated");
-  });
-
-  it("recognises a test by its name or by the directory holding it", () => {
-    expect(diffFileTier("src/app.test.ts")).toBe("test");
-    expect(diffFileTier("src/app.spec.tsx")).toBe("test");
-    expect(diffFileTier("src/__tests__/app.ts")).toBe("test");
-    expect(diffFileTier("test/app.ts")).toBe("test");
-    expect(diffFileTier("tests/helpers/app.ts")).toBe("test");
-  });
-
-  it("treats everything else as source, including files merely named like a directory", () => {
-    expect(diffFileTier("src/app.ts")).toBe("source");
-    expect(diffFileTier("src/testing.ts")).toBe("source");
-    expect(diffFileTier("src/dist.ts")).toBe("source");
-  });
-});
-
 describe("orderDiffFiles", () => {
+  it("places source before tests and generated files across path conventions", () => {
+    const source = ["src/app.ts", "src/dist.ts", "src/testing.ts"];
+    const tests = [
+      "src/__tests__/app.ts",
+      "src/app.spec.tsx",
+      "src/app.test.ts",
+      "test/app.ts",
+      "tests/helpers/app.ts",
+    ];
+    const generated = [
+      "apps/web/package-lock.json",
+      "dist/app.js",
+      "packages/core/vendor/lib.js",
+      "pnpm-lock.yaml",
+      "public/app.min.js",
+      "src/__snapshots__/app.ts",
+      "src/api.generated.ts",
+      "src/app.test.ts.snap",
+    ];
+    expect(
+      order([...generated, ...tests, ...source].toReversed().map((path) => file(path))),
+    ).toEqual([...source, ...tests, ...generated]);
+  });
+
   it("answers an empty diff with an empty order", () => {
     expect(order([])).toEqual([]);
   });

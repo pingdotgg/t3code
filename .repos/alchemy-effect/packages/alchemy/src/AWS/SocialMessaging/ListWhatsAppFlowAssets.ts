@@ -23,9 +23,8 @@ export interface ListWhatsAppFlowAssetsRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.ListWhatsAppFlowAssetsHttp)`.
- * @binding
- * @section Managing WhatsApp Flows
- * @example List a Flow's Assets
+ * ### Managing WhatsApp Flows
+ * **Example:** List a Flow's Assets
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const listFlowAssets = yield* AWS.SocialMessaging.ListWhatsAppFlowAssets(account);
@@ -35,6 +34,8 @@ export interface ListWhatsAppFlowAssetsRequest extends Omit<
  *   flowId: "1234567890",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListWhatsAppFlowAssets extends Binding.Service<
   ListWhatsAppFlowAssets,

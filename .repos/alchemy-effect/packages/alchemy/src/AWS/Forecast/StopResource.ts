@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * grants `forecast:StopResource` on `*`. Provide the implementation with
  * `Effect.provide(AWS.Forecast.StopResourceHttp)`.
  *
- * @binding
- * @section Managing Jobs
- * @example Halt a Runaway Training Run
+ * ### Managing Jobs
+ * **Example:** Halt a Runaway Training Run
  * ```typescript
  * // init
  * const stopResource = yield* AWS.Forecast.StopResource();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* stopResource({ ResourceArn: predictorArn });
  * ```
+ *
+ * @binding
  */
 export interface StopResource extends Binding.Service<
   StopResource,

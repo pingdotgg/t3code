@@ -54,7 +54,7 @@ const stderrDiagnosticOf = (stderr: string): TailscaleStderrDiagnostic | undefin
   return STDERR_DIAGNOSTIC_PATTERNS.find(([pattern]) => pattern.test(stderr))?.[1] ?? "unknown";
 };
 
-export class TailscaleCommandSpawnError extends Schema.TaggedErrorClass<TailscaleCommandSpawnError>()(
+export class TailscaleCommandSpawnError extends Schema.TaggedError<TailscaleCommandSpawnError>()(
   "TailscaleCommandSpawnError",
   {
     ...TailscaleCommandContext,
@@ -66,7 +66,7 @@ export class TailscaleCommandSpawnError extends Schema.TaggedErrorClass<Tailscal
   }
 }
 
-class TailscaleCommandOutputError extends Schema.TaggedErrorClass<TailscaleCommandOutputError>()(
+class TailscaleCommandOutputError extends Schema.TaggedError<TailscaleCommandOutputError>()(
   "TailscaleCommandOutputError",
   {
     ...TailscaleCommandContext,
@@ -78,7 +78,7 @@ class TailscaleCommandOutputError extends Schema.TaggedErrorClass<TailscaleComma
   }
 }
 
-export class TailscaleCommandExitError extends Schema.TaggedErrorClass<TailscaleCommandExitError>()(
+export class TailscaleCommandExitError extends Schema.TaggedError<TailscaleCommandExitError>()(
   "TailscaleCommandExitError",
   {
     ...TailscaleCommandContext,
@@ -98,7 +98,7 @@ export class TailscaleCommandExitError extends Schema.TaggedErrorClass<Tailscale
   }
 }
 
-export class TailscaleCommandTimeoutError extends Schema.TaggedErrorClass<TailscaleCommandTimeoutError>()(
+export class TailscaleCommandTimeoutError extends Schema.TaggedError<TailscaleCommandTimeoutError>()(
   "TailscaleCommandTimeoutError",
   {
     ...TailscaleCommandContext,
@@ -111,15 +111,13 @@ export class TailscaleCommandTimeoutError extends Schema.TaggedErrorClass<Tailsc
   }
 }
 
-export const TailscaleCommandError = Schema.Union([
-  TailscaleCommandSpawnError,
-  TailscaleCommandOutputError,
-  TailscaleCommandExitError,
-  TailscaleCommandTimeoutError,
-]);
-export type TailscaleCommandError = typeof TailscaleCommandError.Type;
+export type TailscaleCommandError =
+  | TailscaleCommandSpawnError
+  | TailscaleCommandOutputError
+  | TailscaleCommandExitError
+  | TailscaleCommandTimeoutError;
 
-export class TailscaleStatusParseError extends Schema.TaggedErrorClass<TailscaleStatusParseError>()(
+export class TailscaleStatusParseError extends Schema.TaggedError<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",
   { cause: Schema.Defect() },
 ) {

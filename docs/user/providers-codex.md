@@ -1,10 +1,37 @@
 # Codex
 
-For one account, use the default Codex provider with your normal Codex login.
-[Provider setup](./install.md#providers) covers installation, Settings > Providers,
-and custom binaries or environment variables.
+Use your ChatGPT plan or an existing Codex CLI login to code in T3 Code.
+
+## Connect with ChatGPT
+
+Connect during onboarding or in **Settings → Providers**. For a remote machine,
+select that environment first. T3 Code handles Codex installation; sign in on
+OpenAI and allow sharing of your ChatGPT plan.
+
+Manage shared usage and credits in ChatGPT through **Manage usage** in T3 Code.
+If a request uses a feature that ChatGPT sharing does not support, use another
+provider for that request.
+
+When reconnecting, choose the same account in T3 Code and on OpenAI's sign-in
+page. Disconnecting stops running threads but keeps their history and lets you
+reconnect later.
+
+If remote sign-in cannot return automatically, paste the full URL from the final
+localhost page into the sign-in panel, even if that page could not load.
+
+## Use an existing Codex login
+
+T3 Code can use your installed Codex and its existing login. Run `codex login`
+on the environment's machine to sign in. [Provider setup](./install.md#providers)
+covers installation and custom configuration.
 
 ## Use multiple accounts
+
+Add another ChatGPT account in **Settings → Providers**, then select the account
+from the thread's model picker. Compatible accounts can continue the same thread.
+Connecting accounts through T3 Code leaves your CLI login unchanged.
+
+### Multiple CLI logins
 
 A shared Codex home with a shadow home lets work and personal accounts continue
 the same threads. The accounts share Codex sessions and configuration while keeping
@@ -54,7 +81,9 @@ contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 Codex can ask a question and keep working. Answer it in the thread's question
 panel. The answer becomes a new message: it reaches the active turn, or starts
 another turn if Codex has finished. Unanswered questions survive reconnects.
-This requires a Codex version that supports async questions.
+If you do not want to answer, dismiss the question from its panel. Dismissing
+closes it without sending anything to Codex. This requires a Codex version that
+supports async questions.
 
 ## Approve app access
 
@@ -62,6 +91,13 @@ Codex tools can request access to another app. Respond to the named app's reques
 in the thread on web, desktop, or mobile. Some tools offer access for one request,
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
+
+## Codex says I hit a usage limit
+
+When Codex stops on a usage limit, the thread names the window that ran out and
+when it resets, when Codex reports them. Send the message again after the reset. On a workspace plan the
+message also says whether your workspace owner needs to add credits or raise the
+spend limit to continue sooner.
 
 ## Send feedback to OpenAI
 

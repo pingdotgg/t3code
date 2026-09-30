@@ -11,9 +11,8 @@ import type { Workspace } from "./Workspace.ts";
  * Grafana Labs token as `grafanaToken` when upgrading to `ENTERPRISE`.
  * Upgrading incurs additional fees. Provide the implementation with
  * `Effect.provide(AWS.Grafana.AssociateLicenseHttp)`.
- * @binding
- * @section Managing Licenses
- * @example Upgrade to Grafana Enterprise
+ * ### Managing Licenses
+ * **Example:** Upgrade to Grafana Enterprise
  * ```typescript
  * const associateLicense = yield* Grafana.AssociateLicense(workspace);
  *
@@ -23,6 +22,8 @@ import type { Workspace } from "./Workspace.ts";
  * });
  * // ws.licenseType → "ENTERPRISE"
  * ```
+ *
+ * @binding
  */
 export interface AssociateLicense extends Binding.Service<
   AssociateLicense,

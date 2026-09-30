@@ -293,8 +293,14 @@ export const useAtom = <R, W, const Mode extends "value" | "promise" | "promiseE
 }
 
 const atomPromiseMap = {
-  suspendOnWaiting: new Map<Atom.Atom<any>, Promise<void>>(),
-  default: new Map<Atom.Atom<any>, Promise<void>>()
+  suspendOnWaiting: new WeakMap<
+    AtomRegistry.AtomRegistry,
+    WeakMap<Atom.Atom<any>, Promise<void>>
+  >(),
+  default: new WeakMap<
+    AtomRegistry.AtomRegistry,
+    WeakMap<Atom.Atom<any>, Promise<void>>
+  >()
 }
 
 function atomToPromise<A, E>(
@@ -302,7 +308,12 @@ function atomToPromise<A, E>(
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
   suspendOnWaiting: boolean
 ) {
-  const map = suspendOnWaiting ? atomPromiseMap.suspendOnWaiting : atomPromiseMap.default
+  const registries = suspendOnWaiting ? atomPromiseMap.suspendOnWaiting : atomPromiseMap.default
+  let map = registries.get(registry)
+  if (map === undefined) {
+    map = new WeakMap()
+    registries.set(registry, map)
+  }
   let promise = map.get(atom)
   if (promise !== undefined) {
     return promise
@@ -424,8 +435,8 @@ export const useAtomSubscribe = <A>(
  * @since 4.0.0
  */
 export const useAtomRef = <A>(ref: AtomRef.ReadonlyRef<A>): A => {
-  const [, setValue] = React.useState(ref.value)
-  React.useEffect(() => ref.subscribe(setValue), [ref])
+  const [, forceUpdate] = React.useReducer((n) => n + 1, 0)
+  React.useEffect(() => ref.subscribe(forceUpdate), [ref])
   return ref.value
 }
 

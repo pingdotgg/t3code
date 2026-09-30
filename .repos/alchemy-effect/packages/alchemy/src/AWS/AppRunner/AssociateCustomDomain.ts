@@ -18,9 +18,8 @@ export interface AssociateCustomDomainRequest extends Omit<
  * Provide `AppRunner.AssociateCustomDomainHttp` on the hosting function's
  * Effect to implement the binding.
  *
- * @binding
- * @section Custom Domains
- * @example Associate a customer domain
+ * ### Custom Domains
+ * **Example:** Associate a customer domain
  * ```typescript
  * const associateCustomDomain = yield* AppRunner.AssociateCustomDomain(service);
  * const { CustomDomain, DNSTarget } = yield* associateCustomDomain({
@@ -30,6 +29,8 @@ export interface AssociateCustomDomainRequest extends Omit<
  * // CustomDomain.CertificateValidationRecords -> CNAMEs the customer creates
  * // DNSTarget -> where the customer points app.customer.com
  * ```
+ *
+ * @binding
  */
 export interface AssociateCustomDomain extends Binding.Service<
   AssociateCustomDomain,

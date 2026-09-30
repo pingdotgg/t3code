@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * ARN — the other half of scheduled CDC windows and cost-control automation
  * (pair with {@link StartReplicationTask}). Provide the implementation with
  * `Effect.provide(AWS.DMS.StopReplicationTaskHttp)`.
- * @binding
- * @section Orchestrating Replication Tasks
- * @example Stop a Running Task
+ * ### Orchestrating Replication Tasks
+ * **Example:** Stop a Running Task
  * ```typescript
  * // init — account-level, no target resource
  * const stopReplicationTask = yield* AWS.DMS.StopReplicationTask();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   ReplicationTaskArn: taskArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface StopReplicationTask extends Binding.Service<
   StopReplicationTask,

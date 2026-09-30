@@ -161,7 +161,7 @@ test.provider("attach and detach a custom domain", (stack) =>
     // run never leaves a dangling Pages.Domain / Pages.Project behind.
     // `stack.destroy()` tears down everything in the scratch stack (domain
     // then project); the next run's start-of-test purge is the backstop.
-    Effect.ensuring(stack.destroy().pipe(Effect.ignore)),
+    Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
   ),
 );
 

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const testState = vi.hoisted(() => ({
   presentations: new Map() as ReadonlyMap<unknown, unknown>,
-  addToast: vi.fn(() => "toast"),
+  addToast: vi.fn((_toast: { actionProps: { onClick: () => void }; timeout: number }) => "toast"),
   closeToast: vi.fn(),
   navigate: vi.fn(),
 }));
@@ -125,5 +125,13 @@ describe("ResetCreditExpiryNotification", () => {
     expect(testState.closeToast).toHaveBeenCalledWith("toast-a");
     await act(() => vi.advanceTimersByTimeAsync(1_000));
     expect(testState.addToast).toHaveBeenCalledTimes(2);
+    const reminder = testState.addToast.mock.calls[1]![0];
+    expect(reminder.timeout).toBe(0);
+    await act(() => reminder.actionProps.onClick());
+    expect(testState.closeToast).toHaveBeenCalledWith("toast-b");
+    expect(testState.navigate).toHaveBeenCalledWith({
+      to: "/usage",
+      search: { metric: "limits" },
+    });
   });
 });

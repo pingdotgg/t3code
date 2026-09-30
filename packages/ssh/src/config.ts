@@ -89,7 +89,7 @@ const expandGlob = Effect.fnUntraced(function* (pattern: string) {
   return matchedPaths.toSorted((left, right) => left.localeCompare(right));
 });
 
-export const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
+const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   filePath: string,
   visited = new Set<string>(),
   homeDir: string,
@@ -211,8 +211,8 @@ export const discoverSshHosts = Effect.fnUntraced(
   function* (input: { readonly homeDir?: string }) {
     const path = yield* Path.Path;
     const env = yield* Config.all({
-      home: Config.string("HOME").pipe(Config.option),
-      userProfile: Config.string("USERPROFILE").pipe(Config.option),
+      home: Config.String("HOME").pipe(Config.option),
+      userProfile: Config.String("USERPROFILE").pipe(Config.option),
     });
     const homeDir =
       input?.homeDir ??

@@ -103,7 +103,7 @@ const RuntimeErrorClass = Schema.Literals([
 ]);
 export type RuntimeErrorClass = typeof RuntimeErrorClass.Type;
 
-export const TOOL_LIFECYCLE_ITEM_TYPES = [
+const TOOL_LIFECYCLE_ITEM_TYPES = [
   "command_execution",
   "file_change",
   "mcp_tool_call",
@@ -141,65 +141,13 @@ export const CanonicalRequestType = Schema.Literals([
   "apply_patch_approval",
   "exec_command_approval",
   "mcp_elicitation_approval",
+  "permission_approval",
   "tool_user_input",
   "dynamic_tool_call",
   "auth_tokens_refresh",
   "unknown",
 ]);
 export type CanonicalRequestType = typeof CanonicalRequestType.Type;
-
-const ProviderRuntimeEventType = Schema.Literals([
-  "session.started",
-  "session.configured",
-  "session.state.changed",
-  "session.exited",
-  "thread.started",
-  "thread.state.changed",
-  "thread.metadata.updated",
-  "thread.token-usage.updated",
-  "thread.realtime.started",
-  "thread.realtime.item-added",
-  "thread.realtime.audio.delta",
-  "thread.realtime.error",
-  "thread.realtime.closed",
-  "turn.started",
-  "turn.completed",
-  "turn.aborted",
-  "turn.plan.updated",
-  "turn.proposed.delta",
-  "turn.proposed.completed",
-  "turn.diff.updated",
-  "item.started",
-  "item.updated",
-  "item.completed",
-  "content.delta",
-  "request.opened",
-  "request.resolved",
-  "user-input.requested",
-  "user-input.resolved",
-  "task.started",
-  "task.progress",
-  "task.updated",
-  "task.completed",
-  "hook.started",
-  "hook.progress",
-  "hook.completed",
-  "tool.progress",
-  "tool.summary",
-  "tool.denied",
-  "auth.status",
-  "account.updated",
-  "account.rate-limits.updated",
-  "mcp.status.updated",
-  "mcp.oauth.completed",
-  "model.rerouted",
-  "config.warning",
-  "deprecation.notice",
-  "files.persisted",
-  "runtime.warning",
-  "runtime.error",
-]);
-export type ProviderRuntimeEventType = typeof ProviderRuntimeEventType.Type;
 
 const SessionStartedType = Schema.Literal("session.started");
 const SessionConfiguredType = Schema.Literal("session.configured");
@@ -861,6 +809,7 @@ export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
 
 const RuntimeErrorPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
+  code: Schema.optional(TrimmedNonEmptyStringSchema),
   class: Schema.optional(RuntimeErrorClass),
   detail: Schema.optional(Schema.Unknown),
 });

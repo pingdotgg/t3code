@@ -1,6 +1,6 @@
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 
-export function getTimestampFormatOptions(
+function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
 ): Intl.DateTimeFormatOptions {
@@ -53,6 +53,35 @@ function readHostSystemLocale(): string | null {
 
 const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
 
+const WEEKDAY_INDEXES = [0, 1, 2, 3, 4, 5, 6] as const;
+type WeekdayIndex = (typeof WEEKDAY_INDEXES)[number];
+
+type LocaleWithWeekInfo = Intl.Locale & {
+  readonly weekInfo?: { readonly firstDay: number };
+  getWeekInfo?: () => { readonly firstDay: number };
+};
+
+/**
+ * First weekday of a locale as a `Date#getDay` index (0 is Sunday), or
+ * `undefined` when the runtime has no week data, so callers keep their own
+ * default. Without a locale it reads the runtime's.
+ */
+export function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefined {
+  try {
+    const resolved: LocaleWithWeekInfo = new Intl.Locale(
+      locale ?? Intl.DateTimeFormat().resolvedOptions().locale,
+    );
+    // Week info counts Monday as 1 and Sunday as 7.
+    const firstDay = resolved.getWeekInfo?.().firstDay ?? resolved.weekInfo?.firstDay;
+    return firstDay === undefined ? undefined : WEEKDAY_INDEXES[firstDay % 7];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Week start for calendars, from the same locale timestamps are shown in. */
+export const weekStartsOn = resolveWeekStartsOn(timestampLocale);
+
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getTimestampFormatter(
@@ -81,7 +110,7 @@ export function parseTimestampDate(isoDate: string): Date | null {
 // Deliberately not the host locale: the tooltip's ordinal suffix and
 // day-before-month order below are English, so a localized month alone would
 // read "4th Juni 2026". Localizing the whole label is a separate change.
-const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
+const monthNameFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
 
 function ordinalSuffix(day: number): string {
   const lastTwo = day % 100;

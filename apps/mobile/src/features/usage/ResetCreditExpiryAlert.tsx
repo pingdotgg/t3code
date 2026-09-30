@@ -86,7 +86,10 @@ function ResetCreditExpiryAlertCycle({
         { text: "Later", style: "cancel" },
         {
           text: "View limits",
-          onPress: () => void Linking.openURL(Linking.createURL("/settings/usage?section=limits")),
+          onPress: () =>
+            void Linking.openURL(
+              Linking.createURL("settings/usage", { queryParams: { tab: "limits" } }),
+            ),
         },
       ]);
     }, RESET_CREDIT_REMINDER_STABILIZE_MS);

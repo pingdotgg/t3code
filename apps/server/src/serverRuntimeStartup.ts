@@ -1,14 +1,21 @@
 import {
   CommandId,
+  EventId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
   type ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  WORKTREE_SETUP_ACTIVITY_KIND,
+  WorktreeSetupSnapshot,
+  worktreeSetupActivityId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -26,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "./config.ts";
+import { flushCompileCache } from "./compileCache.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -49,7 +57,7 @@ import {
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
 
-export class ServerRuntimeStartupError extends Schema.TaggedErrorClass<ServerRuntimeStartupError>()(
+export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
   {
     mode: ServerConfig.RuntimeMode,
@@ -145,7 +153,7 @@ export const makeCommandGate = Effect.gen(function* () {
   } satisfies CommandGate;
 });
 
-export const recordStartupHeartbeat = Effect.gen(function* () {
+const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
@@ -198,6 +206,9 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   let bootstrapThreadCreated = false;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
+    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+    const defaultModelSelection =
+      settings.defaultModelSelection ?? getAutoBootstrapThreadModelSelection();
     yield* Effect.gen(function* () {
       const existingProject = yield* projectionReadModelQuery.getActiveProjectByWorkspaceRoot(
         serverConfig.cwd,
@@ -209,7 +220,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         const createdAt = DateTime.formatIso(yield* DateTime.now);
         nextProjectId = ProjectId.make(yield* randomUUID);
         const bootstrapProjectTitle = path.basename(serverConfig.cwd) || "project";
-        nextThreadModelSelection = getAutoBootstrapThreadModelSelection();
+        nextThreadModelSelection = defaultModelSelection;
         yield* orchestrationEngine.dispatch({
           type: "project.create",
           commandId: CommandId.make(yield* randomUUID),
@@ -224,7 +235,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         nextProjectId = existingProject.value.id;
         bootstrapProjectId = nextProjectId;
         nextThreadModelSelection =
-          existingProject.value.defaultModelSelection ?? getAutoBootstrapThreadModelSelection();
+          resolveProjectSettings(settings, nextProjectId, existingProject.value).settings
+            .defaultModelSelection ?? defaultModelSelection;
       }
 
       yield* Effect.gen(function* () {
@@ -241,7 +253,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
             title: "New thread",
             modelSelection: nextThreadModelSelection,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            runtimeMode: "full-access",
+            runtimeMode: resolveProjectSettings(settings, nextProjectId).settings
+              .defaultRuntimeMode,
             branch: null,
             worktreePath: null,
             createdAt,
@@ -252,13 +265,13 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           bootstrapThreadId = existingThreadId.value;
         }
       }).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasInterrupts(cause)
-            ? Effect.failCause(cause)
-            : Effect.logWarning("startup thread auto-bootstrap failed", {
-                bootstrapProjectId: nextProjectId,
-                cause,
-              }),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterrupts(cause),
+          (cause) =>
+            Effect.logWarning("startup thread auto-bootstrap failed", {
+              bootstrapProjectId: nextProjectId,
+              cause,
+            }),
         ),
       );
     });
@@ -300,11 +313,9 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
-  return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
-    Effect.flatMap((target) =>
-      target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
-    ),
-  );
+  return serverConfig.mode === "desktop"
+    ? baseTarget
+    : yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
 const maybeOpenBrowser = (target: string) =>
@@ -335,7 +346,7 @@ const ORPHANED_PROVIDER_SESSION_ERROR =
 const SERVER_UPDATE_CONTINUATION_KEY = "continueAfterServerUpdate";
 const SERVER_UPDATE_CONTINUATION_PROMPT = "Continue where you left off.";
 
-class ProviderSessionContinuationError extends Schema.TaggedErrorClass<ProviderSessionContinuationError>()(
+class ProviderSessionContinuationError extends Schema.TaggedError<ProviderSessionContinuationError>()(
   "ProviderSessionContinuationError",
   {
     threadId: ThreadId,
@@ -346,7 +357,7 @@ class ProviderSessionContinuationError extends Schema.TaggedErrorClass<ProviderS
   }
 }
 
-export class ServerUpdateThreadContinuationError extends Schema.TaggedErrorClass<ServerUpdateThreadContinuationError>()(
+export class ServerUpdateThreadContinuationError extends Schema.TaggedError<ServerUpdateThreadContinuationError>()(
   "ServerUpdateThreadContinuationError",
   {
     cause: Schema.Defect(),
@@ -461,7 +472,7 @@ const clearContinuationMarkers = (
     { concurrency: "unbounded", discard: true },
   );
 
-export const clearProviderSessionContinuationMarkers = (threadIds: ReadonlyArray<ThreadId>) =>
+const clearProviderSessionContinuationMarkers = (threadIds: ReadonlyArray<ThreadId>) =>
   Effect.gen(function* () {
     const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
     yield* clearContinuationMarkers(directory, threadIds);
@@ -474,14 +485,19 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const providerService = yield* ProviderService.ProviderService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const continueAfterRestart = yield* settings.getSettings.pipe(
-    Effect.map((value) => value.continueThreadsAfterServerUpdate),
+  const restartSettings = yield* settings.getSettings.pipe(
+    Effect.asSome,
     Effect.catch((cause) =>
       Effect.logWarning("could not read restart continuation preference", { cause }).pipe(
-        Effect.as(false),
+        Effect.as(Option.none()),
       ),
     ),
   );
+  const continueAfterRestartFor = (projectId: ProjectId) =>
+    Option.isSome(restartSettings)
+      ? resolveProjectSettings(restartSettings.value, projectId).settings
+          .continueThreadsAfterServerUpdate
+      : false;
 
   const liveThreadIds = new Set(
     (yield* providerService.listSessions()).map((session) => session.threadId),
@@ -532,13 +548,13 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       continue;
     }
     const binding = yield* directory.getBinding(thread.id).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("failed to read orphaned provider session directory binding", {
-              threadId: thread.id,
-              cause,
-            }).pipe(Effect.as(Option.none())),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterrupts(cause),
+        (cause) =>
+          Effect.logWarning("failed to read orphaned provider session directory binding", {
+            threadId: thread.id,
+            cause,
+          }).pipe(Effect.as(Option.none())),
       ),
     );
     const continuationMarkerPresent =
@@ -550,7 +566,8 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       continuationTurnId !== null &&
       (session.activeTurnId === null || continuationTurnId === session.activeTurnId) &&
       Option.isSome(binding) &&
-      (readRuntimePayload(binding.value.runtimePayload).activeTurnId == null ||
+      (session.activeTurnId !== null ||
+        readRuntimePayload(binding.value.runtimePayload).activeTurnId == null ||
         readRuntimePayload(binding.value.runtimePayload).activeTurnId === continuationTurnId);
     const preparedWhileReady =
       session.status === "ready" &&
@@ -559,16 +576,15 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       Option.isSome(binding) &&
       readRuntimePayload(binding.value.runtimePayload).activeTurnId === null &&
       readRuntimePayload(binding.value.runtimePayload).continueAfterServerUpdatePrepared === true;
-    // Abrupt shutdowns cannot write an update marker. Require both durable
-    // records to agree on an unfinished turn before recovering one implicitly.
+    // Runtime events advance the projection's turn, but not the directory's
+    // last admitted turn. Use the projection to identify interrupted work.
     const interruptedByRestart =
-      continueAfterRestart &&
+      continueAfterRestartFor(thread.projectId) &&
       session.status === "running" &&
       session.activeTurnId !== null &&
       Option.isSome(binding) &&
       binding.value.status === "running" &&
-      binding.value.resumeCursor != null &&
-      readRuntimePayload(binding.value.runtimePayload).activeTurnId === session.activeTurnId;
+      binding.value.resumeCursor != null;
     const settleAsError = (lastError: string) =>
       Effect.gen(function* () {
         yield* Effect.gen(function* () {
@@ -589,13 +605,13 @@ export const reconcileProviderSessions = Effect.gen(function* () {
             });
           }
         }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterrupts(cause)
-              ? Effect.failCause(cause)
-              : Effect.logWarning(
-                  "failed to reconcile orphaned provider session directory binding",
-                  { threadId: thread.id, cause },
-                ),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterrupts(cause),
+            (cause) =>
+              Effect.logWarning("failed to reconcile orphaned provider session directory binding", {
+                threadId: thread.id,
+                cause,
+              }),
           ),
         );
 
@@ -616,13 +632,13 @@ export const reconcileProviderSessions = Effect.gen(function* () {
           });
         }).pipe(
           Effect.retry({ times: 1 }),
-          Effect.catchCause((cause) =>
-            Cause.hasInterrupts(cause)
-              ? Effect.failCause(cause)
-              : Effect.logWarning("failed to settle orphaned provider session projection", {
-                  threadId: thread.id,
-                  cause,
-                }),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterrupts(cause),
+            (cause) =>
+              Effect.logWarning("failed to settle orphaned provider session projection", {
+                threadId: thread.id,
+                cause,
+              }),
           ),
         );
       });
@@ -722,10 +738,93 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     yield* settleAsError(ORPHANED_PROVIDER_SESSION_ERROR);
   }
 }).pipe(
-  Effect.catchCause((cause) =>
-    Cause.hasInterrupts(cause)
-      ? Effect.failCause(cause)
-      : Effect.logWarning("provider session startup reconciliation failed", { cause }),
+  Effect.catchCauseIf(
+    (cause) => !Cause.hasInterrupts(cause),
+    (cause) => Effect.logWarning("provider session startup reconciliation failed", { cause }),
+  ),
+);
+
+const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
+
+/**
+ * A worktree bootstrap records its setup snapshot on the thread while it runs
+ * and settles it when it finishes. The bootstrap itself lives only in memory,
+ * so a process exit mid-setup leaves a `running` record with nobody to finish
+ * it. Before the turn started that also strands the persisted user message, so
+ * the setup is marked failed and the user is told to send again. After the
+ * handoff only an async setup script was still running; its stage is marked
+ * failed and the setup settles as done, like any other script failure.
+ */
+export const reconcileWorktreeSetups = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  // The command read model carries no activity bodies; read the setup
+  // records directly, live threads only.
+  const recordedSetups = yield* query.listActivitiesByKind(WORKTREE_SETUP_ACTIVITY_KIND);
+  const interruptedAt = DateTime.formatIso(yield* DateTime.now);
+
+  for (const recorded of recordedSetups) {
+    const snapshot = decodeWorktreeSetupSnapshot(recorded.payload);
+    if (Option.isNone(snapshot) || snapshot.value.phase !== "running") continue;
+    if (recorded.id !== worktreeSetupActivityId(snapshot.value.threadId)) continue;
+    const threadId = snapshot.value.threadId;
+
+    const turnStarted = snapshot.value.stages.some(
+      (stage) => stage.id === "agent" && stage.status === "done",
+    );
+    const interrupted: WorktreeSetupSnapshot = {
+      ...snapshot.value,
+      phase: turnStarted ? "done" : "failed",
+      endedAt: interruptedAt,
+      error: turnStarted
+        ? null
+        : "The server restarted before the worktree setup finished. Send the message again.",
+      stages: snapshot.value.stages.map((stage) =>
+        stage.status === "running" || stage.status === "pending"
+          ? {
+              ...stage,
+              status: "failed",
+              endedAt: interruptedAt,
+              detail: "interrupted by a server restart",
+            }
+          : stage,
+      ),
+      sequence: snapshot.value.sequence + 1,
+    };
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(yield* crypto.randomUUIDv4),
+        threadId,
+        activity: {
+          id: EventId.make(worktreeSetupActivityId(threadId)),
+          tone: "error",
+          kind: WORKTREE_SETUP_ACTIVITY_KIND,
+          summary: turnStarted
+            ? "Setup script interrupted by a server restart"
+            : "Worktree setup interrupted by a server restart",
+          payload: interrupted,
+          turnId: null,
+          createdAt: snapshot.value.startedAt,
+        },
+        createdAt: interruptedAt,
+      })
+      .pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterrupts(cause),
+          (cause) =>
+            Effect.logWarning("failed to settle interrupted worktree setup", {
+              threadId,
+              cause,
+            }),
+        ),
+      );
+  }
+}).pipe(
+  Effect.catchCauseIf(
+    (cause) => !Cause.hasInterrupts(cause),
+    (cause) => Effect.logWarning("worktree setup startup reconciliation failed", { cause }),
   ),
 );
 
@@ -737,12 +836,13 @@ interface StartupOptions {
 
 export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   projects: ReadonlyArray<OrchestrationProjectShell>,
+  settings: ServerSettingsValue = DEFAULT_SERVER_SETTINGS,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const workspaceRoots = [
     ...new Set(
       projects
-        .filter((project) => project.autoPull === true)
+        .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
         .map((project) => project.workspaceRoot),
     ),
   ];
@@ -794,6 +894,7 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   );
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
@@ -813,7 +914,11 @@ export const make = (options?: StartupOptions) =>
     const reactorScope = yield* Scope.make("sequential");
 
     const syncAutoPullProjects = projectionSnapshotQuery.getShellSnapshot().pipe(
-      Effect.flatMap((snapshot) => autoPullProjects(snapshot.projects)),
+      Effect.flatMap((snapshot) =>
+        serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) => autoPullProjects(snapshot.projects, settings)),
+        ),
+      ),
       Effect.catch((cause) =>
         Effect.logWarning("Failed to load projects for automatic pull", { cause }),
       ),
@@ -862,6 +967,7 @@ export const make = (options?: StartupOptions) =>
       );
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+      yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
@@ -969,6 +1075,7 @@ export const make = (options?: StartupOptions) =>
         }),
       );
       yield* Effect.logDebug("startup phase: complete");
+      yield* flushCompileCache;
     }).pipe(
       Effect.annotateSpans({
         "server.mode": serverConfig.mode,

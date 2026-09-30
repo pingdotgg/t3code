@@ -11,9 +11,8 @@ import type { CloudControlBindingOptions } from "./BindingOptions.ts";
  * invokes the resource type's read handler with the caller's credentials,
  * pass the handler's underlying permissions via
  * {@link CloudControlBindingOptions.handlerPolicyStatements}.
- * @binding
- * @section Reading Resources
- * @example Read an SSM Parameter's live state
+ * ### Reading Resources
+ * **Example:** Read an SSM Parameter's live state
  * ```typescript
  * // init — account-level; grant the read handler's permissions too
  * const getResource = yield* CloudControl.GetResource({
@@ -28,6 +27,8 @@ import type { CloudControlBindingOptions } from "./BindingOptions.ts";
  *   Identifier: "/app/greeting",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetResource extends Binding.Service<
   GetResource,

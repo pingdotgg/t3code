@@ -4,6 +4,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef } from "react";
 
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
+import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 import { isFileBackedComposerAttachment } from "../lib/composerImages";
 import {
   composerAttachmentUploadKey,
@@ -20,12 +21,14 @@ import {
   composerDraftsAtom,
   ensureComposerDraftsLoaded,
   flushComposerDrafts,
-  retainComposerAttachmentFileForPreview,
   setComposerDraftAttachmentUpload,
 } from "./use-composer-drafts";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 
-export { composerAttachmentUploadBlockReason } from "../lib/composerAttachmentUploadQueue";
+export {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
+} from "../lib/composerAttachmentUploadQueue";
 
 export const composerAttachmentUploadsAtom = Atom.make<
   Readonly<Record<string, ComposerAttachmentUploadState>>
@@ -79,7 +82,7 @@ export function useComposerAttachmentUploadWorker() {
               let retained = false;
               for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
                 if (
-                  composerDraftEnvironmentId(key, queued) === environmentId &&
+                  composerDraftEnvironmentId(key, queued, draft) === environmentId &&
                   draft.attachments.some((candidate) => candidate.id === attachment.id)
                 ) {
                   retained = setComposerDraftAttachmentUpload(key, uploaded) || retained;
@@ -113,7 +116,7 @@ export function useComposerAttachmentUploadWorker() {
         .map((environment) => environment.environmentId),
     );
     const requests = Object.entries(drafts).flatMap(([key, draft]) => {
-      const environmentId = composerDraftEnvironmentId(key, queued);
+      const environmentId = composerDraftEnvironmentId(key, queued, draft);
       if (environmentId === null || !connected.has(environmentId)) return [];
       return draft.attachments
         .filter((attachment) =>

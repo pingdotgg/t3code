@@ -9,9 +9,8 @@ import type { WorkGroup } from "./WorkGroup.ts";
  * Cancels a running query in the bound workgroup. Stopping an already
  * finished query is a no-op, so the call is safely idempotent. Provide the
  * implementation with `Effect.provide(AWS.Athena.StopQueryExecutionHttp)`.
- * @binding
- * @section Cancelling Queries
- * @example Cancel a Runaway Query
+ * ### Cancelling Queries
+ * **Example:** Cancel a Runaway Query
  * ```typescript
  * // init — bind the operation to the workgroup
  * const stopQueryExecution = yield* AWS.Athena.StopQueryExecution(workGroup);
@@ -19,6 +18,8 @@ import type { WorkGroup } from "./WorkGroup.ts";
  * // runtime
  * yield* stopQueryExecution({ QueryExecutionId: id });
  * ```
+ *
+ * @binding
  */
 export interface StopQueryExecution extends Binding.Service<
   StopQueryExecution,

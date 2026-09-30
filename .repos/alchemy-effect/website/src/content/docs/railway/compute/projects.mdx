@@ -1,0 +1,109 @@
+---
+title: Projects
+description: A workspace-scoped namespace containing Services, Environments, Volumes, Variables, and Buckets.
+---
+
+A [`Railway.Project`](/providers/railway/project) is a workspace-scoped
+namespace. It owns environments and services. Names are unique per
+workspace.
+
+## Create a Project
+
+Alchemy generates a unique name unless you pass one.
+
+```typescript
+const site = yield* Railway.Project("Site");
+```
+
+`url` is `https://railway.com/project/{projectId}`. A production
+environment is created with the project — do not recreate it as an
+[Environment](/railway/compute/environments). `environmentId` is that
+primary environment.
+
+Nothing answers on the public internet until a
+[Service](/railway/compute/services) is deployed. The Service gets its
+own `*.up.railway.app` hostname.
+
+:::note
+Prefer omitting `name` in tests and CI so names stay unique and
+reclaimable.
+:::
+
+## A stable name
+
+Pass `name` when you need a stable project name.
+
+```typescript
+const site = yield* Railway.Project("Site", {
+  name: "my-site",
+});
+```
+
+Changing `name` later updates the project in place.
+
+## Description
+
+`description` is optional and updates in place.
+
+```typescript
+const site = yield* Railway.Project("Site", {
+  description: "production web app",
+});
+```
+
+## Workspace
+
+Workspace defaults to the current token
+(`me.workspace ?? me.workspaces[0]`). Pass `workspaceId` to pin it.
+
+```diff lang="typescript"
+const site = yield* Railway.Project("Site", {
+  name: "my-site",
++  workspaceId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+});
+```
+
+:::caution[Changing `workspaceId` replaces the Project]
+The Project is created in the new workspace. The old Project is
+deleted.
+:::
+
+## Default environment name
+
+`defaultEnvironmentName` is create-only. Railway's default is
+`production`. Extra environments (staging) are a separate
+[Environment](/railway/compute/environments) resource.
+
+```typescript
+const site = yield* Railway.Project("Site", {
+  defaultEnvironmentName: "production",
+});
+```
+
+## Module-scope declarations
+
+Declare the Project once. Pass it into every child.
+
+```typescript
+// src/project.ts
+import * as Railway from "alchemy/Railway";
+
+export const Site = Railway.Project("Site");
+```
+
+Resource-valued props accept the resource or an Effect producing
+it. Do not unwrap it just to pass it along.
+
+## Destroy
+
+`alchemy destroy` deletes children, then the Project.
+
+## Where next
+
+The [tutorial](/railway/tutorial/part-1) deploys a Project from an
+empty directory. [Services](/railway/compute/services) run in the
+Project. [Environments](/railway/compute/environments) add staging.
+The [`Project` reference](/providers/railway/project) lists every
+prop.
+[Example: railway-project](https://github.com/alchemy-run/alchemy/tree/main/examples/railway-project)
+is a Project plus an image Service.

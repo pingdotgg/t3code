@@ -8,9 +8,10 @@ import { toastManager } from "../ui/toast";
 export type PullRequestLinkContextMenuAction = "copy-link" | "open-external";
 
 /** Named for the host rather than "externally": the point is where you will land. */
-export const OPEN_ON_HOST_LABELS: Partial<Record<string, string>> = {
+const OPEN_ON_HOST_LABELS: Partial<Record<string, string>> = {
   github: "Open on GitHub",
   gitlab: "Open on GitLab",
+  forgejo: "Open on Forgejo",
   bitbucket: "Open on Bitbucket",
   "azure-devops": "Open on Azure DevOps",
 };

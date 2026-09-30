@@ -63,9 +63,8 @@ export interface TableStreamsClient {
  *
  * Bind this to a `Table` whose `cdcSpecification` is enabled to get a typed
  * client for traversing the table's change-data-capture stream.
- * @binding
- * @section Reading Change Data
- * @example Traverse the Latest Stream
+ * ### Reading Change Data
+ * **Example:** Traverse the Latest Stream
  * ```typescript
  * const streams = yield* AWS.Keyspaces.TableStreams(table);
  *
@@ -83,6 +82,8 @@ export interface TableStreamsClient {
  *   shardIterator: shardIterator!,
  * });
  * ```
+ *
+ * @binding
  */
 export interface TableStreams extends Binding.Service<
   TableStreams,

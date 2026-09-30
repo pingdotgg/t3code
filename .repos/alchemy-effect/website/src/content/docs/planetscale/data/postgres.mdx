@@ -16,8 +16,10 @@ MySQL (Vitess) family, see [MySQL](/planetscale/data/mysql).
 ## Create a database
 
 `PostgresDatabase` owns the long-lived cluster. `clusterSize` is
-required; short sizes like `"PS_10"` are expanded to the full SKU
-using the target region and architecture:
+required.
+
+Network-attached (NAS) sizes like `"PS_10"` are expanded to the full
+SKU using the target region and architecture:
 
 ```typescript
 import * as Planetscale from "alchemy/Planetscale";
@@ -25,6 +27,22 @@ import * as Planetscale from "alchemy/Planetscale";
 const database = yield* Planetscale.PostgresDatabase("app-db", {
   region: { slug: "us-east" },
   clusterSize: "PS_10",
+});
+```
+
+[PlanetScale Metal](https://planetscale.com/docs/metal) is supported
+too. Metal uses locally-attached NVMe, so the API needs the **full
+SKU** — CPU series, compute size, provider, architecture, and drive
+size — not a short `"M-10"` name. Copy a SKU from
+[Postgres pricing](https://planetscale.com/docs/postgres/pricing) or
+your org's `list_cluster_size_skus` response; hyphens from the docs
+are normalized to underscores:
+
+```typescript
+const metal = yield* Planetscale.PostgresDatabase("app-db-metal", {
+  region: { slug: "us-east" },
+  clusterSize: "M1_10_AWS_ARM_D_METAL_10",
+  arch: "arm",
 });
 ```
 
@@ -50,7 +68,7 @@ const branch = yield* Planetscale.PostgresBranch("app-branch", {
 
 `parentBranch` defaults to `"main"` and also accepts another
 `PostgresBranch`, so branches can chain. Branches take the same
-`migrationsDir` / `importFiles` props as the database — see
+`migrations` / `importFiles` props as the database — see
 [Migrations](/planetscale/data/migrations) for how SQL files are hashed
 and applied, and the
 [branch from a shared database](/cloudflare/data/branch-from-shared-database)
@@ -139,9 +157,34 @@ If you need a URL instead of components, `connectionUrl` and
 `connectionUrlPooled` carry the same direct/pooled endpoints as
 `Redacted` connection strings (`sslmode=verify-full`).
 
+## Connect privately with AWS PrivateLink
+
+Postgres roles expose the branch's provider-neutral private connection
+details. For AWS PrivateLink, pass `privateConnectionServiceName` to
+an Interface VPC endpoint. With private DNS enabled, use
+`privateHost` for workloads in that VPC:
+
+```typescript
+import * as AWS from "alchemy/AWS";
+
+const endpoint = yield* AWS.EC2.VpcEndpoint("postgres-private-link", {
+  vpcId: vpc.vpcId,
+  serviceName: role.privateConnectionServiceName,
+  vpcEndpointType: "Interface",
+  subnetIds: [privateSubnet.subnetId],
+  securityGroupIds: [databaseSecurityGroup.groupId],
+  privateDnsEnabled: true,
+});
+```
+
+For GCP Private Service Connect, `privateHost` is the private DNS zone;
+prepend the endpoint name configured in GCP before connecting.
+`PostgresDefaultRole` exposes the same details, though `PostgresRole`
+remains the safer choice for applications.
+
 ## Where next
 
-- [Migrations](/planetscale/data/migrations) — `migrationsDir` and
+- [Migrations](/planetscale/data/migrations) — `migrations` and
   `importFiles` on databases and branches.
 - [Hyperdrive](/cloudflare/data/hyperdrive) — edge-pooled connections from
   Workers to your PlanetScale database.

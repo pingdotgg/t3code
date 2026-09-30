@@ -142,9 +142,8 @@ export interface IdentitySource extends Resource<
  * identity provider — an Amazon Cognito user pool or any OpenID Connect
  * (OIDC) IdP — so that `IsAuthorizedWithToken` and
  * `BatchIsAuthorizedWithToken` can derive the principal directly from a JWT.
- * @resource
- * @section Connecting an Identity Provider
- * @example Cognito User Pool
+ * ### Connecting an Identity Provider
+ * **Example:** Cognito User Pool
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -159,7 +158,7 @@ export interface IdentitySource extends Resource<
  * });
  * ```
  *
- * @example OpenID Connect Provider
+ * **Example:** OpenID Connect Provider
  * ```typescript
  * yield* AWS.VerifiedPermissions.IdentitySource("Oidc", {
  *   policyStoreId: store.policyStoreId,
@@ -172,6 +171,8 @@ export interface IdentitySource extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const IdentitySource = Resource<IdentitySource>(
   "AWS.VerifiedPermissions.IdentitySource",

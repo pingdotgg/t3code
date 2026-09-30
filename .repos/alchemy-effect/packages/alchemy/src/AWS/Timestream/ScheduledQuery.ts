@@ -123,9 +123,8 @@ export interface ScheduledQuery extends Resource<
  * were not already onboarded receive `TimestreamNotOnboarded` (a specialized
  * `AccessDenied`) on every operation.
  * :::
- * @resource
- * @section Creating Scheduled Queries
- * @example Hourly Rollup
+ * ### Creating Scheduled Queries
+ * **Example:** Hourly Rollup
  * ```typescript
  * import * as Timestream from "alchemy/AWS/Timestream";
  *
@@ -154,13 +153,15 @@ export interface ScheduledQuery extends Resource<
  * });
  * ```
  *
- * @example Pausing a Schedule
+ * **Example:** Pausing a Schedule
  * ```typescript
  * const rollup = yield* Timestream.ScheduledQuery("HourlyRollup", {
  *   // ... unchanged configuration ...
  *   state: "DISABLED",
  * });
  * ```
+ *
+ * @resource
  */
 export const ScheduledQuery = Resource<ScheduledQuery>(
   "AWS.Timestream.ScheduledQuery",

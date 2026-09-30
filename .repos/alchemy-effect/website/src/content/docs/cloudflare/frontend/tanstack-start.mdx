@@ -5,14 +5,23 @@ sidebar:
   order: 5
 ---
 
-TanStack Start is pure Vite — `tanstackStart()` and `viteReact()` are
-ordinary plugins in `vite.config.ts`, so
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+[TanStack Start](https://tanstack.com/start) is pure Vite —
+`tanstackStart()` and `viteReact()` are ordinary plugins in
+`vite.config.ts`, so
 [`Cloudflare.Website.Vite`](/cloudflare/frontend/vite) builds the client
 assets and the SSR server bundle in a single `vite build` pass, no
 adapter or Wrangler config required. Support is verified: the
-[examples/cloudflare-tanstack](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-tanstack)
+[examples/cloudflare-website-tanstack-start](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-website-tanstack-start)
 example is checked in, and a live test deploys it in dev mode with real
 Alchemy-managed R2 bindings.
+
+## Configure Vite
+
+Your Vite config stays exactly what TanStack Start's scaffold gives
+you — Alchemy layers its Cloudflare integration on top when it
+builds:
 
 ```typescript
 // vite.config.ts
@@ -50,17 +59,29 @@ export default defineConfig({
 });
 ```
 
+:::
+
 Also drop the dependency:
 
-```sh
-bun remove @cloudflare/vite-plugin
-```
-:::
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun remove @cloudflare/vite-plugin" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm uninstall @cloudflare/vite-plugin" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm remove @cloudflare/vite-plugin" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn remove @cloudflare/vite-plugin" lang="sh" />
+  </TabItem>
+</Tabs>
 
 ## Declare the Website
 
-Use the class form of `Cloudflare.Website.Vite` so the app gets a named
-type you can infer bindings from:
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
 
 ```typescript
 // alchemy.run.ts
@@ -69,32 +90,28 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import Backend, { Bucket } from "./src/backend.ts";
 
-export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
-  compatibility: {
-    flags: ["nodejs_compat"],
-  },
+export const Website = Cloudflare.Website.Vite("Website", {
   env: {
     BUCKET: Bucket,
     BACKEND: Backend,
   },
-  assets: {
-    runWorkerFirst: true,
-  },
-}) {}
+});
 
 export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 ```
 
-`nodejs_compat` gives the SSR server bundle the Node APIs it needs at
-runtime; each `env` entry becomes a native Worker binding (`BUCKET` an
-R2 bucket, `BACKEND` a service binding to another Worker); and
-`runWorkerFirst` routes requests to the SSR Worker before static-asset
-matching, so server routes win over files. `WebsiteEnv` is the typed
-shape of those bindings, derived from the class.
+Each `env` entry becomes a native Worker binding (`BUCKET` an
+R2 bucket, `BACKEND` a service binding to another Worker). Requests
+matching a built client asset are served directly from the asset layer;
+everything else (SSR routes, server routes) falls through to the
+TanStack server handler. `WebsiteEnv` is the typed
+shape of those bindings, derived from the declaration. The SSR server
+bundle's Node APIs are covered by the `nodejs_compat` compatibility
+flag, which is enabled by default for every Worker.
 
 ## Add it to the Stack
 
-Yield the class from the Stack alongside anything it binds to:
+Yield the Website from the Stack alongside anything it binds to:
 
 ```typescript
 // alchemy.run.ts
@@ -199,4 +216,4 @@ export default defineConfig({
 
 `@tanstack/solid-start` provides the same `tanstackStart()` plugin
 entry point, so `Cloudflare.Website.Vite` builds it identically —
-`nodejs_compat` on, no other changes.
+no changes needed.

@@ -76,8 +76,8 @@ export interface Rotation extends Resource<
  * engagement duty between contacts. Attach rotations to an
  * `ONCALL_SCHEDULE` contact via its engagement plan's `RotationIds`.
  *
- * @section Creating Rotations
- * @example Daily hand-off rotation
+ * ### Creating Rotations
+ * **Example:** Daily hand-off rotation
  * ```typescript
  * const rotation = yield* SSMContacts.Rotation("Primary", {
  *   contactIds: [alice.contactArn, bob.contactArn],

@@ -13,9 +13,8 @@ export interface GetStageSessionRequest extends Omit<
  * Read a session of the bound stage — its start time and, once the last
  * participant leaves, its end time.
  *
- * @binding
- * @section Inspecting Stage Sessions
- * @example Look up a session
+ * ### Inspecting Stage Sessions
+ * **Example:** Look up a session
  * ```typescript
  * // init
  * const getStageSession = yield* IVSRealtime.GetStageSession(stage);
@@ -25,6 +24,8 @@ export interface GetStageSessionRequest extends Omit<
  *   sessionId: "st-a1b2c3d4e5f6",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetStageSession extends Binding.Service<
   GetStageSession,

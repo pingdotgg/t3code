@@ -1,14 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { UsagePage, type UsageMetric } from "../components/usage/UsagePage";
+import { UsagePage } from "../components/usage/UsagePage";
+import type { UsageMetric } from "../components/usage/usageShortcuts";
 
 export interface UsageSearch {
-  readonly metric?: "limits" | "tokens";
+  readonly metric?: UsageMetric;
 }
 
 export const Route = createFileRoute("/usage")({
   validateSearch: (raw: Record<string, unknown>): UsageSearch =>
-    raw.metric === "limits" || raw.metric === "tokens" ? { metric: raw.metric } : {},
+    raw.metric === "cost" || raw.metric === "limits" || raw.metric === "tokens"
+      ? { metric: raw.metric }
+      : {},
   component: UsageRoute,
 });
 
@@ -17,9 +20,9 @@ function UsageRoute() {
   const navigate = Route.useNavigate();
   const onMetricChange = (nextMetric: UsageMetric) => {
     void navigate({
-      search: nextMetric === "cost" ? {} : { metric: nextMetric },
+      search: { metric: nextMetric },
       replace: true,
     });
   };
-  return <UsagePage metric={metric ?? "cost"} onMetricChange={onMetricChange} />;
+  return <UsagePage metric={metric} onMetricChange={onMetricChange} />;
 }
