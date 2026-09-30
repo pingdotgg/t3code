@@ -2,10 +2,10 @@ import type { OrchestrationReadModel, OrchestrationThread, ProjectId } from "@t3
 import { describe, expect, it } from "vitest";
 
 import {
-  pendingReviewThreadPullRequests,
+  liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
-  type PendingReviewThreadPullRequest,
+  type ReviewThreadPullRequest,
 } from "./reviewThreadMergeArchive.ts";
 
 const REPO = "owner/name";
@@ -189,7 +189,7 @@ describe("planReviewThreadAutoArchive", () => {
   });
 });
 
-describe("pendingReviewThreadPullRequests", () => {
+describe("liveReviewThreadPullRequests", () => {
   it("asks about each distinct open pull request once, in project and repository order", () => {
     const threads = [
       reviewThread({ id: "root-b" }),
@@ -212,29 +212,32 @@ describe("pendingReviewThreadPullRequests", () => {
         ],
       }),
     ];
-    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([
+    expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([
       {
         ref: { projectId: projectId("project-0"), repository: "other/repo", number: 3 },
         pullRequestKeys: ["github.com/other/repo#3"],
+        recordedState: "unmerged",
       },
       {
         ref: { projectId: projectId("project-1"), repository: REPO, number: 7 },
         pullRequestKeys: [`github.com/${REPO}#7`],
+        recordedState: "unmerged",
       },
-    ] satisfies ReadonlyArray<PendingReviewThreadPullRequest>);
+    ] satisfies ReadonlyArray<ReviewThreadPullRequest>);
   });
 
   it("asks once about a pull request two review threads both watch, keeping both keys", () => {
     const threads = [reviewThread({ id: "root-a" }), reviewThread({ id: "root-b" })];
-    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([
+    expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([
       {
         ref: { projectId: projectId("project-1"), repository: REPO, number: 7 },
         pullRequestKeys: [`github.com/${REPO}#7`],
+        recordedState: "unmerged",
       },
     ]);
   });
 
-  it("does not ask about a pull request already recorded as merged", () => {
+  it("reports a recorded merge instead of asking, so the thread is still archived", () => {
     const threads = [
       reviewThread({
         id: "root",
@@ -254,15 +257,47 @@ describe("pendingReviewThreadPullRequests", () => {
         ],
       }),
     ];
-    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([]);
+    expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([
+      {
+        ref: { projectId: projectId("project-1"), repository: REPO, number: 7 },
+        pullRequestKeys: [`github.com/${REPO}#7`],
+        recordedState: "merged",
+      },
+    ] satisfies ReadonlyArray<ReviewThreadPullRequest>);
   });
 
-  it("does not ask about an archived or settled review thread", () => {
+  it("treats a pull request as merged when any thread records it that way", () => {
+    const mergedLink = {
+      pullRequest: {
+        url: `https://github.com/${REPO}/pull/7`,
+        number: 7,
+        title: "Add thing",
+        state: "merged" as const,
+        baseBranch: "main",
+        headBranch: "feature",
+      },
+      source: "agent" as const,
+      linkedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const threads = [
+      reviewThread({ id: "root-a" }),
+      reviewThread({ id: "root-b", pullRequests: [mergedLink] }),
+    ];
+    expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([
+      {
+        ref: { projectId: projectId("project-1"), repository: REPO, number: 7 },
+        pullRequestKeys: [`github.com/${REPO}#7`],
+        recordedState: "merged",
+      },
+    ]);
+  });
+
+  it("does not report an archived or settled review thread", () => {
     const threads = [
       reviewThread({ id: "archived", archivedAt: "2026-01-02T00:00:00.000Z" }),
       reviewThread({ id: "deleted", deletedAt: "2026-01-02T00:00:00.000Z" }),
       reviewThread({ id: "settled", settledOverride: "settled" }),
     ];
-    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([]);
+    expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([]);
   });
 });

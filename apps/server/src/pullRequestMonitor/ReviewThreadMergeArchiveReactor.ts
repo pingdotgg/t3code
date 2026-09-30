@@ -8,7 +8,7 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
-  pendingReviewThreadPullRequests,
+  liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
 } from "./reviewThreadMergeArchive.ts";
@@ -49,9 +49,11 @@ const makeReactor = Effect.gen(function* () {
     }
     const readModel = yield* engine.getReadModel();
     const mergedPullRequestKeys = new Set<string>();
-    for (const pending of pendingReviewThreadPullRequests(readModel)) {
-      if (!(yield* isMerged(pending.ref))) continue;
-      for (const key of pending.pullRequestKeys) mergedPullRequestKeys.add(key);
+    for (const live of liveReviewThreadPullRequests(readModel)) {
+      // A review thread that already records the merge is archived on this pass; only an
+      // unrecorded one costs a provider read.
+      if (live.recordedState !== "merged" && !(yield* isMerged(live.ref))) continue;
+      for (const key of live.pullRequestKeys) mergedPullRequestKeys.add(key);
     }
     for (const candidate of planReviewThreadAutoArchive(readModel, mergedPullRequestKeys)) {
       yield* engine

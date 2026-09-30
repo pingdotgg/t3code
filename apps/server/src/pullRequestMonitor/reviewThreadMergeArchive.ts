@@ -22,10 +22,14 @@ export type ReviewThreadMergeArchiveCandidate = {
 /**
  * A pull request a live review thread is watching, named both ways: the reference the provider
  * is asked about, and the thread-level keys that identify the same pull request in the read model.
+ *
+ * `recordedState` is what a review thread already knows. A merge recorded there needs no provider
+ * read, and dropping it would leave that review thread unarchived for as long as it stays linked.
  */
-export type PendingReviewThreadPullRequest = {
+export type ReviewThreadPullRequest = {
   readonly ref: PullRequestRef;
   readonly pullRequestKeys: ReadonlyArray<string>;
+  readonly recordedState: "merged" | "unmerged";
 };
 
 export function reviewThreadPullRequests(
@@ -50,16 +54,15 @@ function activeReviewRoots(readModel: OrchestrationReadModel): OrchestrationThre
 }
 
 /**
- * Pull requests whose merge state only the provider knows. A merge the thread already records is
- * excluded so a sweep never re-reads what it already knows.
+ * Every pull request a live review thread is watching, whether or not the merge is already
+ * recorded. One entry per pull request: the caller decides which entries need a provider read.
  */
-export function pendingReviewThreadPullRequests(
+export function liveReviewThreadPullRequests(
   readModel: OrchestrationReadModel,
-): ReadonlyArray<PendingReviewThreadPullRequest> {
-  const byRef = new Map<string, PendingReviewThreadPullRequest>();
+): ReadonlyArray<ReviewThreadPullRequest> {
+  const byRef = new Map<string, ReviewThreadPullRequest>();
   for (const thread of activeReviewRoots(readModel)) {
     for (const pullRequest of reviewThreadPullRequests(thread)) {
-      if (pullRequest.state === "merged") continue;
       const identity = threadPullRequestIdentity(pullRequest);
       if (identity.host === "unknown" || identity.repository.length === 0) continue;
       const ref: PullRequestRef = {
@@ -76,12 +79,17 @@ export function pendingReviewThreadPullRequests(
           existing === undefined || existing.pullRequestKeys.includes(pullRequestKey)
             ? (existing?.pullRequestKeys ?? [pullRequestKey])
             : [...existing.pullRequestKeys, pullRequestKey],
+        // A merge is terminal, so one thread recording it settles the pull request for all of them.
+        recordedState:
+          existing?.recordedState === "merged" || pullRequest.state === "merged"
+            ? "merged"
+            : "unmerged",
       });
     }
   }
   return [...byRef.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, pending]) => pending);
+    .map(([, live]) => live);
 }
 
 /**
