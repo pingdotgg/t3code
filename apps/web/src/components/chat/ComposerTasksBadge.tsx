@@ -17,7 +17,8 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
   const completed = steps.filter((step) => step.status === "completed").length;
   const current =
     steps.find((step) => step.status === "inProgress") ??
-    steps.find((step) => step.status === "pending");
+    steps.find((step) => step.status === "pending") ??
+    steps.at(-1);
   const occurrences = new Map<string, number>();
   const keyedSteps = steps.map((step) => {
     const occurrence = occurrences.get(step.step) ?? 0;
@@ -35,7 +36,7 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
       <button
         type="button"
         aria-expanded={expanded}
-        aria-label={`Tasks: ${completed} of ${steps.length} complete. Current task: ${current.step}`}
+        aria-label={`Tasks: ${completed} of ${steps.length} complete. ${completed === steps.length ? "Last" : "Current"} task: ${current.step}`}
         onClick={() => setExpanded((value) => !value)}
         onPointerDown={(event) => event.preventDefault()}
         className="flex min-h-10 w-full min-w-0 items-center gap-2.5 rounded-t-2xl px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4"
@@ -67,7 +68,7 @@ export function ComposerTasksBadge({ steps }: { steps: readonly TaskStep[] }) {
         ) : null}
         <ChevronDownIcon
           aria-hidden
-          className={cn("size-4 shrink-0 text-muted-foreground", !expanded && "rotate-180")}
+          className={cn("size-4 shrink-0 text-muted-foreground", expanded && "rotate-180")}
         />
       </button>
       {expanded ? (

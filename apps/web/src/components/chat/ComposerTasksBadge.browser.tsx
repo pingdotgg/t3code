@@ -11,6 +11,28 @@ afterEach(() => {
 });
 
 describe("ComposerTasksBadge", () => {
+  it("keeps completed tasks visible until the turn settles", async () => {
+    render(
+      <ComposerTasksBadge
+        steps={[
+          { step: "Inspect the repository", status: "completed" },
+          { step: "Finish the change", status: "completed" },
+        ]}
+      />,
+    );
+
+    const toggle = page.getByRole("button", { name: /Tasks: 2 of 2 complete/ });
+    await expect.element(toggle).toBeVisible();
+    await expect.element(toggle).toHaveTextContent("2/2 complete");
+
+    await toggle.click();
+    await expect
+      .element(page.getByRole("list", { name: /Task list. 2 of 2 complete/ }))
+      .toBeVisible();
+    await expect.element(page.getByRole("listitem").first()).toHaveTextContent("Completed");
+    await expect.element(page.getByRole("listitem").last()).toHaveTextContent("Completed");
+  });
+
   it("uses the upstream near-black raised surface in dark mode", async () => {
     document.documentElement.classList.add("dark");
     render(
@@ -45,12 +67,16 @@ describe("ComposerTasksBadge", () => {
 
     const toggle = page.getByRole("button", { name: /Tasks: 0 of 3 complete/ });
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+    const chevron = document.querySelector("[data-composer-tasks] button > svg:last-child");
+    expect(chevron).not.toBeNull();
+    expect(getComputedStyle(chevron!).rotate).toBe("none");
     await expect
       .element(page.getByText("Select highest-impact lowest-effort fix and implement"))
       .not.toBeInTheDocument();
 
     await toggle.click();
     await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(getComputedStyle(chevron!).rotate).toBe("180deg");
     await expect.element(page.getByRole("list", { name: /Task list/ })).toBeVisible();
     await expect.element(page.getByText("Running", { exact: true })).toBeVisible();
     await expect.element(page.getByText("Pending", { exact: true }).first()).toBeVisible();
