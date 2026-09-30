@@ -57,6 +57,8 @@ export function makeSubagentChildThread(input: {
     id: input.childThreadId,
     title: input.title,
     historyOrigin: undefined,
+    // A subagent is never a side chat, even when its parent is one.
+    sideChat: false,
     providerInstanceId: input.providerInstanceId,
     modelSelection: input.modelSelection,
     activeProviderThreadId: input.activeProviderThreadId,
