@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import { CODEX_THREAD_CONFIG } from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
+import { buildCodexInitializeParams } from "../src/provider/Layers/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -66,11 +67,6 @@ import { makeReplayRecorderDeferredRegistry } from "./replayRecorderDeferredRegi
 const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
   process.env.T3_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
   "You are in Plan mode. Prefer request_user_input for clarifying questions. When presenting a complete plan, wrap it in <proposed_plan> and </proposed_plan>.";
-const CODEX_CLIENT_INFO = {
-  name: "t3code_desktop",
-  title: "T3 Code Desktop",
-  version: "0.1.0",
-} as const;
 // Match the V2 adapter's initialize, thread and turn frames so recordings replay
 // against it without hand edits.
 const CODEX_CLIENT_CAPABILITIES = {
@@ -103,6 +99,7 @@ const SCENARIO_NAMES = [
   "turn_interrupt_mid_tool",
   "thread_rollback",
   "thread_rollback_after_restart",
+  "thread_rollback_to_stopped_turn",
   "thread_fork_native_continue",
   "thread_fork_native_siblings",
   "thread_merge_back_continue",
@@ -841,6 +838,51 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       ],
     },
     {
+      name: "thread_rollback_to_stopped_turn",
+      fileName: "thread_rollback_to_stopped_turn.ndjson",
+      description:
+        "One completed turn, one turn stopped mid-tool, one completed turn, thread/revert back to the stopped turn, then a post-rollback turn.",
+      runs: [
+        {
+          name: "rollback-to-stopped-turn",
+          description:
+            "Edit the message after a stopped turn: revert the turn after it and keep the stopped turn.",
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "first-before-rollback",
+              prompt: THREAD_ROLLBACK_FIRST_PROMPT,
+            },
+            {
+              type: "interruptedTurn",
+              label: "stopped-mid-tool",
+              prompt: TURN_INTERRUPT_MID_TOOL_PROMPT,
+              interruptAfterCommandExecutionStarted: true,
+            },
+            {
+              type: "turn",
+              label: "second-before-rollback",
+              prompt: THREAD_ROLLBACK_SECOND_PROMPT,
+            },
+            {
+              type: "rollback",
+              label: "rollback-to-stopped-turn",
+              numTurns: 1,
+            },
+            {
+              type: "turn",
+              label: "post-rollback",
+              prompt: THREAD_ROLLBACK_AFTER_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
       name: "thread_fork_native_continue",
       fileName: "thread_fork_native_continue.ndjson",
       description:
@@ -1324,7 +1366,7 @@ function runReplaySession({
       });
 
       yield* client.request("initialize", {
-        clientInfo: CODEX_CLIENT_INFO,
+        clientInfo: buildCodexInitializeParams().clientInfo,
         capabilities: CODEX_CLIENT_CAPABILITIES,
       });
 

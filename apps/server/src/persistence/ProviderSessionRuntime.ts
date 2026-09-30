@@ -16,7 +16,6 @@ import {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import { ProviderSessionRuntimeStatus } from "@t3tools/contracts/legacy-orchestration";
 
 import {
   PersistenceDecodeError,
@@ -32,6 +31,8 @@ import {
  *
  * @module ProviderSessionRuntimeRepository
  */
+
+const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
 
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,

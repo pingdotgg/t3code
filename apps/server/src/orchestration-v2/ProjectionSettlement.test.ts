@@ -252,7 +252,7 @@ for (const [name, testLayer] of [
             forkedFrom: null,
             createdAt: old,
             updatedAt: old,
-            pendingBackgroundTasks: [{ taskId: "running-task" }],
+            pendingBackgroundTasks: [{ taskId: "running-task", kind: "command" }],
           },
         });
         const candidates = yield* store.getSettlementCandidates();
@@ -432,4 +432,39 @@ it.effect(
       assert.isTrue(messagePlan.some((row) => row.detail.includes("messages_latest_user_idx")));
       assert.isFalse(messagePlan.some((row) => row.detail.includes("TEMP B-TREE")));
     }).pipe(Effect.provide(SqlLayer)),
+);
+
+it.effect("shell failure lookups stay on the thread's own turn items", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const failed = yield* createThread("failed-latest");
+    yield* createRun(failed, "failed");
+    const queries: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const record: Statement.Transformer = (statement) =>
+      Effect.sync(() => {
+        queries.push(statement.compile());
+        return statement;
+      });
+    const shell = yield* store
+      .getShellSnapshot()
+      .pipe(Effect.provideService(Statement.CurrentTransformer, record));
+    assert.deepEqual(
+      shell.threads.map((thread) => thread.id),
+      [failed],
+    );
+    const shellQuery = queries.find(([query]) =>
+      query.includes("AS blocking_failure_payload_json"),
+    );
+    assert.isDefined(shellQuery);
+    const plan = yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${shellQuery![0]}`,
+      shellQuery![1],
+    );
+    // A failed run's root node is often null, and every runless item shares that
+    // node_id, so a node_ordinal lookup walks the whole history once per thread.
+    const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
+    assert.lengthOf(itemLookups, 2);
+    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
+  }).pipe(Effect.provide(SqlLayer)),
 );

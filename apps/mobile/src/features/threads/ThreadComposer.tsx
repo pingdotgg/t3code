@@ -587,7 +587,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
-      if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
+      if (
+        sendBlockedReason !== null ||
+        voiceInput.blocksSubmission ||
+        pendingPastedTextAttachmentCountRef.current > 0
+      )
+        return;
       // Typed out in full rather than picked from the menu. Attachments mean the
       // user is sending a prompt, so those go through as usual.
       if (
@@ -631,6 +636,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.selectedThread.id,
       props.selectedThread.title,
       voiceInput.blocksSubmission,
+      sendBlockedReason,
     ],
   );
 
@@ -785,7 +791,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ? "assertive"
                 : "polite"
             }
-            className="px-3 py-2 text-xs text-foreground"
+            className={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken"
+                ? "bg-danger px-3 py-2 text-xs text-danger-foreground"
+                : "px-3 py-2 text-xs text-foreground"
+            }
           >
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>

@@ -7,6 +7,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
   assertVisibleTurnItemsMirrorLocalTurnItems,
+  backgroundNotifications,
   projectionFor,
 } from "../shared.ts";
 import { GROK_BACKGROUND_BASH_PROMPT, GROK_BACKGROUND_BASH_TICKS } from "./input.ts";
@@ -76,6 +77,15 @@ export function assertGrokBackgroundBashOutput(
     item.runId === rootRun?.id && item.type === "assistant_message" ? [item.text.trim()] : [],
   );
   assert.include(rootTexts, "ROOT_DONE");
+
+  // The timeline names the command from Grok's task_completed snapshot.
+  assert.deepEqual(backgroundNotifications(projection), [
+    {
+      summary: 'Command "Run three tock echoes in the background" finished (exit 0)',
+      outcome: "completed",
+      source: { kind: "command" },
+    },
+  ]);
 
   // Grok's own wake reply is a provider continuation, not more of run 1.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);

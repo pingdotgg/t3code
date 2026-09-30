@@ -1,14 +1,18 @@
 import {
   latestRootProviderFailure,
   threadErrorSummary,
+  usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   type ModelSelection,
+  type OrchestrationV2NotificationSource,
+  type OrchestrationV2PendingBackgroundTask,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ThreadProjection,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
@@ -55,10 +59,23 @@ function summarizeThreadRun(
   };
 }
 
+function presentedUsageLimitRun(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["runs"][number] | null {
+  const providerSession = projection.providerSessions.findLast(
+    (session) => session.providerInstanceId === projection.thread.providerInstanceId,
+  );
+  return usageLimitRunPresentedAsLatest(
+    projection.runs,
+    projection.turnItems,
+    providerSession?.lastError ?? null,
+  );
+}
+
 export function deriveLatestThreadRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
-  const run = latestMatchingRun(projection, () => true);
+  const run = presentedUsageLimitRun(projection) ?? latestMatchingRun(projection, () => true);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
@@ -72,6 +89,7 @@ export function deriveThreadActivityRun(
 ): ThreadRunSummary | null {
   const run =
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
+    presentedUsageLimitRun(projection) ??
     latestMatchingRun(projection, () => true);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
@@ -181,11 +199,12 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
-  const latestRunProjection = latestMatchingRun(projection, () => true);
-  const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
+  const usageLimitedRun = presentedUsageLimitRun(projection);
+  const latestRunProjection = usageLimitedRun ?? latestMatchingRun(projection, () => true);
+  const activityRun = deriveThreadActivityRun(projection);
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
@@ -198,7 +217,11 @@ export function deriveThreadRuntime(
       runs: projection.runs,
     }).length > 0;
   return {
-    status: hasPendingBackgroundTasks ? "idle" : (activityRun?.status ?? "idle"),
+    status: usageLimitedRun
+      ? "failed"
+      : hasPendingBackgroundTasks && latestRunProjection?.status !== "failed"
+        ? "idle"
+        : (activityRun?.status ?? "idle"),
     activeRunId,
     activityStartedAt:
       activityRun !== null && ACTIVITY_RUN_STATUSES.has(activityRun.status)
@@ -222,4 +245,95 @@ export function threadRuntimeHasInterruptibleRun(
     runtime?.activeRunId !== null &&
     runtime?.activeRunId !== undefined
   );
+}
+
+type BackgroundWorkKind = OrchestrationV2PendingBackgroundTask["kind"];
+
+// `order` groups work the way a reader thinks about it: agents first, loose tasks last.
+const BACKGROUND_WORK_KINDS: Record<
+  BackgroundWorkKind,
+  { readonly order: number; readonly singular: string; readonly plural: string }
+> = {
+  subagent: { order: 0, singular: "subagent", plural: "subagents" },
+  command: { order: 1, singular: "command", plural: "commands" },
+  monitor: { order: 2, singular: "monitor", plural: "monitors" },
+  background_task: { order: 3, singular: "background task", plural: "background tasks" },
+};
+
+export interface PendingBackgroundWorkItem {
+  readonly taskId: string;
+  readonly kind: BackgroundWorkKind;
+  /** The work's name, or its noun when the provider gave none. */
+  readonly label: string;
+  /** A subagent's own thread, when it has one. */
+  readonly childThreadId: ThreadId | undefined;
+}
+
+export interface PendingBackgroundWorkPresentation {
+  /** "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command". */
+  readonly title: string;
+  readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
+}
+
+function joinWithAnd(parts: ReadonlyArray<string>): string {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+/** Names what a settled thread is still waiting on, grouped by kind, for the composer strip. */
+export function presentPendingBackgroundWork(
+  tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+): PendingBackgroundWorkPresentation | null {
+  if (tasks.length === 0) return null;
+  const items = tasks
+    .map((task): PendingBackgroundWorkItem => {
+      const description = task.description?.trim();
+      return {
+        taskId: task.taskId,
+        kind: task.kind,
+        label:
+          description === undefined || description.length === 0
+            ? BACKGROUND_WORK_KINDS[task.kind].singular
+            : description,
+        childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
+      };
+    })
+    // `map` returned a new array; Hermes has no `toSorted`.
+    .sort(
+      (left, right) =>
+        BACKGROUND_WORK_KINDS[left.kind].order - BACKGROUND_WORK_KINDS[right.kind].order,
+    );
+  const [only] = items;
+  if (items.length === 1 && only !== undefined) {
+    const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
+    return {
+      title: only.label === noun ? `Waiting on a ${noun}` : `Waiting on ${noun} ${only.label}`,
+      items,
+    };
+  }
+  const counts = new Map<BackgroundWorkKind, number>();
+  for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  const groups = Array.from(counts, ([kind, count]) => {
+    const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
+    return `${count} ${count === 1 ? singular : plural}`;
+  });
+  return { title: `Waiting on ${joinWithAnd(groups)}`, items };
+}
+
+/** The thread a notification row opens: that of the one subagent or delegated task it reports. */
+export function notificationChildThreadId(
+  source: OrchestrationV2NotificationSource,
+): ThreadId | undefined {
+  switch (source.kind) {
+    case "subagent":
+    case "delegated_task":
+      return source.childThreadId;
+    case "command":
+    case "monitor":
+    case "background_task":
+      return undefined;
+    default:
+      source satisfies never;
+      return undefined;
+  }
 }

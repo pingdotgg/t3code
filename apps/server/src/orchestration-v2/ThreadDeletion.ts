@@ -154,7 +154,6 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
         delegatedCompletion: {
           disposition: "disposed",
           nextGeneration: cohort?.nextGeneration ?? 1,
-          settledDeliveryCount: cohort?.settledDeliveryCount ?? 0,
           delivery: null,
         },
       },

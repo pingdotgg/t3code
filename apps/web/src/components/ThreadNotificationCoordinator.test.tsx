@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   turnError: false,
   limited: false,
   subagent: false,
+  background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -70,6 +71,7 @@ function mockThreadShell() {
     latestVisibleMessage: null,
     latestUserMessageAt: null,
     hasActionableProposedPlan: false,
+    pendingBackgroundTasks: state.background,
     itemCount: 0,
     visibleItemCount: 0,
     createdAt: SHELL_NOW,
@@ -151,6 +153,7 @@ beforeEach(() => {
     turnError: false,
     limited: false,
     subagent: false,
+    background: [],
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
@@ -246,6 +249,19 @@ describe("thread notifications", () => {
       tag: "env-1:thread-1",
       silent: true,
     });
+  });
+
+  it("alerts when only a dev server is left running, not while a monitor can wake the agent", async () => {
+    await render();
+    state.background = [{ taskId: "watch", kind: "monitor" }];
+    await complete();
+    expect(state.add).not.toHaveBeenCalled();
+    state.background = [{ taskId: "dev", kind: "command" }];
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Thread completed" }),
+    );
   });
 
   it("keeps background desktop alerts when in-app notifications are disabled", async () => {

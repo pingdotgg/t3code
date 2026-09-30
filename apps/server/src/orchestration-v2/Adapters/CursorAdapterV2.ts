@@ -8,6 +8,7 @@ import type {
   SettingSource,
   ToolCall,
 } from "@cursor/sdk";
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   CursorSettings,
@@ -442,7 +443,6 @@ function cursorToolSearchPattern(toolCall: ToolCall): string | undefined {
       return toolCall.args.pattern;
     case "semSearch":
       return toolCall.args.query;
-    case "read":
     case "ls":
       return toolCall.args.path;
     case "readLints":
@@ -480,13 +480,6 @@ function cursorToolSearchResults(
     return [];
   }
   switch (toolCall.type) {
-    case "read":
-      return [
-        {
-          fileName: toolCall.args.path,
-          preview: toolCall.result.value.content,
-        },
-      ];
     case "glob":
       return toolCall.result.value.files.map((fileName) => ({ fileName }));
     case "grep":
@@ -1265,19 +1258,34 @@ export function makeCursorAdapterV2(
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
               };
               break;
+            case "read":
+              turnItem = {
+                ...base,
+                title: formatReadToolLabel(toolCall.args.path),
+                type: "dynamic_tool",
+                toolName: "Read",
+                input: toolCall.args,
+                ...(cursorToolOutput(toolCall) === undefined
+                  ? {}
+                  : { output: cursorToolOutput(toolCall) }),
+              };
+              break;
             case "glob":
             case "grep":
-            case "read":
             case "ls":
             case "readLints":
             case "semSearch": {
               const results = cursorToolSearchResults(toolCall, path);
+              const pattern = cursorToolSearchPattern(toolCall);
               turnItem = {
                 ...base,
+                title:
+                  formatSearchToolLabel({
+                    input: toolCall.args,
+                    ...(pattern === undefined ? {} : { pattern }),
+                  }) ?? null,
                 type: "file_search",
-                ...(cursorToolSearchPattern(toolCall) === undefined
-                  ? {}
-                  : { pattern: cursorToolSearchPattern(toolCall) }),
+                ...(pattern === undefined ? {} : { pattern }),
                 ...(results.length === 0 ? {} : { results: [...results] }),
               };
               break;

@@ -13,11 +13,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
-import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
-import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "../textGeneration/ThreadTitleContext.ts";
@@ -34,14 +33,14 @@ export class ThreadTitleRegenerationService extends Context.Service<
         | { readonly type: "regenerate" };
     }) => Effect.Effect<
       void,
-      OrchestratorV2Error | ProjectionRepositoryError | ServerSettingsError
+      OrchestratorV2Error | ProjectStore.ProjectStoreV2Error | ServerSettingsError
     >;
   }
 >()("t3/orchestration-v2/ThreadTitleRegenerationService") {}
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
-  const projects = yield* ProjectionProjectRepository;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
 
@@ -77,7 +76,7 @@ const make = Effect.gen(function* () {
         return { type: "stale" as const };
       }
 
-      const project = yield* projects.getById({ projectId: projection.thread.projectId });
+      const project = yield* projects.get(projection.thread.projectId);
       if (Option.isNone(project)) {
         return { type: "complete" as const };
       }

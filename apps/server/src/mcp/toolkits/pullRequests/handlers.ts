@@ -24,7 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   type ListThreadPullRequestsResult,
@@ -150,7 +150,7 @@ export function listThreadPullRequests(
 const make = Effect.gen(function* () {
   const engine = yield* OrchestratorV2;
 
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
 
   const commandId = (tag: string, threadId: ThreadId) =>
@@ -180,7 +180,7 @@ const make = Effect.gen(function* () {
     thread: OrchestrationV2ThreadShell,
     Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError,
   ) =>
-    snapshots.getProjectShellById(thread.projectId).pipe(
+    projects.getShell(thread.projectId).pipe(
       Effect.map(Option.getOrUndefined),
       Effect.mapError((cause) => new Failure({ cause })),
     );

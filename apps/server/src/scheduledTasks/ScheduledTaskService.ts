@@ -569,11 +569,13 @@ export const layer = Layer.effect(
     // state event (unarchive, pin, visit) is deleted. Command receipts are
     // never compacted for non-legacy commands — an accepted thread.archive
     // receipt's result_sequence is the archived event's sequence — so the
-    // watermark unions both sources.
+    // watermark unions both sources. Pin the partial archive index so the
+    // event lookup never walks the thread's unrelated event history.
     const staleArchiveCommitted = (threadId: ThreadId) => sql`
       (
         SELECT MAX(sequence) FROM (
           SELECT MAX(sequence) AS sequence FROM orchestration_events
+            INDEXED BY orchestration_events_v2_archived_threads_idx
           WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
             AND event_type = 'thread.archived'
             AND application_event_version = 2
@@ -1009,6 +1011,7 @@ export const layer = Layer.effect(
       scope?: {
         readonly projectId?: ProjectId | undefined;
         readonly expectedActiveRun?: ScheduledTaskRunNowInput["expectedActiveRun"] | undefined;
+        readonly expectedCaller?: ScheduledTaskRunNowInput["expectedCaller"] | undefined;
       },
     ) {
       const reserved = yield* Ref.modify(activeRuns, (active) => {
@@ -1054,6 +1057,9 @@ export const layer = Layer.effect(
                     taskId: active.id,
                     run: scope.expectedActiveRun,
                   });
+                }
+                if (scope?.expectedCaller !== undefined) {
+                  yield* ensureExpectedCaller({ taskId: active.id, caller: scope.expectedCaller });
                 }
                 // A next_run_at corrupted between the poll read and this
                 // re-read must not defect the poll; an unparseable value is
@@ -1485,7 +1491,11 @@ export const layer = Layer.effect(
               // left the caller's project — the scoped view must answer
               // not-found rather than let the upsert drag the row back and
               // overwrite a definition the caller can no longer see.
-              if (existingTask !== null && existingTask.projectId !== input.projectId) {
+              if (
+                input.id === undefined &&
+                existingTask !== null &&
+                existingTask.projectId !== input.projectId
+              ) {
                 return yield* taskError("Schedule task not found.", { taskId: id });
               }
               // Keep the existing next_run_at when the schedule itself is untouched:
@@ -2029,6 +2039,7 @@ export const layer = Layer.effect(
           ...(input.expectedActiveRun === undefined
             ? {}
             : { expectedActiveRun: input.expectedActiveRun }),
+          ...(input.expectedCaller === undefined ? {} : { expectedCaller: input.expectedCaller }),
         }).pipe(
           Effect.mapError((cause) =>
             taskError("Could not run schedule task.", { taskId: input.id, cause }),

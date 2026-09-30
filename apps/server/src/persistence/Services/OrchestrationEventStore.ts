@@ -11,55 +11,34 @@
  * @module OrchestrationEventStore
  */
 import type {
+  ApplicationProjectEvent,
   ApplicationStoredEvent,
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ThreadId,
 } from "@t3tools/contracts";
-import type { OrchestrationEvent } from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { OrchestrationEventStoreError } from "../Errors.ts";
 
+/** A project event before the store assigns its sequence. */
+export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Event
+  ? Event extends ApplicationProjectEvent
+    ? Omit<Event, "sequence">
+    : never
+  : never;
+
 /**
  * OrchestrationEventStoreShape - Service API for orchestration event persistence.
  */
 export interface OrchestrationEventStoreShape {
-  /**
-   * Persist a new orchestration event.
-   *
-   * @param event - Event payload without sequence (assigned by storage).
-   * @returns Effect containing the stored event with assigned sequence.
-   *
-   * Actor kind is inferred from command/metadata before persistence.
-   */
-  readonly append: (
-    event: Omit<OrchestrationEvent, "sequence">,
-  ) => Effect.Effect<OrchestrationEvent, OrchestrationEventStoreError>;
-
-  /**
-   * Replay events after the provided sequence.
-   *
-   * @param sequenceExclusive - Sequence cursor (exclusive).
-   * @param limit - Maximum number of events to emit.
-   * @returns Stream containing ordered events.
-   *
-   * Reads in fixed-size pages and normalizes non-integer/negative limits.
-   */
-  readonly readFromSequence: (
-    sequenceExclusive: number,
-    limit?: number,
-  ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
-
-  /**
-   * Read all events from the beginning of the stream.
-   *
-   * @returns Stream containing all stored events.
-   */
-  readonly readAll: () => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+  /** Append one project event to the shared application log. */
+  readonly appendProjectEvent: (
+    event: UnsequencedProjectEvent,
+  ) => Effect.Effect<ApplicationProjectEvent, OrchestrationEventStoreError>;
 
   /** Append V2 agent events to the same globally ordered application log. */
   readonly appendAgentEvents: (input: {
@@ -98,6 +77,22 @@ export interface OrchestrationEventStoreShape {
     OrchestrationEventStoreError
   >;
 
+  /**
+   * Measure the retained application-event range `(afterSequence, throughSequence]`
+   * without loading or decoding its payloads.
+   */
+  readonly getReplayStats: (input: {
+    readonly afterSequence: number;
+    readonly throughSequence: number;
+  }) => Effect.Effect<
+    {
+      readonly eventCount: number;
+      /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
+      readonly rawPayloadBytes: number;
+    },
+    OrchestrationEventStoreError
+  >;
+
   readonly latestAgentSequence: (
     threadId?: ThreadId,
   ) => Effect.Effect<number, OrchestrationEventStoreError>;
@@ -122,32 +117,9 @@ export interface OrchestrationEventStoreShape {
     readonly afterSequence?: number;
     readonly project: (event: ApplicationStoredEvent) => A;
   }) => Stream.Stream<A, OrchestrationEventStoreError>;
-  /**
-   * Check whether an aggregate has an event after a sequence, optionally
-   * restricted to one event type.
-   *
-   * Used during replay to tell whether a later event supersedes the one being
-   * applied, without streaming the rest of the log.
-   */
-  readonly hasEventAfter: (input: {
-    readonly aggregateKind: OrchestrationEvent["aggregateKind"];
-    readonly aggregateId: string;
-    readonly type?: OrchestrationEvent["type"];
-    readonly sequenceExclusive: number;
-  }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 }
 
-/**
- * OrchestrationEventStore - Service tag for orchestration event persistence.
- *
- * @example
- * ```ts
- * const program = Effect.gen(function* () {
- *   const events = yield* OrchestrationEventStore
- *   return yield* Stream.runCollect(events.readAll())
- * })
- * ```
- */
+/** OrchestrationEventStore - Service tag for the shared application event log. */
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   OrchestrationEventStoreShape

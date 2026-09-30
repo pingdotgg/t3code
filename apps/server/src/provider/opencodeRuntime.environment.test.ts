@@ -23,6 +23,7 @@ import {
   resolveOpenCodeServerPassword,
   verifyOpenCodeServerVersion,
 } from "./opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
 describe("resolveOpenCodeConfigContent", () => {
   it("prefers the caller environment over the inherited environment", () => {
@@ -230,7 +231,10 @@ server.listen(0, "127.0.0.1", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide([
-          OpenCodeRuntimeLive.pipe(Layer.provideMerge(NodeServices.layer)),
+          OpenCodeRuntimeLive.pipe(
+            Layer.provide(OpenCodeServerLedger.layerTest),
+            Layer.provideMerge(NodeServices.layer),
+          ),
           FetchHttpClient.layer,
         ]),
       ),

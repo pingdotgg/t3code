@@ -6,6 +6,8 @@
  */
 import { UsageDay, type UsageResolution, type UsageSummaryInput } from "@t3tools/contracts";
 
+import type { UsageContractMismatch } from "./usageMerge.ts";
+
 const CURRENCY = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -47,6 +49,15 @@ export function formatPercent(share: number, digits = 1): string {
   const smallest = 10 ** -digits;
   if (percent > 0 && percent < smallest) return `<${smallest.toFixed(digits)}%`;
   return `${percent.toFixed(digits)}%`;
+}
+
+export function formatUsageContractMismatch(
+  environmentLabel: string,
+  mismatch: Pick<UsageContractMismatch, "direction">,
+): string {
+  return mismatch.direction === "serverBehind"
+    ? `${environmentLabel} runs an older server version and is excluded from totals.`
+    : `This client is older than the server on ${environmentLabel}; its usage is excluded from totals.`;
 }
 
 /** `2026-08-07` to `Aug 7`. */

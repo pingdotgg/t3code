@@ -23,14 +23,14 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { ServerConfig } from "../../config.ts";
-import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "../../provider/Layers/GrokProvider.ts";
 import type { ProviderInstance } from "../../provider/ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
-  layerFromProjectRepository as runtimePolicyLayerFromProjectRepository,
+  layerFromProjectStore as runtimePolicyLayerFromProjectStore,
   RuntimePolicyV2,
 } from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
@@ -424,10 +424,10 @@ describe("Grok launch permission mode", () => {
         });
       }).pipe(
         Effect.provide(
-          runtimePolicyLayerFromProjectRepository.pipe(
+          runtimePolicyLayerFromProjectStore.pipe(
             Layer.provide(
-              Layer.mock(ProjectionProjectRepository)({
-                getById: () => Effect.die("the thread has a worktree"),
+              Layer.mock(ProjectStore.ProjectStoreV2)({
+                get: () => Effect.die("the thread has a worktree"),
               }),
             ),
             Layer.provide(

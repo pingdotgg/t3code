@@ -466,14 +466,19 @@ describe("XAiAcpExtension", () => {
   });
 
   it("finishes monitors from the recorded task_completed snapshot", () => {
+    // Fields from the grok_monitor recording (Grok 1.0.41).
     const completed = {
       sessionId: "01a0d660-c1bb-7842-91a3-02d91dc8b0d2",
       update: {
         sessionUpdate: "task_completed",
         task_snapshot: {
           task_id: "01a0d660-f98d-7ef3-a291-97af1c2b6455",
+          command: "for i in 1 2 3; do sleep 8; echo tick $i; done",
+          display_command: "[monitor] Watch three tick echoes",
           output: "tick 1\ntick 2\ntick 3\n",
           exit_code: 0,
+          kind: "monitor",
+          description: "Watch three tick echoes",
         },
       },
     };
@@ -482,6 +487,7 @@ describe("XAiAcpExtension", () => {
       taskId: "01a0d660-f98d-7ef3-a291-97af1c2b6455",
       status: "completed",
       output: "tick 1\ntick 2\ntick 3\n",
+      report: { kind: "monitor", label: "Watch three tick echoes" },
     });
     expect(
       xAiBackgroundTaskLifecycleMutation(

@@ -34,6 +34,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 
@@ -975,6 +976,27 @@ it.effect("scoped runNow loses to a racing project move and never dispatches", (
     assert.equal(liveRun.task.lastRunStatus, "succeeded");
     assert.equal(dispatchLaunchCount, 1);
   }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+it.effect(
+  "legacy explicit-id upsert can move an unbound task without restarting its schedule",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService;
+      const seeded = yield* seedTask;
+      const moved = yield* tasks.upsert({
+        ...seeded,
+        requireExisting: true,
+        projectId: otherProjectId,
+        title: "Moved by an older client",
+      });
+      assert.equal(moved.task.projectId, otherProjectId);
+      assert.equal(moved.task.title, "Moved by an older client");
+      assert.equal(moved.task.nextRunAt, seeded.nextRunAt);
+      const stored = yield* findSeeded;
+      assert.equal(stored?.projectId, otherProjectId);
+      assert.equal(stored?.nextRunAt, seeded.nextRunAt);
+    }).pipe(Effect.provide(updateTestLayer)),
 );
 
 it.effect(
@@ -2041,6 +2063,13 @@ it.effect("a compacted archive event still pauses via its command receipt", () =
     assert.isDefined(after);
     assert.isFalse(after!.enabled);
     assert.isNull(after!.nextRunAt);
+    // A later explicit enable outranks the retained receipt too.
+    yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    sendToThreadCalls = 0;
+    const ran = yield* tasks.runNow({ id: seeded.id });
+    assert.isTrue(ran.task.enabled);
+    assert.equal(sendToThreadCalls, 1);
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
@@ -2235,6 +2264,123 @@ it.effect(
       assert.isFalse(after!.enabled);
       assert.isNull(after!.nextRunAt);
     }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("archive checks use a bounded event lookup on a long-lived thread", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* sql`
+      WITH RECURSIVE history(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 40000
+      )
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      )
+      SELECT 'history:' || n, 'thread', ${archiveBoundThreadId}, n,
+        'thread.visited', '2026-01-01T00:00:00.000Z', 'server', '{}', '{}', 2
+      FROM history
+    `;
+    const queries: string[] = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string" && query.includes("'thread.archived'")) {
+            queries.push(query);
+          }
+        };
+        return span;
+      },
+    });
+    sendToThreadCalls = 0;
+    yield* tasks.pauseForThread(archiveBoundThreadId).pipe(Effect.withTracer(tracer));
+    const ran = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.withTracer(tracer));
+    assert.equal(sendToThreadCalls, 1);
+    assert.isTrue(ran.task.enabled);
+    assert.equal(ran.task.runCount, 1);
+    assert.isAtLeast(queries.length, 2);
+    for (const query of queries) {
+      // Explain the actual pause/claim SQL, including its UNION and UPDATE,
+      // rather than a second hand-written copy of the archive predicate.
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${query}`,
+        Array.from(query.matchAll(/\?/g), () => null),
+      );
+      const details = plan.map((row) => row.detail).join("\n");
+      assert.match(
+        details,
+        /SEARCH orchestration_events USING (?:COVERING )?INDEX orchestration_events_v2_archived_threads_idx \(stream_id=\?\)/,
+      );
+      assert.notMatch(details, /idx_orch_events_stream_sequence|SCAN orchestration_events/);
+    }
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("archive checks ignore unrelated events and uncommitted receipts", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    const now = "2026-01-01T00:00:01.000Z";
+    for (const [index, overrides] of [
+      { application_event_version: 1 },
+      { aggregate_kind: "project" },
+      { stream_id: "thread:other" },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_events ${sql.insert({
+        event_id: `irrelevant-archive:${index}`,
+        aggregate_kind: "thread",
+        stream_id: archiveBoundThreadId,
+        stream_version: index,
+        event_type: "thread.archived",
+        occurred_at: now,
+        actor_kind: "server",
+        payload_json: "{}",
+        metadata_json: "{}",
+        application_event_version: 2,
+        ...overrides,
+      })}`;
+    }
+    for (const [index, overrides] of [
+      { status: "rejected" },
+      { status: "reserved" },
+      { result_sequence: 0 },
+      { aggregate_kind: "project" },
+      { aggregate_id: "thread:other" },
+      { command_type: "thread.unarchive" },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_command_receipts ${sql.insert({
+        command_id: `irrelevant-receipt:${index}`,
+        aggregate_kind: "thread",
+        aggregate_id: archiveBoundThreadId,
+        command_type: "thread.archive",
+        accepted_at: now,
+        result_sequence: 100,
+        status: "accepted",
+        error: null,
+        ...overrides,
+      })}`;
+    }
+    sendToThreadCalls = 0;
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const ran = yield* tasks.runNow({ id: seeded.id });
+    assert.isTrue(ran.task.enabled);
+    assert.equal(sendToThreadCalls, 1);
+    // A matching V2 archive still voids the same enablement.
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", now);
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const paused = yield* findTaskById(seeded.id);
+    assert.isFalse(paused!.enabled);
+    assert.isNull(paused!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
 it.effect("a legacy NULL-watermark task is spared on a never-archived thread", () =>
@@ -2731,6 +2877,60 @@ it.effect("runNow rejects when the pinned project or authorizing run drifted", (
     });
     assert.equal(ran.task.id, seeded.id);
     assert.equal(sendToThreadCalls, 1);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect.each([
+  { runtimeMode: "approval-required", interactionMode: "default" },
+  { runtimeMode: "full-access", interactionMode: "plan" },
+])("runNow rejects a caller mode change before the claim (%s)", (modes) =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const callerThreadId = ThreadId.make("thread:run-now-caller-mode");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(callerThreadId, "active");
+    yield* seedAuthorizingRun("running", { threadId: callerThreadId });
+    const activeRun = { ...authorizingRun, threadId: callerThreadId };
+    const seeded = yield* seedBoundTask(true);
+    const caller = {
+      threadId: callerThreadId,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    } as const;
+
+    // The handler authorized this snapshot. The run remains active when
+    // the caller changes modes, so its identity pin alone cannot reject it.
+    // The destination remains full-access/default throughout.
+    yield* setBoundThreadModes(callerThreadId, modes);
+    sendToThreadCalls = 0;
+    const rejected = yield* tasks
+      .runNow({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        expectedActiveRun: activeRun,
+        expectedCaller: caller,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(rejected));
+    if (Exit.isFailure(rejected)) {
+      assert.include(Cause.pretty(rejected.cause), "modes changed");
+    }
+    assert.equal(sendToThreadCalls, 0);
+    const unchanged = yield* findTaskById(seeded.id);
+    assert.equal(unchanged?.lastRunStatus, "never");
+    assert.equal(unchanged?.runCount, 0);
+    assert.equal(unchanged?.nextRunAt, seeded.nextRunAt);
+
+    yield* setBoundThreadModes(callerThreadId, null);
+    const ran = yield* tasks.runNow({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      expectedActiveRun: activeRun,
+      expectedCaller: caller,
+    });
+    assert.equal(sendToThreadCalls, 1);
+    assert.equal(ran.task.lastRunStatus, "succeeded");
+    assert.equal(ran.task.runCount, 1);
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 

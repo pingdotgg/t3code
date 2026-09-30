@@ -13,7 +13,6 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";
@@ -38,12 +37,14 @@ import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
 import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
+import { layer as projectStoreLayer } from "../ProjectStore.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { layer as providerContinuationRequestsLayer } from "../ProviderContinuationRequests.ts";
 import { workerLive as providerContinuationWorkerLive } from "../ProviderContinuationService.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
+import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../ProviderSessionManager.ts";
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
@@ -192,6 +193,10 @@ export function runOrchestratorV2ProviderReplayScenario<
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
+    // Reconcile a previous runtime's state before the effect worker starts,
+    // as server startup does after a crash or restart.
+    readonly recoverOnStartup?: boolean;
+    readonly continueThreadsAfterServerUpdate?: boolean;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -233,6 +238,10 @@ export function makeOrchestratorV2ProviderReplayLayer<
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
+    // Reconcile a previous runtime's state before the effect worker starts,
+    // as server startup does after a crash or restart.
+    readonly recoverOnStartup?: boolean;
+    readonly continueThreadsAfterServerUpdate?: boolean;
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
@@ -258,6 +267,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
+    // Reconcile a previous runtime's state before the effect worker starts,
+    // as server startup does after a crash or restart.
+    readonly recoverOnStartup?: boolean;
+    readonly continueThreadsAfterServerUpdate?: boolean;
   } = {},
 ): Layer.Layer<
   OrchestratorV2 | OrchestrationEffectWorkerV2 | EventSinkV2,
@@ -281,10 +294,14 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
   const serverSettingsLayer = ServerSettingsService.layerTest({
     responseStreamingMode: "turn",
+    ...(options.continueThreadsAfterServerUpdate === undefined
+      ? {}
+      : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
   }).pipe(Layer.orDie);
   const storesLayer = Layer.mergeAll(
     eventStoreLayer,
     projectionStoreLayer,
+    projectStoreLayer,
     commandReceiptStoreLayer,
     effectOutboxLayer,
     turnItemPositionStoreLayer,
@@ -397,7 +414,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         commandPolicyLayer,
         contextHandoffServiceProvided,
         persistenceLayer,
-        ProjectionProjectRepositoryLive.pipe(Layer.provide(databaseLayer)),
         providedRegistryLayer,
         continuationRequestsLayer,
         runtimeLayer,
@@ -457,6 +473,24 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   if (options.runEffectWorker === false) {
     return replayRuntime;
   }
+  // Built before the runtime it shares stores with, so recovery commits before
+  // the effect worker claims anything, as in serverRuntimeStartup.
+  const startupRecovery: Layer.Layer<
+    never,
+    MigrationError | PlatformError.PlatformError | SqlError
+  > =
+    options.recoverOnStartup === true
+      ? Layer.effectDiscard(
+          ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService.use(
+            (recovery) => recovery.recover,
+          ).pipe(Effect.orDie),
+        ).pipe(
+          Layer.provide(ProviderRuntimeRecoveryService.layer),
+          Layer.provide(
+            Layer.mergeAll(storesLayer, eventSinkProvided, idAllocatorLayer, serverSettingsLayer),
+          ),
+        )
+      : Layer.empty;
   return Layer.effect(
     OrchestratorV2,
     Effect.gen(function* () {
@@ -464,5 +498,5 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
       return orchestrator;
     }),
-  ).pipe(Layer.provideMerge(replayRuntime));
+  ).pipe(Layer.provideMerge(replayRuntime), Layer.provide(startupRecovery));
 }

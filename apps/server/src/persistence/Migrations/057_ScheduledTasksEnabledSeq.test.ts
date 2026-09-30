@@ -16,8 +16,10 @@ describe("057_ScheduledTasksEnabledSeq", () => {
       `;
       assert.ok(!before.some((column) => column.name === "enabled_seq"));
 
-      assert.deepStrictEqual(yield* runMigrations(), [[57, "ScheduledTasksEnabledSeq"]]);
-      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 57 }), [
+        [57, "ScheduledTasksEnabledSeq"],
+      ]);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 57 }), []);
       const after = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(scheduled_tasks)
       `;
@@ -48,7 +50,9 @@ describe("057_ScheduledTasksEnabledSeq", () => {
       yield* runMigrations({ toMigrationInclusive: 56 });
       yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN enabled_seq INTEGER`;
 
-      assert.deepStrictEqual(yield* runMigrations(), [[57, "ScheduledTasksEnabledSeq"]]);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 57 }), [
+        [57, "ScheduledTasksEnabledSeq"],
+      ]);
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(scheduled_tasks)
       `;

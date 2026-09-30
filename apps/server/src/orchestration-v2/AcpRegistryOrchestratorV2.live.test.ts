@@ -3,6 +3,7 @@ import { SourceControlProviderRegistry } from "../sourceControl/SourceControlPro
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   CommandId,
   type ModelSelection,
   MessageId,
@@ -24,6 +25,8 @@ import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { AntigravityInstallation } from "../provider/AntigravityInstallation.ts";
+import { CodexInstallation } from "../provider/CodexInstallation.ts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import {
@@ -31,6 +34,7 @@ import {
   ProviderEventLoggers,
 } from "../provider/Layers/ProviderEventLoggers.ts";
 import { OpenCodeRuntimeLive } from "../provider/opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -101,7 +105,10 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       ),
       NodeServices.layer,
       FetchHttpClient.layer,
-      OpenCodeRuntimeLive.pipe(Layer.provide(PlatformTestLayer)),
+      OpenCodeRuntimeLive.pipe(
+        Layer.provide(OpenCodeServerLedger.layerTest),
+        Layer.provide(PlatformTestLayer),
+      ),
       Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
       ModelManifest.layerTest,
       AntigravityInstallation.layer.pipe(
@@ -109,6 +116,13 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(PlatformTestLayer),
       ),
+      // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
+      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+      Layer.succeed(ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(
+          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
+        ),
+      }),
     ),
   ),
 );

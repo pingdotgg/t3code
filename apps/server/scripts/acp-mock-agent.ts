@@ -873,6 +873,12 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      if (
+        process.env.T3_ACP_CRASH_PROMPT === "1" &&
+        request.prompt.some((part) => part.type === "text" && part.text === "crash now")
+      ) {
+        return yield* Effect.sync(() => process.exit(23));
+      }
 
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
         const probes = [
@@ -1053,6 +1059,23 @@ const program = Effect.gen(function* () {
                 },
               },
             ],
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-read",
+            title: "Read `src/env.ts`",
+            kind: "read",
+            status: "completed",
+            rawInput: { path: "src/env.ts" },
+            locations: [{ path: "src/env.ts" }],
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "TODO", path: "apps/web" },
           },
           {
             sessionUpdate: "compaction_update",

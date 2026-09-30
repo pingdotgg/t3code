@@ -40,7 +40,7 @@ import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Statement from "effect/unstable/sql/Statement";
 
-import { LIVE_STREAM_MAX_ITEMS, LiveStreamBufferError } from "../orchestration/LiveStreamBudget.ts";
+import { LIVE_STREAM_MAX_ITEMS, LiveStreamBufferError } from "./LiveStreamBudget.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CommandReceiptStoreV2, layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
@@ -1668,7 +1668,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         handoffIds: [] as const,
         forkedFrom: null,
         pendingBackgroundTasks: [
-          { taskId: "bg-owner", description: "sleep 20", taskType: "local_bash" },
+          { taskId: "bg-owner", description: "sleep 20", kind: "command" as const },
         ],
         createdAt: now,
         updatedAt: now,
@@ -1767,7 +1767,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
                 {
                   taskId: "bg-superseded",
                   description: "should not land",
-                  taskType: "local_bash",
+                  kind: "command" as const,
                 },
               ],
               updatedAt: afterReplacement,

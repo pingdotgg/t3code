@@ -55,6 +55,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -101,6 +102,11 @@ import {
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import {
+  type BackgroundWork,
+  type BackgroundWorkReport,
+  backgroundWorkNotification,
+} from "../Notification.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
@@ -208,6 +214,8 @@ export interface AcpAdapterV2ExtensionContext {
     readonly taskId: string;
     readonly status: "running" | "completed" | "failed";
     readonly output?: string;
+    /** What the task is, so a wake it causes can name it. */
+    readonly report?: BackgroundWork;
   }) => Effect.Effect<void>;
   readonly requestUserInput: (
     input: AcpAdapterV2UserInputRequest,
@@ -515,6 +523,7 @@ export interface AcpAdapterV2Options {
      * by exactly that on this receipt.
      */
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     readonly beforeNativeResponseAdmissionCheck?: (
@@ -1863,6 +1872,30 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           readonly providerThreadId: ProviderThreadId;
         } | null>(null);
         const wakeBuffer = yield* Ref.make<Array<EffectAcpSchema.SessionNotification>>([]);
+        // Background work that ended after the prompt settled, keyed by task or
+        // child session id. The next continuation offer names it for the user;
+        // `offered` holds the keys that offer named. Work that ends while the
+        // offer waits for its turn is named by the offer after it.
+        const noWakeReports = {
+          reports: new Map<string, BackgroundWorkReport>(),
+          offered: new Set<string>(),
+        };
+        const wakeReports = yield* Ref.make<{
+          readonly reports: ReadonlyMap<string, BackgroundWorkReport>;
+          readonly offered: ReadonlySet<string>;
+        }>(noWakeReports);
+        const recordWakeReport = Effect.fnUntraced(function* (
+          key: string,
+          report: BackgroundWorkReport,
+        ) {
+          const context = yield* Ref.get(activeTurn);
+          // An open prompt reports the work itself; no continuation follows.
+          if (context !== null && !context.promptSettled && !context.finalized) return;
+          yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+            reports: new Map(reports).set(key, report),
+            offered,
+          }));
+        });
         const continuationRequested = yield* Ref.make(false);
         const continuationGeneration = yield* Ref.make(0);
         const continuationPermit = yield* Semaphore.make(1);
@@ -3251,9 +3284,28 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           } else {
             switch (toolCall.kind) {
               case "read":
+                turnItem = {
+                  ...base,
+                  title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
+                  type: "dynamic_tool",
+                  toolName: "Read",
+                  input:
+                    path === undefined ||
+                    ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
+                      ? (rawInputRecord ?? {})
+                      : { ...rawInputRecord, path },
+                  ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                };
+                break;
               case "search":
                 turnItem = {
                   ...base,
+                  title:
+                    formatSearchToolLabel({
+                      rawInput: rawInputRecord,
+                      input: rawInputRecord,
+                      ...(path === undefined ? {} : { pattern: path }),
+                    }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
                   ...(path === undefined
@@ -3546,11 +3598,16 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 continuationGeneration,
                 (value) => value + 1,
               );
-              return Option.some({ route, generation });
+              const reports = yield* Ref.modify(wakeReports, ({ reports }) => [
+                reports,
+                { reports, offered: new Set(reports.keys()) },
+              ]);
+              return Option.some({ route, generation, reports });
             }),
           );
           if (Option.isNone(pending)) return false;
-          const { route, generation } = pending.value;
+          const { route, generation, reports } = pending.value;
+          const notification = backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
             providerSessionId: input.providerSessionId,
@@ -3562,6 +3619,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             providerThreadId: route.providerThreadId,
             driver,
             detail: null,
+            ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
                 Effect.gen(function* () {
@@ -5049,6 +5107,21 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const context = yield* Ref.get(activeTurn);
           const subagent =
             context === null ? undefined : context.subagentsBySessionId.get(notice.childSessionId);
+          const known =
+            subagent ??
+            (yield* Ref.get(carryoverSubagents))?.subagents.find(
+              (candidate) =>
+                candidate.childSessionId === notice.childSessionId ||
+                candidate.task.nativeTaskRef?.nativeId === notice.childSessionId,
+            );
+          if (known !== undefined && acpSubagentStatusBlocksTurnSettlement(known.task.status)) {
+            yield* recordWakeReport(notice.childSessionId, {
+              kind: "subagent",
+              label: known.task.title ?? known.task.prompt,
+              outcome: notice.status,
+              childThreadId: known.childThreadId,
+            });
+          }
           if (context !== null && subagent !== undefined && !context.finalized) {
             if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return;
             yield* emitSubagent(context, {
@@ -5712,6 +5785,16 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     // Root-session tasks only: a cancelled subagent's re-run in
                     // its child session must not gate root wake machinery.
                     if ((yield* Ref.get(activeSessionId)) !== mutation.sessionId) return;
+                    if (
+                      mutation.status !== "running" &&
+                      mutation.report !== undefined &&
+                      !(yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).has(mutation.taskId)
+                    ) {
+                      yield* recordWakeReport(mutation.taskId, {
+                        ...mutation.report,
+                        outcome: mutation.status,
+                      });
+                    }
                     yield* applyLateBackgroundMutation(mutation.sessionId, mutation);
                     if (mutation.status !== "running") {
                       yield* finishRegisteredBackgroundTool({
@@ -6284,6 +6367,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               yield* Ref.update(continuationGeneration, (value) => value + 1);
               yield* Ref.set(stoppedRunQuarantine, true);
               yield* Ref.set(wakeBuffer, []);
+              yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -6689,6 +6773,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 // traffic, and exempt app-owned sibling wakes entirely.
                 if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
                   yield* Ref.set(wakeBuffer, []);
+                  yield* Ref.set(wakeReports, noWakeReports);
                 }
                 if (preserveBufferedContinuation) return wasRequested;
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -6830,6 +6915,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             // terminal-and-projected lineage still expires with this turn.
             if (isContinuationTurn) {
               yield* Ref.set(continuationRequested, false);
+              // This turn delivers what its offer named. Work that ended after
+              // the offer keeps its report for the next one.
+              yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+                reports: new Map([...reports].filter(([key]) => !offered.has(key))),
+                offered: noWakeReports.offered,
+              }));
               const drainedWakeCount = yield* Ref.modify(wakeBuffer, (current) => {
                 const next: Array<EffectAcpSchema.SessionNotification> = [];
                 return [
@@ -6915,6 +7006,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       // The agent finished this prompt's reply. Background work
                       // holds the run open, not the text it already sent.
                       yield* closeTextStreams(context);
+                      yield* (
+                        options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
+                      );
                       return;
                     }
                     yield* finalizeTurn(context, status);
@@ -7641,6 +7735,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                             yield* Ref.update(continuationGeneration, (value) => value + 1);
                             yield* Ref.set(stoppedRunQuarantine, false);
                             yield* Ref.set(wakeBuffer, []);
+                            yield* Ref.set(wakeReports, noWakeReports);
                             yield* Ref.set(continuationRequested, false);
                             yield* Ref.set(runningBackgroundTaskIds, new Set());
                             yield* Ref.set(endedBackgroundTaskIds, new Set());

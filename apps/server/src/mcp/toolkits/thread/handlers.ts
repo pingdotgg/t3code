@@ -18,7 +18,7 @@ import {
   readWritableThread,
   unavailable,
 } from "../../threadAccess.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -97,9 +97,9 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           message: "The task was not found in the calling project.",
         });
       // The list() membership check and the caller's live run are snapshots:
-      // both are re-verified inside the run claim transaction so a project
-      // move or a settled caller run committed in between cannot carry this
-      // authorization into work launched outside the calling project.
+      // both, along with the caller's authorized modes, are re-verified inside
+      // the run claim transaction so a project move, settled run, or caller
+      // mode change cannot carry stale authorization into a dispatch.
       const { task } = yield* scheduler
         .runNow({
           id: input.taskId,
@@ -108,6 +108,11 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
             id: caller.activeRunId,
             threadId: caller.id,
             providerInstanceId: scope.providerInstanceId,
+          },
+          expectedCaller: {
+            threadId: caller.id,
+            runtimeMode: caller.runtimeMode,
+            interactionMode: caller.interactionMode,
           },
         })
         .pipe(Effect.mapError(unavailable));
@@ -122,8 +127,8 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   t3_thread_search: (input) =>
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
-      const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-      const result = yield* query.searchThreads(input).pipe(Effect.mapError(unavailable));
+      const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const result = yield* threadSearch.search(input).pipe(Effect.mapError(unavailable));
       return { matches: result.matches.filter((match) => match.projectId === caller.projectId) };
     }),
   t3_thread_fork: (input) =>

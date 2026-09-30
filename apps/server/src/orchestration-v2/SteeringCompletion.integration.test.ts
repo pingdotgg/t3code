@@ -217,7 +217,6 @@ for (const mailbox of [false, true]) {
                         delegatedCompletion: {
                           disposition: "open",
                           nextGeneration: 2,
-                          settledDeliveryCount: 0,
                           delivery: { generation: 1, messageId, taskIds: [taskId] },
                         },
                       },
@@ -331,7 +330,6 @@ for (const mailbox of [false, true]) {
                   assert.equal(delivered.subagents[0]?.completionDelivery?.state, "delivered");
                   assert.equal(delivered.subagents[0]?.completionDelivery?.observedByRunId, null);
                   assert.equal(delivered.runs[0]?.delegatedCompletion?.delivery, null);
-                  assert.equal(delivered.runs[0]?.delegatedCompletion?.settledDeliveryCount, 0);
                   assert.equal(
                     delivered.turnItems.filter((item) => item.type === "notification").length,
                     1,
