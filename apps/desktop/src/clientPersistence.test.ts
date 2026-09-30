@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  DEFAULT_SIDEBAR_ICON_SIZE,
   EnvironmentId,
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
@@ -68,6 +69,7 @@ const clientSettings: ClientSettings = {
     monitoring: 4,
   },
   sidebarFontSize: 12,
+  sidebarIconSize: DEFAULT_SIDEBAR_ICON_SIZE,
   sidebarMetaFontSize: 11,
   sidebarRowSpacing: "default",
   sidebarTranslucency: "off",

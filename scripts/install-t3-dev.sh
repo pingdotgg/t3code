@@ -13,6 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${REPO_ROOT}/scripts/install-app-bundle.sh"
 APP_FLAVOR="dev"
 APP_NAME="T3 Code (Dev)"
 APP_BUNDLE="${APP_NAME}.app"
@@ -60,14 +61,29 @@ esac
 ARTIFACT_GLOB="T3-Code-Dev-*-${BUILD_ARCH}.dmg"
 LOCK_PATH="${T3CODE_DEV_REBUILD_LOCK_PATH:-${HOME}/Library/Caches/t3code-dev/rebuild.lock}"
 MOUNT_POINT=""
+STAGED_APP=""
 
 cleanup() {
+  local exit_code=$?
+  trap - EXIT
+  if [[ -n "${T3CODE_DEV_REBUILD_RESULT_PATH:-}" ]]; then
+    local result_tmp="${T3CODE_DEV_REBUILD_RESULT_PATH}.tmp.$$"
+    if ! printf '%s\n' "$exit_code" > "$result_tmp" ||
+      ! mv "$result_tmp" "$T3CODE_DEV_REBUILD_RESULT_PATH"; then
+      echo "Could not write rebuild completion status to ${T3CODE_DEV_REBUILD_RESULT_PATH}." >&2
+      rm -f "$result_tmp"
+    fi
+  fi
+  if [[ -n "$STAGED_APP" ]]; then
+    cleanup_staged_app_bundle "$STAGED_APP" || echo "Could not clean up staged app: ${STAGED_APP}" >&2
+  fi
   if [[ -n "$MOUNT_POINT" && -d "$MOUNT_POINT" ]]; then
     hdiutil detach "$MOUNT_POINT" -quiet || hdiutil detach "$MOUNT_POINT" -force -quiet || true
   fi
   if [[ -L "$LOCK_PATH" && "$(readlink "$LOCK_PATH" 2>/dev/null || true)" == "$$" ]]; then
     rm -f "$LOCK_PATH"
   fi
+  exit "$exit_code"
 }
 trap cleanup EXIT
 
@@ -149,6 +165,9 @@ if [[ ! -d "$SRC_APP" ]]; then
   exit 1
 fi
 
+log "Staging and validating replacement app bundle..."
+STAGED_APP="$(stage_app_bundle "$SRC_APP" "$INSTALL_DEST")"
+
 log "Quitting any running ${APP_NAME} instance..."
 osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
 for _ in {1..50}; do
@@ -163,8 +182,8 @@ if pgrep -f "${APP_BUNDLE}/Contents/MacOS/" >/dev/null 2>&1; then
 fi
 
 log "Replacing ${INSTALL_DEST}..."
-rm -rf "$INSTALL_DEST"
-ditto "$SRC_APP" "$INSTALL_DEST"
+replace_staged_app_bundle "$STAGED_APP" "$INSTALL_DEST"
+STAGED_APP=""
 
 log "Clearing quarantine attributes..."
 xattr -dr com.apple.quarantine "$INSTALL_DEST" 2>/dev/null || true

@@ -38,6 +38,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
+  DesktopLocalRebuildLifecycle,
   DesktopLocalRebuildState,
 } from "@t3tools/contracts";
 import { DesktopNotificationRequest } from "@t3tools/contracts";
@@ -109,8 +110,10 @@ import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
   checkLocalDevRebuildStaleness,
   launchLocalDevRebuild,
+  persistLocalDevRebuildLifecycle,
   pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
+  restoreLocalDevRebuildLifecycle,
   resolveLocalDevRebuildState,
   runLocalRebuildStart,
 } from "./localDevRebuild.ts";
@@ -157,8 +160,10 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const LOCAL_REBUILD_GET_STATE_CHANNEL = "desktop:local-rebuild-get-state";
+const LOCAL_REBUILD_GET_LIFECYCLE_CHANNEL = "desktop:local-rebuild-get-lifecycle";
 const LOCAL_REBUILD_START_CHANNEL = "desktop:local-rebuild-start";
 const LOCAL_REBUILD_CHECK_STALENESS_CHANNEL = "desktop:local-rebuild-check-staleness";
+const LOCAL_REBUILD_LIFECYCLE_CHANNEL = "desktop:local-rebuild-lifecycle";
 const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
 const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
@@ -186,6 +191,7 @@ const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = Path.join(STATE_DIR, "logs");
+const LOCAL_REBUILD_LIFECYCLE_PATH = Path.join(STATE_DIR, "local-rebuild-lifecycle.json");
 const BROWSER_ARTIFACTS_DIR = Path.join(STATE_DIR, "browser-artifacts");
 let previewRuntime: PreviewRuntimeHandle | null = null;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -285,6 +291,22 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let localRebuildStarted = false;
+const restoredLocalRebuildLifecycle = restoreLocalDevRebuildLifecycle(
+  LOCAL_REBUILD_LIFECYCLE_PATH,
+  Path.join(LOG_DIR, "dev-rebuild.log"),
+);
+if (restoredLocalRebuildLifecycle.error) {
+  console.error(`[desktop] ${restoredLocalRebuildLifecycle.error}`);
+}
+let localRebuildLifecycle = restoredLocalRebuildLifecycle.lifecycle;
+let localRebuildProcessId = restoredLocalRebuildLifecycle.processId;
+let localRebuildLifecycleMonitor: ReturnType<typeof setInterval> | null = null;
+localRebuildStarted = localRebuildLifecycle.phase === "running";
+if (localRebuildLifecycle.phase === "running") {
+  monitorLocalRebuildLifecycle();
+}
+let localRebuildStalenessCheckInFlight: ReturnType<typeof checkLocalDevRebuildStaleness> | null =
+  null;
 let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
 let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion());
@@ -1214,6 +1236,63 @@ function emitUpdateState(): void {
   }
 }
 
+function persistLocalRebuildLifecycle(): void {
+  try {
+    persistLocalDevRebuildLifecycle(
+      LOCAL_REBUILD_LIFECYCLE_PATH,
+      localRebuildLifecycle,
+      localRebuildProcessId,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[desktop] Could not persist local rebuild status: ${message}`);
+  }
+}
+
+function reconcileLocalRebuildLifecycle(): void {
+  if (localRebuildLifecycle.phase !== "running") return;
+  const recovered = restoreLocalDevRebuildLifecycle(
+    LOCAL_REBUILD_LIFECYCLE_PATH,
+    Path.join(LOG_DIR, "dev-rebuild.log"),
+  );
+  if (recovered.error) console.error(`[desktop] ${recovered.error}`);
+  if (recovered.lifecycle.phase === "running") return;
+  emitLocalRebuildLifecycle({
+    phase: recovered.lifecycle.phase === "idle" ? "failed" : recovered.lifecycle.phase,
+    logPath: recovered.lifecycle.logPath ?? localRebuildLifecycle.logPath,
+    message:
+      recovered.lifecycle.phase === "idle"
+        ? "Could not recover installer status. Inspect the local rebuild log."
+        : recovered.lifecycle.message,
+  });
+}
+
+function monitorLocalRebuildLifecycle(): void {
+  if (localRebuildLifecycleMonitor) return;
+  localRebuildLifecycleMonitor = setInterval(reconcileLocalRebuildLifecycle, 1_000);
+  localRebuildLifecycleMonitor.unref();
+}
+
+function emitLocalRebuildLifecycle(state: Omit<DesktopLocalRebuildLifecycle, "revision">): void {
+  localRebuildStarted = state.phase === "running";
+  localRebuildLifecycle = { ...state, revision: localRebuildLifecycle.revision + 1 };
+  if (state.phase === "running" && state.logPath) {
+    persistLocalRebuildLifecycle();
+    monitorLocalRebuildLifecycle();
+  } else {
+    if (state.phase !== "running") localRebuildProcessId = null;
+    persistLocalRebuildLifecycle();
+    if (localRebuildLifecycleMonitor) {
+      clearInterval(localRebuildLifecycleMonitor);
+      localRebuildLifecycleMonitor = null;
+    }
+  }
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send(LOCAL_REBUILD_LIFECYCLE_CHANNEL, localRebuildLifecycle);
+  }
+}
+
 function emitNotificationClick(request: DesktopNotificationRequest): void {
   const window = mainWindow ?? BrowserWindow.getAllWindows().find((entry) => !entry.isDestroyed());
   if (!window || window.isDestroyed()) {
@@ -2088,14 +2167,23 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(LOCAL_REBUILD_GET_STATE_CHANNEL);
   ipcMain.handle(LOCAL_REBUILD_GET_STATE_CHANNEL, async () => getLocalDevRebuildState());
 
+  ipcMain.removeHandler(LOCAL_REBUILD_GET_LIFECYCLE_CHANNEL);
+  ipcMain.handle(LOCAL_REBUILD_GET_LIFECYCLE_CHANNEL, async () => localRebuildLifecycle);
+
   ipcMain.removeHandler(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL);
-  ipcMain.handle(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL, async () => {
-    const state = getLocalDevRebuildState();
-    return checkLocalDevRebuildStaleness({
-      enabled: state.enabled,
-      sourceRoot: state.sourceRoot,
-      buildSha: resolveAboutCommitHash(),
-    });
+  ipcMain.handle(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL, () => {
+    if (!localRebuildStalenessCheckInFlight) {
+      const state = getLocalDevRebuildState();
+      const check = checkLocalDevRebuildStaleness({
+        enabled: state.enabled,
+        sourceRoot: state.sourceRoot,
+        buildSha: resolveAboutCommitHash(),
+      });
+      localRebuildStalenessCheckInFlight = check.finally(() => {
+        localRebuildStalenessCheckInFlight = null;
+      });
+    }
+    return localRebuildStalenessCheckInFlight;
   });
 
   ipcMain.removeHandler(LOCAL_REBUILD_START_CHANNEL);
@@ -2107,7 +2195,12 @@ function registerIpcHandlers(): void {
       },
       getState: getLocalDevRebuildState,
       pullLatest: (sourceRoot) => pullLatestCheckoutChanges(sourceRoot),
-      launch: (state, onExit) => launchLocalDevRebuild(state, LOG_DIR, undefined, onExit),
+      launch: (state, onExit) =>
+        launchLocalDevRebuild(state, LOG_DIR, undefined, onExit, (processId) => {
+          localRebuildProcessId = processId !== null && processId > 0 ? processId : null;
+          persistLocalRebuildLifecycle();
+        }),
+      onLifecycle: emitLocalRebuildLifecycle,
       alreadyStartedLogPath: Path.join(LOG_DIR, "dev-rebuild.log"),
       options: options as { pullLatest?: unknown } | undefined,
     }),
