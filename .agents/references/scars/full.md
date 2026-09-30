@@ -385,6 +385,7 @@
 
 ## UI discovery and browser capture
 
+- Settings rows without search IDs must not match an empty URL hash; ref-driven focus/scroll otherwise jumps to the last ID-less row when Settings opens.
 - Composer-triggered provider discovery must use the route's environment connection; the primary environment cannot safely resolve remote workspace paths or update a remote provider snapshot.
 - Sidebar device markers belong in trailing metadata, not title text: omit primary-machine markers and raw IDs, keep remote names in tooltips, and cover hosted clients with no primary environment in both sidebar layouts.
 - Diff route search is thread-local UI state: clear it when sidebar navigation changes threads, but preserve it for the active thread so the split-layout store can restore each chat independently.

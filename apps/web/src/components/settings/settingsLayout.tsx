@@ -9,7 +9,7 @@ import { settingsSearchId } from "./settingsSearch";
 const SettingsTargetContext = createContext("");
 
 function focusSettingsTarget(target: HTMLElement) {
-  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.scrollIntoView({ block: "nearest", behavior: "instant" });
   target.focus({ preventScroll: true });
 }
 
@@ -23,7 +23,7 @@ function useSettingsTarget(id: string) {
   const targetId = useContext(SettingsTargetContext);
   return useCallback(
     (element: HTMLElement | null) => {
-      if (element && targetId === id) focusSettingsTarget(element);
+      if (element && targetId && targetId === id) focusSettingsTarget(element);
     },
     [id, targetId],
   );
