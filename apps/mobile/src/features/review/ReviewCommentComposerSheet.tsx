@@ -92,7 +92,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     codeSurface.rowHeight,
   );
   const previewViewportWidth = Math.max(width - 40, 280);
-  const { submitted, submit, accepted } = useReviewCommentSubmission();
+  const { submitted, submit, accepted } = useReviewCommentSubmission(pendingImagesRef);
   useReviewCommentDismissal({
     commentText,
     attachmentCount: attachments.length,
@@ -109,7 +109,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   );
   const dismissComposer = useCallback(() => navigation.goBack(), [navigation]);
   const handleNativePaste = useNativePaste((uris) => {
-    if (submitted) return;
+    if (accepted.current) return;
     changePendingImages(1);
     void (async () => {
       try {
@@ -157,7 +157,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   }, [selectedLines, selectedTheme, target]);
 
   async function handlePickImages(): Promise<void> {
-    if (submitted) return;
+    if (accepted.current) return;
     changePendingImages(1);
     try {
       const result = await pickComposerImages({ existingCount: attachments.length });

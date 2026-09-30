@@ -73,6 +73,19 @@ describe("PR edit draft lifetime", () => {
     expect(renderer!.root.findByType("textarea").props.value).toBe("First target's edit");
   });
 
+  it("does not retain a reverted edit when changes arrive before a rerender", () => {
+    act(() => {
+      renderer = create(editor());
+    });
+    act(() => {
+      const onChange = renderer!.root.findByType("textarea").props.onChange;
+      onChange({ target: { value: "Temporary edit" } });
+      onChange({ target: { value: "Original" } });
+    });
+    act(() => renderer!.update(editor("environment:review:comment-a", "Remote update")));
+    expect(renderer!.root.findByType("textarea").props.value).toBe("Remote update");
+  });
+
   it("does not erase invested input when the remote body refreshes", () => {
     act(() => {
       renderer = create(editor());

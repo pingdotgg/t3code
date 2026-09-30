@@ -51,8 +51,10 @@ export function PullRequestMarkdownEditor({
   // mask a later remote change behind text the reader already discarded.
   const setDraft = (text: string) => {
     const store = usePullRequestReviewStore.getState();
-    if (text === value) store.clearEditorDraft(draftKey, draft);
-    else store.setEditorDraft(draftKey, text);
+    if (text === value) {
+      const current = store.editorDrafts[draftKey];
+      if (current !== undefined) store.clearEditorDraft(draftKey, current);
+    } else store.setEditorDraft(draftKey, text);
   };
   const [preview, setPreview] = useState(false);
   const empty = draft.trim().length === 0;
