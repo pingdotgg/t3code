@@ -200,6 +200,13 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   line-height: 1 !important;
 }
 
+/* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
+   descenders and the hover underline. Only the clipped names get room: 16px plus the header's
+   12px of padding stays inside its 32px min-height, which diffHeaderHeight assumes. */
+[data-diffs-header] :is([data-title], [data-prev-name]) {
+  line-height: 16px !important;
+}
+
 [data-diffs-header] [data-metadata] {
   align-items: center !important;
   line-height: 1 !important;
