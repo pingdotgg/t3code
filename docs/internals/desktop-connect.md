@@ -34,7 +34,9 @@ pnpm exec vp test run integration/desktopConnect.integration.test.ts
 ```
 
 The test starts two actual fork backends in disposable worktree-local directories.
-Only external OAuth/relay behavior is simulated. It exercises the real PKCE callback,
+External OAuth/relay behavior is simulated. Two additional upstream HTTP responses
+are stubbed to verify that the native proxy preserves `304 Not Modified` and rejects
+redirects. It exercises the real PKCE callback,
 OAuth exchange, account discovery, relay-signed cloud mint requests, DPoP exchange,
 authenticated HTTP, native WebSocket gateway, filesystem browsing, and terminal
 execution. It checks that a command writes only on the selected host, that revoked

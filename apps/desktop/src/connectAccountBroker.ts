@@ -15,6 +15,7 @@ export function createConnectAccountBroker(driver: ConnectAccountDriver) {
 
   const invalidate = () => {
     generation++;
+    pendingDiscovery = undefined;
     targets.clear();
     discovery = null;
     for (const listener of listeners) listener();
@@ -27,7 +28,7 @@ export function createConnectAccountBroker(driver: ConnectAccountDriver) {
   const discover = () => {
     if (pendingDiscovery) return pendingDiscovery;
     const epoch = generation;
-    pendingDiscovery = driver
+    const pending = driver
       .discover()
       .then((next) => {
         if (epoch !== generation) return discovery;
@@ -46,9 +47,10 @@ export function createConnectAccountBroker(driver: ConnectAccountDriver) {
         return next;
       })
       .finally(() => {
-        pendingDiscovery = undefined;
+        if (pendingDiscovery === pending) pendingDiscovery = undefined;
       });
-    return pendingDiscovery;
+    pendingDiscovery = pending;
+    return pending;
   };
 
   return {
@@ -60,6 +62,7 @@ export function createConnectAccountBroker(driver: ConnectAccountDriver) {
     async login() {
       invalidate();
       await driver.login();
+      invalidate();
       return discover();
     },
     async logout() {

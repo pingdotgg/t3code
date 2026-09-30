@@ -813,7 +813,7 @@ const prepareAccountEnvironment = (
               response = yield* send(current);
             }
             yield* assertSameAccount(tokens, session.accountId);
-            if (response.status >= 300 && response.status < 400) {
+            if (response.status >= 300 && response.status < 400 && response.status !== 304) {
               yield* Effect.tryPromise(() => response.body?.cancel() ?? Promise.resolve());
               return yield* new CliAccountEnvironmentError({
                 message: "Environment redirects are not allowed for authenticated requests.",

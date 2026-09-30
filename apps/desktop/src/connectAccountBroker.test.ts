@@ -3,6 +3,32 @@ import { describe, expect, it } from "vitest";
 import { createConnectAccountBroker, type ConnectAccountDriver } from "./connectAccountBroker.ts";
 
 describe("desktop account broker", () => {
+  it("starts fresh discovery after login and retains it when old discovery finishes", async () => {
+    type Discovery = Awaited<ReturnType<ConnectAccountDriver["discover"]>>;
+    const oldDiscovery = Promise.withResolvers<Discovery>();
+    const newDiscovery = Promise.withResolvers<Discovery>();
+    let calls = 0;
+    const account = { accountId: "account-a", identity: "Alice", environments: [] };
+    const broker = createConnectAccountBroker({
+      login: async () => undefined,
+      logout: async () => undefined,
+      discover: () => (++calls === 1 ? oldDiscovery.promise : newDiscovery.promise),
+      connect: async () => {
+        throw new Error("unused");
+      },
+    });
+    const beforeLogin = broker.discover();
+    const login = broker.login();
+    await Promise.resolve();
+    oldDiscovery.resolve(null);
+    await beforeLogin;
+    const afterLogin = broker.discover();
+    newDiscovery.resolve(account);
+    await expect(login).resolves.toEqual(account);
+    await expect(afterLogin).resolves.toEqual(account);
+    expect(calls).toBe(2);
+  });
+
   it("does not release an authorization completed after logout", async () => {
     let complete: (() => void) | undefined;
     let signedIn = true;

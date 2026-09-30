@@ -74,6 +74,27 @@ it("discovers two real hosts through account OAuth and routes authorized HTTP, s
           headers: { origin: appOrigin, ...init?.headers },
         }),
       );
+    // Stub only the upstream HTTP response; the native proxy owns status handling.
+    vi.stubGlobal("fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.pathname === "/api/conditional-fixture") {
+        expect(new Headers(init?.headers).get("if-none-match")).toBe('"fixture-version"');
+        return new Response(null, { status: 304, headers: { etag: '"fixture-version"' } });
+      }
+      if (url.pathname === "/api/redirect-fixture") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://untrusted.example" },
+        });
+      }
+      return fixture.fixtureFetch(input, init);
+    });
+    const notModified = await request(first.httpBaseUrl, "/api/conditional-fixture", {
+      headers: { "if-none-match": '"fixture-version"' },
+    });
+    expect(notModified.status).toBe(304);
+    expect(await notModified.text()).toBe("");
+    expect((await request(first.httpBaseUrl, "/api/redirect-fixture")).status).toBe(502);
     expect(
       (
         await native.handle(
