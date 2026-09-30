@@ -116,7 +116,7 @@ import {
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
-import { isElectron } from "../../env";
+import { isElectronRuntime } from "../../env";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { DeviceSettings } from "./DeviceSettings";
 import { GitHubApiUsagePanel } from "./GitHubApiUsagePanel";
@@ -1356,6 +1356,7 @@ function HeaderSidebarToggleRows({
 }
 
 export function GeneralSettingsPanel() {
+  const isDesktopRuntime = isElectronRuntime();
   const browserEnvironmentId = usePrimaryEnvironmentId();
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -4042,7 +4043,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="About">
-        {isElectron ? (
+        {isDesktopRuntime ? (
           <AboutVersionSection />
         ) : (
           <SettingsRow

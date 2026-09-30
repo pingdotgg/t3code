@@ -27,8 +27,9 @@ import { GeneralSettingsPanel } from "./SettingsPanels";
 import { __resetClientSettingsPersistenceForTests } from "../../hooks/useSettings";
 
 vi.mock("../../env", () => ({
-  // Desktop mode is fixed at module load, before individual bridge fixtures exist.
+  // Keep settings in desktop mode while individual bridge fixtures vary.
   isElectron: true,
+  isElectronRuntime: () => true,
 }));
 
 vi.mock("../../environments/primary", async (importOriginal) => ({
@@ -157,6 +158,7 @@ vi.mock("../../environments/runtime", () => {
     getSavedEnvironmentRuntimeState: () => null,
     hasSavedEnvironmentRegistryHydrated: () => true,
     listSavedEnvironmentRecords: () => [],
+    readSavedEnvironmentBearerToken: vi.fn(async () => null),
     resetSavedEnvironmentRegistryStoreForTests: () => undefined,
     resetSavedEnvironmentRuntimeStoreForTests: () => undefined,
     resolveEnvironmentHttpUrl: (_environmentId: unknown, path: string) =>
@@ -168,6 +170,7 @@ vi.mock("../../environments/runtime", () => {
     getPrimaryEnvironmentConnection: () => primaryConnection,
     readEnvironmentConnection: () => primaryConnection,
     reconnectSavedEnvironment: vi.fn(),
+    setSavedEnvironmentEnabled: vi.fn(),
     removeSavedEnvironment: vi.fn(),
     requireEnvironmentConnection: () => primaryConnection,
     resetEnvironmentServiceForTests: () => undefined,

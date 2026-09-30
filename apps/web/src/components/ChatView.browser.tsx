@@ -3579,6 +3579,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("shows the source update check interval when local rebuilds are available", async () => {
     // Same shell stand-ins as above: settings panels assume these exist once
     // a bridge is present.
+    const getLocalRebuildState = vi.fn().mockResolvedValue({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      reason: null,
+    });
     window.desktopBridge = {
       getAppBranding: () => null,
       getClientSettings: vi.fn().mockResolvedValue(null),
@@ -3595,16 +3600,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
       onNotificationClick: () => () => {},
       showNotification: vi.fn().mockResolvedValue(false),
       onUpdateState: () => () => {},
-      getLocalRebuildState: vi.fn().mockResolvedValue({
-        enabled: true,
-        sourceRoot: "/repo/t3code",
-        reason: null,
-      }),
+      getLocalRebuildState,
     } as unknown as NonNullable<typeof window.desktopBridge>;
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      initialPath: "/settings/general",
       snapshot: createSnapshotForTargetUser({
         targetMessageId: "msg-user-sidebar-rebuild-interval" as MessageId,
         targetText: "sidebar rebuild interval",
@@ -3613,6 +3613,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await waitForServerConfigToApply();
+      await mounted.router.navigate({ to: "/settings/general" });
       await expect
         .element(page.getByLabelText("Source update check interval in minutes"))
         .toBeInTheDocument();
