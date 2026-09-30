@@ -184,6 +184,29 @@ describe("instance-scoped model selection", () => {
     );
   });
 
+  it("offers every saved custom model instead of truncating the list", () => {
+    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
+    const customModels = Array.from({ length: 70 }, (_, index) => `proxy/model-${index}`);
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("grok")]: {
+          driver: ProviderDriverKind.make("grok"),
+          config: { customModels },
+        },
+      },
+    };
+    const grok = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "grok",
+    )!;
+
+    const slugs = new Set(
+      getAppModelOptionsForInstance(settings, grok).map((option) => option.slug),
+    );
+    expect(customModels.every((slug) => slugs.has(slug))).toBe(true);
+  });
+
   it("does not inject an unknown selected slug into the stock instance list", () => {
     const providers = [
       provider({
