@@ -16,6 +16,7 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
@@ -39,6 +40,8 @@ import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { AntigravityInstallation } from "../provider/AntigravityInstallation.ts";
+import { CodexInstallation } from "../provider/CodexInstallation.ts";
+import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import {
@@ -119,6 +122,13 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(PlatformTestLayer),
       ),
+      // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
+      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+      Layer.succeed(ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(
+          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
+        ),
+      }),
     ),
   ),
 );

@@ -191,14 +191,15 @@ describe("OpenCode2 adapter", () => {
     "refuses a turn outside Full access instead of running it with every tool allowed",
     () =>
       Effect.gen(function* () {
+        // No prompt is expected: the turn fails without reaching the server.
         const { runtime, thread } = yield* resumed([]);
-        const error = yield* runtime
-          .startTurn(turnInput(thread, bigPickle, "approval-required"))
-          .pipe(Effect.flip);
-        assert.equal(
-          (error.cause as { readonly detail?: string } | undefined)?.detail,
-          OPENCODE_2_FULL_ACCESS_ONLY,
-        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+        const refused = yield* Fiber.join(terminal);
+        assert.deepInclude(refused?.failure, {
+          class: "validation_error",
+          message: OPENCODE_2_FULL_ACCESS_ONLY,
+        });
       }).pipe(Effect.scoped),
   );
 
@@ -348,7 +349,7 @@ describe("OpenCode2 adapter", () => {
           providerTurnId: yield* providerTurnId,
         })
         .pipe(Effect.flip);
-      assert.equal(failed._tag, "ProviderAdapterInterruptError");
+      assert.equal(failed._tag, "ProviderAdapterProtocolError");
     }).pipe(Effect.scoped),
   );
 
@@ -392,6 +393,26 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "moves the session when a thread it resumes through ensureThread changed worktree",
+    () =>
+      Effect.gen(function* () {
+        const runtime = yield* openCode2ReplayRuntime([
+          out("event.subscribe"),
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo()),
+          out("session.move", { sessionID: SESSION, directory: "/work/opencode2-feature" }),
+          reply("session.move", null),
+        ]);
+        yield* runtime.ensureThread({
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: { ...policy(), cwd: "/work/opencode2-feature" },
+          existingProviderThread: providerThread(yield* DateTime.now),
+        });
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("breaks the thread and forgets it when the session was deleted outside T3", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -412,7 +433,8 @@ describe("OpenCode2 adapter", () => {
       assert.equal(ended?.threadDisposition, "broken");
       // The next turn must resume (and fail into a handoff), not reuse the dead session.
       const again = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.flip);
-      assert.include(String((again.cause as { detail?: string }).detail), "not registered");
+      assert.equal(again._tag, "ProviderAdapterProtocolError");
+      assert.include(again.message, "not registered");
     }).pipe(Effect.scoped),
   );
 
@@ -427,23 +449,19 @@ describe("OpenCode2 adapter", () => {
           runtimePolicy: policy(),
         })
         .pipe(Effect.flip);
-      assert.include(
-        String((created.cause as { detail?: string } | undefined)?.detail),
-        "OpenCode model 'big-pickle' must use provider/model format",
-      );
+      assert.equal(created._tag, "ProviderAdapterProtocolError");
+      assert.include(created.message, "OpenCode model 'big-pickle' must use provider/model format");
     }).pipe(Effect.scoped),
   );
 
   it.effect("refuses a turn whose model slug is not provider/model before prompting", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([]);
-      const refused = yield* runtime
-        .startTurn(turnInput(thread, { instanceId, model: "big-pickle" }))
-        .pipe(Effect.flip);
-      assert.include(
-        String((refused.cause as { detail?: string } | undefined)?.detail),
-        "must use provider/model format",
-      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread, { instanceId, model: "big-pickle" }));
+      const refused = yield* Fiber.join(terminal);
+      assert.equal(refused?.failure?.class, "validation_error");
+      assert.include(refused?.failure?.message, "must use provider/model format");
     }).pipe(Effect.scoped),
   );
 
@@ -556,11 +574,7 @@ describe("OpenCode2 adapter", () => {
       const refused = yield* runtime
         .startTurn(turnInput(thread))
         .pipe(Effect.flip, Effect.timeout("5 seconds"));
-      assert.equal(refused._tag, "ProviderAdapterTurnStartError");
-      assert.equal(
-        (refused.cause as { readonly _tag?: string } | undefined)?._tag,
-        "ProviderAdapterEventStreamError",
-      );
+      assert.equal(refused._tag, "ProviderAdapterEventStreamError");
     }).pipe(Effect.scoped),
   );
 

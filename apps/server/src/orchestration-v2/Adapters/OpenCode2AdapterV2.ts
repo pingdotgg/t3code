@@ -36,6 +36,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../../config.ts";
@@ -65,6 +66,7 @@ import {
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterTurnStartError,
   ProviderAdapterV2,
+  ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2Shape,
@@ -78,7 +80,7 @@ const OpenCode2ProviderCapabilities = {
   sessions: {
     // One server serves every location, so one session runtime owns them all.
     supportsMultipleProviderThreadsPerSession: true,
-    supportsModelSwitchInSession: false,
+    supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: false,
     pendingRequestsSurviveRestart: false,
@@ -254,30 +256,26 @@ const deliver = <E>(answer: Effect.Effect<void, E>) =>
 
 type ModelRef = ReturnType<typeof Model.Ref.make>;
 
+// Errors already in the adapter channel keep their tag; only lower-level ones are wrapped.
+const isProviderAdapterError = Schema.is(ProviderAdapterV2Error);
+
 /**
  * The model OpenCode should run for a `provider/model` slug and its reasoning
- * variant. Any other slug fails: sending none would run OpenCode's default
- * while T3 records the requested model.
+ * variant, or undefined for any other slug: sending none would run OpenCode's
+ * default while T3 records the requested model.
  */
 const modelRef = (selection: ProviderAdapterV2TurnInput["modelSelection"]) => {
   const parsed = parseOpenCodeModelSlug(selection.model);
-  if (parsed === null) {
-    return Effect.fail(
-      new ProviderAdapterProtocolError({
-        driver: OPENCODE_PROVIDER,
-        detail: `OpenCode model '${selection.model}' must use provider/model format`,
-      }),
-    );
-  }
+  if (parsed === null) return undefined;
   const variant = getModelSelectionStringOptionValue(selection, "variant");
-  return Effect.succeed(
-    Model.Ref.make({
-      providerID: Provider.ID.make(parsed.providerID),
-      id: Model.ID.make(parsed.modelID),
-      ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
-    }),
-  );
+  return Model.Ref.make({
+    providerID: Provider.ID.make(parsed.providerID),
+    id: Model.ID.make(parsed.modelID),
+    ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+  });
 };
+const malformedModel = (model: string) =>
+  `OpenCode model '${model}' must use provider/model format`;
 const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.providerID === right?.providerID &&
   left.id === right?.id &&
@@ -784,9 +782,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (threadInput.existingProviderThread?.nativeThreadRef != null) {
             return yield* runtime.resumeThread({
               providerThread: threadInput.existingProviderThread,
+              threadId: threadInput.threadId,
+              modelSelection: threadInput.modelSelection,
+              runtimePolicy: threadInput.runtimePolicy,
             });
           }
-          const model = yield* modelRef(threadInput.modelSelection);
+          const model = modelRef(threadInput.modelSelection);
+          if (model === undefined) {
+            return yield* new ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: malformedModel(threadInput.modelSelection.model),
+            });
+          }
           const created = yield* client.session.create({
             location: Location.PublicRef.make({
               directory: AbsolutePath.make(threadInput.runtimePolicy.cwd ?? serverConfig.cwd),
@@ -816,13 +823,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           };
           return register(providerThread, created.id, created.model);
         }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterEnsureThreadError({
-                driver,
-                threadId: threadInput.threadId,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isProviderAdapterError(cause)
+              ? cause
+              : new ProviderAdapterEnsureThreadError({
+                  driver,
+                  threadId: threadInput.threadId,
+                  cause,
+                }),
           ),
         ),
       resumeThread: (threadInput) =>
@@ -862,13 +870,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       startTurn: (turnInput) =>
         Effect.gen(function* () {
-          // Sessions allow every tool, so any other mode would silently run as Full access.
-          if (turnInput.runtimePolicy.runtimeMode !== "full-access") {
-            return yield* new ProviderAdapterProtocolError({
-              driver: OPENCODE_PROVIDER,
-              detail: OPENCODE_2_FULL_ACCESS_ONLY,
-            });
-          }
           const sessionId = yield* sessionIdOf(turnInput.providerThread);
           const state = threads.get(sessionId);
           if (state === undefined) {
@@ -883,59 +884,80 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               detail: `OpenCode session ${sessionId} already has an active turn`,
             });
           }
+          // Installs the turn; every path after it ends the turn with a terminal.
+          const begin = Effect.gen(function* () {
+            const startedAt = yield* DateTime.now;
+            const nativeTurnId = `${sessionId}:attempt:${turnInput.attemptId}`;
+            const providerTurn: OrchestrationV2ProviderTurn = {
+              id: idAllocator.derive.providerTurn({ driver, nativeTurnId }),
+              providerThreadId: turnInput.providerThread.id,
+              nodeId: turnInput.rootNodeId,
+              runAttemptId: turnInput.attemptId,
+              nativeTurnRef: ref(nativeTurnId, "weak"),
+              ordinal: turnInput.providerTurnOrdinal,
+              status: "running",
+              startedAt,
+              completedAt: null,
+            };
+            const turn: ActiveTurn = {
+              input: turnInput,
+              providerTurn,
+              texts: new Map(),
+              tools: new Map(),
+              startedAt: new Map(),
+              ordinals: new Map(),
+              nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
+              interrupted: false,
+            };
+            // No stream is left to end this turn, so it must not start.
+            if (streamFailure !== undefined) {
+              return yield* new ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: input.providerSessionId,
+                cause: streamFailure,
+              });
+            }
+            state.active = turn;
+            yield* emitProviderTurn(state, turn, providerTurn);
+            state.providerThread = {
+              ...state.providerThread,
+              status: "active",
+              firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
+              lastRunOrdinal: turnInput.runOrdinal,
+              updatedAt: startedAt,
+            };
+            yield* emit({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: state.providerThread,
+            });
+            yield* setSessionStatus("running", null);
+            return turn;
+          });
+          // A turn T3 will not run still starts and fails, so the refusal is what
+          // the user reads. Sessions allow every tool, so any other mode would
+          // silently run as Full access.
+          const model = modelRef(turnInput.modelSelection);
+          if (turnInput.runtimePolicy.runtimeMode !== "full-access" || model === undefined) {
+            yield* begin;
+            return yield* finishTurn(state, {
+              status: "failed",
+              failure: makeProviderFailure({
+                message:
+                  turnInput.runtimePolicy.runtimeMode !== "full-access"
+                    ? OPENCODE_2_FULL_ACCESS_ONLY
+                    : malformedModel(turnInput.modelSelection.model),
+                class: "validation_error",
+              }),
+            });
+          }
           // A selection changed since the last turn applies now; OpenCode keeps
           // the session's model otherwise.
-          const model = yield* modelRef(turnInput.modelSelection);
           if (!sameModel(model, state.model)) {
             yield* client.session.switchModel({ sessionID: Session.ID.make(sessionId), model });
             state.model = model;
           }
-          const startedAt = yield* DateTime.now;
-          const nativeTurnId = `${sessionId}:attempt:${turnInput.attemptId}`;
-          const providerTurn: OrchestrationV2ProviderTurn = {
-            id: idAllocator.derive.providerTurn({ driver, nativeTurnId }),
-            providerThreadId: turnInput.providerThread.id,
-            nodeId: turnInput.rootNodeId,
-            runAttemptId: turnInput.attemptId,
-            nativeTurnRef: ref(nativeTurnId, "weak"),
-            ordinal: turnInput.providerTurnOrdinal,
-            status: "running",
-            startedAt,
-            completedAt: null,
-          };
-          const turn: ActiveTurn = {
-            input: turnInput,
-            providerTurn,
-            texts: new Map(),
-            tools: new Map(),
-            startedAt: new Map(),
-            ordinals: new Map(),
-            nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
-            interrupted: false,
-          };
-          // No stream is left to end this turn, so it must not start.
-          if (streamFailure !== undefined) {
-            return yield* new ProviderAdapterEventStreamError({
-              driver,
-              providerSessionId: input.providerSessionId,
-              cause: streamFailure,
-            });
-          }
-          state.active = turn;
-          yield* emitProviderTurn(state, turn, providerTurn);
-          state.providerThread = {
-            ...state.providerThread,
-            status: "active",
-            firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
-            lastRunOrdinal: turnInput.runOrdinal,
-            updatedAt: startedAt,
-          };
-          yield* emit({
-            type: "provider_thread.updated",
-            driver,
-            providerThread: state.providerThread,
-          });
-          yield* setSessionStatus("running", null);
+          const turn = yield* begin;
           yield* client.session
             .prompt({ sessionID: Session.ID.make(sessionId), text: prompt(turnInput) })
             .pipe(
@@ -966,15 +988,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ),
             );
         }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterTurnStartError({
-                driver,
-                threadId: turnInput.threadId,
-                providerThreadId: turnInput.providerThread.id,
-                runId: turnInput.runId,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isProviderAdapterError(cause)
+              ? cause
+              : new ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  cause,
+                }),
           ),
         ),
       steerTurn: (steerInput) =>
@@ -1024,14 +1047,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             });
           }
         }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterInterruptError({
-                driver,
-                providerThreadId: interruptInput.providerThread.id,
-                providerTurnId: interruptInput.providerTurnId,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isProviderAdapterError(cause)
+              ? cause
+              : new ProviderAdapterInterruptError({
+                  driver,
+                  providerThreadId: interruptInput.providerThread.id,
+                  providerTurnId: interruptInput.providerTurnId,
+                  cause,
+                }),
           ),
         ),
       unloadThread: ({ providerThread }) =>
