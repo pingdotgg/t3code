@@ -281,7 +281,9 @@ it.effect("requires an update before running an older activated managed installa
       '{"version":"0.155.1"}',
     );
     const restarted = yield* makeHarness({ baseDir: first.baseDir });
-    expect((yield* Effect.flip(restarted.installation.resolve())).detail).toContain("0.156.0");
+    expect((yield* Effect.flip(restarted.installation.resolve())).detail).toContain(
+      "outside the supported range",
+    );
     yield* restarted.installation.start;
     expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
     expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
