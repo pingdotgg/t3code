@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -18,8 +19,12 @@ import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
+  loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
   type OpenCode2Model,
+  type OpenCode2Workspace,
+  openCode2CommandsToServerProviderSlashCommands,
+  openCode2SkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
 } from "./OpenCodeProvider.ts";
 import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
@@ -562,6 +567,12 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         "auto",
         "full-access",
       ]);
+      // Plan mode runs as OpenCode's plan agent, and every session can compact.
+      NodeAssert.equal(snapshot.showInteractionModeToggle, true);
+      NodeAssert.deepEqual(
+        snapshot.slashCommands.map((command) => command.name),
+        ["compact"],
+      );
       NodeAssert.deepEqual(
         snapshot.models.map((model) => model.slug),
         ["opencode/big-pickle", "opencode/space-bunny-free"],
@@ -788,3 +799,70 @@ it.effect("keeps the last OpenCode 2 model list while a fresh server's stays emp
     NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
   }).pipe(Effect.provide(TestClock.layer())),
 );
+
+// What 2.0.18 lists for a directory once it has scanned it (live, 2026-09-29).
+const builtinCommands = [
+  { name: "init", description: "guided AGENTS.md setup" },
+  { name: "review", description: "review changes [commit|branch|pr], defaults to uncommitted" },
+];
+const builtinSkills = [
+  { id: "opencode", name: "OpenCode", path: "/builtin/opencode.md" },
+  { id: "report", name: "Report", path: "/builtin/report.md" },
+];
+const scanned: OpenCode2Workspace = {
+  commands: [...builtinCommands, { name: "hello", description: "Say hello to the workspace" }],
+  skills: [
+    ...builtinSkills,
+    {
+      id: "greet",
+      name: "greet",
+      path: "/work/.opencode/skills/greet/SKILL.md",
+      description: "Greets the user with the secret word MANGO.",
+    },
+  ],
+};
+
+it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", () =>
+  Effect.gen(function* () {
+    // A directory the server has not served yet lists no commands until its scan ends.
+    const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
+    const scanEnded = yield* Deferred.make<void>();
+    const load = yield* loadOpenCode2Workspace(
+      Effect.sync(() => reads.shift()!),
+      Deferred.await(scanEnded),
+    ).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    NodeAssert.equal(reads.length, 1);
+    yield* Deferred.succeed(scanEnded, undefined);
+    NodeAssert.deepEqual(yield* Fiber.join(load), scanned);
+  }),
+);
+
+it.effect("takes a served OpenCode 2 directory's first listing as is", () =>
+  Effect.gen(function* () {
+    const workspace = yield* loadOpenCode2Workspace(Effect.succeed(scanned), Effect.never);
+    NodeAssert.deepEqual(workspace, scanned);
+  }),
+);
+
+it("lists an OpenCode 2 directory's skills by id and its commands after /compact", () => {
+  NodeAssert.deepEqual(
+    openCode2SkillsToServerProviderSkills(scanned.skills).map((skill) => [
+      skill.name,
+      skill.displayName,
+      skill.path,
+    ]),
+    [
+      ["greet", undefined, "/work/.opencode/skills/greet/SKILL.md"],
+      ["opencode", "OpenCode", "/builtin/opencode.md"],
+      ["report", "Report", "/builtin/report.md"],
+    ],
+  );
+  NodeAssert.deepEqual(
+    openCode2CommandsToServerProviderSlashCommands([
+      ...scanned.commands,
+      { name: "compact", description: "a workspace command named like T3's own" },
+    ]).map((command) => command.name),
+    ["compact", "init", "review", "hello"],
+  );
+});

@@ -14,11 +14,13 @@
  */
 import { OpenCodeSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -34,8 +36,11 @@ import { ProviderDriverError } from "../Errors.ts";
 import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
+  loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
   makePendingOpenCodeProvider,
+  openCode2CommandsToServerProviderSlashCommands,
+  openCode2SkillsToServerProviderSkills,
   openCodeSkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
 } from "../Layers/OpenCodeProvider.ts";
@@ -279,6 +284,42 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           ),
         ),
       );
+      // A 2.x server lists skills and commands per directory, so one server
+      // answers every workspace. Its event stream says when a directory it had
+      // not served yet finished scanning.
+      const listOpenCode2Workspace = (cwd: string) =>
+        openCode2Server.withConnection(({ client, events }) =>
+          Effect.gen(function* () {
+            const location = { directory: cwd };
+            const scanned = yield* Deferred.make<void>();
+            const pending = new Set(["command.updated", "skill.updated"]);
+            const stream = yield* events.pipe(Effect.option);
+            if (stream._tag === "Some") {
+              yield* stream.value.pipe(
+                Stream.runForEach((event) =>
+                  "location" in event &&
+                  event.location?.directory === cwd &&
+                  pending.delete(event.type) &&
+                  pending.size === 0
+                    ? Deferred.succeed(scanned, undefined)
+                    : Effect.void,
+                ),
+                Effect.ignore,
+                Effect.forkScoped,
+              );
+            }
+            return yield* loadOpenCode2Workspace(
+              Effect.all(
+                {
+                  skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
+                  commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
+                },
+                { concurrency: "unbounded" },
+              ),
+              Deferred.await(scanned),
+            );
+          }).pipe(Effect.scoped),
+        );
       const serverOwner = yield* OpenCodeServerOwner.make({
         binaryPath: effectiveConfig.binaryPath,
         directory: serverConfig.cwd,
@@ -417,13 +458,29 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         accentColor,
         enabled,
         snapshot,
-        // OpenCode 2 has no per-workspace skill and command inventory yet, so a
-        // 2.x workspace shows the machine snapshot instead of starting a 1.x server.
         snapshotForCwd: (cwd) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot
             : byOpenCodeRuntime(runtimeProbe.get, {
-                v2: snapshot.getSnapshot,
+                v2: Effect.all([
+                  snapshot.getSnapshot,
+                  listOpenCode2Workspace(cwd).pipe(Effect.timeout("20 seconds")),
+                ]).pipe(
+                  Effect.map(([machineSnapshot, { skills, commands }]) => ({
+                    ...machineSnapshot,
+                    skills: openCode2SkillsToServerProviderSkills(skills),
+                    slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                  })),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId,
+                        detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                        cause,
+                      }),
+                  ),
+                ),
                 v1: Effect.all([
                   snapshot.getSnapshot,
                   loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),

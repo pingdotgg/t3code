@@ -410,12 +410,78 @@ export const makeOpenCode2ModelLoader = <E>(
     );
   });
 
+/** A workspace's skills and commands, as an OpenCode 2 server lists them for its directory. */
+export interface OpenCode2Workspace {
+  readonly skills: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly path: string;
+    readonly description?: string | undefined;
+  }>;
+  readonly commands: ReadonlyArray<{
+    readonly name: string;
+    readonly description?: string | undefined;
+  }>;
+}
+
+/**
+ * A server scans a directory it has not served yet in the background: its
+ * first read lists no commands at all (not even the built-ins), and
+ * `command.updated` plus `skill.updated` for the directory end the scan. A
+ * directory it already serves lists everything at once. `scanned` must be
+ * listening before `read` runs, since the read is what starts the scan.
+ */
+export const loadOpenCode2Workspace = <E>(
+  read: Effect.Effect<OpenCode2Workspace, E>,
+  scanned: Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    const first = yield* read;
+    if (first.commands.length > 0) return first;
+    yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
+    return yield* read;
+  });
+
+export function openCode2SkillsToServerProviderSkills(
+  skills: OpenCode2Workspace["skills"],
+): ReadonlyArray<ServerProviderSkill> {
+  return skills
+    .map((skill) => {
+      const description = trimOptional(skill.description);
+      return {
+        name: skill.id,
+        path: skill.path,
+        enabled: true,
+        ...(skill.name === skill.id ? {} : { displayName: skill.name }),
+        ...(description ? { description, shortDescription: description } : {}),
+      };
+    })
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+export function openCode2CommandsToServerProviderSlashCommands(
+  commands: OpenCode2Workspace["commands"],
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const slashCommands: ServerProviderSlashCommand[] = [COMPACT_SLASH_COMMAND];
+  const names = new Set([COMPACT_SLASH_COMMAND.name]);
+  for (const command of commands) {
+    const name = trimOptional(command.name);
+    if (!name || names.has(name)) continue;
+    names.add(name);
+    const description = trimOptional(command.description);
+    slashCommands.push({ name, ...(description ? { description } : {}) });
+  }
+  return slashCommands;
+}
+
 /**
  * Every mode maps onto OpenCode 2 session rules. Auto asks like Supervised:
- * OpenCode has no reviewer that approves routine actions.
+ * OpenCode has no reviewer that approves routine actions. Plan mode is its
+ * `plan` agent, so the composer's mode toggle drives it.
  */
 const OPENCODE_2_PRESENTATION = {
   ...OPENCODE_PRESENTATION,
+  showInteractionModeToggle: true,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "auto", "full-access"],
 } as const;
 
@@ -488,6 +554,8 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     enabled: true,
     checkedAt,
     models,
+    // Every session can compact; a workspace snapshot adds that directory's commands.
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe:
       result.value.length > 0
         ? probe(

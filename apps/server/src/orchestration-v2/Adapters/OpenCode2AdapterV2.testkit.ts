@@ -66,14 +66,23 @@ const operationOf = (
   if (method === "GET" && path === "/api/agent") return { type: "agent.list", input: query };
   if (method === "POST" && path === "/api/session") return { type: "session.create", input: body };
   if (method === "GET" && path === "/api/session/active") return { type: "session.active" };
+  if (method === "GET" && path === "/api/command") return { type: "command.list", input: query };
+  if (method === "GET" && path === "/api/skill") return { type: "skill.list", input: query };
   if (session !== null) {
     const [, sessionID, rest = ""] = session;
-    const input = { sessionID, ...query, ...(body === undefined ? {} : (body as object)) };
+    // The client sends absent optional fields as `null`; recordings omit them.
+    const fields = Object.entries((body ?? {}) as Record<string, unknown>).filter(
+      ([, value]) => value !== null,
+    );
+    const input = { sessionID, ...query, ...Object.fromEntries(fields) };
     if (method === "GET" && rest === "") return { type: "session.get", input };
     if (method === "PATCH" && rest === "") return { type: "session.update", input };
     if (method === "POST" && rest === "/prompt") return { type: "session.prompt", input };
+    if (method === "POST" && rest === "/command") return { type: "session.command", input };
+    if (method === "POST" && rest === "/compact") return { type: "session.compact", input };
     if (method === "POST" && rest === "/interrupt") return { type: "session.interrupt", input };
     if (method === "POST" && rest === "/model") return { type: "session.switchModel", input };
+    if (method === "POST" && rest === "/agent") return { type: "session.switchAgent", input };
     if (method === "POST" && rest === "/move") return { type: "session.move", input };
     if (method === "POST" && rest === "/synthetic") return { type: "session.synthetic", input };
     if (method === "POST" && rest === "/fork") return { type: "session.fork", input };

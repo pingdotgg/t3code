@@ -3,6 +3,7 @@
  * the transcript fixes the order of every request the adapter sends, so a
  * request the orchestrator never lets it make fails the run.
  */
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
@@ -16,9 +17,10 @@ import {
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import {
   OPENCODE2_HTTP_PROTOCOL,
@@ -29,7 +31,10 @@ import { provideDeterministicTestRuntime } from "./testkit/DeterministicRuntime.
 import type { OrchestratorV2ScenarioStep } from "./testkit/OrchestratorScenario.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
-import { readProviderReplayTranscript } from "./testkit/ReplayTranscriptNdjson.ts";
+import {
+  decodeProviderReplayNdjson,
+  readProviderReplayTranscript,
+} from "./testkit/ReplayTranscriptNdjson.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -38,6 +43,7 @@ const FIRST_TURN_END = "first-turn-end";
 const instanceId = ProviderInstanceId.make("opencode");
 const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
 const mimo: ModelSelection = { instanceId, model: "opencode/mimo-v2.6-flash-free" };
+const nemotron: ModelSelection = { instanceId, model: "opencode/nemotron-3.5-lightning-free" };
 
 const out = (type: string, input?: unknown): ProviderReplayEntry => ({
   type: "expect_outbound",
@@ -243,7 +249,7 @@ const threadCommands = (input: {
       branch: null,
       worktreePath: input.worktreePath,
     } satisfies OrchestrationV2Command,
-    message: (key: string, modelSelection: ModelSelection = bigPickle) =>
+    message: (key: string, modelSelection: ModelSelection = bigPickle, text?: string) =>
       ({
         type: "message.dispatch",
         createdBy: "user",
@@ -251,10 +257,17 @@ const threadCommands = (input: {
         commandId: command(key),
         threadId,
         messageId: MessageId.make(`message:${input.name}:${key}`),
-        text: `Reply with exactly: ${key}`,
+        text: text ?? `Reply with exactly: ${key}`,
         attachments: [],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
+      }) satisfies OrchestrationV2Command,
+    interactionMode: (key: string, interactionMode: "default" | "plan") =>
+      ({
+        type: "thread.interaction-mode.set",
+        commandId: command(key),
+        threadId,
+        interactionMode,
       }) satisfies OrchestrationV2Command,
     command,
   };
@@ -520,11 +533,16 @@ describe("OpenCode 2 through the orchestrator", () => {
         threadId: thread.threadId,
         entries: [
           ...createdSession(cwd, PLAN_RULES),
+          // Plan mode is also OpenCode's plan agent, switched before the prompt.
+          out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
+          reply("session.switchAgent", null),
           ...answeredPrompt("PLANNED"),
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, PLAN_RULES)),
           out("session.update", { sessionID: SESSION, permissions: T3_RULES }),
           reply("session.update", null),
+          out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
+          reply("session.switchAgent", null),
           ...answeredPrompt("BUILT"),
         ],
         commands: [
@@ -698,5 +716,60 @@ describe("OpenCode 2 through the orchestrator", () => {
         ["completed", "cancelled", "completed"],
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect(
+    "runs plan mode as OpenCode's plan agent and switches back before the next prompt",
+    () =>
+      Effect.gen(function* () {
+        const name = "opencode2_switch";
+        const cwd = yield* checkpointWorkspace(name);
+        const thread = threadCommands({ name, worktreePath: cwd });
+        // The spike's recording: plan agent, then build agent and a new model on
+        // one session. Its `<work>` is this test's workspace.
+        const recorded = yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const text = yield* fs.readFileString(
+            yield* path.fromFileUrl(
+              new URL(
+                "./testkit/fixtures/opencode2_switch/opencode_transcript.ndjson",
+                import.meta.url,
+              ),
+            ),
+          );
+          return yield* decodeProviderReplayNdjson(text.replaceAll("<work>", cwd));
+        }).pipe(Effect.provide(NodeServices.layer));
+        const projection = yield* runScenario({
+          name,
+          threadId: thread.threadId,
+          entries: recorded.entries,
+          commands: [
+            thread.create,
+            thread.interactionMode("mode-plan", "plan"),
+            thread.message(
+              "plan",
+              bigPickle,
+              "Create a file named plan_probe.txt containing HI using the write tool.",
+            ),
+            thread.interactionMode("mode-default", "default"),
+            thread.message("switched", nemotron, "Reply exactly SWITCHED."),
+          ],
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.modelSelection.model]),
+          [
+            ["completed", bigPickle.model],
+            ["completed", nemotron.model],
+          ],
+        );
+        const replies = projection.turnItems.flatMap((item) =>
+          item.type === "assistant_message" ? [item.text] : [],
+        );
+        // The plan agent refused to write; OpenCode's own reminder told it why.
+        assert.include(replies[0], "Plan mode");
+        assert.equal(replies[1], "SWITCHED");
+        assert.lengthOf(projection.providerThreads, 1);
+      }).pipe(Effect.scoped),
   );
 });

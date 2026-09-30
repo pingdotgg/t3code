@@ -13,6 +13,11 @@ import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
+import {
+  OPENCODE_2_RESPONSES,
+  OPENCODE_2_WORKSPACE_RESPONSES,
+  replayOpenCodeServer,
+} from "../testFixtures/opencodeProbeResponses.ts";
 import { OPENCODE_2_TEXT_GENERATION_UNSUPPORTED, OpenCodeDriver } from "./OpenCodeDriver.ts";
 
 const serverStarts: Array<string> = [];
@@ -62,10 +67,6 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     Effect.gen(function* () {
       serverStarts.length = 0;
       const instance = yield* create({}, noHttp);
-
-      // The workspace snapshot falls back to the machine snapshot.
-      const workspace = yield* instance.snapshotForCwd!(process.cwd());
-      assert.strictEqual(workspace.instanceId, instance.instanceId);
       const title = yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
           cwd: process.cwd(),
@@ -74,6 +75,34 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         }),
       );
       assert.strictEqual(title.detail, OPENCODE_2_TEXT_GENERATION_UNSUPPORTED);
+      assert.deepStrictEqual(serverStarts, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists an OpenCode 2 workspace's own skills and commands from its server", () =>
+    Effect.gen(function* () {
+      serverStarts.length = 0;
+      const requested: Array<string> = [];
+      const server = replayOpenCodeServer(
+        { ...OPENCODE_2_RESPONSES, ...OPENCODE_2_WORKSPACE_RESPONSES },
+        "secret",
+        requested,
+      );
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+
+      const workspace = yield* instance.snapshotForCwd!("/work");
+      assert.includeMembers(
+        workspace.skills.map((skill) => skill.name),
+        ["plum", "opencode"],
+      );
+      assert.deepStrictEqual(
+        workspace.slashCommands.map((command) => command.name),
+        ["compact", "init", "review", "bee"],
+      );
+      assert.include(requested, "/api/skill");
       assert.deepStrictEqual(serverStarts, []);
     }).pipe(Effect.scoped),
   );
