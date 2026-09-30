@@ -39,6 +39,14 @@ iOS, and power off. Close the tab to stop watching; the device keeps running
 unless you power it off. Closed tabs stay closed after a reload. To watch the
 device again, choose it from **+ → Device**.
 
+Choose **3D view** to inspect supported devices while the live screen stays
+interactive. On iPhone Duo, use the fold and stance controls to change its
+physical pose, or pinch over the device to adjust the hinge. Turning the model
+to the other screen switches the live display and touch input to that screen.
+**Restore 3D view** returns the device to a screen-facing position.
+On supported Android foldables, use **Fold device** and **Unfold device** beside
+the screen to change its posture in either view.
+
 ## Tools
 
 The toolbar's **Tools** button opens a drawer for the open device. It shows the
@@ -102,3 +110,9 @@ T3 provides discovery, streaming, and control. Arrange app builds,
 installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
+
+## Device tool updates
+
+The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
+
+To receive newer tool versions on a remote environment, update that environment's T3 server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; T3 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

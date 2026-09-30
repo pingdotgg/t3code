@@ -48,6 +48,13 @@ loopback listener may be on another machine. Forward only the callback for the o
 a successful callback HTTP request is not proof that provider authentication finished. The native
 process owns token exchange and storage.
 
+Managed ChatGPT sign-in for a remote environment can finish on a local primary. The
+[primary handoff](../../apps/server/src/provider/CodexChatGptHandoff.ts) uses an ephemeral
+credential store and the destination's environment ID. It exchanges and verifies the code before
+transferring the issued client registration and tokens. Only the destination persists and refreshes
+that session; retaining a primary refresh session would race refresh-token rotation. Without a local
+primary, the client uses the remote callback completion flow.
+
 Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
 metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
 do not establish current access, and an authoritative empty catalog must clear the old list.
@@ -64,7 +71,9 @@ it. Homebrew and npm are proven by the real path (symlinks followed): a versione
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
 Native installer layouts and the global bin directories of pnpm, Bun, and Vite+ may match on either
 the resolved path or its real target, since those installers place real files or their own symlinks
-there. Anything unproven stays manual-only but still reports the version gap. npm updates pin
+there. Cursor and Grok are the exception: their only updater is the CLI itself, which detects its
+own installer, so any resolved executable runs `<binary> update`. Anything unproven stays
+manual-only but still reports the version gap. npm updates pin
 `--prefix` because the `npm` on `PATH` can belong to a different Node than the one that owns the
 provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version

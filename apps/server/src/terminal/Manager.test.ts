@@ -56,6 +56,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
+  exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -88,6 +89,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   onExit(callback: (event: PtyAdapter.PtyExitEvent) => void): () => void {
+    if (this.exitOnSubscribe) callback(this.exitOnSubscribe);
     this.exitListeners.add(callback);
     return () => {
       this.exitListeners.delete(callback);
@@ -113,6 +115,7 @@ class FakePtyAdapter {
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
+  exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -133,6 +136,7 @@ class FakePtyAdapter {
       );
     }
     const process = new FakePtyProcess(this.nextPid++);
+    process.exitOnSubscribe = this.exitOnSubscribe;
     this.processes.push(process);
     if (this.mode === "async") {
       return Effect.tryPromise({
@@ -624,6 +628,36 @@ it.layer(
         cause: {
           _tag: "PlatformError",
         },
+      });
+    }),
+  );
+
+  it.effect("handles an exit replayed during subscription after publishing startup", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      ptyAdapter.exitOnSubscribe = { exitCode: 7, signal: null };
+      const { manager, getEvents } = yield* createManager(5, { ptyAdapter });
+      const exited = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      yield* Deferred.await(exited);
+      const events = yield* getEvents;
+      expect(events.map((event) => event.type)).toEqual(["started", "exited"]);
+      expect(events[1]).toMatchObject({ exitCode: 7 });
+      const attached: TerminalAttachStreamEvent[] = [];
+      const stopAttach = yield* manager.attachStream(openInput(), (event) =>
+        Effect.sync(() => {
+          attached.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopAttach));
+      expect(attached.find((event) => event.type === "snapshot")).toMatchObject({
+        snapshot: { status: "exited", exitCode: 7 },
       });
     }),
   );
@@ -1227,6 +1261,73 @@ it.layer(
         "1200 millis",
       );
       expect(snapshotCalls).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
+    Effect.gen(function* () {
+      // FakePtyAdapter assigns pids from 9000 in open order.
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          // An async prompt worker: a copy of the shell with no children.
+          { pid: 100, ppid: 9000, name: "zsh" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9001, name: "node" },
+          { pid: 9002, ppid: 1, name: "zsh" },
+          // A subshell with a child is real work.
+          { pid: 300, ppid: 9002, name: "zsh" },
+          { pid: 301, ppid: 300, name: "sleep" },
+          { pid: 9003, ppid: 1, name: "zsh" },
+        ]),
+      }).pipe(Effect.provide(withHostPlatform("linux")));
+      yield* manager.open(openInput({ terminalId: "idle" }));
+      yield* manager.open(openInput({ terminalId: "dev-server" }));
+      yield* manager.open(openInput({ terminalId: "subshell" }));
+      yield* manager.open(openInput({ threadId: "thread-2" }));
+
+      yield* manager.closeIdle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+        true,
+        false,
+        false,
+        false,
+      ]);
+    }),
+  );
+
+  it.effect("keeps terminals that get input or output while closeIdle checks them", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      // The typed command's process misses the snapshot, but its input or echo lands.
+      let duringCheck: (pid: number) => Effect.Effect<void> = () => Effect.void;
+      const { manager, getEvents } = yield* createManager(5, {
+        ptyAdapter,
+        subprocessPollIntervalMs: 60_000,
+        subprocessInspector: (pid) =>
+          duringCheck(pid).pipe(
+            Effect.as({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
+          ),
+      });
+      yield* manager.open(openInput({ terminalId: "typed" }));
+      yield* manager.open(openInput({ terminalId: "echoed" }));
+      const [typed, echoed] = ptyAdapter.processes;
+      duringCheck = (pid) =>
+        pid === typed!.pid
+          ? manager
+              .write({ threadId: "thread-1", terminalId: "typed", data: "make build\r" })
+              .pipe(Effect.orDie)
+          : Effect.gen(function* () {
+              echoed!.emitData("make build\r\n");
+              yield* waitFor(
+                Effect.map(getEvents, (events) => events.some((event) => event.type === "output")),
+              );
+            }).pipe(Effect.orDie);
+
+      yield* manager.closeIdle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([false, false]);
     }),
   );
 
