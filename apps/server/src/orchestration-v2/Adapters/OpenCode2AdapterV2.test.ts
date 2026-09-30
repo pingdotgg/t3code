@@ -141,7 +141,13 @@ const withInstructions = (
       typeof entry.frame === "object" &&
       entry.frame !== null &&
       "type" in entry.frame &&
-      ["session.prompt", "session.command", "session.compact"].includes(String(entry.frame.type)),
+      [
+        "session.prompt",
+        "session.command",
+        "session.compact",
+        "command.list",
+        "skill.list",
+      ].includes(String(entry.frame.type)),
   );
   // T3's MCP server is added before the entry that describes it.
   const after = entries.findIndex(
@@ -2161,6 +2167,96 @@ describe("OpenCode2 adapter", () => {
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("finishes a workspace command whose stream dropped before its inbox event", () =>
+    Effect.gen(function* () {
+      // `session.command` answers 204 without the inbox item's id, and the
+      // stream drops before `session.inbox.enqueued` would have named it.
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "hello" }] }),
+        // Where the history stood before the command.
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
+          ],
+          cursor: {},
+        }),
+        out("session.command", { sessionID: SESSION, name: "hello", text: "WORLD" }),
+        reply("session.command", null),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_cmd", time: { created: 4 }, type: "idle", outcome: "succeeded" },
+            {
+              id: "msg_assistant_cmd",
+              time: { created: 3 },
+              type: "assistant",
+              agent: "build",
+              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+              content: [{ type: "text", text: "HELLO WORLD" }],
+              finish: "stop",
+            },
+            // The command's expanded template, the turn's own user item.
+            {
+              id: "msg_user_cmd",
+              time: { created: 2 },
+              text: "Reply with exactly: HELLO WORLD",
+              type: "user",
+            },
+            // The previous turn, which already ended before this one started.
+            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
+          ],
+          cursor: {},
+        }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        message: { ...turnInput(thread).message, text: "/hello WORLD" },
+      });
+      const collected = yield* Fiber.join(events);
+      const texts = collected.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.include(texts, "HELLO WORLD");
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("returns the server it reconnected to once the session closes", () =>
+    Effect.gen(function* () {
+      // A spawned server stops after it has no borrowers for a while, so a
+      // session must not keep holding the connection it reconnected with.
+      const borrowers = { current: 0 };
+      yield* Effect.gen(function* () {
+        yield* openCode2ReplayRuntime(
+          [
+            ...opening,
+            { type: "runtime_exit", status: "success" },
+            out("event.subscribe"),
+            event("server.connected", {}),
+          ],
+          { borrowers },
+        );
+        // Reconnected: the dropped connection is returned and the new one is held.
+        yield* Effect.sleep("200 millis");
+        assert.equal(borrowers.current, 1);
+      }).pipe(Effect.scoped);
+      assert.equal(borrowers.current, 0);
+    }),
   );
 
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>

@@ -227,6 +227,14 @@ interface ActiveTurn {
   };
   steps: number;
   lastStep: Tokens | undefined;
+  /**
+   * The session's newest history item before a `/name` command turn started,
+   * or null when the history was empty. A `session.command` takes no id of
+   * T3's and answers without the item it queues, so a reconnect backfills that
+   * turn from everything after this. Other turns backfill from their own
+   * prompt's id (`nativeTurnRef`).
+   */
+  before: string | null | undefined;
   /** The compaction running in this turn, `/compact` or OpenCode's own when the context fills. */
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
@@ -1212,6 +1220,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       usage: { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 },
       steps: 0,
       lastStep: undefined,
+      before: undefined,
       compaction: undefined,
       compactions: 0,
       interrupted: false,
@@ -2547,7 +2556,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * session's history since the turn began: text, reasoning and tools, each
      * under the same native id its live events would have used, so nothing
      * already shown is duplicated. A turn begins at its prompt, whose id T3
-     * chose (`nativeTurnRef`).
+     * chose (`nativeTurnRef`), or for a `/name` command after `before`.
      * Returns how that history says the turn's execution ended: the `idle` item
      * OpenCode appends after each one, or undefined when there is none after
      * the turn's start.
@@ -2556,12 +2565,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) return undefined;
       const promptId = promptOf(turn.providerTurn);
-      if (promptId === undefined) return undefined;
+      const { before } = turn;
+      if (promptId === undefined && before === undefined) return undefined;
       const recent = yield* paginate(
         { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
         client.message.list,
       ).pipe(
-        Stream.takeUntil((message) => message.id === promptId),
+        before !== undefined
+          ? Stream.takeWhile((message) => message.id !== before)
+          : Stream.takeUntil((message) => message.id === promptId),
         Stream.runCollect,
       );
       const idle = recent.find((message) => message.type === "idle");
@@ -2668,6 +2680,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     );
 
     let currentScope = initial.scope;
+    // The borrow in use when the session closes is returned with it, so a
+    // spawned server can still reach its idle shutdown.
+    yield* Effect.addFinalizer(() => Scope.close(currentScope, Exit.void));
     const follow = (stream: Stream.Stream<OpenCode2StreamEvent, unknown>): Effect.Effect<void> =>
       stream.pipe(
         Stream.runForEach((event) => lock.withPermit(handleEvent(event))),
@@ -3102,6 +3117,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
+    const markBefore = (sessionId: string, before: string | null) =>
+      Effect.sync(() => {
+        const turn = threads.get(sessionId)?.active;
+        if (turn !== undefined) turn.before = before;
+      });
+
     /** Installs a turn T3 started; every path after it ends the turn with a terminal. */
     const beginTurn = (
       state: ThreadState,
@@ -3316,6 +3337,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.orElseSucceed(() => []),
         );
         if (commands.some((entry) => entry.name === command.name)) {
+          // `session.command` takes no id of T3's and its answer carries none,
+          // so the turn remembers where the history stood before it.
+          const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
+          yield* markBefore(sessionId, newest.data[0]?.id ?? null);
           if (!sending()) return;
           return yield* client.session.command({ sessionID, ...command });
         }

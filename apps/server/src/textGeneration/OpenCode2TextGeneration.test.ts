@@ -24,7 +24,7 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         scenario: "opencode2_title_generation",
         entries: [...OPENCODE2_TITLE_GENERATION, { type: "runtime_exit", status: "success" }],
       });
-      const textGeneration = yield* OpenCode2TextGeneration.makeOpenCode2TextGeneration().pipe(
+      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, server),
       );
       const title = yield* textGeneration.generateThreadTitle({
@@ -36,6 +36,154 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         },
       });
       assert.equal(title.title, "Fix OAuth Login Redirect Loop");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("fails at once when the event stream drops before the reply", () =>
+    Effect.gen(function* () {
+      const [subscribe, connected, create, created] = OPENCODE2_TITLE_GENERATION;
+      const sessionId = "ses_f0ec85cf6ffebfalpvV2E9nocu";
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
+        provider: "opencode",
+        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+        version: "2.0.18",
+        scenario: "opencode2_title_generation_stream_lost",
+        entries: [
+          subscribe!,
+          connected!,
+          create!,
+          created!,
+          {
+            type: "expect_outbound",
+            frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.response",
+              operation: "session.prompt",
+              data: {
+                data: {
+                  id: "msg_1",
+                  sessionID: sessionId,
+                  time: { created: 1 },
+                  type: "user",
+                  payload: { text: "t" },
+                  delivery: "steer",
+                },
+              },
+            },
+          },
+          // The server goes away before the reply; the temporary session is still removed.
+          { type: "runtime_exit", status: "success" },
+          {
+            type: "expect_outbound",
+            frame: { type: "session.remove", input: { sessionID: sessionId } },
+          },
+          {
+            type: "emit_inbound",
+            frame: { type: "sdk.response", operation: "session.remove", data: null },
+          },
+        ],
+      });
+      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+      );
+      const failure = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "fix the login redirect loop after oauth",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "opencode/big-pickle",
+          },
+        })
+        .pipe(Effect.flip, Effect.timeout("10 seconds"));
+      assert.equal(failure._tag, "TextGenerationError");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a provider's own error message out of the caller-visible detail", () =>
+    Effect.gen(function* () {
+      const [subscribe, connected, create, created] = OPENCODE2_TITLE_GENERATION;
+      const sessionId = "ses_f0ec85cf6ffebfalpvV2E9nocu";
+      // The spike's `text_generation` recording: a deny-all session is refused this way.
+      const refusal = {
+        type: "provider.auth",
+        message:
+          "Error from provider (Console): OpenCode's free tier can only be used from within OpenCode",
+        status: 403,
+      };
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
+        provider: "opencode",
+        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+        version: "2.0.18",
+        scenario: "opencode2_title_generation_refused",
+        entries: [
+          subscribe!,
+          connected!,
+          create!,
+          created!,
+          {
+            type: "expect_outbound",
+            frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.response",
+              operation: "session.prompt",
+              data: {
+                data: {
+                  id: "msg_1",
+                  sessionID: sessionId,
+                  time: { created: 1 },
+                  type: "user",
+                  payload: { text: "t" },
+                  delivery: "steer",
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.event",
+              event: {
+                id: "evt_0eb7f9ae0001VCNDHVLnqTfoPG",
+                created: 1790657403616,
+                type: "session.execution.failed",
+                data: { sessionID: sessionId, error: refusal },
+                durable: { aggregateID: sessionId, seq: 7, version: 1 },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { type: "session.remove", input: { sessionID: sessionId } },
+          },
+          {
+            type: "emit_inbound",
+            frame: { type: "sdk.response", operation: "session.remove", data: null },
+          },
+          { type: "runtime_exit", status: "success" },
+        ],
+      });
+      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+      );
+      const failure = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "fix the login redirect loop after oauth",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "opencode/big-pickle",
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure.detail, "OpenCode could not generate the text.");
+      assert.deepEqual(failure.cause, refusal);
     }).pipe(Effect.scoped),
   );
 });

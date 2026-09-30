@@ -24,7 +24,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { makeOpenCode2TextGeneration } from "../../textGeneration/OpenCode2TextGeneration.ts";
+import * as OpenCode2TextGeneration from "../../textGeneration/OpenCode2TextGeneration.ts";
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -339,7 +339,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
           Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         ),
-        yield* makeOpenCode2TextGeneration().pipe(
+        yield* OpenCode2TextGeneration.make().pipe(
           Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
         ),
       );

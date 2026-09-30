@@ -35,9 +35,10 @@ const GENERATION_TIMEOUT = "3 minutes";
  */
 const GENERATION_PERMISSIONS = [{ action: "*", resource: "*", effect: "ask" }] as const;
 
+/** How a generation ended. A failure's cause is the provider's own error, kept out of `detail`. */
 type Outcome =
   | { readonly _tag: "text"; readonly text: string }
-  | { readonly _tag: "failed"; readonly message: string };
+  | { readonly _tag: "failed"; readonly detail: string; readonly cause?: unknown };
 
 const runOnServer = (
   connection: OpenCode2Connection,
@@ -90,18 +91,27 @@ const runOnServer = (
           case "session.execution.failed":
             return Deferred.succeed(outcome, {
               _tag: "failed",
-              message: event.data.error.message,
+              detail: "OpenCode could not generate the text.",
+              cause: event.data.error,
             });
           case "session.execution.interrupted":
             return Deferred.succeed(outcome, {
               _tag: "failed",
-              message: "OpenCode stopped the generation.",
+              detail: "OpenCode stopped the generation.",
             });
           default:
             return Effect.void;
         }
       }),
-      Effect.ignore,
+      // The reply only arrives on this stream, so a lost stream ends the wait.
+      Effect.exit,
+      Effect.flatMap((exit) =>
+        Deferred.succeed(outcome, {
+          _tag: "failed",
+          detail: "The OpenCode event stream was lost.",
+          cause: exit,
+        }),
+      ),
       Effect.forkScoped,
     );
     const session = yield* client.session.create({
@@ -138,13 +148,17 @@ const runOnServer = (
             Effect.ignore,
             Effect.as<Outcome>({
               _tag: "failed",
-              message: "OpenCode did not finish generating in time.",
+              detail: "OpenCode did not finish generating in time.",
             }),
           ),
       }),
     );
     if (result._tag === "failed") {
-      return yield* new TextGenerationError({ operation: input.operation, detail: result.message });
+      return yield* new TextGenerationError({
+        operation: input.operation,
+        detail: result.detail,
+        ...(result.cause === undefined ? {} : { cause: result.cause }),
+      });
     }
     if (result.text.length === 0) {
       return yield* new TextGenerationError({
@@ -156,7 +170,7 @@ const runOnServer = (
   }).pipe(Effect.scoped);
 
 /** Text generation for an instance whose server is OpenCode 2. */
-export const makeOpenCode2TextGeneration = Effect.fn("makeOpenCode2TextGeneration")(function* () {
+export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const run: OpenCodeJsonRunner = (input) => {
