@@ -441,6 +441,30 @@ describe("ModelManifest service", () => {
     ),
   );
 
+  it.live("ignores older remote edits without replacing the current manifest or disk cache", () => {
+    let remote = { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" };
+    return Effect.gen(function* () {
+      const service = yield* make;
+      assert.deepStrictEqual(yield* service.refresh, BUNDLED_MODEL_MANIFEST);
+      assert.deepStrictEqual(yield* service.current, BUNDLED_MODEL_MANIFEST);
+
+      remote = { ...REMOTE_MANIFEST, updatedAt: REMOTE_UPDATED_AT };
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+      remote = { ...REMOTE_MANIFEST, updatedAt: BUNDLED_MODEL_MANIFEST.updatedAt! };
+      assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
+      const rebooted = yield* make;
+      assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "model-manifest-stale-fetch-test",
+          response: () => Response.json(remote),
+        }),
+      ),
+    );
+  });
+
   it.live("keeps the bundled manifest when the remote payload is malformed", () =>
     Effect.gen(function* () {
       const service = yield* make;
