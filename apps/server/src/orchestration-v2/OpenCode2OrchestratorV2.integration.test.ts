@@ -10,6 +10,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
+  type OrchestrationV2Run,
   ProjectId,
   type ProviderInteractionMode,
   ProviderInstanceId,
@@ -40,6 +41,12 @@ import * as IdAllocator from "./IdAllocator.ts";
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
 /** Held until the scenario releases it, so the turn is still running meanwhile. */
 const FIRST_TURN_END = "first-turn-end";
+/** Held until the scenario releases it, so a follow-up is running when its stream drops. */
+const BACKGROUND_HOLD = "background-hold";
+/** The parent session of the recorded background run. */
+const BACKGROUND_PARENT = "ses_f1485cda4ffeXuc6GjAU9vDiRb";
+const BACKGROUND_PROMPT =
+  "Use the subagent tool with background enabled to delegate to the general subagent with the prompt: 'Run the shell command `sleep 20` with the bash tool and then reply exactly CHILD_OK.' As soon as it is launched, reply exactly PARENT_OK and end your turn without waiting for it.";
 const instanceId = ProviderInstanceId.make("opencode");
 const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
 const mimo: ModelSelection = { instanceId, model: "opencode/mimo-v2.6-flash-free" };
@@ -749,6 +756,244 @@ describe("OpenCode 2 through the orchestrator", () => {
         ["completed", "cancelled", "completed"],
       );
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  /**
+   * The recorded background run (`opencode2_background`): the parent's turn
+   * ends while its subagent runs, then the subagent's report wakes the parent
+   * and T3 opens a continuation run for that follow-up. `reconnect` replaces
+   * the recording from `cut` on with a stream drop, a restarted stream and
+   * what the server answers then.
+   */
+  const backgroundReconnect = Effect.fn("backgroundReconnect")(function* (input: {
+    readonly name: string;
+    readonly cut: string;
+    readonly hold?: string;
+    readonly reconnect: (parent: string) => ReadonlyArray<ProviderReplayEntry>;
+    readonly steps: (
+      thread: ReturnType<typeof threadCommands>,
+      run: (ordinal: number) => OrchestrationV2Run["id"],
+    ) => ReadonlyArray<OrchestratorV2ScenarioStep>;
+    readonly commands: (
+      thread: ReturnType<typeof threadCommands>,
+    ) => ReadonlyArray<OrchestrationV2Command>;
+  }) {
+    const cwd = yield* checkpointWorkspace(input.name);
+    const recorded = yield* readProviderReplayTranscript(
+      new URL(
+        "./testkit/fixtures/opencode2_background/opencode_transcript.ndjson",
+        import.meta.url,
+      ),
+    );
+    const cut = recorded.entries.findIndex(
+      (entry) => entry.type !== "runtime_exit" && entry.label === input.cut,
+    );
+    assert.isAtLeast(cut, 0);
+    const kept = recorded.entries
+      .slice(0, cut)
+      .map((entry) =>
+        entry.type !== "runtime_exit" && entry.label === input.hold
+          ? labelled(entry, BACKGROUND_HOLD)
+          : entry,
+      );
+    const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript({
+      ...recorded,
+      scenario: input.name,
+      entries: [
+        ...kept,
+        { type: "runtime_exit", status: "success" },
+        ...input.reconnect(BACKGROUND_PARENT),
+      ],
+    });
+    const thread = threadCommands({ name: input.name, worktreePath: cwd });
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const run = (ordinal: number) => ids.derive.run({ threadId: thread.threadId, ordinal });
+    const result = yield* runOrchestratorV2ProviderReplayScenario(
+      {
+        name: input.name,
+        transcript,
+        commands: input.commands(thread),
+        steps: input.steps(thread, run),
+      },
+      OpenCode2OrchestratorReplayHarness,
+      // Opens the continuation run a follow-up asks for, as the server does.
+      { runContinuationWorker: true },
+    ).pipe(provideDeterministicTestRuntime);
+    const projection = result.projections.get(thread.threadId);
+    assert.isDefined(projection);
+    return { result, projection };
+  });
+
+  it.effect("backfills a follow-up whose stream dropped mid-run and ends it completed", () =>
+    Effect.gen(function* () {
+      const { result, projection } = yield* backgroundReconnect({
+        name: "opencode2-follow-up-reconnect",
+        // The follow-up streams its reply; then the stream drops before the
+        // execution's end.
+        cut: "session.step.streamed.5",
+        hold: "session.text.ended.3",
+        reconnect: (parent) => [
+          out("event.subscribe"),
+          out("session.active"),
+          reply("session.active", { data: {} }),
+          // The follow-up's history since the report it answers, newest first.
+          out("message.list", { sessionID: parent, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [
+              {
+                id: "msg_0eb7a99c0001idleFollowUp00",
+                time: { created: 5 },
+                type: "idle",
+                outcome: "succeeded",
+              },
+              {
+                id: "msg_0eb7a96bb00170K1f1HJUeBNwF",
+                time: { created: 4 },
+                type: "assistant",
+                agent: "build",
+                model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                content: [
+                  {
+                    type: "text",
+                    text: "The background subagent finished and returned `CHILD_OK`.",
+                  },
+                ],
+                finish: "stop",
+              },
+              {
+                id: "msg_0eb7a3aee0015KmTB8XkMDW8iy",
+                time: { created: 3 },
+                type: "synthetic",
+                text: "<subagent>CHILD_OK</subagent>",
+              },
+              {
+                id: "msg_0eb7a3e3c001idleParentTurn0",
+                time: { created: 2 },
+                type: "idle",
+                outcome: "succeeded",
+              },
+            ],
+            cursor: {},
+          }),
+        ],
+        commands: (thread) => [
+          thread.create,
+          thread.message("start", bigPickle, BACKGROUND_PROMPT),
+        ],
+        steps: (thread, run) => [
+          { type: "dispatch", command: thread.create },
+          { type: "advance_clock", duration: "1 millis" },
+          // A continuation run starts while the thread is busy, so this does not wait.
+          {
+            type: "dispatch",
+            command: thread.message("start", bigPickle, BACKGROUND_PROMPT),
+            await: false,
+            key: "start",
+          },
+          { type: "advance_clock", duration: "1 millis" },
+          // The follow-up's continuation turn has taken its execution when the
+          // stream drops: the held reply end is the next event.
+          { type: "await_run_steerable", threadId: thread.threadId, runId: run(2) },
+          { type: "release_replay_gate", label: BACKGROUND_HOLD },
+          {
+            type: "await_run_status",
+            threadId: thread.threadId,
+            runId: run(2),
+            status: "completed",
+          },
+          { type: "await", key: "start" },
+          { type: "await_thread_idle", threadId: thread.threadId },
+        ],
+      });
+      assert.deepEqual(
+        projection.runs.map((candidate) => candidate.status),
+        ["completed", "completed"],
+      );
+      const followUp = projection.runs[1];
+      assert.deepEqual(
+        projection.turnItems.flatMap((item) =>
+          item.runId === followUp?.id && item.type === "assistant_message" ? [item.text] : [],
+        ),
+        ["The background subagent finished and returned `CHILD_OK`."],
+      );
+      const shell = result.shellSnapshot.threads.find((row) => row.id === projection.thread.id);
+      assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect(
+    "settles a background subagent whose end was lost with the stream, and takes the next turn",
+    () =>
+      Effect.gen(function* () {
+        const { result, projection } = yield* backgroundReconnect({
+          name: "opencode2-background-lost",
+          // The subagent runs; the stream drops before its end, its report and
+          // the follow-up it started, none of which is read back.
+          cut: "session.step.started.3",
+          reconnect: (parent) => [
+            out("event.subscribe"),
+            // Nothing runs any more: the subagent and the follow-up both ended.
+            out("session.active"),
+            reply("session.active", { data: {} }),
+            out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
+            reply("session.prompt", {
+              data: {
+                id: "msg_next",
+                sessionID: parent,
+                time: { created: 9 },
+                type: "user",
+                payload: { text: "<prompt>" },
+                delivery: "steer",
+              },
+            }),
+            event("session.execution.started", { sessionID: parent }),
+            event("session.text.ended", {
+              sessionID: parent,
+              assistantMessageID: "msg_next_reply",
+              ordinal: 0,
+              text: "NEXT",
+            }),
+            event("session.execution.succeeded", { sessionID: parent }),
+          ],
+          commands: (thread) => [
+            thread.create,
+            thread.message("start", bigPickle, BACKGROUND_PROMPT),
+            thread.message("next"),
+          ],
+          steps: (thread, run) => [
+            { type: "dispatch", command: thread.create },
+            { type: "advance_clock", duration: "1 millis" },
+            { type: "dispatch", command: thread.message("start", bigPickle, BACKGROUND_PROMPT) },
+            { type: "advance_clock", duration: "1 millis" },
+            { type: "await_thread_idle", threadId: thread.threadId },
+            { type: "dispatch", command: thread.message("next") },
+            { type: "advance_clock", duration: "1 millis" },
+            {
+              type: "await_run_status",
+              threadId: thread.threadId,
+              runId: run(2),
+              status: "completed",
+            },
+            { type: "await_thread_idle", threadId: thread.threadId },
+          ],
+        });
+        // The parent's run ended; the lost subagent ended as interrupted and
+        // said why; no follow-up is waited on; the next turn ran normally.
+        assert.deepEqual(
+          projection.runs.map((candidate) => candidate.status),
+          ["completed", "completed"],
+        );
+        assert.lengthOf(projection.subagents, 1);
+        assert.deepInclude(projection.subagents[0], { status: "interrupted" });
+        assert.include(projection.subagents[0]?.result ?? "", "lost its connection to OpenCode");
+        assert.isFalse(
+          projection.turnItems.some(
+            (item) => item.status === "running" || item.status === "waiting",
+          ),
+        );
+        const shell = result.shellSnapshot.threads.find((row) => row.id === projection.thread.id);
+        assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
   it.effect(

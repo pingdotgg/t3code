@@ -228,11 +228,12 @@ interface ActiveTurn {
   steps: number;
   lastStep: Tokens | undefined;
   /**
-   * The session's newest history item before a `/name` command turn started,
-   * or null when the history was empty. A `session.command` takes no id of
-   * T3's and answers without the item it queues, so a reconnect backfills that
-   * turn from everything after this. Other turns backfill from their own
-   * prompt's id (`nativeTurnRef`).
+   * The history item this turn's execution follows, for a turn with no prompt
+   * id of T3's: the session's newest item before a `/name` command (null when
+   * the history was empty), since `session.command` takes no id and answers
+   * without one; or the report a continuation turn's execution answers. A
+   * reconnect backfills that turn from everything after this. Other turns
+   * backfill from their own prompt's id (`nativeTurnRef`).
    */
   before: string | null | undefined;
   /** The compaction running in this turn, `/compact` or OpenCode's own when the context fills. */
@@ -305,6 +306,8 @@ interface Wake {
   readonly detail: string | null;
   /** Stopped, or taken by a user turn: the continuation it asked for is not needed. */
   dropped: boolean;
+  /** The last report it delivered (inbox ids are history ids): its execution follows it. */
+  readonly after: string | undefined;
 }
 
 interface OpenBlock {
@@ -363,7 +366,12 @@ interface ThreadState {
    */
   readonly reports: Map<
     string,
-    { readonly childId: string; readonly report: BackgroundWorkReport; readonly text: string }
+    {
+      readonly inboxId: string;
+      readonly childId: string;
+      readonly report: BackgroundWorkReport;
+      readonly text: string;
+    }
   >;
   /**
    * Background subagent sessions T3 stopped. OpenCode wakes the parent to
@@ -631,6 +639,9 @@ const RECONNECT_DELAY = "2 seconds";
 const RECONCILE_TIMEOUT = "15 seconds";
 /** How long a new turn waits for a reconnect in progress. */
 const RECONNECT_WAIT = "30 seconds";
+/** A background subagent's result when its end was lost with the event stream. */
+const LOST_BACKGROUND =
+  "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 /** How long a turn waits on the directory's commands or skills before sending the text as is. */
 const INVENTORY_TIMEOUT = "5 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
@@ -2256,6 +2267,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         reports: delivered.map((entry) => entry.report),
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
+        after: delivered.at(-1)?.inboxId,
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -2280,6 +2292,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
+        inboxId,
         childId,
         text: payload.text,
         report: {
@@ -2556,7 +2569,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * session's history since the turn began: text, reasoning and tools, each
      * under the same native id its live events would have used, so nothing
      * already shown is duplicated. A turn begins at its prompt, whose id T3
-     * chose (`nativeTurnRef`), or for a `/name` command after `before`.
+     * chose (`nativeTurnRef`), or after `before` for a `/name` command or a
+     * continuation.
      * Returns how that history says the turn's execution ended: the `idle` item
      * OpenCode appends after each one, or undefined when there is none after
      * the turn's start.
@@ -2622,16 +2636,28 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * outcome of the `idle` item after the turn's start. A restarted server
      * writes no such item for the execution it lost, and `session.outcome` is
      * still the previous execution's, so no `idle` means the turn was
-     * interrupted. A turn still holding for an undelivered steer only ends once
-     * the session is idle. Subagent turns and held follow-ups are not
-     * reconciled.
+     * interrupted. A continuation turn is settled the same way, from the report
+     * its execution answers. A turn still holding for an undelivered steer only
+     * ends once the session is idle.
+     *
+     * What the stream carried outside a turn is not read back: a background
+     * subagent's report, a follow-up OpenCode started on its own, or one held
+     * for its continuation turn. So background work is settled, not resumed: a
+     * subagent whose session stopped ends as interrupted, and a thread's held
+     * follow-ups and queued reports are dropped, so nothing waits on an event
+     * that already went by.
      */
     const reconcile = Effect.gen(function* () {
       const running = [...threads].filter(
         ([, state]) => state.active !== undefined && state.subagent === undefined,
       );
-      if (running.length === 0) return;
+      const background = [...threads.values()].filter(
+        (state) => state.subagent === undefined && hasBackground(state),
+      );
+      if (running.length === 0 && background.length === 0 && busy.size === 0) return;
       const active = yield* client.session.active();
+      // An execution that ended while the stream was down never said so.
+      for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const [sessionId, state] of running) {
         const turn = state.active;
         if (turn === undefined) continue;
@@ -2652,6 +2678,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 }
               : { status: "interrupted" },
         );
+      }
+      for (const state of background) {
+        // A subagent still running keeps its call; its end arrives on the new stream.
+        for (const call of runningCalls(state)) {
+          const child = call.child?.sessionId;
+          if (child === undefined || !(child in active)) {
+            yield* settleCall(call, "interrupted", LOST_BACKGROUND);
+          }
+        }
+        for (const wake of state.wakes.splice(0)) wake.dropped = true;
+        state.reports.clear();
       }
     });
 
@@ -3209,6 +3246,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           const wake = state.wakes.shift();
           if (wake === undefined) return yield* finishTurn(state, { status: "completed" });
+          const turn = state.active;
+          if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
           yield* replay(wake);
         }),
       );

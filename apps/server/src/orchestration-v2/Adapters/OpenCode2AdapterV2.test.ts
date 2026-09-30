@@ -844,6 +844,36 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("leaves no background work pending once a reconnect finds its subagent gone", () =>
+    Effect.gen(function* () {
+      // The subagent ends while the stream is down: its end, its report and
+      // the follow-up it starts are never seen. `session.active` lists nothing.
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+      ]);
+      const settled = yield* Deferred.make<string | null>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "subagent.updated" && event.subagent.status === "interrupted"
+            ? Deferred.succeed(settled, event.subagent.result)
+            : Effect.void,
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      assert.include((yield* Deferred.await(settled)) ?? "", "lost its connection to OpenCode");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops a nested background subagent's report on its own parent's session", () =>
     Effect.gen(function* () {
       const MIDDLE = "ses_middle0000000000000000000";
