@@ -522,7 +522,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(status.problems).toContain("restart-pending");
 
       commands.length = 0;
-      expect(yield* newer.restart).toBe(true);
+      expect(yield* newer.restart).toBe("restarted");
       expect((yield* newer.status).problems).not.toContain("restart-pending");
       expect((yield* newer.status).current).toBe(true);
     }),
@@ -576,11 +576,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   it.effect("restart stops and starts an installed service, and is a no-op otherwise", () =>
     Effect.gen(function* () {
       const { service, commands } = yield* makeHarness();
-      expect(yield* service.restart).toBe(false);
+      expect(yield* service.restart).toBe("skipped");
       yield* service.install();
       commands.length = 0;
 
-      expect(yield* service.restart).toBe(true);
+      expect(yield* service.restart).toBe("restarted");
       expect(
         commands.filter(
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
@@ -603,7 +603,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
-      expect(yield* other.restart).toBe(false);
+      expect(yield* other.restart).toBe("skipped");
       expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
     }),
   );
@@ -640,8 +640,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       const baseDir = path.dirname(path.dirname(statePath));
       const newer = yield* makeService(undefined, "1.2.4", undefined, true);
-      yield* newer.install({ allowDowngrade: true });
+      const handedOff = yield* newer.install({ allowDowngrade: true });
 
+      // Nobody waits on it, so the caller learns it was handed off and where
+      // the outcome lands.
+      expect(handedOff.handedOff).toBe(true);
+      expect(plan.handedOff).toBeUndefined();
       expect(
         commands.filter(
           (command) =>
@@ -649,7 +653,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             !command.includes("show-environment"),
         ),
       ).toEqual([
-        `systemd-run --user --collect --quiet --setenv=T3_BOOT_SERVICE_UNIT= ${pinnedRuntimePaths(path, baseDir, "1.2.4", "linux").entryPath} service install --base-dir ${baseDir} --allow-downgrade`,
+        `systemd-run --user --collect --quiet --property=StandardOutput=append:${plan.logPath} --property=StandardError=append:${plan.logPath} --setenv=T3_BOOT_SERVICE_UNIT= ${pinnedRuntimePaths(path, baseDir, "1.2.4", "linux").entryPath} service install --base-dir ${baseDir} --allow-downgrade`,
       ]);
       // The transient unit writes them after stopping the launcher.
       expect(yield* fs.readFileString(statePath)).toBe(state);
@@ -657,7 +661,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("keeps a literal $ in the base dir it hands to systemd-run", () =>
+  it.effect("hands paths to systemd-run in the form systemd reads them", () =>
     Effect.gen(function* () {
       const { service, commands, makeService } = yield* makeHarness();
       const fs = yield* FileSystem.FileSystem;
@@ -665,16 +669,20 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       yield* service.install();
       commands.length = 0;
 
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dollar-" });
-      const baseDir = path.join(home, "${UNSET}", ".t3");
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-special-" });
+      const baseDir = path.join(home, "100%", "${UNSET}", ".t3");
       const inside = yield* makeService(undefined, "1.2.4", baseDir, true);
-      yield* inside.install();
+      const { logPath } = yield* inside.install();
 
+      // systemd expands ${VAR} in arguments only; property values and the
+      // executable path arrive literally, % included.
       const handoff = commands.find((command) => command.startsWith("systemd-run "));
+      expect(logPath).toContain("100%/${UNSET}");
+      expect(handoff).toContain(`--property=StandardOutput=append:${logPath} `);
       expect(handoff).toContain(
         `${pinnedRuntimePaths(path, baseDir, "1.2.4", "linux").entryPath} service install`,
       );
-      expect(handoff).toContain(`--base-dir ${path.join(home, "$${UNSET}", ".t3")}`);
+      expect(handoff).toContain(`--base-dir ${path.join(home, "100%", "$${UNSET}", ".t3")}`);
     }),
   );
 
@@ -685,7 +693,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       commands.length = 0;
 
       const inside = yield* makeService(undefined, "1.2.3", undefined, true);
-      expect(yield* inside.restart).toBe(true);
+      expect(yield* inside.restart).toBe("queued");
       expect(
         commands.filter(
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),

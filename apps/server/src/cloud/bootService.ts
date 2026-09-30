@@ -91,6 +91,11 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  /**
+   * Set by an install run inside the service: a transient unit carries it out
+   * after this call returns and appends its outcome to `logPath`.
+   */
+  readonly handedOff?: boolean;
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
@@ -564,10 +569,11 @@ export class BootService extends Context.Service<
     /**
      * Stop and start the installed service on the version its unit names.
      * Only when the unit serves this base dir: the unit name is per user, so
-     * another home's service is left alone. Resolves false when nothing was
-     * restarted.
+     * another home's service is left alone, which resolves `skipped`. From
+     * inside the service the restart can only be `queued` with the service
+     * manager, since the stop ends this process.
      */
-    readonly restart: Effect.Effect<boolean, BootServiceError>;
+    readonly restart: Effect.Effect<"restarted" | "queued" | "skipped", BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
@@ -862,6 +868,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         "--user",
         "--collect",
         "--quiet",
+        // Nobody waits on the transient unit; its outcome goes where
+        // `t3 triage` and the CLI already point. Property values reach
+        // systemd literally, unlike the unit file, so no specifier escaping.
+        `--property=StandardOutput=append:${logPath}`,
+        `--property=StandardError=append:${logPath}`,
         `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
         runtimePaths.entryPath,
         "service",
@@ -871,7 +882,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         input.baseDir.replaceAll("$", () => "$$"),
         ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
       ]);
-      return plan;
+      return { ...plan, handedOff: true };
     }
     if (installed && start) {
       yield* runSteps(manager.stop);
@@ -953,19 +964,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    if (Option.isNone(unit)) return false;
+    if (Option.isNone(unit)) return "skipped" as const;
     const installedBaseDir = bootServiceBaseDirOf(unit.value);
     if (
       installedBaseDir === undefined ||
       path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
     ) {
-      return false;
+      return "skipped" as const;
     }
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInsideService && manager.handoff !== undefined) {
       yield* runSteps(manager.handoff);
-      return true;
+      return "queued" as const;
     }
     yield* runSteps(manager.stop);
     yield* runSteps(manager.activate).pipe(
@@ -974,7 +985,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
     );
     yield* fs.remove(restartPendingPath, { force: true });
-    return true;
+    return "restarted" as const;
   }).pipe(
     Effect.mapError((cause) =>
       cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
