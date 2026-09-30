@@ -171,7 +171,7 @@ function ThreadListV2Section(props: {
   );
 }
 
-/** Section label + rule: the only structure in an otherwise flat list. */
+/** Section or environment label with a rule. */
 export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";

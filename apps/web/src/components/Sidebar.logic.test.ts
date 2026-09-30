@@ -18,6 +18,7 @@ import {
   reduceSidebarScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
+  groupSidebarThreadsByEnvironment,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
@@ -991,19 +992,19 @@ describe("resolveSidebarScopeSelection", () => {
 });
 
 describe("orderSidebarProjectScopeItems", () => {
-  it("keeps All first and groups projects by environment without changing their relative order", () => {
+  it("keeps projects together and orders their environments", () => {
     const items = [
-      { value: "all", environmentId: null },
-      { value: "b-one", environmentId: "environment-b" },
-      { value: "a-one", environmentId: "environment-a" },
-      { value: "b-two", environmentId: "environment-b" },
-      { value: "a-two", environmentId: "environment-a" },
+      { value: "all", environmentId: null, projectKey: null },
+      { value: "b-one", environmentId: "environment-b", projectKey: "one" },
+      { value: "b-two", environmentId: "environment-b", projectKey: "two" },
+      { value: "a-one", environmentId: "environment-a", projectKey: "one" },
+      { value: "a-two", environmentId: "environment-a", projectKey: "two" },
     ];
     expect(
       orderSidebarProjectScopeItems(items, ["environment-a", "environment-b"]).map(
         (item) => item.value,
       ),
-    ).toEqual(["all", "a-one", "a-two", "b-one", "b-two"]);
+    ).toEqual(["all", "a-one", "b-one", "a-two", "b-two"]);
   });
 });
 
@@ -1052,22 +1053,20 @@ describe("buildSidebarProjectScopeItems", () => {
 });
 
 describe("sidebarProjectScopeHeader", () => {
-  it("shows one header per visible environment, including after a search narrows the list", () => {
+  it("shows one header per visible project, including after a search narrows the list", () => {
     const items = [
-      { environmentId: null },
-      { environmentId: "environment-a" },
-      { environmentId: "environment-a" },
-      { environmentId: "environment-b" },
+      { projectKey: null },
+      { projectKey: "project-a" },
+      { projectKey: "project-a" },
+      { projectKey: "project-b" },
     ];
     expect(items.map((_, index) => sidebarProjectScopeHeader(items, index))).toEqual([
       null,
-      "environment-a",
+      "project-a",
       null,
-      "environment-b",
+      "project-b",
     ]);
-    expect(sidebarProjectScopeHeader([{ environmentId: "environment-b" }], 0)).toBe(
-      "environment-b",
-    );
+    expect(sidebarProjectScopeHeader([{ projectKey: "project-b" }], 0)).toBe("project-b");
   });
 });
 
@@ -1098,6 +1097,19 @@ describe("reduceSidebarScopeMenuState", () => {
         { type: "query-changed", query: "beta" },
       ),
     ).toEqual({ open: true, query: "beta" });
+  });
+});
+
+describe("groupSidebarThreadsByEnvironment", () => {
+  it("keeps each environment together without changing its thread order", () => {
+    const threads = [
+      { environmentId: "remote", id: "r1" },
+      { environmentId: "local", id: "l1" },
+      { environmentId: "remote", id: "r2" },
+    ];
+    expect(
+      groupSidebarThreadsByEnvironment(threads, ["local", "remote"]).map((thread) => thread.id),
+    ).toEqual(["l1", "r1", "r2"]);
   });
 });
 
@@ -1174,7 +1186,7 @@ describe("sortThreadsForSidebar", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["older-active", "newer-idle"]);
   });
 
-  it("keeps an updating thread in place until its turn finishes", () => {
+  it("moves a thread on turn start and finish without reacting to tool updates", () => {
     const running = {
       ...sortable({ id: "running", createdAt: "2026-03-09T08:00:00.000Z" }),
       lastFinishedAt: "2026-03-09T10:00:00.000Z",
@@ -1189,6 +1201,12 @@ describe("sortThreadsForSidebar", () => {
     expect(
       sortThreadsForSidebar([running, waiting], "updated_at").map((thread) => thread.id),
     ).toEqual(["waiting", "running"]);
+    expect(
+      sortThreadsForSidebar(
+        [{ ...running, latestUserMessageAt: "2026-03-09T13:30:00.000Z" }, waiting],
+        "updated_at",
+      ).map((thread) => thread.id),
+    ).toEqual(["running", "waiting"]);
     expect(
       sortThreadsForSidebar(
         [{ ...running, lastFinishedAt: "2026-03-09T14:00:00.000Z" }, waiting],

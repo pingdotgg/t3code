@@ -234,7 +234,7 @@ describe("sortThreads", () => {
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
   });
 
-  it("sorts new-server thread shells by the latest finished turn", () => {
+  it("sorts new-server thread shells by the latest turn action", () => {
     const sorted = sortThreads(
       [
         makeThread({
@@ -257,23 +257,51 @@ describe("sortThreads", () => {
     ]);
   });
 
-  it("keeps the previous finish anchor while the next run updates the thread", () => {
+  it("moves a thread up when a turn starts and again when it finishes", () => {
     const beforeRun = makeThread({
       id: "running",
       lastFinishedAt: "2026-03-09T10:00:00.000Z",
       updatedAt: "2026-03-09T10:00:00.000Z",
     });
-    const duringRun = { ...beforeRun, updatedAt: "2026-03-09T13:00:00.000Z" };
+    const duringRun = {
+      ...beforeRun,
+      latestUserMessageAt: "2026-03-09T13:00:00.000Z",
+      latestTurn: {
+        requestedAt: "2026-03-09T13:00:00.000Z",
+        startedAt: "2026-03-09T13:01:00.000Z",
+        completedAt: null,
+      },
+      updatedAt: "2026-03-09T13:30:00.000Z",
+    };
     const waiting = makeThread({
       id: "waiting",
-      lastFinishedAt: "2026-03-09T11:00:00.000Z",
-      updatedAt: "2026-03-09T11:00:00.000Z",
+      lastFinishedAt: "2026-03-09T13:15:00.000Z",
+      updatedAt: "2026-03-09T13:15:00.000Z",
     });
 
     expect(sortThreads([duringRun, waiting], "updated_at").map((thread) => thread.id)).toEqual([
       "waiting",
       "running",
     ]);
+    expect(
+      sortThreads(
+        [
+          {
+            ...duringRun,
+            latestTurn: { ...duringRun.latestTurn, completedAt: "2026-03-09T14:00:00.000Z" },
+            lastFinishedAt: "2026-03-09T14:00:00.000Z",
+          },
+          waiting,
+        ],
+        "updated_at",
+      ).map((thread) => thread.id),
+    ).toEqual(["running", "waiting"]);
+    expect(
+      sortThreads(
+        [{ ...duringRun, latestUserMessageAt: "2026-03-09T13:20:00.000Z" }, waiting],
+        "updated_at",
+      ).map((thread) => thread.id),
+    ).toEqual(["running", "waiting"]);
   });
 
   it("uses creation time until a thread has a finished run", () => {

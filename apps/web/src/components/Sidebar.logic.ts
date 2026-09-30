@@ -132,6 +132,28 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
 
+export function groupSidebarThreadsByEnvironment<T extends { readonly environmentId: string }>(
+  threads: readonly T[],
+  environmentIds: readonly string[],
+): T[] {
+  if (environmentIds.length < 2) return [...threads];
+  const groups = new Map<string, T[]>();
+  for (const thread of threads) {
+    const group = groups.get(thread.environmentId) ?? [];
+    group.push(thread);
+    groups.set(thread.environmentId, group);
+  }
+  const result: T[] = [];
+  for (const environmentId of environmentIds) {
+    const group = groups.get(environmentId);
+    if (group === undefined) continue;
+    result.push(...group);
+    groups.delete(environmentId);
+  }
+  for (const group of groups.values()) result.push(...group);
+  return result;
+}
+
 /** Sortable ids: thread rows use their scoped key; structural items use a
     colon-free prefix: scoped thread keys always contain a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -872,7 +894,7 @@ function firstValidTimestamp(
 }
 
 /** Active threads keep their explicit/creation order by default. The optional
- * last-finished view deliberately ignores saved drag keys until creation order
+ * last-action view deliberately ignores saved drag keys until creation order
  * is restored, so two ordering models never compete. */
 export function sortThreadsForSidebar<
   T extends ThreadSortInput & {
@@ -959,12 +981,24 @@ export function resolveSidebarScopeSelection(
 }
 
 export function orderSidebarProjectScopeItems<
-  TItem extends { readonly environmentId: string | null },
+  TItem extends { readonly environmentId: string | null; readonly projectKey: string | null },
 >(items: readonly TItem[], environmentIds: readonly string[]): TItem[] {
   const order = new Map(environmentIds.map((id, index) => [id, index] as const));
-  const rank = (item: TItem) =>
-    item.environmentId === null ? -1 : (order.get(item.environmentId) ?? environmentIds.length);
-  return [...items].sort((left, right) => rank(left) - rank(right));
+  const projectOrder = new Map<string, number>();
+  for (const [index, item] of items.entries()) {
+    if (item.projectKey !== null && !projectOrder.has(item.projectKey)) {
+      projectOrder.set(item.projectKey, index);
+    }
+  }
+  return [...items].sort((left, right) => {
+    if (left.projectKey === null) return -1;
+    if (right.projectKey === null) return 1;
+    return (
+      (projectOrder.get(left.projectKey) ?? 0) - (projectOrder.get(right.projectKey) ?? 0) ||
+      (order.get(left.environmentId ?? "") ?? environmentIds.length) -
+        (order.get(right.environmentId ?? "") ?? environmentIds.length)
+    );
+  });
 }
 
 export interface SidebarProjectScopeItem<TEnvironmentId extends string = string> {
@@ -1054,12 +1088,12 @@ export function selectedSidebarProjectRefKeys(
 }
 
 export function sidebarProjectScopeHeader(
-  visibleItems: readonly { readonly environmentId: string | null }[],
+  visibleItems: readonly { readonly projectKey: string | null }[],
   index: number,
 ): string | null {
-  const environmentId = visibleItems[index]?.environmentId ?? null;
-  return environmentId !== null && visibleItems[index - 1]?.environmentId !== environmentId
-    ? environmentId
+  const projectKey = visibleItems[index]?.projectKey ?? null;
+  return projectKey !== null && visibleItems[index - 1]?.projectKey !== projectKey
+    ? projectKey
     : null;
 }
 

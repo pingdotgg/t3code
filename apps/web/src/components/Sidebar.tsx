@@ -117,7 +117,6 @@ import {
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
-  projectGroupsSpanEnvironments,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import {
@@ -160,7 +159,6 @@ import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
@@ -170,6 +168,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarScopeItems,
   formatWorkingDurationLabel,
+  groupSidebarThreadsByEnvironment,
   firstValidTimestampMs,
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
@@ -280,7 +279,7 @@ const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   created_at: "Creation time",
-  updated_at: "Last finished",
+  updated_at: "Last action time",
 };
 
 function SidebarScopeCheckbox({ checked }: { checked: boolean }) {
@@ -1045,6 +1044,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
+  environmentHeading: string | null;
   environmentMachine: EnvironmentMachineKind;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
@@ -1650,6 +1650,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           sortable?.isDragging && "relative z-20",
         )}
       >
+        {props.environmentHeading !== null ? (
+          <div className="pointer-events-none flex items-center gap-2 px-2.5 pt-3 pb-1 text-xs font-medium text-sidebar-muted-foreground">
+            <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3.5 shrink-0" />
+            <span className="min-w-0 truncate">{props.environmentHeading}</span>
+          </div>
+        ) : null}
         <Tooltip disabled={sortable?.isDragging}>
           <TooltipTrigger
             render={
@@ -1806,6 +1812,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         sortable?.isDragging && "relative z-20",
       )}
     >
+      {props.environmentHeading !== null ? (
+        <div className="pointer-events-none flex items-center gap-2 px-2.5 pt-3 pb-1 text-xs font-medium text-sidebar-muted-foreground">
+          <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3.5 shrink-0" />
+          <span className="min-w-0 truncate">{props.environmentHeading}</span>
+        </div>
+      ) : null}
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
@@ -2360,6 +2372,10 @@ export default function Sidebar() {
       ),
     [environments],
   );
+  const environmentOrder = useMemo(
+    () => environments.map((environment) => environment.environmentId),
+    [environments],
+  );
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -2499,13 +2515,16 @@ export default function Sidebar() {
       ),
     [environments, projectGroups],
   );
-  // Same-named projects on two machines are only told apart by where they
-  // live, so rows on another machine carry its icon once the catalog spans
-  // more than one environment; a single-machine catalog stays as it was.
-  const showProjectEnvironments = useMemo(
-    () => projectGroupsSpanEnvironments(projectGroups),
-    [projectGroups],
-  );
+  const projectScopeKeysByProject = useMemo(() => {
+    const keys = new Map<string, string[]>();
+    for (const item of projectScopeItems) {
+      if (item.projectKey === null) continue;
+      const groupKeys = keys.get(item.projectKey) ?? [];
+      groupKeys.push(item.value);
+      keys.set(item.projectKey, groupKeys);
+    }
+    return keys;
+  }, [projectScopeItems]);
   const projectGroupByScopeKey = useMemo(() => {
     const byLogicalKey = new Map(
       projectGroups.map((project) => [project.projectKey, project] as const),
@@ -2542,9 +2561,15 @@ export default function Sidebar() {
         items: projectScopeItems,
         query: projectScopeMenuState.query,
         matches: (item, query) =>
-          projectScopeFilter.contains(item, query, (candidate) => candidate.label),
+          projectScopeFilter.contains(item, query, (candidate) => candidate.label) ||
+          (item.environmentId !== null &&
+            projectScopeFilter.contains(item, query, (candidate) =>
+              candidate.environmentId === null
+                ? ""
+                : (environmentLabelById.get(candidate.environmentId) ?? ""),
+            )),
       }),
-    [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
+    [environmentLabelById, projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
   );
   const scopedProjectGroups = useMemo(
     () =>
@@ -3343,17 +3368,17 @@ export default function Sidebar() {
   }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads]);
   const pinnedKeys = useMemo(
     () =>
-      pinnedThreads.map((thread) =>
+      groupSidebarThreadsByEnvironment(pinnedThreads, environmentOrder).map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [pinnedThreads],
+    [environmentOrder, pinnedThreads],
   );
   const activeKeys = useMemo(
     () =>
-      activeThreads.map((thread) =>
+      groupSidebarThreadsByEnvironment(activeThreads, environmentOrder).map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [activeThreads],
+    [activeThreads, environmentOrder],
   );
   useEffect(() => {
     if (optimisticDrop === null) return;
@@ -3500,7 +3525,7 @@ export default function Sidebar() {
       list: readonly EnvironmentThreadShell[],
       section: SidebarSection,
     ): SidebarListItem[] =>
-      list.map((thread) => {
+      groupSidebarThreadsByEnvironment(list, environmentOrder).map((thread) => {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         return { kind: "thread", key, section };
       });
@@ -3531,6 +3556,7 @@ export default function Sidebar() {
     return items;
   }, [
     activeThreads,
+    environmentOrder,
     pinnedThreads,
     renderedSettledThreads,
     settledThreads.length,
@@ -4761,71 +4787,44 @@ export default function Sidebar() {
                     <ComboboxList>
                       {(item: (typeof projectScopeItems)[number], index: number) => {
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
+                        const projectEnvironmentKeys =
+                          projectScopeKeysByProject.get(item.projectKey ?? "") ?? [];
+                        const allProjectEnvironmentsSelected =
+                          projectEnvironmentKeys.length > 0 &&
+                          projectEnvironmentKeys.every((key) =>
+                            effectiveProjectScopeKeys.includes(key),
+                          );
                         return (
                           <Fragment key={item.value}>
-                            {environments.length > 1 &&
-                            item.environmentId !== null &&
+                            {project &&
                             sidebarProjectScopeHeader(filteredProjectScopeItems, index) !== null ? (
-                              <div
-                                role="presentation"
-                                className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground"
-                              >
-                                <EnvironmentMachineIcon
-                                  kind={environmentMachineById.get(item.environmentId) ?? "server"}
-                                  className="size-3.5"
-                                />
-                                <span className="min-w-0 truncate">
-                                  {environmentLabelById.get(item.environmentId) ?? "Environment"}
-                                </span>
-                              </div>
-                            ) : null}
-                            <ComboboxItem
-                              hideIndicator
-                              value={item}
-                              aria-label={
-                                item.environmentId === null
-                                  ? undefined
-                                  : `${item.label}, ${environmentLabelById.get(item.environmentId) ?? "Environment"}`
-                              }
-                              onContextMenu={(event) => {
-                                if (project) handleProjectSettings(event, project);
-                              }}
-                            >
-                              <SidebarScopeCheckbox
-                                checked={
-                                  item.value === "all"
-                                    ? effectiveProjectScopeKeys.length === 0
-                                    : effectiveProjectScopeKeys.includes(item.value)
-                                }
-                              />
-                              {project ? (
-                                <ProjectFavicon
-                                  project={
-                                    project.memberProjects.find(
-                                      (member) => member.environmentId === item.environmentId,
-                                    ) ?? project
-                                  }
-                                  className="size-4 shrink-0"
-                                />
-                              ) : (
-                                <FolderIcon className="size-4 shrink-0" />
-                              )}
-                              <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                              {project && showProjectEnvironments ? (
-                                <ProjectEnvironmentBadge
-                                  group={project}
-                                  primaryEnvironmentId={item.environmentId ?? project.environmentId}
-                                  machineByEnvironmentId={environmentMachineById}
-                                />
-                              ) : null}
-                              {project ? (
+                              <div className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+                                <Button
+                                  size="sm"
+                                  variant="ghost-muted"
+                                  className="min-w-0 flex-1 justify-start"
+                                  aria-label={`Filter ${project.displayName} in all environments`}
+                                  aria-pressed={allProjectEnvironmentsSelected}
+                                  onPointerDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    const selected = new Set(effectiveProjectScopeKeys);
+                                    for (const key of projectEnvironmentKeys) {
+                                      if (allProjectEnvironmentsSelected) selected.delete(key);
+                                      else selected.add(key);
+                                    }
+                                    setProjectScopeKeys([...selected]);
+                                  }}
+                                >
+                                  <SidebarScopeCheckbox checked={allProjectEnvironmentsSelected} />
+                                  <ProjectFavicon project={project} className="size-3.5 shrink-0" />
+                                  <span className="min-w-0 truncate text-xs font-medium">
+                                    {project.displayName}
+                                  </span>
+                                </Button>
                                 <Button
                                   size="icon-xs"
                                   variant="ghost-muted"
-                                  tabIndex={-1}
-                                  aria-hidden="true"
                                   title={`Project settings for ${project.displayName}`}
-                                  className="ml-auto"
                                   onPointerDown={(event) => event.stopPropagation()}
                                   onClick={(event) => {
                                     void handleProjectSettings(event, project);
@@ -4833,8 +4832,46 @@ export default function Sidebar() {
                                 >
                                   <SettingsIcon className="size-3.5" />
                                 </Button>
-                              ) : null}
-                            </ComboboxItem>
+                              </div>
+                            ) : null}
+                            <div className={project ? "pl-4" : undefined}>
+                              <ComboboxItem
+                                hideIndicator
+                                value={item}
+                                aria-label={
+                                  item.environmentId === null
+                                    ? undefined
+                                    : `${item.label}, ${environmentLabelById.get(item.environmentId) ?? "Environment"}`
+                                }
+                                onContextMenu={(event) => {
+                                  if (project) handleProjectSettings(event, project);
+                                }}
+                              >
+                                <SidebarScopeCheckbox
+                                  checked={
+                                    item.value === "all"
+                                      ? effectiveProjectScopeKeys.length === 0
+                                      : effectiveProjectScopeKeys.includes(item.value)
+                                  }
+                                />
+                                {project && item.environmentId !== null ? (
+                                  <EnvironmentMachineIcon
+                                    kind={
+                                      environmentMachineById.get(item.environmentId) ?? "server"
+                                    }
+                                    className="size-4 shrink-0"
+                                  />
+                                ) : (
+                                  <FolderIcon className="size-4 shrink-0" />
+                                )}
+                                <span className="min-w-0 flex-1 truncate text-sm">
+                                  {item.environmentId === null
+                                    ? item.label
+                                    : (environmentLabelById.get(item.environmentId) ??
+                                      "Environment")}
+                                </span>
+                              </ComboboxItem>
+                            </div>
                           </Fragment>
                         );
                       }}
@@ -5000,6 +5037,7 @@ export default function Sidebar() {
                       const renderThreadRowInner = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
+                        environmentHeading: string | null,
                         sortable?: SortableThreadRowBag,
                       ) => {
                         const threadKey = scopedThreadKey(
@@ -5069,6 +5107,7 @@ export default function Sidebar() {
                             environmentLabel={
                               environmentLabelById.get(thread.environmentId) ?? null
                             }
+                            environmentHeading={environmentHeading}
                             environmentMachine={
                               environmentMachineById.get(thread.environmentId) ?? "server"
                             }
@@ -5108,6 +5147,7 @@ export default function Sidebar() {
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
+                        environmentHeading: string | null,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -5123,7 +5163,9 @@ export default function Sidebar() {
                               (section === "active" && sidebarThreadSortOrder !== "created_at")
                             }
                           >
-                            {(bag) => renderThreadRowInner(thread, section, bag)}
+                            {(bag) =>
+                              renderThreadRowInner(thread, section, environmentHeading, bag)
+                            }
                           </SortableThreadRow>
                         );
                       };
@@ -5139,9 +5181,20 @@ export default function Sidebar() {
                           onNavigateToDraft={navigateToDraft}
                         />,
                       ];
+                      let previousThreadGroup: string | null = null;
+                      let previousThreadSection: SidebarSection | null = null;
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          const thread = threadByKey.get(item.key)!;
+                          const environmentHeading =
+                            environments.length > 1 &&
+                            (previousThreadSection !== item.section ||
+                              previousThreadGroup !== thread.environmentId)
+                              ? (environmentLabelById.get(thread.environmentId) ?? "Environment")
+                              : null;
+                          previousThreadSection = item.section;
+                          previousThreadGroup = thread.environmentId;
+                          items.push(renderThreadRow(thread, item.section, environmentHeading));
                           continue;
                         }
                         switch (item.marker) {

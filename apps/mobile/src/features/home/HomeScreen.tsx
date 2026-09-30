@@ -46,6 +46,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2SectionDivider,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
 } from "../threads/thread-list-v2-items";
@@ -54,6 +55,7 @@ import {
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
+  groupThreadListV2ByEnvironment,
   threadListV2ListItemsAreEqual,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -397,7 +399,7 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
     [v2ScopedProjectGroup],
   );
-  // Thread List v2 (beta): one flat list in creation order, no grouping.
+  // Thread List v2 (beta): saved order within each environment's card block.
   // Settled threads collapse into a recency tail below the card block.
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
@@ -677,21 +679,24 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const threadListV2Items = useMemo(
     () =>
-      buildThreadListV2ListItems({
-        items: threadListV2Layout.items,
-        pendingTasks: v2PendingTasks,
-        snoozedCount: threadListV2Layout.snoozedCount,
-        snoozedShelfExpanded,
-        snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-        settledCount: threadListV2Layout.settledCount,
-        settledShelfExpanded,
-        settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-        snoozeLabelNow: `${nowMinute}:00.000Z`,
-        snoozeEnvironmentIds,
-        queuedThreadKeys,
-        moveAvailability: threadMoveAvailability,
-        shelfPreferencesLoading: !shelfPreferencesLoaded,
-      }),
+      groupThreadListV2ByEnvironment(
+        buildThreadListV2ListItems({
+          items: threadListV2Layout.items,
+          pendingTasks: v2PendingTasks,
+          snoozedCount: threadListV2Layout.snoozedCount,
+          snoozedShelfExpanded,
+          snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+          settledCount: threadListV2Layout.settledCount,
+          settledShelfExpanded,
+          settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
+          snoozeLabelNow: `${nowMinute}:00.000Z`,
+          snoozeEnvironmentIds,
+          queuedThreadKeys,
+          moveAvailability: threadMoveAvailability,
+          shelfPreferencesLoading: !shelfPreferencesLoaded,
+        }),
+        props.environments,
+      ),
     [
       nowMinute,
       queuedThreadKeys,
@@ -702,6 +707,7 @@ export function HomeScreen(props: HomeScreenProps) {
       snoozeEnvironmentIds,
       threadListV2Layout,
       v2PendingTasks,
+      props.environments,
     ],
   );
 
@@ -712,6 +718,9 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const renderV2Item = useCallback(
     ({ item }: { readonly item: ThreadListV2ListItem }) => {
+      if (item.type === "v2-environment") {
+        return <ThreadListV2SectionDivider label={item.label} />;
+      }
       if (item.type === "v2-pending") {
         const pendingScopeKey = scopedProjectKey(
           item.pendingTask.environmentId,

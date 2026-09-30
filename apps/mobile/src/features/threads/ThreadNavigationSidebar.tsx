@@ -60,6 +60,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2SectionDivider,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
 } from "./thread-list-v2-items";
@@ -68,6 +69,7 @@ import {
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
+  groupThreadListV2ByEnvironment,
   isThreadListV2ListItem,
   threadListV2ListItemsAreEqual,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -75,7 +77,7 @@ import {
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
-/** The sidebar list: flat v2 rows with queued tasks spliced in, plus a
+/** The sidebar list: v2 rows with queued tasks spliced in, plus a
     settled "Show more" pager row. */
 type SidebarListItem =
   | ThreadListV2ListItem
@@ -272,7 +274,7 @@ function ThreadNavigationSidebarPane(
   }, [projects]);
 
   // Thread List v2 (beta) support — same model as the compact Home list
-  // (HomeScreen.tsx): flat creation-order card block + settled recency tail.
+  // (HomeScreen.tsx): ordered card block + settled recency tail.
   // The settled tail renders in pages; expansion resets when the filter
   // context changes so environment/search flips never inherit a deep page.
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -492,21 +494,24 @@ function ThreadNavigationSidebarPane(
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
-    const items: SidebarListItem[] = buildThreadListV2ListItems({
-      items: threadListV2Layout.items,
-      pendingTasks: v2PendingTasks,
-      snoozedCount: threadListV2Layout.snoozedCount,
-      snoozedShelfExpanded,
-      snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-      settledCount: threadListV2Layout.settledCount,
-      settledShelfExpanded,
-      settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-      snoozeLabelNow: `${nowMinute}:00.000Z`,
-      snoozeEnvironmentIds,
-      queuedThreadKeys,
-      moveAvailability: threadMoveAvailability,
-      shelfPreferencesLoading: !shelfPreferencesLoaded,
-    });
+    const items: SidebarListItem[] = groupThreadListV2ByEnvironment(
+      buildThreadListV2ListItems({
+        items: threadListV2Layout.items,
+        pendingTasks: v2PendingTasks,
+        snoozedCount: threadListV2Layout.snoozedCount,
+        snoozedShelfExpanded,
+        snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+        settledCount: threadListV2Layout.settledCount,
+        settledShelfExpanded,
+        settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
+        snoozeLabelNow: `${nowMinute}:00.000Z`,
+        snoozeEnvironmentIds,
+        queuedThreadKeys,
+        moveAvailability: threadMoveAvailability,
+        shelfPreferencesLoading: !shelfPreferencesLoaded,
+      }),
+      environments,
+    );
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
         type: "v2-show-more",
@@ -517,6 +522,7 @@ function ThreadNavigationSidebarPane(
     return items;
   }, [
     nowMinute,
+    environments,
     options.selectedEnvironmentId,
     pendingTasks,
     props.searchQuery,
@@ -702,6 +708,8 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
+        case "v2-environment":
+          return <ThreadListV2SectionDivider label={item.label} pane="sidebar" />;
         case "v2-pending": {
           const pendingScopeKey = scopedProjectKey(
             item.pendingTask.environmentId,

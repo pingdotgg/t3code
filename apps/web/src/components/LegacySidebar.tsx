@@ -228,7 +228,7 @@ import {
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { legacySidebarThreadMatchesFilters } from "./LegacySidebar.logic";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
-  updated_at: "Last finished",
+  updated_at: "Last action time",
   created_at: "Created at",
   manual: "Manual",
 };
