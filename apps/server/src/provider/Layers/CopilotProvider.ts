@@ -104,6 +104,7 @@ const COPILOT_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   makeCopilotBuiltInModel("gpt-6-astra", "GPT-6 Astra"),
   makeCopilotBuiltInModel("gpt-6-luna", "GPT-6 Luna"),
   makeCopilotBuiltInModel("gpt-6-sol", "GPT-6 Sol"),
+  makeCopilotBuiltInModel("gpt-6.1-sol", "GPT-6.1 Sol"),
   makeCopilotBuiltInModel("gpt-5.5", "GPT-5.5"),
   makeCopilotBuiltInModel("gpt-5.4", "GPT-5.4"),
   makeCopilotBuiltInModel("gpt-5.4-mini", "GPT-5.4 Mini"),
