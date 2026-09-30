@@ -454,6 +454,9 @@ export const make = Effect.gen(function* () {
       }).pipe(
         Effect.tap((result) => budget.observe(host, result.stdout)),
         Effect.asVoid,
+        // The probe is advisory. GitHub Enterprise servers with rate limiting disabled answer it
+        // with a 404, and the read itself still reports any real failure.
+        Effect.catchTag("GitHubCliCommandError", () => Effect.void),
       );
     },
     {

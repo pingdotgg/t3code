@@ -97,6 +97,38 @@ it.effect("shares quota checks, preserves the reserve, and resumes after reset",
   }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
 );
 
+it.effect("runs reads when GitHub Enterprise has rate limiting disabled", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const gh = yield* GitHubCli.make.pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args[1] !== "rate_limit") return Effect.succeed(processOutput("[]"));
+          probes++;
+          return Effect.fail(
+            VcsProcessExitError.fromProcessExit(
+              { operation: "GitHubCli.execute", command: "gh", cwd: "/repo" },
+              {
+                exitCode: 1,
+                stderr: "gh: Rate limiting is not enabled. (HTTP 404)",
+                stderrTruncated: false,
+              },
+              "command-failed",
+            ),
+          );
+        },
+      }),
+    );
+    const read = gh.execute({
+      cwd: "/repo",
+      args: ["pr", "list", "--repo", "github.example.test/acme/web", "--json", "number"],
+    });
+    assert.strictEqual((yield* read).stdout, "[]");
+    yield* read;
+    assert.strictEqual(probes, 1);
+  }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+);
+
 describe("GitHubCli.layer", () => {
   it.effect("shares the registry budget with CLI reads through nested layer providers", () =>
     Effect.gen(function* () {
