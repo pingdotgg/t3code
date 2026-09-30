@@ -288,10 +288,11 @@ function PoolSegment({
           render={
             <button
               type="button"
-              className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:text-foreground"
+              className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-1.5 overflow-hidden rounded-sm text-start text-2xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:text-foreground"
             />
           }
         >
+          {/* Wraps, then clips, in narrow columns so a label never spills into its neighbour's. */}
           <AccountName account={account} className="min-w-0 truncate" />
           <span className="shrink-0 font-medium text-foreground tabular-nums">{remaining}%</span>
           {credits ? (
@@ -414,14 +415,20 @@ function PoolBar({
   );
 }
 
-/** `+21% in 4h 45m` when the next reset hands quota back, else `resets in 6d 23h`. */
+/**
+ * `+21% in 4h 45m` when the next reset hands quota back, else `resets in 6d 23h`.
+ * Accounts resetting at the same moment hand back their shares together.
+ */
 function nextRefillText(pool: LimitPoolWindow, now: number): string | null {
   const next = pool.resets.find((reset) => reset.restoresPercent > 0) ?? pool.resets[0];
   if (!next) return null;
   const resetsIn = formatResetsIn(next.member.window, now);
   if (!resetsIn) return null;
-  return next.restoresPercent > 0
-    ? `+${next.restoresPercent}% ${resetsIn.replace("resets ", "")}`
+  const restores = pool.resets
+    .filter((reset) => reset.at === next.at)
+    .reduce((sum, reset) => sum + reset.restoresPercent, 0);
+  return restores > 0
+    ? `+${restores}% ${resetsIn.replace("resets ", "")}`
     : resetsIn.replace("resets", "Resets");
 }
 
