@@ -46,6 +46,13 @@ const activityOrder = O.combine<OrchestrationThreadActivity>(
   ),
 );
 
+// Presence proves the array was sorted by this reducer; snapshot arrays remain unindexed
+// until their first append takes the fallback path.
+const activityIdIndex = new WeakMap<
+  ReadonlyArray<OrchestrationThreadActivity>,
+  Set<OrchestrationThreadActivity["id"]>
+>();
+
 /**
  * Apply a single orchestration event to an `OrchestrationThread`, returning
  * the updated thread, a deletion signal, or an "unchanged" marker when the
@@ -576,12 +583,29 @@ export function applyThreadDetailEvent(
               payload: event.payload,
               sequence: event.sequence,
             });
+      const ids = activityIdIndex.get(thread.activities);
+      const lastActivity = thread.activities.at(-1);
+      if (
+        ids !== undefined &&
+        (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
+        !ids.has(activity.id)
+      ) {
+        const activities = Arr.append(thread.activities, activity);
+        activityIdIndex.delete(thread.activities);
+        ids.add(activity.id);
+        activityIdIndex.set(activities, ids);
+        return {
+          kind: "updated",
+          thread: { ...thread, activities, updatedAt: event.occurredAt },
+        };
+      }
       const activities = pipe(
         thread.activities,
         Arr.filter((entry) => entry.id !== activity.id),
         Arr.append(activity),
         Arr.sort(activityOrder),
       );
+      activityIdIndex.set(activities, new Set(activities.map((entry) => entry.id)));
 
       return {
         kind: "updated",

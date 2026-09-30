@@ -479,7 +479,7 @@ function trace2ChildKey(record: Record<string, unknown>): string | null {
 
 const Trace2Record = Schema.Record(Schema.String, Schema.Unknown);
 
-const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
+const createTrace2Monitor = Effect.fnUntraced(function* (
   input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
   progress: ExecuteGitProgress | undefined,
 ): Effect.fn.Return<

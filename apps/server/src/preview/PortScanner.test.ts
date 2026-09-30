@@ -3,7 +3,8 @@ import * as net from "node:net";
 import { it as effectIt } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as Net from "@t3tools/shared/Net";
-import { Effect, Layer } from "effect";
+import { Duration, Effect, Layer, Tracer } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as PortScanner from "./PortScanner.ts";
@@ -221,6 +222,22 @@ describe("parseWindowsListenerOutput", () => {
       },
     ]);
   });
+});
+
+effectIt.effect("writes no poll span while no client retains the scanner", () => {
+  let pollSpans = 0;
+  const tracer = Tracer.make({
+    span: (options) => {
+      if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
+      return new Tracer.NativeSpan(options);
+    },
+  });
+
+  return Effect.gen(function* () {
+    yield* PortScanner.PortDiscovery;
+    yield* TestClock.adjust(Duration.seconds(15));
+    expect(pollSpans).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(TestPortDiscoveryLive), Effect.withTracer(tracer));
 });
 
 /**

@@ -84,11 +84,6 @@ export function projectionImpactForEvent(event: OrchestrationEvent): ProjectionI
   const attachmentThreadIds = new Set<ThreadId>();
 
   switch (event.type) {
-    case "thread.message-sent":
-      if (event.payload.role === "user") {
-        shellThreadIds.add(event.payload.threadId);
-      }
-      break;
     case "thread.activity-appended":
       if (activityChangesShellSummary(event.payload.activity)) {
         shellThreadIds.add(event.payload.threadId);

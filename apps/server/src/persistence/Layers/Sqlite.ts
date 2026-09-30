@@ -5,6 +5,8 @@ import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
 import { compactLegacyActivityPayloads } from "../ActivityPayloadCompactor.ts";
 
+const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
   readonly readonly?: boolean;
@@ -33,6 +35,7 @@ const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* runMigrations();
     yield* Effect.forkScoped(compactLegacyActivityPayloads);
