@@ -717,7 +717,7 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
 /** Who created a thread ↔ pull request link. `stack-dismissed` is the historical
- * tombstone for an unlinked discovery (stack member or branch PR), so refreshes
+ * tombstone for an unlinked PR, so branch and stack discovery refreshes
  * do not re-add it; clients hide it. */
 export const ThreadPullRequestLinkSource = Schema.Literals([
   "manual",

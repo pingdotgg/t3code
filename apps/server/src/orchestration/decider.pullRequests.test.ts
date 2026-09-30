@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { projectEvent } from "./projector.ts";
 import { isThreadDetailEvent } from "../ws.ts";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { listThreadPullRequests } from "../mcp/toolkits/pullRequests/handlers.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
@@ -206,6 +207,20 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
       expect(listThreadPullRequests(model.threads[0]!).pullRequests.map((pr) => pr.number)).toEqual(
         [42],
       );
+      const unlinkedAgain = expectSingleEvent(
+        yield* decideOrchestrationCommand({ readModel: model, command: unlink }),
+        "thread.pull-request-linked",
+      );
+      model = yield* projectEvent(model, {
+        ...unlinkedAgain,
+        sequence: model.snapshotSequence + 1,
+      });
+      expect(listThreadPullRequests(model.threads[0]!).pullRequests).toEqual([]);
+      const rediscoveredAgain = expectSingleEvent(
+        yield* decideOrchestrationCommand({ readModel: model, command: sync }),
+        "thread.meta-updated",
+      );
+      expect(rediscoveredAgain.payload.branchPullRequest).toBeNull();
     }),
   );
 
@@ -243,12 +258,12 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
       });
       const unlinked = expectSingleEvent(
         yield* decideOrchestrationCommand({ readModel: model, command: unlink }),
-        "thread.pull-request-unlinked",
+        "thread.pull-request-linked",
       );
       model = yield* projectEvent(model, { ...unlinked, sequence: 2 });
-      expect(model.threads[0]!.pullRequests.map((link) => link.url)).toEqual([
-        linked.payload.link.url,
-      ]);
+      expect(
+        visibleThreadPullRequests(model.threads[0]!.pullRequests).map((link) => link.url),
+      ).toEqual([linked.payload.link.url]);
     }),
   );
 
@@ -270,8 +285,8 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
         readModel: makeReadModel([own, foreign]),
         command,
       });
-      const event = expectSingleEvent(decided, "thread.pull-request-unlinked");
-      expect(event.payload.host).toBe("github.com");
+      const event = expectSingleEvent(decided, "thread.pull-request-linked");
+      expect(event.payload.link.host).toBe("github.com");
     }),
   );
 
@@ -294,12 +309,14 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
       const decided = yield* decideOrchestrationCommand({ readModel: model, command });
       const events = Array.isArray(decided) ? decided : [decided];
       expect(events.map((event) => event.type)).toEqual([
-        "thread.pull-request-unlinked",
+        "thread.pull-request-linked",
         "thread.pull-request-linked",
       ]);
       for (const event of events)
         model = yield* projectEvent(model, { ...event, sequence: model.snapshotSequence + 1 });
-      expect(model.threads[0]!.pullRequests.map((link) => link.number)).toEqual([7, 99]);
+      expect(
+        visibleThreadPullRequests(model.threads[0]!.pullRequests).map((link) => link.number),
+      ).toEqual([7, 99]);
     }),
   );
   it.effect("round-trips an Azure legacy link and unlinks only its organization", () =>
@@ -349,7 +366,7 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
           ]);
         }
       }
-      expect(model.threads[0]!.pullRequests).toEqual([foreign]);
+      expect(visibleThreadPullRequests(model.threads[0]!.pullRequests)).toEqual([foreign]);
       expect(model.threads[0]!.linkedPullRequest).toBeNull();
     }),
   );
@@ -366,7 +383,7 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
         command,
       });
       const events = Array.isArray(decided) ? decided : [decided];
-      expect(events.map((event) => event.type)).toEqual(["thread.pull-request-unlinked"]);
+      expect(events.map((event) => event.type)).toEqual(["thread.pull-request-linked"]);
     }),
   );
 
@@ -396,9 +413,7 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
         }
         const thread = model.threads[0]!;
         expect(thread.title).toBe("Renamed by old client");
-        expect(thread.pullRequests).toEqual(
-          source === "stack" ? [other, { ...current, source: "stack-dismissed" }] : [other],
-        );
+        expect(thread.pullRequests).toEqual([other, { ...current, source: "stack-dismissed" }]);
         // The old single-link field continues to track the remaining visible request.
         expect(thread.linkedPullRequest?.number).toBe(7);
       }),
@@ -520,12 +535,15 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
         },
         readModel: makeReadModel([makeLink()]),
       });
-      const event = expectSingleEvent(decided, "thread.pull-request-unlinked");
+      const event = expectSingleEvent(decided, "thread.pull-request-linked");
       expect(event.payload).toMatchObject({
         threadId: THREAD_ID,
-        host: "github.com",
-        repository: "t3tools/t3code",
-        number: 42,
+        link: {
+          host: "github.com",
+          repository: "t3tools/t3code",
+          number: 42,
+          source: "stack-dismissed",
+        },
       });
     }),
   );

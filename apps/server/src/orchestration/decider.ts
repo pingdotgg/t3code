@@ -1127,17 +1127,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         occurredAt,
         commandId: command.commandId,
       });
-      // Any known native-stack member needs a tombstone, regardless of who linked it.
-      // A sibling can rediscover it even before this link has its own stack snapshot.
-      const belongsToStack =
-        existing?.source === "stack" ||
-        (existing !== undefined && existing.stack !== null) ||
-        thread.pullRequests.some(
-          (link) =>
-            link.host.toLowerCase() === key.host &&
-            link.repository.toLowerCase() === key.repository &&
-            link.stack?.layers.some((layer) => layer.number === key.number),
-        );
       if (matchesBranch) {
         return [
           {
@@ -1169,23 +1158,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         ];
       }
-      if (belongsToStack && existing !== undefined) {
-        return {
-          ...eventBase,
-          type: "thread.pull-request-linked",
-          payload: {
-            threadId: command.threadId,
-            link: { ...existing, source: "stack-dismissed" },
-            updatedAt: occurredAt,
-          },
-        };
-      }
+      // Discovery may not have identified the branch or stack yet. Keep the
+      // dismissal for every link so an immediate unlink cannot be reattached.
       return {
         ...eventBase,
-        type: "thread.pull-request-unlinked",
+        type: "thread.pull-request-linked",
         payload: {
           threadId: command.threadId,
-          ...key,
+          link: { ...existing!, source: "stack-dismissed" },
           updatedAt: occurredAt,
         },
       };
