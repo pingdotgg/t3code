@@ -29,8 +29,7 @@ import {
   resolveBrowserDefaults,
 } from "./browserDefaults";
 
-export const isBrowserPreviewFile = (path: string): boolean =>
-  /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+export const isBrowserPreviewFile = (path: string): boolean => /\.(?:html?|pdf)$/i.test(path);
 
 export class BrowserPreviewUnavailableError extends Data.TaggedError(
   "BrowserPreviewUnavailableError",
@@ -184,12 +183,15 @@ export async function openFileInExternalBrowser<AssetError>(input: {
   readonly workspaceRoot: string | undefined;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: CreateAssetUrl<AssetError>;
+  /** Resolves bare filenames after reserving the tab, before signing the actual file. */
+  readonly resolveFilePath?: () => Promise<string>;
   /** Runs before the first await so a web click can reserve its tab synchronously. */
   readonly beginOpen: () => ExternalFileOpenSession;
 }): Promise<AtomCommandResult<void, AssetError>> {
   const session = input.beginOpen();
   try {
-    const assetUrl = await createFileAssetUrl(input);
+    const filePath = input.resolveFilePath ? await input.resolveFilePath() : input.filePath;
+    const assetUrl = await createFileAssetUrl({ ...input, filePath });
     if (assetUrl._tag === "Failure") {
       session.cancel();
       return AsyncResult.failure(assetUrl.cause);

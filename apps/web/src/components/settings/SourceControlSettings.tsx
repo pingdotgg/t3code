@@ -56,6 +56,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
@@ -234,7 +235,9 @@ function itemSummary({
       );
     }
 
-    if (!item.executable) {
+    // API integrations have no CLI to sign in with; an unverified saved credential falls
+    // through to the "could not verify" detail instead of repeating the setup hint.
+    if (!item.executable && auth.status === "unauthenticated") {
       return <span>Available. {item.installHint}</span>;
     }
 
@@ -242,8 +245,8 @@ function itemSummary({
       return (
         <span>
           {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable change request features.
+          the <code className="rounded bg-muted px-1 py-px text-2xs">{item.executable}</code> tool
+          on the server host to enable change request features.
         </span>
       );
     }
@@ -277,7 +280,11 @@ function DiscoveryItemRow({
   const searchTargetId = useSettingsSearchTargetId();
 
   useEffect(() => {
-    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+    if (
+      (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
+      (item.kind === "bitbucket" &&
+        searchTargetId === searchableSetting("bitbucket-credentials").id)
+    ) {
       setIsExpanded(true);
     }
   }, [item.kind, searchTargetId]);
@@ -294,9 +301,7 @@ function DiscoveryItemRow({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
-                {item.label}
-              </span>
+              <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
@@ -309,7 +314,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -588,7 +593,18 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {item.kind === "bitbucket" ? (
+                    <SettingsSearchTarget id={searchableSetting("bitbucket-credentials").id}>
+                      <BitbucketCredentialsSettings
+                        // Drafts belong to one environment; switching must not carry them over.
+                        key={environmentId}
+                        environmentId={environmentId}
+                        onSaved={handleScan}
+                      />
+                    </SettingsSearchTarget>
+                  ) : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}

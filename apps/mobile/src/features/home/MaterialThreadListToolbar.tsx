@@ -12,7 +12,8 @@ import { MaterialSearchField } from "../../components/MaterialSearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
-import { useMaterialToolbarHeight } from "../../components/useMaterialToolbarHeight";
+import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
 
 /** One toolbar height for the compact list and expanded sidebar, including search. */
 export function MaterialThreadListToolbar(props: {
@@ -28,7 +29,8 @@ export function MaterialThreadListToolbar(props: {
   readonly onRequestVisibility?: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const toolbarHeight = useMaterialToolbarHeight();
+  const { fabSize } = useAndroidControlSizing();
+  const { height: toolbarHeight, ...headerPadding } = useMaterialToolbarLayout();
   const { state } = useWorkspaceState();
   const { onRequestVisibility, onSearchQueryChange } = props;
   const searchRef = useRef<TextInput>(null);
@@ -76,11 +78,9 @@ export function MaterialThreadListToolbar(props: {
       <View
         onLayout={props.onLayout}
         className={
-          props.sidebar
-            ? "absolute inset-x-0 top-0 z-[4] bg-header px-2 pb-2"
-            : "bg-header px-2 pb-2"
+          props.sidebar ? "absolute inset-x-0 top-0 z-[4] bg-header px-2" : "bg-header px-2"
         }
-        style={{ paddingTop: Math.max(insets.top, 12) }}
+        style={headerPadding}
       >
         <View className="flex-row items-center gap-1" style={{ minHeight: toolbarHeight }}>
           {searching ? (
@@ -116,14 +116,14 @@ export function MaterialThreadListToolbar(props: {
           )}
         </View>
       </View>
-      {/* Sit 8dp above the 56dp extended New thread FAB. */}
+      {/* Keep the filter above the New thread FAB at every text size. */}
       {state.hasConnections ? (
         <View
           className="absolute right-5 z-[5]"
           style={{
             bottom:
               (props.sidebar ? Math.max(insets.bottom, 12) + 6 : Math.max(insets.bottom, 16) + 16) +
-              56 +
+              fabSize +
               8,
           }}
         >

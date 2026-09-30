@@ -20,11 +20,21 @@ const assetResult = (relativeUrl: string): AssetCreateUrlResult => ({
 });
 
 describe("isBrowserPreviewFile", () => {
-  it.each(["report.html", "doc.HTM", "paper.pdf", "nested/page.html?x=1#top"])(
-    "accepts %s",
-    (path) => expect(isBrowserPreviewFile(path)).toBe(true),
-  );
-  it.each(["notes.md", "index.html.bak", "script.js"])("rejects %s", (path) => {
+  it.each([
+    "report.html",
+    "doc.HTM",
+    "paper.pdf",
+    "nested/report#1.html",
+    "nested/report?draft.pdf",
+    "résumé 100%.pdf",
+  ])("accepts %s", (path) => expect(isBrowserPreviewFile(path)).toBe(true));
+  it.each([
+    "notes.md",
+    "index.html.bak",
+    "script.js",
+    "report.html?draft.txt",
+    "report.pdf#notes.md",
+  ])("rejects %s", (path) => {
     expect(isBrowserPreviewFile(path)).toBe(false);
   });
 });
@@ -76,6 +86,9 @@ describe("openFileInExternalBrowser", () => {
     ["/repo-other/report.pdf", "/repo", "media-file"],
     ["C:/repo/report.pdf", "C:/repo", "workspace-file"],
     ["C:/temp/report.pdf", "C:/repo", "media-file"],
+    ["C:\\repo\\report.pdf", "c:\\repo", "workspace-file"],
+    ["//server/share/repo/report.pdf", "//server/share/repo", "workspace-file"],
+    ["/repo/../tmp/report.pdf", "/repo", "media-file"],
   ] as const)(
     "opens %s using %s and the matching resource scope",
     async (filePath, workspaceRoot, resourceTag) => {
@@ -128,6 +141,91 @@ describe("openFileInExternalBrowser", () => {
       "open:http://environment.test:1234/api/assets/token/report.html",
     ]);
     expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("reserves the tab before a basename lookup and signs the resolved file", async () => {
+    const calls: string[] = [];
+    const open = vi.fn(async () => undefined);
+    const cancel = vi.fn();
+    const remoteThreadRef = {
+      ...threadRef,
+      environmentId: "remote" as ScopedThreadRef["environmentId"],
+    };
+    const createAssetUrl = vi.fn(async () => {
+      calls.push("sign");
+      return AsyncResult.success(assetResult("/api/assets/token/report%20%231%25.pdf"));
+    });
+    const result = await openFileInExternalBrowser({
+      threadRef: remoteThreadRef,
+      workspaceRoot: "/repo",
+      filePath: "/repo/report #1%.pdf",
+      resolveFilePath: async () => {
+        calls.push("lookup");
+        return "/repo/docs/report #1%.pdf";
+      },
+      httpBaseUrl: "https://remote.example.test",
+      createAssetUrl,
+      beginOpen: () => {
+        calls.push("begin");
+        return { open, cancel };
+      },
+    });
+
+    expect(result._tag).toBe("Success");
+    expect(calls).toEqual(["begin", "lookup", "sign"]);
+    expect(createAssetUrl).toHaveBeenCalledWith({
+      environmentId: remoteThreadRef.environmentId,
+      input: {
+        resource: {
+          _tag: "workspace-file",
+          threadId: threadRef.threadId,
+          path: "/repo/docs/report #1%.pdf",
+        },
+      },
+    });
+    expect(open).toHaveBeenCalledWith(
+      "https://remote.example.test/api/assets/token/report%20%231%25.pdf",
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("closes the reserved tab if resolving the file fails", async () => {
+    const cancel = vi.fn();
+    const createAssetUrl = vi.fn();
+    const failure = new Error("lookup disconnected");
+    await expect(
+      openFileInExternalBrowser({
+        threadRef,
+        workspaceRoot: "/repo",
+        filePath: "/repo/report.pdf",
+        resolveFilePath: async () => {
+          throw failure;
+        },
+        httpBaseUrl: "http://environment.test",
+        createAssetUrl,
+        beginOpen: () => ({ open: vi.fn(), cancel }),
+      }),
+    ).rejects.toBe(failure);
+    expect(createAssetUrl).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("closes the reserved tab without navigating when the asset URL is invalid", async () => {
+    const cancel = vi.fn();
+    const open = vi.fn();
+    const result = await openFileInExternalBrowser({
+      threadRef,
+      workspaceRoot: "/repo",
+      filePath: "/repo/report.pdf",
+      httpBaseUrl: "not a URL",
+      createAssetUrl: vi.fn(async () =>
+        AsyncResult.success(assetResult("/api/assets/token/report.pdf")),
+      ),
+      beginOpen: () => ({ open, cancel }),
+    });
+    expect(result._tag).toBe("Failure");
+    expect(open).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("closes the reserved target when signed URL creation fails", async () => {
