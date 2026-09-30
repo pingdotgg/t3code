@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import {
   type ClientOrchestrationCommand,
@@ -22,6 +23,8 @@ import {
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
+import { isThreadIdleForSettlement } from "./ThreadSettlementPolicy.ts";
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -129,6 +132,22 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ...canonicalCommand,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
       } satisfies OrchestrationCommand;
+    }
+
+    if (canonicalCommand.type === "thread.settle") {
+      // Settling stops the session. A thread still working, including
+      // background work, files away now and settles once idle instead.
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const thread = yield* snapshots
+        .getThreadShellById(canonicalCommand.threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(thread) && !isThreadIdleForSettlement(thread.value, receivedAt)) {
+        return {
+          ...canonicalCommand,
+          type: "thread.settle-when-idle",
+        } satisfies OrchestrationCommand;
+      }
+      return canonicalCommand;
     }
 
     if (

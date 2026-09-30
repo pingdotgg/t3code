@@ -1696,6 +1696,7 @@ describe("applySidebarThreadDrop", () => {
       settledOverride: "active",
       settledAt: null,
       unsettledAt: now,
+      settleWhenIdleAt: null,
     });
   });
 
@@ -1764,6 +1765,7 @@ describe("applySidebarThreadDrop", () => {
       settledOverride: "active",
       settledAt: null,
       unsettledAt: now,
+      settleWhenIdleAt: null,
     });
     expect(
       sortPinnedThreadsForSidebar([

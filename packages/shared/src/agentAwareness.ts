@@ -40,6 +40,8 @@ export interface ProjectThreadAwarenessInput {
     | "updatedAt"
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "settledOverride"
+    | "settleWhenIdleAt"
   >;
 }
 
@@ -55,7 +57,9 @@ export function projectThreadAwareness(
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
   const phase = resolveThreadAwarenessPhase(thread);
-  if (!phase) {
+  // A thread put away while it worked finishes quietly, before or after it settles.
+  const filedAsSettled = thread.settledOverride === "settled" || thread.settleWhenIdleAt != null;
+  if (!phase || (phase === "completed" && filedAsSettled)) {
     return null;
   }
 

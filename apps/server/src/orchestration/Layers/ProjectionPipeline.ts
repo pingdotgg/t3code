@@ -634,6 +634,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pinOrderKey: null,
             activeOrderKey: null,
             autoSettleDisabledAt: null,
+            settleWhenIdleAt: null,
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
             latestUserMessageAt: null,
@@ -689,6 +690,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledAt: event.payload.settledAt,
             unsettledAt: null,
             activeOrderKey: null,
+            settleWhenIdleAt: null,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -793,6 +795,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             autoSettleDisabledAt: event.payload.autoSettleDisabledAt,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.settle-when-idle-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            settleWhenIdleAt: event.payload.settleWhenIdleAt,
             updatedAt: event.payload.updatedAt,
           });
           return;

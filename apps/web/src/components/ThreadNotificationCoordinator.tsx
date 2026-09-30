@@ -8,6 +8,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { useCallback, useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -137,6 +138,8 @@ function EnvironmentNotifications({
             ? "completion"
             : null;
       if (!kind) continue;
+      // A thread put away while it worked finishes quietly.
+      if (kind === "completion" && isFiledAsSettled(thread)) continue;
       const title =
         kind === "completion"
           ? "Thread completed"

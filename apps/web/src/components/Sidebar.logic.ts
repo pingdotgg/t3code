@@ -12,6 +12,7 @@ import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
+  isFiledAsSettled,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -29,13 +30,15 @@ export function shouldNavigateAfterThreadPark(input: {
   readonly currentThreadKey: string | null;
   readonly action: "settle" | "snooze";
   readonly now: string;
-  readonly thread: (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">) | null;
+  readonly thread:
+    | (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride" | "settleWhenIdleAt">)
+    | null;
 }): boolean {
   return (
     input.threadKey === input.currentThreadKey &&
     input.thread !== null &&
     (input.action === "settle"
-      ? input.thread.settledOverride === "settled"
+      ? isFiledAsSettled(input.thread)
       : effectiveSnoozed(input.thread, { now: input.now }))
   );
 }
@@ -358,9 +361,10 @@ export function applySidebarThreadDrop<
     | "settledAt"
     | "settledOverride"
     | "unsettledAt"
+    | "settleWhenIdleAt"
   >,
 >(thread: T, section: "pinned" | "active" | "settled", now: string, orderKey?: string): T {
-  const wasSettled = thread.settledOverride === "settled";
+  const wasSettled = isFiledAsSettled(thread);
   const awake = { ...thread, snoozedAt: null, snoozedUntil: null };
   if (section === "settled") {
     return {
@@ -374,7 +378,13 @@ export function applySidebarThreadDrop<
     };
   }
   const resumed = wasSettled
-    ? { ...awake, settledOverride: "active" as const, settledAt: null, unsettledAt: now }
+    ? {
+        ...awake,
+        settledOverride: "active" as const,
+        settledAt: null,
+        unsettledAt: now,
+        settleWhenIdleAt: null,
+      }
     : awake;
   return {
     ...resumed,

@@ -1,6 +1,10 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  effectiveSnoozed,
+  isFiledAsSettled,
+} from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
@@ -642,8 +646,7 @@ export function useThreadListActions(): {
         crossSection &&
         (((section === "pinned" || thread.pinnedAt != null) &&
           !environmentSupportsPinning(thread.environmentId)) ||
-          (thread.settledOverride === "settled" &&
-            !environmentSupportsSettlement(thread.environmentId)) ||
+          (isFiledAsSettled(thread) && !environmentSupportsSettlement(thread.environmentId)) ||
           (effectiveSnoozed(thread, { now: new Date().toISOString() }) &&
             !environmentSupportsSnooze(thread.environmentId)))
       )

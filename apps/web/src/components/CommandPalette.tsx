@@ -4,6 +4,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -2204,7 +2205,7 @@ function OpenCommandPaletteDialog(props: {
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
-        if (latestThread && latestThread.settledOverride !== "settled") {
+        if (latestThread && !isFiledAsSettled(latestThread)) {
           await navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(

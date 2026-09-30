@@ -43,6 +43,7 @@ import {
   ThreadPinnedPayload,
   ThreadPinReorderedPayload,
   ThreadAutoSettleSetPayload,
+  ThreadSettleWhenIdleSetPayload,
   ThreadPullRequestLinkedPayload,
   ThreadPullRequestSyncedPayload,
   ThreadPullRequestUnlinkedPayload,
@@ -456,6 +457,7 @@ export function projectEvent(
             unsettledAt: null,
             activeOrderKey: null,
             autoSettleDisabledAt: null,
+            settleWhenIdleAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -519,6 +521,8 @@ export function projectEvent(
             settledAt: payload.settledAt,
             unsettledAt: null,
             activeOrderKey: null,
+            // A real settle fulfills any settle-when-idle intent.
+            settleWhenIdleAt: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -602,6 +606,22 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             autoSettleDisabledAt: payload.autoSettleDisabledAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.settle-when-idle-set":
+      return decodeForEvent(
+        ThreadSettleWhenIdleSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            settleWhenIdleAt: payload.settleWhenIdleAt,
             updatedAt: payload.updatedAt,
           }),
         })),

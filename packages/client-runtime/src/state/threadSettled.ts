@@ -44,6 +44,29 @@ export function hasQueuedTurnStart(
   );
 }
 
+/** Settle files such a thread away and the server settles it once idle. */
+export function isThreadWorking(
+  shell: Pick<
+    OrchestrationThreadShell,
+    "session" | "backgroundLiveness" | "latestUserMessageAt" | "latestTurn"
+  >,
+  options: { readonly now: string },
+): boolean {
+  return (
+    shell.session?.status === "starting" ||
+    shell.session?.status === "running" ||
+    shell.backgroundLiveness != null ||
+    hasQueuedTurnStart(shell, options)
+  );
+}
+
+/** Rows filed with the settled threads: settled, or waiting to settle when idle. */
+export function isFiledAsSettled(
+  shell: Pick<OrchestrationThreadShell, "settledOverride" | "settleWhenIdleAt">,
+): boolean {
+  return shell.settledOverride === "settled" || shell.settleWhenIdleAt != null;
+}
+
 /**
  * The snooze lifecycle fields plus everything needed to detect a raised
  * hand. Snooze is an overlay on the active state: a snoozed thread stays

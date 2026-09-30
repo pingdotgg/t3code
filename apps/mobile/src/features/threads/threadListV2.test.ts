@@ -393,6 +393,25 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items[0]?.variant).toBe("slim");
   });
 
+  it("files a thread waiting to settle when idle with the settled threads", () => {
+    const thread = makeThread({
+      id: ThreadId.make("settles-when-idle"),
+      title: "Still working",
+      settleWhenIdleAt: NOW,
+    });
+    const layout = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.settledCount).toBe(1);
+    expect(
+      getThreadListV2OrderedSection({ threads: [thread], section: "active", now: NOW }),
+    ).toEqual([]);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

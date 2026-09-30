@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+﻿import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 import {
   WS_METHODS,
@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
-import { canSnooze } from "./threadSettled.ts";
+import { canSnooze, isThreadWorking } from "./threadSettled.ts";
 
 import {
   createAtomCommandScheduler,
@@ -269,19 +269,21 @@ export function createThreadEnvironmentAtoms<R, E>(
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
-      !accepted &&
-      (!canSnooze(thread, { now }) ||
-        thread.session?.status === "starting" ||
-        thread.session?.status === "running")
+      !accepted && !canSnooze(thread, { now })
         ? thread
         : {
             ...thread,
-            hasPendingApprovals: false,
-            hasPendingUserInput: false,
-            settledOverride: "settled",
-            settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
-            unsettledAt: null,
-            activeOrderKey: null,
+            // The server files a working thread away and settles it once idle.
+            ...(isThreadWorking(thread, { now })
+              ? { settleWhenIdleAt: thread.settleWhenIdleAt ?? now }
+              : {
+                  hasPendingApprovals: false,
+                  hasPendingUserInput: false,
+                  settledOverride: "settled" as const,
+                  settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
+                  unsettledAt: null,
+                  activeOrderKey: null,
+                }),
             pinnedAt: null,
             pinOrderKey: null,
             snoozedAt: null,
@@ -293,6 +295,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       settledOverride: input.reason === "user" ? "active" : null,
       settledAt: null,
       unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
+      settleWhenIdleAt: null,
     })),
     snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
       (!accepted && !canSnooze(thread, { now })) ||
@@ -315,6 +318,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       pinnedAt: thread.pinnedAt ?? now,
       pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
+      settleWhenIdleAt: null,
       ...(thread.settledOverride === "settled"
         ? {
             settledOverride: "active" as const,

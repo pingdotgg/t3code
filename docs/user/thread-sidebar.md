@@ -94,6 +94,13 @@ sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
 runs a command, such as a dev server, stays open.
 
+You can also settle a thread while its agent is still working, including background work
+such as a watch loop. The thread moves to the settled shelf right away, marked **Working**,
+and the agent keeps going. It settles once all of that work finishes, without a completion
+notification. Sending a message, **Un-settle thread**, pinning, or dragging it back returns
+it to active work without stopping the agent. So does an approval request, a question from
+the agent, or a failure, and those still notify you.
+
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work

@@ -626,6 +626,7 @@ const makeWsRpcLayer = (
       const normalizerContext = yield* Effect.context<
         | FileSystem.FileSystem
         | Path.Path
+        | ProjectionSnapshotQuery.ProjectionSnapshotQuery
         | ServerConfig.ServerConfig
         | WorkspacePaths.WorkspacePaths
       >();

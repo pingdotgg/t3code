@@ -26,6 +26,7 @@ import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts"
 import { pullRequestMatchesProject, readSweepSnapshot } from "./ThreadPullRequestReactor.ts";
 import {
   isAutoSettlementCandidate,
+  isThreadIdleForSettlement,
   resolveAutoSettlementAt,
   type SettlementPullRequest,
 } from "./ThreadSettlementPolicy.ts";
@@ -87,16 +88,55 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
 
+  // Settle on a working thread asks for this once it is idle. Settling stops
+  // the session, so background work such as a watch loop has to end first.
+  // Auto-settle is rejected when the thread changed after this read.
+  const settleWhenIdle = Effect.fn("ThreadSettlementReactor.settleWhenIdle")(
+    function* (threadId: ThreadId, snapshotSequence: number, settledAt: string) {
+      const uuid = yield* crypto.randomUUIDv4;
+      yield* engine.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make(`server:settle-when-idle:${threadId}:${uuid}`),
+        threadId,
+        snapshotSequence,
+        settledAt,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("settle when idle skipped", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      ),
+  );
+
   const sweep = Effect.fn("ThreadSettlementReactor.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
     const settings = yield* settingsService.getSettings;
-    if (!autoSettlementConfigured(settings)) {
+    const configured = autoSettlementConfigured(settings);
+    // Settle when idle needs only the one-thread checks its events queue.
+    if (!configured && threadId === undefined) {
       return;
     }
     const snapshot = yield* readSweepSnapshot(snapshots, threadId ?? null);
     const now = DateTime.formatIso(yield* DateTime.now);
+    yield* Effect.forEach(
+      snapshot.threads.filter(
+        (thread) => thread.settleWhenIdleAt != null && isThreadIdleForSettlement(thread, now),
+      ),
+      (thread) => settleWhenIdle(thread.id, snapshot.snapshotSequence, now),
+      { concurrency: 8, discard: true },
+    );
+    if (!configured) {
+      return;
+    }
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     // A merge rechecks all candidates, including branches that discovery has
     // not linked yet. Those lookups can still have cached the PR as open.
@@ -339,6 +379,16 @@ export const make = Effect.gen(function* () {
         // Merge notifications can arrive before the linked snapshot is projected.
         // Recheck the persisted state so terminal links settle without the timer.
         return worker.enqueue(event.payload.threadId);
+      case "thread.settle-when-idle-set":
+        // The intent can land after the turn already ended.
+        return event.payload.settleWhenIdleAt === null
+          ? Effect.void
+          : worker.enqueue(event.payload.threadId);
+      case "thread.activity-appended":
+        // Background work (a subagent, a watch loop) can end after the turn.
+        return event.payload.activity.kind === "task.completed"
+          ? worker.enqueue(event.payload.threadId)
+          : Effect.void;
       case "thread.session-set":
         if (
           event.payload.session.status !== "running" &&

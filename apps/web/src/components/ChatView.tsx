@@ -54,7 +54,11 @@ import {
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
-import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSnoozed,
+  isFiledAsSettled,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseCodexFeedbackCommand,
   submitCodexFeedback,
@@ -6055,7 +6059,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
-    if (activeThreadShell?.settledOverride === "settled") return false;
+    if (activeThreadShell && isFiledAsSettled(activeThreadShell)) return false;
     const wokeAtMs = Date.parse(activeThreadWokeAt);
     if (Number.isNaN(wokeAtMs)) return false;
     // Having the thread open counts as a visit at completedAt (the effect
@@ -6079,7 +6083,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadWokeAt,
   ]);
   const activeThreadSettled =
-    supportsSettlement && activeThreadShell?.settledOverride === "settled";
+    supportsSettlement && activeThreadShell != null && isFiledAsSettled(activeThreadShell);
+  const activeThreadSettlesWhenIdle = activeThreadShell?.settleWhenIdleAt != null;
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });
@@ -6353,7 +6358,11 @@ export default function ChatView(props: ChatViewProps) {
       id: `thread-${isSnoozed ? "snoozed" : "settled"}:${activeThread?.id ?? "unknown"}`,
       variant: "info",
       icon: isSnoozed ? <AlarmClockIcon /> : <CheckCircle2Icon />,
-      title: `This thread is ${isSnoozed ? "snoozed" : "settled"}`,
+      title: isSnoozed
+        ? "This thread is snoozed"
+        : activeThreadSettlesWhenIdle
+          ? "This thread settles when the agent finishes"
+          : "This thread is settled",
       description: `Send a message to ${isSnoozed ? "wake" : "unsettle"}`,
       actions: (
         <Button
@@ -6377,6 +6386,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeThread?.id,
     activeThreadSettled,
+    activeThreadSettlesWhenIdle,
     activeThreadSnoozed,
     handleUnsnoozeActiveThread,
     handleUnsettleActiveThread,

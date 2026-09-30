@@ -29,6 +29,8 @@ function thread(
   | "updatedAt"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "settledOverride"
+  | "settleWhenIdleAt"
 > {
   return {
     id: "thread-1" as ThreadId,
@@ -39,6 +41,8 @@ function thread(
     updatedAt: NOW,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
+    settledOverride: null,
+    settleWhenIdleAt: null,
     ...overrides,
   };
 }
@@ -176,5 +180,36 @@ describe("projectThreadAwareness", () => {
       headline: "Agent failed",
       detail: "Provider process exited.",
     });
+  });
+
+  it("finishes quietly for a thread put away while it worked", () => {
+    const readySession = {
+      threadId: "thread-1" as ThreadId,
+      status: "ready" as const,
+      providerName: "Codex",
+      runtimeMode: "full-access" as const,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: NOW,
+    };
+    for (const filed of [{ settleWhenIdleAt: NOW }, { settledOverride: "settled" as const }]) {
+      expect(
+        projectThreadAwareness({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: thread({ ...filed, session: readySession }),
+        }),
+      ).toBeNull();
+    }
+    // A failure still surfaces.
+    const failed = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        settleWhenIdleAt: NOW,
+        session: { ...readySession, status: "error", lastError: "Provider process exited." },
+      }),
+    });
+    expect(failed?.phase).toBe("failed");
   });
 });

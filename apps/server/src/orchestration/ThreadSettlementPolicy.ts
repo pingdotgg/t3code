@@ -114,14 +114,21 @@ export function resolveAutoSettlementAt(input: {
     : null;
 }
 
+/** Settling stops the session, so nothing may be running, including background work. */
+export function isThreadIdleForSettlement(thread: OrchestrationThreadShell, now: string): boolean {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
+  if (thread.backgroundLiveness != null) return false;
+  return !threadHasQueuedTurnStart(thread, now);
+}
+
 /** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now: string): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.autoSettleDisabledAt != null) return false;
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
-  if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
-  if (thread.backgroundLiveness != null) return false;
-  if (threadHasQueuedTurnStart(thread, now)) return false;
+  // The settle-when-idle intent settles these instead.
+  if (thread.settleWhenIdleAt != null) return false;
+  if (!isThreadIdleForSettlement(thread, now)) return false;
   if (thread.snoozedUntil == null || Date.parse(thread.snoozedUntil) <= Date.parse(now))
     return true;
   const wokeOnError =

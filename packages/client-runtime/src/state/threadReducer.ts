@@ -132,6 +132,7 @@ export function applyThreadDetailEvent(
           unsettledAt: null,
           activeOrderKey: null,
           autoSettleDisabledAt: null,
+          settleWhenIdleAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           deletedAt: null,
@@ -173,6 +174,7 @@ export function applyThreadDetailEvent(
           settledAt: event.payload.settledAt,
           unsettledAt: null,
           activeOrderKey: null,
+          settleWhenIdleAt: null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -256,6 +258,16 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           autoSettleDisabledAt: event.payload.autoSettleDisabledAt,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.settle-when-idle-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          settleWhenIdleAt: event.payload.settleWhenIdleAt,
           updatedAt: event.payload.updatedAt,
         },
       };

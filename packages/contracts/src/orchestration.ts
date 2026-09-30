@@ -842,6 +842,9 @@ export const OrchestrationThread = Schema.Struct({
   // Survives manual settle, un-settle, and activity: only the user clears it.
   // Optional so payloads from older servers still decode.
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Settle on a working thread: filed with the settled threads, and settled
+  // for real (which stops the session) once the thread is idle.
+  settleWhenIdleAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
@@ -913,6 +916,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  settleWhenIdleAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
@@ -1163,6 +1167,14 @@ const ThreadAutoSettleCommand = Schema.Struct({
   threadId: ThreadId,
   snapshotSequence: NonNegativeInt,
   settledAt: IsoDateTime,
+});
+
+// The server's form of thread.settle on a working thread: arms the
+// settle-when-idle intent instead, because settling stops the session.
+const ThreadSettleWhenIdleCommand = Schema.Struct({
+  type: Schema.Literal("thread.settle-when-idle"),
+  commandId: CommandId,
+  threadId: ThreadId,
 });
 
 const ThreadUnsettleCommand = Schema.Struct({
@@ -1660,6 +1672,7 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
 
 const InternalOrchestrationCommand = Schema.Union([
   ThreadAutoSettleCommand,
+  ThreadSettleWhenIdleCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
   ThreadSessionSetCommand,
@@ -1703,6 +1716,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unpinned",
   "thread.pin-reordered",
   "thread.auto-settle-set",
+  "thread.settle-when-idle-set",
   "thread.meta-updated",
   "thread.pull-request-linked",
   "thread.pull-request-unlinked",
@@ -1845,6 +1859,13 @@ export const ThreadAutoSettleSetPayload = Schema.Struct({
   threadId: ThreadId,
   // Null re-enables automatic settlement.
   autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadSettleWhenIdleSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  // Null cancels the intent; thread.settled clears it when fulfilled.
+  settleWhenIdleAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
 });
 
@@ -2116,6 +2137,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.auto-settle-set"),
     payload: ThreadAutoSettleSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.settle-when-idle-set"),
+    payload: ThreadSettleWhenIdleSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

@@ -170,6 +170,58 @@ function withEventBase(
 
 type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
 
+interface ThreadEventInput<Fields extends keyof OrchestrationThread> {
+  readonly thread: Pick<OrchestrationThread, "id" | Fields>;
+  readonly commandId: OrchestrationCommand["commandId"];
+  readonly occurredAt: string;
+}
+
+const threadEventBase = (input: ThreadEventInput<never>) =>
+  withEventBase({
+    aggregateKind: "thread",
+    aggregateId: input.thread.id,
+    occurredAt: input.occurredAt,
+    commandId: input.commandId,
+  });
+
+/** Cancels an armed settle-when-idle intent. Emits nothing when none is armed. */
+const cancelSettleWhenIdle = Effect.fnUntraced(function* (
+  input: ThreadEventInput<"settleWhenIdleAt">,
+) {
+  if (input.thread.settleWhenIdleAt == null) return [];
+  const payload = {
+    threadId: input.thread.id,
+    settleWhenIdleAt: null,
+    updatedAt: input.occurredAt,
+  };
+  return [
+    { ...(yield* threadEventBase(input)), type: "thread.settle-when-idle-set" as const, payload },
+  ];
+});
+
+/** Filing a thread away drops the states that would keep its row pinned or snoozed. */
+const parkCompanionEvents = Effect.fnUntraced(function* (
+  input: ThreadEventInput<"pinnedAt" | "snoozedUntil">,
+) {
+  const events: Array<PlannedOrchestrationEvent> = [];
+  const { thread, occurredAt } = input;
+  if (thread.pinnedAt != null) {
+    events.push({
+      ...(yield* threadEventBase(input)),
+      type: "thread.unpinned",
+      payload: { threadId: thread.id, updatedAt: occurredAt },
+    });
+  }
+  if (thread.snoozedUntil != null) {
+    events.push({
+      ...(yield* threadEventBase(input)),
+      type: "thread.unsnoozed",
+      payload: { threadId: thread.id, reason: "user", updatedAt: occurredAt },
+    });
+  }
+  return events;
+});
+
 type DecideOrchestrationCommandResult =
   | PlannedOrchestrationEvent
   | ReadonlyArray<PlannedOrchestrationEvent>;
@@ -484,9 +536,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      // The auto-settle opt-out does not cover a settle the user asked for.
       if (
         command.type === "thread.auto-settle" &&
-        (thread.settledOverride !== null || thread.autoSettleDisabledAt != null)
+        (thread.settledOverride !== null ||
+          (thread.autoSettleDisabledAt != null && thread.settleWhenIdleAt == null))
       ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -568,38 +622,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
-      if (thread.pinnedAt != null) {
-        companionEvents.push({
-          ...(yield* withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt,
-            commandId: command.commandId,
-          })),
-          type: "thread.unpinned" as const,
-          payload: {
-            threadId: command.threadId,
-            updatedAt: occurredAt,
-          },
-        });
-      }
-      if (thread.snoozedUntil != null) {
-        companionEvents.push({
-          ...(yield* withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt,
-            commandId: command.commandId,
-          })),
-          type: "thread.unsnoozed",
-          payload: {
-            threadId: command.threadId,
-            reason: "user",
-            updatedAt: occurredAt,
-          },
-        });
-      }
+      companionEvents.push(
+        ...(yield* parkCompanionEvents({ thread, commandId: command.commandId, occurredAt })),
+      );
       return companionEvents.length > 0 ? [settledEvent, ...companionEvents] : settledEvent;
+    }
+
+    case "thread.settle-when-idle": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Same rule as snooze: an agent blocked on the user must stay in view.
+      if (openRequests(thread).size > 0) {
+        return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
+      }
+      // Never thread.settled here: that stops the provider. ThreadSettlementReactor
+      // settles once the thread is idle. Re-arming keeps the original stamps.
+      const armedAt = thread.settleWhenIdleAt ?? null;
+      const occurredAt = yield* nowIso;
+      const input = { thread, commandId: command.commandId, occurredAt };
+      const armedEvent: PlannedOrchestrationEvent = {
+        ...(yield* threadEventBase(input)),
+        type: "thread.settle-when-idle-set",
+        payload: {
+          threadId: command.threadId,
+          settleWhenIdleAt: armedAt ?? occurredAt,
+          updatedAt: armedAt !== null ? thread.updatedAt : occurredAt,
+        },
+      };
+      const companionEvents = yield* parkCompanionEvents(input);
+      return companionEvents.length > 0 ? [armedEvent, ...companionEvents] : armedEvent;
     }
 
     case "thread.unsettle": {
@@ -613,7 +667,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // the existing updatedAt so duplicates do not churn ordering.
       const alreadyPinnedActive = thread.settledOverride === "active";
       const occurredAt = yield* nowIso;
-      return {
+      const unsettledEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -627,6 +681,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: alreadyPinnedActive ? thread.updatedAt : occurredAt,
         },
       };
+      // The session was never stopped, so un-settle only cancels the intent.
+      const cancelEvents = yield* cancelSettleWhenIdle({
+        thread,
+        commandId: command.commandId,
+        occurredAt,
+      });
+      return cancelEvents.length > 0 ? [...cancelEvents, unsettledEvent] : unsettledEvent;
     }
 
     case "thread.snooze": {
@@ -756,7 +817,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // silently outranking them. An explicit settle un-settles (reason
       // "user", same override the un-settle button stamps), and a snooze's
       // return ticket is spent — the thread is on top NOW, not on Tuesday.
-      const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [
+        ...(yield* cancelSettleWhenIdle({ thread, commandId: command.commandId, occurredAt })),
+      ];
       if (thread.settledOverride === "settled") {
         promotionEvents.push({
           ...(yield* withEventBase({
@@ -1483,7 +1546,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // thread can auto-settle again after this burst of work goes stale.
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
-      const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      // A new message also cancels a settle-when-idle intent.
+      const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [
+        ...(yield* cancelSettleWhenIdle({
+          thread: targetThread,
+          commandId: command.commandId,
+          occurredAt: command.createdAt,
+        })),
+      ];
       if (targetThread.settledOverride !== null) {
         lifecycleResetEvents.push({
           ...(yield* withEventBase({
@@ -1911,6 +1981,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // as snoozed, without spending the return ticket.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
+      // A failure cancels a settle-when-idle intent so it shows as active.
+      if (command.session.status === "error") {
+        const cancelEvents = yield* cancelSettleWhenIdle({
+          thread,
+          commandId: command.commandId,
+          occurredAt: command.createdAt,
+        });
+        if (cancelEvents.length > 0) return [...cancelEvents, sessionSetEvent];
+      }
       // Real activity resets ANY override (settled wakes, active unpins).
       if (thread.settledOverride === null || !isSessionActivity) {
         return sessionSetEvent;
@@ -2193,9 +2272,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const wakesSettledThread =
         command.activity.kind === "approval.requested" ||
         command.activity.kind === "user-input.requested";
+      // The same requests cancel a settle-when-idle intent.
+      const cancelEvents = wakesSettledThread
+        ? yield* cancelSettleWhenIdle({
+            thread,
+            commandId: command.commandId,
+            occurredAt: command.createdAt,
+          })
+        : [];
       // Real activity resets ANY override (settled wakes, active unpins).
       if (thread.settledOverride === null || !wakesSettledThread) {
-        return activityAppendedEvent;
+        return cancelEvents.length > 0
+          ? [...cancelEvents, activityAppendedEvent]
+          : activityAppendedEvent;
       }
       const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
@@ -2211,7 +2300,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
-      return [unsettledEvent, activityAppendedEvent];
+      return [...cancelEvents, unsettledEvent, activityAppendedEvent];
     }
 
     default: {
