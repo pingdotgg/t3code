@@ -2288,7 +2288,15 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
-  const subagentCountsByThreadKey = useMemo(() => deriveSidebarSubagentCounts(threads), [threads]);
+  const previousSubagentCounts = useRef<ReturnType<typeof deriveSidebarSubagentCounts> | undefined>(
+    undefined,
+  );
+  const subagentCountsByThreadKey = useMemo(() => {
+    // Unchanged counts keep their identity, so their memoized rows skip the render.
+    const counts = deriveSidebarSubagentCounts(threads, previousSubagentCounts.current);
+    previousSubagentCounts.current = counts;
+    return counts;
+  }, [threads]);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);

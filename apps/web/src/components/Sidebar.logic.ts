@@ -1390,7 +1390,7 @@ type SidebarSubagentThread = Pick<
   readonly runtime: Pick<NonNullable<SidebarThreadSummary["runtime"]>, "activityStartedAt"> | null;
   readonly latestRun: Pick<
     NonNullable<SidebarThreadSummary["latestRun"]>,
-    "startedAt" | "requestedAt"
+    "startedAt" | "requestedAt" | "completedAt"
   > | null;
 };
 
@@ -1405,30 +1405,37 @@ const WORKING_SUBAGENT_STATUSES = new Set([
 /**
  * Subagent tallies keyed by the parent's scoped thread key. Only parents with
  * a subagent still working get an entry: a quiet thread must not carry a
- * finished batch forever. The batch starts when the oldest still-working
- * subagent started its current run, so earlier finished rounds drop out. Run
- * start, not creation, marks a subagent: a resumed child keeps its old
- * createdAt. (The parent's latest user message cannot mark the batch:
- * delegated results arrive as user messages.)
+ * finished batch forever. The batch is the working subagents plus every
+ * finished one whose run overlapped theirs, directly or through another
+ * member, so a subagent that finishes first stays counted while earlier
+ * rounds drop out. Run start, not creation, marks a subagent: a resumed child
+ * keeps its old createdAt. (The parent's latest user message cannot mark the
+ * batch: delegated results arrive as user messages.)
+ *
+ * Pass the previous result to keep the entries that did not change, so an
+ * unrelated thread update does not re-render every row that shows counts.
  */
 export function deriveSidebarSubagentCounts(
   threads: ReadonlyArray<SidebarSubagentThread>,
+  previous?: ReadonlyMap<string, SidebarSubagentCounts>,
 ): ReadonlyMap<string, SidebarSubagentCounts> {
   const subagentsByParent = new Map<
     string,
-    Array<{ readonly startedAt: string; readonly status: string }>
+    Array<{ readonly startedAt: string; readonly finishedAt: string; readonly status: string }>
   >();
   for (const thread of threads) {
     const parentThreadId = thread.lineage.parentThreadId;
     if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) continue;
     const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
     const subagents = subagentsByParent.get(parentKey) ?? [];
+    const startedAt =
+      thread.runtime?.activityStartedAt ??
+      thread.latestRun?.startedAt ??
+      thread.latestRun?.requestedAt ??
+      thread.createdAt;
     subagents.push({
-      startedAt:
-        thread.runtime?.activityStartedAt ??
-        thread.latestRun?.startedAt ??
-        thread.latestRun?.requestedAt ??
-        thread.createdAt,
+      startedAt,
+      finishedAt: thread.latestRun?.completedAt ?? startedAt,
       status: thread.source.activityRunStatus ?? thread.source.status,
     });
     subagentsByParent.set(parentKey, subagents);
@@ -1437,16 +1444,29 @@ export function deriveSidebarSubagentCounts(
   for (const [parentKey, subagents] of subagentsByParent) {
     const working = subagents.filter((subagent) => WORKING_SUBAGENT_STATUSES.has(subagent.status));
     if (working.length === 0) continue;
-    const batchStartedAt = working.reduce(
+    let batchStartedAt = working.reduce(
       (earliest, subagent) => (subagent.startedAt < earliest ? subagent.startedAt : earliest),
       working[0]!.startedAt,
     );
-    const batch = subagents.filter((subagent) => subagent.startedAt >= batchStartedAt);
-    counts.set(parentKey, {
-      working: working.length,
-      done: batch.filter((subagent) => subagent.status === "completed").length,
-      failed: batch.filter((subagent) => subagent.status === "failed").length,
-    });
+    let done = 0;
+    let failed = 0;
+    // Latest finish first: each member can only move the batch start earlier.
+    const finished = subagents
+      .filter((subagent) => !WORKING_SUBAGENT_STATUSES.has(subagent.status))
+      .toSorted((left, right) => (left.finishedAt < right.finishedAt ? 1 : -1));
+    for (const subagent of finished) {
+      if (subagent.finishedAt < batchStartedAt) break;
+      if (subagent.startedAt < batchStartedAt) batchStartedAt = subagent.startedAt;
+      if (subagent.status === "completed") done += 1;
+      else if (subagent.status === "failed") failed += 1;
+    }
+    const kept = previous?.get(parentKey);
+    counts.set(
+      parentKey,
+      kept?.working === working.length && kept.done === done && kept.failed === failed
+        ? kept
+        : { working: working.length, done, failed },
+    );
   }
   return counts;
 }

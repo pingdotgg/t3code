@@ -2166,7 +2166,11 @@ describe("deriveSidebarSubagentCounts", () => {
     createdAt,
     source: { status, activityRunStatus: null as "running" | null },
     runtime: null as { activityStartedAt: string } | null,
-    latestRun: null as { startedAt: string | null; requestedAt: string | null } | null,
+    latestRun: null as {
+      startedAt: string | null;
+      requestedAt: string | null;
+      completedAt: string | null;
+    } | null,
   });
 
   it("tallies the batch that started with the oldest working subagent", () => {
@@ -2195,11 +2199,19 @@ describe("deriveSidebarSubagentCounts", () => {
       // Finished yesterday, between the resumed child's creation and today.
       {
         ...child("completed", "2026-09-24T09:30:00.000Z"),
-        latestRun: { startedAt: "2026-09-24T09:30:01.000Z", requestedAt: null },
+        latestRun: {
+          startedAt: "2026-09-24T09:30:01.000Z",
+          requestedAt: null,
+          completedAt: "2026-09-24T09:40:00.000Z",
+        },
       },
       {
         ...child("completed", "2026-09-25T10:00:01.000Z"),
-        latestRun: { startedAt: "2026-09-25T10:00:02.000Z", requestedAt: null },
+        latestRun: {
+          startedAt: "2026-09-25T10:00:02.000Z",
+          requestedAt: null,
+          completedAt: "2026-09-25T10:05:00.000Z",
+        },
       },
     ]);
     expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 0 });
@@ -2210,19 +2222,76 @@ describe("deriveSidebarSubagentCounts", () => {
       // Resumed today and still queued.
       {
         ...child("queued", "2026-09-24T09:00:00.000Z"),
-        latestRun: { startedAt: null, requestedAt: "2026-09-25T10:00:00.000Z" },
+        latestRun: { startedAt: null, requestedAt: "2026-09-25T10:00:00.000Z", completedAt: null },
       },
       {
         ...child("completed", "2026-09-24T09:30:00.000Z"),
-        latestRun: { startedAt: "2026-09-24T09:30:01.000Z", requestedAt: null },
+        latestRun: {
+          startedAt: "2026-09-24T09:30:01.000Z",
+          requestedAt: null,
+          completedAt: "2026-09-24T09:40:00.000Z",
+        },
       },
       // Resumed today and failed before its provider started.
       {
         ...child("failed", "2026-09-24T09:45:00.000Z"),
-        latestRun: { startedAt: null, requestedAt: "2026-09-25T10:00:01.000Z" },
+        latestRun: {
+          startedAt: null,
+          requestedAt: "2026-09-25T10:00:01.000Z",
+          completedAt: "2026-09-25T10:00:02.000Z",
+        },
       },
     ]);
     expect(counts.get(parentKey)).toEqual({ working: 1, done: 0, failed: 1 });
+  });
+
+  it("keeps a subagent that finished first in the batch it ran with", () => {
+    const finishedFirst = {
+      ...child("completed", "2026-09-25T10:00:00.000Z"),
+      latestRun: {
+        startedAt: "2026-09-25T10:00:00.000Z",
+        requestedAt: null,
+        completedAt: "2026-09-25T10:05:00.000Z",
+      },
+    };
+    const failedEarly = {
+      ...child("failed", "2026-09-25T09:59:00.000Z"),
+      latestRun: {
+        startedAt: "2026-09-25T09:59:00.000Z",
+        requestedAt: null,
+        completedAt: "2026-09-25T10:00:30.000Z",
+      },
+    };
+    // Finished before any member of the batch started.
+    const earlierRound = {
+      ...child("completed", "2026-09-25T09:00:00.000Z"),
+      latestRun: {
+        startedAt: "2026-09-25T09:00:00.000Z",
+        requestedAt: null,
+        completedAt: "2026-09-25T09:30:00.000Z",
+      },
+    };
+    const counts = deriveSidebarSubagentCounts([
+      earlierRound,
+      failedEarly,
+      finishedFirst,
+      child("running", "2026-09-25T10:01:00.000Z"),
+    ]);
+    // failedEarly overlapped finishedFirst, which overlapped the running one.
+    expect(counts.get(parentKey)).toEqual({ working: 1, done: 1, failed: 1 });
+  });
+
+  it("keeps a parent's counts object when nothing about it changed", () => {
+    const threads = [child("running", "2026-09-25T10:00:00.000Z")];
+    const first = deriveSidebarSubagentCounts(threads);
+    const unchanged = deriveSidebarSubagentCounts(threads, first);
+    expect(unchanged.get(parentKey)).toBe(first.get(parentKey));
+
+    const changed = deriveSidebarSubagentCounts(
+      [...threads, child("running", "2026-09-25T10:00:01.000Z")],
+      first,
+    );
+    expect(changed.get(parentKey)).toEqual({ working: 2, done: 0, failed: 0 });
   });
 
   it("omits parents whose subagents have all finished", () => {
