@@ -2,6 +2,7 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,7 +34,14 @@ import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+// Budget to resolve credentials and create the session, which ends when the
+// driver reports the synchronizing stage. The socket then opens (bounded at 15
+// seconds by the RPC session) and the server gets the rest of its own budget
+// to deliver the first config snapshot. A cold server with a large database
+// can take longer than 15 seconds to answer, and that is not a reason to drop
+// a working connection.
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+const CONNECTION_SYNCHRONIZATION_TIMEOUT = "75 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 // Mobile resumes, explicit retries, and offline events want a fast answer:
 // the user is waiting, or the network may be gone.
@@ -308,9 +316,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     attempt: number,
     generation: number,
     lastFailure: ConnectionAttemptError | null,
+    synchronizing: Deferred.Deferred<void>,
   ) {
     return yield* driver.connect(entry, (progress) =>
-      reportProgress(attempt, generation, lastFailure, progress),
+      (progress.stage === "synchronizing"
+        ? Deferred.succeed(synchronizing, undefined)
+        : Effect.void
+      ).pipe(Effect.andThen(reportProgress(attempt, generation, lastFailure, progress))),
     );
   });
 
@@ -361,16 +373,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     generation: number,
     lastFailure: ConnectionAttemptError | null,
     pendingRetry: Option.Option<PendingRetryTrace>,
+    synchronizing: Deferred.Deferred<void>,
   ) {
     if (target._tag === "RelayConnectionTarget") {
       return yield* traceRelayEstablishment(
-        establishConnection(attempt, generation, lastFailure),
+        establishConnection(attempt, generation, lastFailure, synchronizing),
         attempt,
         generation,
         pendingRetry,
       );
     }
-    return yield* establishConnection(attempt, generation, lastFailure).pipe(
+    return yield* establishConnection(attempt, generation, lastFailure, synchronizing).pipe(
       Effect.map((lease) => ({
         attemptSpan: Option.none<Tracer.Span>(),
         lease,
@@ -533,9 +546,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     ignoreOffline: boolean,
   ) {
     yield* SubscriptionRef.set(prepared, Option.none());
+    const synchronizing = yield* Deferred.make<void>();
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
-        establishTracedConnection(attempt, generation, lastFailure, pendingRetry),
+        establishTracedConnection(attempt, generation, lastFailure, pendingRetry, synchronizing),
       ).pipe(
         Effect.map((exit): EstablishmentEvent => ({
           _tag: "Completed",
@@ -548,9 +562,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           resetRetry,
         })),
       ),
-      Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
-        Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
-      ),
+      Effect.gen(function* () {
+        const reachedSynchronizing = yield* Deferred.await(synchronizing).pipe(
+          Effect.timeoutOption(CONNECTION_ESTABLISHMENT_TIMEOUT),
+        );
+        if (Option.isSome(reachedSynchronizing)) {
+          yield* Effect.sleep(CONNECTION_SYNCHRONIZATION_TIMEOUT);
+        }
+        return { _tag: "TimedOut" } as const satisfies EstablishmentEvent;
+      }),
     ]);
 
     if (establishment._tag === "Interrupted") {
