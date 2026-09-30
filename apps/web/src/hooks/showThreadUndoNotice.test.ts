@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { toastManager } from "../components/ui/toast";
 import {
+  setThreadUndoNoticeHeld,
   showThreadUndoNotice,
   undoLatestThreadAction,
   useThreadUndoNotice,
@@ -148,5 +149,30 @@ describe("thread undo notice", () => {
     await notice().undo();
     expect(older).toHaveBeenCalledOnce();
     expect(undoLatestThreadAction()).toBe(false);
+  });
+
+  it("holds the notice while hovered and restarts the full timer on leave", () => {
+    const { options } = setup();
+    showThreadUndoNotice(options);
+    vi.advanceTimersByTime(4_000);
+    setThreadUndoNoticeHeld(true);
+    vi.advanceTimersByTime(60_000);
+    expect(useThreadUndoNotice.getState().notice).not.toBeNull();
+    setThreadUndoNoticeHeld(false);
+    vi.advanceTimersByTime(4_999);
+    expect(useThreadUndoNotice.getState().notice).not.toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
+  });
+
+  it("does not carry a hover hold over to the next notice", () => {
+    const { options } = setup();
+    showThreadUndoNotice(options);
+    setThreadUndoNoticeHeld(true);
+    void undoLatestThreadAction();
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
+    showThreadUndoNotice({ ...options, claim: ThreadUndo.begin("pin", "env/next") });
+    vi.advanceTimersByTime(5_000);
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
   });
 });

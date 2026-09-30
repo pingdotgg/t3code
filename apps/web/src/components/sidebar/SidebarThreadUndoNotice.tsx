@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 
-import { undoLatestThreadAction, useThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import {
+  setThreadUndoNoticeHeld,
+  undoLatestThreadAction,
+  useThreadUndoNotice,
+} from "../../hooks/showThreadUndoNotice";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -15,7 +19,12 @@ export function SidebarThreadUndoNotice() {
   const noun = `${notice.action === "Discarded" ? "draft" : "thread"}${notice.count === 1 ? "" : "s"}`;
 
   return (
-    <Alert role="status" variant="sidebar">
+    <Alert
+      role="status"
+      variant="sidebar"
+      onPointerEnter={() => setThreadUndoNoticeHeld(true)}
+      onPointerLeave={() => setThreadUndoNoticeHeld(false)}
+    >
       <AlertDescription>
         {notice.action} {notice.count} {noun},{" "}
         <InlineButton onClick={undoLatestThreadAction}>
