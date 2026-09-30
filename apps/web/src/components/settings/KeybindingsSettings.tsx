@@ -68,6 +68,7 @@ import {
   type KeybindingRow,
   type WhenVariableOption,
   unknownWhenVariables,
+  whenAstToDisplayLabel,
   whenAstToExpression,
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
@@ -930,7 +931,7 @@ function WhenClauseControl({
         }
         aria-label={t("editWhenFor", { command: label })}
       >
-        <span className="truncate font-mono">{expression || t("always")}</span>
+        <span className="truncate">{whenAstToDisplayLabel(value, t)}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>

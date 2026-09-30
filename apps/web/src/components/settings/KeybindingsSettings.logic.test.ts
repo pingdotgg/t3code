@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type { TFunction } from "@t3tools/i18n";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
@@ -12,11 +13,39 @@ import {
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
   unknownWhenVariables,
+  whenAstToDisplayLabel,
   whenAstToExpression,
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("localizes known trigger conditions without changing their stored expression", () => {
+    const labels: Record<string, string> = {
+      whenVariableTerminalFocus: "终端已聚焦",
+      whenVariableModelPickerOpen: "模型选择器已打开",
+      whenVariableIsDesktop: "桌面版",
+      logicalAnd: "且",
+    };
+    const t = ((key: string, options?: { condition?: string }) =>
+      key === "conditionNot"
+        ? `不满足“${options?.condition}”`
+        : (labels[key] ?? key)) as unknown as TFunction<"keybindings">;
+    const notTerminalFocus = {
+      type: "not",
+      node: { type: "identifier", name: "terminalFocus" },
+    } as const;
+    const desktopModelPicker = {
+      type: "and",
+      left: { type: "identifier", name: "modelPickerOpen" },
+      right: { type: "identifier", name: "isDesktop" },
+    } as const;
+
+    expect(whenAstToDisplayLabel(notTerminalFocus, t)).toBe("不满足“终端已聚焦”");
+    expect(whenAstToExpression(notTerminalFocus)).toBe("!terminalFocus");
+    expect(whenAstToDisplayLabel(desktopModelPicker, t)).toBe("模型选择器已打开 且 桌面版");
+    expect(whenAstToExpression(desktopModelPicker)).toBe("modelPickerOpen && isDesktop");
+  });
+
   it("lists composer, provider, and pull request commands with editable defaults", () => {
     const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
     for (const command of [

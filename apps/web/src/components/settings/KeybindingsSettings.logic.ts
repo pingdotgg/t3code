@@ -53,6 +53,17 @@ const CORE_WHEN_VARIABLES = [
   "false",
 ] as const;
 
+const WHEN_VARIABLE_LABEL_KEYS: Readonly<Partial<Record<string, KeybindingsTranslationKey>>> = {
+  terminalFocus: "whenVariableTerminalFocus",
+  terminalOpen: "whenVariableTerminalOpen",
+  previewFocus: "whenVariablePreviewFocus",
+  editableFocus: "whenVariableEditableFocus",
+  modelPickerOpen: "whenVariableModelPickerOpen",
+  usagePageOpen: "whenVariableUsagePageOpen",
+  isWeb: "whenVariableIsWeb",
+  isDesktop: "whenVariableIsDesktop",
+};
+
 const DEFAULT_WHEN_VARIABLES = new Set<string>(CORE_WHEN_VARIABLES);
 for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
   collectWhenIdentifiersFromNode(binding.whenAst, DEFAULT_WHEN_VARIABLES);
@@ -87,6 +98,42 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
     case "or":
       return `${wrapWhenExpression(node.left)} || ${wrapWhenExpression(node.right)}`;
   }
+}
+
+export function whenAstToDisplayLabel(
+  node: KeybindingWhenNode | undefined,
+  t: KeybindingsT,
+): string {
+  if (!node) return t("always");
+
+  const render = (current: KeybindingWhenNode, parentPrecedence = 0): string => {
+    const precedence =
+      current.type === "or" ? 1 : current.type === "and" ? 2 : current.type === "not" ? 3 : 4;
+    let label: string;
+
+    switch (current.type) {
+      case "identifier": {
+        if (current.name === "true") return t("always");
+        if (current.name === "false") return t("never");
+        const translationKey = WHEN_VARIABLE_LABEL_KEYS[current.name];
+        label = translationKey ? t(translationKey) : current.name;
+        break;
+      }
+      case "not":
+        label = t("conditionNot", { condition: render(current.node, precedence) });
+        break;
+      case "and":
+      case "or": {
+        const operator = current.type === "and" ? "logicalAnd" : "logicalOr";
+        label = `${render(current.left, precedence)} ${t(operator)} ${render(current.right, precedence)}`;
+        break;
+      }
+    }
+
+    return precedence < parentPrecedence ? `(${label})` : label;
+  };
+
+  return render(node);
 }
 
 export function whenNodeRemoveLabel(
