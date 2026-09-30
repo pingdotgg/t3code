@@ -171,7 +171,12 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
-      if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
+      if (
+        !failed &&
+        (command === "systemctl --user restart t3code.service" ||
+          command === "systemctl --user restart --no-block t3code.service")
+      )
+        control.active = true;
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
@@ -208,6 +213,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     environmentPath: string | undefined = installerPath,
     cliVersion = "1.2.3",
     serviceBaseDir = baseDir,
+    insideService = false,
   ) =>
     Effect.gen(function* () {
       // Every version the tests install is present and verified on disk, so
@@ -240,6 +246,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
+                ...(insideService ? { T3_BOOT_SERVICE_UNIT: "t3code.service" } : {}),
               },
             }),
           ),
@@ -619,6 +626,73 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         "systemctl --user daemon-reload",
         "systemctl --user restart t3code.service",
       ]);
+    }),
+  );
+
+  it.effect("updates from inside the service without stopping the process doing it", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      yield* service.install();
+      commands.length = 0;
+
+      const newer = yield* makeService(undefined, "1.2.4", undefined, true);
+      const plan = yield* newer.install();
+
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual([
+        "systemctl --user daemon-reload",
+        "systemctl --user enable t3code.service",
+        "systemctl --user restart --no-block t3code.service",
+      ]);
+      expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
+      expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+      // Until the launcher comes back on 1.2.4 and clears it.
+      expect(
+        yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("restarts from inside the service by queuing the restart", () =>
+    Effect.gen(function* () {
+      const { service, commands, makeService } = yield* makeHarness();
+      yield* service.install();
+      commands.length = 0;
+
+      const inside = yield* makeService(undefined, "1.2.3", undefined, true);
+      expect(yield* inside.restart).toBe(true);
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual([
+        "systemctl --user daemon-reload",
+        "systemctl --user enable t3code.service",
+        "systemctl --user restart --no-block t3code.service",
+      ]);
+    }),
+  );
+
+  it.effect("leaves the service running when a handoff from inside it fails", () =>
+    Effect.gen(function* () {
+      const { service, commands, control, makeService } = yield* makeHarness();
+      yield* service.install();
+      commands.length = 0;
+      control.failCommand = "systemctl --user daemon-reload";
+
+      const newer = yield* makeService(undefined, "1.2.4", undefined, true);
+      const error = yield* newer.install().pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceCommandError");
+      // Nothing was stopped, so there is nothing to bring back.
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual(["systemctl --user daemon-reload"]);
     }),
   );
 

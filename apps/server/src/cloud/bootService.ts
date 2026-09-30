@@ -228,6 +228,12 @@ export interface BootServiceManager {
   readonly activate: ReadonlyArray<BootServiceStep>;
   /** Best-effort recovery after a failed repair of an installed service. */
   readonly restart: ReadonlyArray<BootServiceStep>;
+  /**
+   * Replaces stop + activate when the caller runs inside the service, where a
+   * stop would kill it before the start. The last entry queues the restart
+   * with the service manager instead of waiting for it.
+   */
+  readonly handoff?: ReadonlyArray<BootServiceStep>;
   /** Uninstall, before the unit file is removed. */
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   /** Uninstall, after the unit file is removed. */
@@ -280,6 +286,25 @@ function systemdManager(input: {
         step: "restarting the service after a failed update",
         command: "systemctl",
         args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+      },
+    ],
+    handoff: [
+      {
+        step: "reloading systemd user units",
+        command: "systemctl",
+        args: ["--user", "daemon-reload"],
+      },
+      {
+        step: "enabling the service",
+        command: "systemctl",
+        args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
+      },
+      // The user manager owns the queued job and finishes it after the stop
+      // has killed this process along with the rest of the unit.
+      {
+        step: "restarting the service",
+        command: "systemctl",
+        args: ["--user", "restart", "--no-block", BOOT_SERVICE_UNIT_FILE],
       },
     ],
     deactivate: [
@@ -568,6 +593,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  // The unit exports its name to everything it runs, so this is set for agent
+  // tool calls and terminals started by the service.
+  const runningInsideService =
+    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
+    BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -824,7 +854,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // written, from the same read the downgrade check uses; the stop that
     // normally serialises against the launcher is skipped on purpose.
     const start = options?.start !== false;
-    if (installed && start) {
+    // From inside the service the files are written as for start=false, with
+    // the same guard against a concurrent remote update, and the service
+    // manager restarts onto them.
+    const handoff = installed && start && runningInsideService ? manager.handoff : undefined;
+    const deferred = installed && (!start || handoff !== undefined);
+    const stopped = installed && start && handoff === undefined;
+    if (stopped) {
       yield* runSteps(manager.stop);
     }
 
@@ -853,7 +889,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      if (!start && installed) {
+      if (deferred) {
         // Written first: once the files below name the new version, the
         // running service is behind them, and a failure between the two
         // writes must not leave it looking current. The launcher removes the
@@ -872,7 +908,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
-      if (!start && installed) {
+      if (deferred) {
         // The launcher only writes this file while a remote update is in
         // flight. One that began after the check above lands either before
         // this write (then the launcher's copy in memory is what it keeps
@@ -886,7 +922,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }
       yield* writeDurably(unitPath, manager.render(plan));
 
-      if (start) {
+      if (handoff !== undefined) {
+        // The launcher clears the restart marker once it runs this version.
+        yield* runSteps(handoff);
+      } else if (start) {
         yield* runSteps(manager.activate);
         yield* fs.remove(restartPendingPath, { force: true });
       }
@@ -895,7 +934,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
       ),
       Effect.tapError(() =>
-        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        stopped ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
     return plan;
@@ -911,6 +950,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
     ) {
       return false;
+    }
+    if (runningInsideService && manager.handoff !== undefined) {
+      yield* runSteps(manager.handoff);
+      return true;
     }
     yield* runSteps(manager.stop);
     yield* runSteps(manager.activate).pipe(
