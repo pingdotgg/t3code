@@ -201,8 +201,8 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
-   descenders and the hover underline. Only the clipped names get room: 16px plus the header's
-   12px of padding stays inside its 32px min-height, which diffHeaderHeight assumes. */
+   descenders. Only the clipped names get room: 16px plus the header's 12px of padding stays
+   inside its 32px min-height, which diffHeaderHeight assumes. */
 [data-diffs-header] :is([data-title], [data-prev-name]) {
   line-height: 16px !important;
 }
@@ -229,18 +229,12 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 [data-title] {
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    text-decoration-color 120ms ease;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 2px;
+  transition: color 120ms ease;
   font-family: var(--font-sans) !important;
 }
 
 [data-title]:hover {
   color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
-  text-decoration-color: currentColor;
 }
 
 /* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
