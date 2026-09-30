@@ -184,7 +184,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
       "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
+  runtimeMode: Schema.optional(
+    OrchestratorMcpRuntimeMode.annotate({
+      description:
+        "Defaults to inherit; omit it unless the user asks for a supervised child. A narrower mode is not a read-only switch: on most providers, approval-required and auto-accept-edits pause the child at each action that needs approval until a person approves it in the child's thread, which this thread cannot do. To limit what the child does, say so in the task. A mode broader than this thread's is rejected.",
+    }),
+  ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
