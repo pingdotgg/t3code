@@ -216,6 +216,7 @@
 - A retained floating-preview preference is not surface ownership: the visible panel must present its browser while the matching mini-player is suppressed, then return it to the mini-player when closed.
 - Persisted floating-preview state must survive the empty pre-snapshot render after refresh; only prune a missing tab after `serverEpoch` proves an authoritative preview list has arrived.
 - Desktop zoom menu accelerators must route through the renderer without changing focus: preview chrome and its `<webview>` zoom the active browser tab, while all other focus targets zoom only the sender's T3 window.
+- Portaled preview menus must count as preview focus too; their controls live outside the panel DOM, otherwise zoom menu accelerators target the T3 window instead of the browser tab.
 - Preview zoom is manager-owned state; reapply it after webview registration and navigation, and keep same-origin tabs in one shared factor because Chromium propagates zoom within a session partition.
 - Desktop preview load events must capture their phase before forking async state updates, and `did-finish-load` must terminate the main-frame loading state; re-reading `webContents.isLoading()` later can observe a different phase and strand the progress UI.
 - Host popovers over a `<webview>` must consume forwarded guest interaction events because guest clicks never reach the host DOM's outside-press handlers.
