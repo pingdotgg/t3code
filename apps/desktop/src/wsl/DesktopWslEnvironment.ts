@@ -17,8 +17,11 @@ import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
-const PRE_WARM_TIMEOUT = Duration.seconds(10);
-const WSLPATH_TIMEOUT = Duration.seconds(10);
+// A cold distro can spend well over 10s in systemd startup before the first
+// command runs, and killing the command at that point never lets the boot finish.
+// Fast failures (e.g. wslpath exiting 1) still return immediately.
+const PRE_WARM_TIMEOUT = Duration.seconds(60);
+const WSLPATH_TIMEOUT = Duration.seconds(60);
 const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
