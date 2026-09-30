@@ -1867,13 +1867,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
   const speechPresentation = resolveSpeechPresentation(speechInput.state, speechInput.progress);
+  const dictationDisabled =
+    isConnecting ||
+    projectSelectionRequired ||
+    activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
-    disabled:
-      isConnecting ||
-      projectSelectionRequired ||
-      activePendingProgress?.activeQuestion?.allowCustomAnswer === false,
+    disabled: dictationDisabled,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
   });
@@ -3579,9 +3580,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         state={speechInput.state}
                         progress={speechInput.progress}
                         shortcutLabel={dictationShortcutLabel}
-                        disabled={
-                          isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
-                        }
+                        disabled={dictationDisabled}
                         onStart={() => void speechInput.start()}
                         onCancel={() => void speechInput.cancel()}
                       />
