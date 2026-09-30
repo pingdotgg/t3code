@@ -96,6 +96,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
+  "T3CODE_TELEMETRY_ENABLED",
   "T3CODE_OTEL_SDK_DISABLED",
   "OTEL_SDK_DISABLED",
   "T3CODE_OTLP_HEADERS",

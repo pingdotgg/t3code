@@ -59,6 +59,18 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 }
 
 export function resolveRelayTracingConfig() {
+  // Runtime policy must be resolved synchronously, before the tracing layer is created.
+  const telemetryEnabled =
+    (typeof window !== "undefined" && window.desktopBridge
+      ? window.desktopBridge.getRelayTelemetryEnabled()
+      : undefined) ??
+    (typeof document === "undefined" ||
+      document
+        .querySelector('meta[name="t3code-relay-telemetry-enabled"]')
+        ?.getAttribute("content") !== "false");
+  if (!telemetryEnabled) {
+    return null;
+  }
   const { relayTracing } = resolveCloudPublicConfig();
   return relayTracing.tracesUrl && relayTracing.tracesDataset && relayTracing.tracesToken
     ? {

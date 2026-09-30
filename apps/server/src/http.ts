@@ -1,4 +1,5 @@
 import * as Mime from "effect/unstable/http/Mime";
+import { parse, type DefaultTreeAdapterTypes } from "parse5";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -6,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
+import { isRelayClientTracingEnabled } from "@t3tools/shared/relayTracing";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -642,6 +644,35 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       return HttpServerResponse.empty({
         status: 304,
         headers: { ...headers, Vary: "Accept-Encoding" },
+      });
+    }
+
+    if (isHtml && !isRelayClientTracingEnabled(process.env)) {
+      // Resolve the opt-out before renderer modules initialize their tracing layer.
+      const html = yield* streamStaticFile(opened.file, fileInfo.size).pipe(
+        Stream.decodeText(),
+        Stream.mkString,
+      );
+      const marker = '<meta name="t3code-relay-telemetry-enabled" content="false">';
+      const document = parse(html, { sourceCodeLocationInfo: true });
+      const root = document.childNodes.find(
+        (node): node is DefaultTreeAdapterTypes.Element =>
+          "tagName" in node && node.tagName === "html",
+      );
+      const head = root?.childNodes.find(
+        (node): node is DefaultTreeAdapterTypes.Element =>
+          "tagName" in node && node.tagName === "head",
+      );
+      // Parser locations exclude comments, quoted attributes, and ignored duplicate tags.
+      // Splice the original source rather than serializing and rewriting the document.
+      const headOpening = head?.sourceCodeLocation?.startTag;
+      const opening = headOpening ?? root?.sourceCodeLocation?.startTag;
+      const doctype = document.childNodes.find((node) => node.nodeName === "#documentType");
+      const offset = opening?.endOffset ?? doctype?.sourceCodeLocation?.endOffset ?? 0;
+      const bootstrap = headOpening ? marker : `<head>${marker}</head>`;
+      return HttpServerResponse.text(html.slice(0, offset) + bootstrap + html.slice(offset), {
+        headers,
+        contentType: "text/html; charset=utf-8",
       });
     }
 

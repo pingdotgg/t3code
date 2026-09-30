@@ -16,6 +16,7 @@ import {
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/hostProcess";
+import { isRelayClientTracingEnabled } from "@t3tools/shared/relayTracing";
 import * as NodeOS from "node:os";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -68,6 +69,14 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getAppBranding")(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     return environment.branding;
+  }),
+});
+
+export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
+    return isRelayClientTracingEnabled(yield* HostProcess.HostProcessEnvironment);
   }),
 });
 

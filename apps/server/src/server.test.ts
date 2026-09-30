@@ -2,6 +2,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
+import { parse, type DefaultTreeAdapterTypes } from "parse5";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
@@ -1789,6 +1790,112 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const response = yield* HttpClient.get("/");
       assert.equal(response.status, 200);
       assert.include(yield* response.text, "router-static-ok");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("bootstraps relay telemetry opt-out in static HTML before renderer scripts", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-optout-" });
+      const html =
+        '<!doctype html><html><head><script type="module" src="/app.js"></script></head><body>résumé</body></html>';
+      const disabledHtml =
+        '<!doctype html><html><head><meta name="t3code-relay-telemetry-enabled" content="false"><script type="module" src="/app.js"></script></head><body>résumé</body></html>';
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), html);
+      yield* fileSystem.writeFileString(path.join(staticDir, "app.js"), "export const app = true;");
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      for (const [telemetryEnabled, t3SdkDisabled, otelSdkDisabled, expected] of [
+        ["false", "false", "false", disabledHtml],
+        ["true", "true", "false", disabledHtml],
+        ["true", undefined, "true", disabledHtml],
+        ["true", "false", "true", html],
+        [undefined, undefined, undefined, html],
+      ] as const) {
+        vi.stubEnv("T3CODE_TELEMETRY_ENABLED", telemetryEnabled);
+        vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", t3SdkDisabled);
+        vi.stubEnv("OTEL_SDK_DISABLED", otelSdkDisabled);
+        for (const resource of ["/", "/index.html", "/threads/example"]) {
+          const response = yield* HttpClient.get(resource, {
+            headers: { "accept-encoding": "identity", "if-none-match": "*" },
+          });
+          assert.equal(response.status, 200);
+          assert.equal(yield* response.text, expected);
+          assert.equal(response.headers["cache-control"], "no-cache");
+          assert.equal(response.headers["content-length"], String(Buffer.byteLength(expected)));
+        }
+        const head = yield* HttpClient.head("/", {
+          headers: { "accept-encoding": "identity" },
+        });
+        assert.equal(head.headers["content-length"], String(Buffer.byteLength(expected)));
+        assert.equal(yield* head.text, "");
+        const asset = yield* HttpClient.get("/app.js");
+        assert.equal(yield* asset.text, "export const app = true;");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("bootstraps relay telemetry opt-out across HTML parsing edge cases", () =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      vi.stubEnv("T3CODE_TELEMETRY_ENABLED", "false");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-no-head-" });
+      yield* buildAppUnderTest({ config: { staticDir } });
+      const script = '<script type="module" src="/app.js"></script>';
+      const marker = '<meta name="t3code-relay-telemetry-enabled" content="false">';
+      for (const html of [
+        `<!doctype html><html><body>${script}résumé</body></html>`,
+        `<!DOCTYPE html><HTML lang="en">${script}<body>résumé</body></HTML>`,
+        `<!doctype html>${script}<p>résumé</p>`,
+        `${script}<p>résumé</p>`,
+        `<!doctype html><!-- <head> placeholder --><html><body>${script}résumé</body></html>`,
+        `<!doctype html><html><head data-note="a > b">${script}</head><body>résumé</body></html>`,
+        `<!doctype html><html data-note='a > b'><body>${script}résumé</body></html>`,
+        `<!-- <html><head> -->\n<!doctype html>${script}<p>résumé</p>`,
+        `<!doctype html><html><head><title>&lt;head&gt;</title>${script}</head><body>résumé</body></html>`,
+        `<!doctype html>${script}<html><head></head><body>résumé</body></html>`,
+      ]) {
+        yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), html);
+        const response = yield* HttpClient.get("/", {
+          headers: { "accept-encoding": "identity" },
+        });
+        const body = yield* response.text;
+        assert.equal(response.status, 200);
+        assert.include(body, marker);
+        assert.isBelow(body.indexOf(marker), body.indexOf(script));
+        assert.include(body, "résumé");
+        assert.equal(response.headers["content-length"], String(Buffer.byteLength(body)));
+        const document = parse(body, { sourceCodeLocationInfo: true });
+        const root = document.childNodes.find(
+          (node): node is DefaultTreeAdapterTypes.Element =>
+            "tagName" in node && node.tagName === "html",
+        );
+        const head = root?.childNodes.find(
+          (node): node is DefaultTreeAdapterTypes.Element =>
+            "tagName" in node && node.tagName === "head",
+        );
+        const meta = head?.childNodes.find(
+          (node): node is DefaultTreeAdapterTypes.Element =>
+            "tagName" in node &&
+            node.tagName === "meta" &&
+            node.attrs.some(
+              (attr) => attr.name === "name" && attr.value === "t3code-relay-telemetry-enabled",
+            ),
+        );
+        assert.isDefined(
+          meta,
+          "opt-out must be an actual head element, not comment or attribute text",
+        );
+        assert.equal(meta?.attrs.find((attr) => attr.name === "content")?.value, "false");
+        assert.equal(document.mode, /<!doctype html>/i.test(html) ? "no-quirks" : "quirks");
+        if (/^<!doctype/i.test(html)) {
+          assert.match(body, /^<!doctype html>/i);
+        }
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
