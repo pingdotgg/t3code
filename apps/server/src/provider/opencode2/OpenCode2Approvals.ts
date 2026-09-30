@@ -187,9 +187,11 @@ export const trackOpenCode2Question = Effect.fn("trackOpenCode2Question")(functi
  * before the SDK await so a concurrent reply for the same id finds no entry
  * (and becomes an idempotent no-op / typed unknown-id instead of a second
  * submit). No async boundary sits between the lookup and this delete, so the
- * claim is atomic under Effect's cooperative scheduling. The claim is kept
- * on failure (the maps evict so a dead request can never wedge the thread);
- * the terminal event itself arrives via the provider SSE echo, recorded by
+ * claim is atomic under Effect's cooperative scheduling. On transport
+ * failure the caller restores the claimed entry (guarded by `has`, so a
+ * re-tracked entry from another fiber is never clobbered) so a retry can
+ * resubmit instead of stalling on unknown-id; the terminal event itself
+ * arrives via the provider SSE echo, recorded by
  * `handleOpenCode2TranslatedEvent`.
  */
 const claimPendingForReply = (context: OpenCode2SessionContext, key: string): void => {
@@ -198,12 +200,30 @@ const claimPendingForReply = (context: OpenCode2SessionContext, key: string): vo
 };
 
 /**
+ * Restore a claimed entry after a failed reply, unless another fiber
+ * re-registered the same id meanwhile (upstream re-emit / re-track). The
+ * guard preserves the race property: the loser already failed unknown-id
+ * before the winner's failure path runs, so a restore can never resurrect
+ * a second submit — it only re-arms a retry.
+ */
+const restorePendingForRetry = (
+  map: Map<string, OpenCode2PendingPermission> | Map<string, OpenCode2PendingQuestion>,
+  key: string,
+  request: OpenCode2PendingPermission | OpenCode2PendingQuestion,
+): void => {
+  if (!map.has(key)) {
+    (map as Map<string, typeof request>).set(key, request);
+  }
+};
+
+/**
  * Respond to an interactive approval request. Already-resolved ids are
  * idempotent no-ops; unknown ids fail with `ProviderAdapterRequestError`.
  * The requested session id travels with the reply (v2 is session-scoped).
  * The pending entry is claimed before the SDK await so concurrent replies
- * for the same id cannot both submit; the maps stay evicted on failure so
- * a dead request can never wedge the thread. The terminal
+ * for the same id cannot both submit; on failure the entry is restored
+ * (unless re-registered meanwhile) so a transient failure is retryable
+ * instead of stalling on unknown-id. The terminal
  * `request.resolved` event arrives via the provider SSE echo
  * (`permission.replied`); this path only records the id so late frames
  * settle state without re-emitting.
@@ -237,6 +257,7 @@ export const respondToOpenCode2Request = Effect.fn("respondToOpenCode2Request")(
     ),
   ).pipe(withReplyTimeout("permission.reply"), Effect.exit);
   if (Exit.isFailure(outcome)) {
+    restorePendingForRetry(context.pendingPermissions, key, request);
     return yield* Effect.failCause(outcome.cause);
   }
   // No synthetic terminal emit: the provider SSE echo (`permission.replied`)
@@ -359,8 +380,9 @@ export const listOpenCode2Descendants = Effect.fn("listOpenCode2Descendants")(fu
  * session-scoped form reply (`sessionForm.reply`, `Form.Answer` record);
  * falls back to the legacy question reply only when the binding predates
  * forms. The pending entry is claimed before the SDK await so concurrent
- * replies for the same id cannot both submit; the maps stay evicted on
- * failure so a dead request can never wedge the thread. The terminal
+ * replies for the same id cannot both submit; on failure the entry is
+ * restored (unless re-registered meanwhile) so a transient failure is
+ * retryable instead of stalling on unknown-id. The terminal
  * `user-input.resolved` event arrives via the provider SSE echo
  * (`form.replied` / `form.cancelled`); this path only records the id.
  */
@@ -404,6 +426,7 @@ export const respondToOpenCode2UserInput = Effect.fn("respondToOpenCode2UserInpu
           ).pipe(withReplyTimeout("question.reply"), Effect.asVoid);
         }).pipe(Effect.exit);
   if (Exit.isFailure(outcome)) {
+    restorePendingForRetry(context.pendingQuestions, key, request);
     return yield* Effect.failCause(outcome.cause);
   }
   // No synthetic terminal emit: the provider SSE echo (`form.replied` /

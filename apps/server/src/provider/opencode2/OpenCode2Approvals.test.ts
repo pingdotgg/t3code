@@ -293,15 +293,22 @@ describe("OpenCode2Approvals lifecycle fixes", () => {
     }),
   );
 
-  it.effect("evicts the pending permission map when the reply fails", () =>
+  it.effect("restores the pending permission entry when the reply fails", () =>
     Effect.gen(function* () {
-      const { store, events } = yield* setup;
+      const { store, events, calls } = yield* setup;
       const context = store.get(threadId);
       assert.isDefined(context);
+      let fail = true;
       const patchedClient = {
         ...context!.client,
         permission: {
-          reply: () => Promise.reject(new Error("transport down")),
+          reply: (input: { requestID: string; reply: string }) => {
+            if (fail) {
+              return Promise.reject(new Error("transport down"));
+            }
+            calls.permissionReplies.push({ requestID: input.requestID, reply: input.reply });
+            return Promise.resolve(undefined);
+          },
         },
       };
       store.set(threadId, { ...context!, client: patchedClient });
@@ -325,10 +332,83 @@ describe("OpenCode2Approvals lifecycle fixes", () => {
         eventDeps,
       ).pipe(Effect.flip);
       assert.equal(exit._tag, "ProviderAdapterRequestError");
-      // The dead request evicts so the next answer is a typed unknown-id,
-      // not a wedged pending entry; no terminal event was emitted.
+      // A transient failure restores the entry so a retry can resubmit
+      // instead of stalling on unknown-id; no terminal event was emitted.
+      assert.equal(store.get(threadId)?.pendingPermissions.has("req_dead"), true);
+      assert.equal(store.get(threadId)?.emittedTerminalRequestIds.has("req_dead"), false);
+      fail = false;
+      yield* respondToOpenCode2Request(
+        store,
+        events,
+        threadId,
+        ApprovalRequestId.make("req_dead"),
+        "accept",
+        eventDeps,
+      );
+      assert.deepEqual(calls.permissionReplies, [{ requestID: "req_dead", reply: "once" }]);
       assert.equal(store.get(threadId)?.pendingPermissions.has("req_dead"), false);
-      assert.equal(yield* Queue.size(events), 1);
+      // Drain the opened event so the queue holds no backlog (one track =
+      // one event; the failed reply and the retry emit nothing synthetic).
+      yield* Queue.take(events);
+      assert.equal(yield* Queue.size(events), 0);
+    }),
+  );
+
+  it.effect("failed permission restore never clobbers a re-registered entry", () =>
+    Effect.gen(function* () {
+      const { store, events } = yield* setup;
+      const context = store.get(threadId);
+      assert.isDefined(context);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const patchedClient = {
+        ...context!.client,
+        permission: {
+          reply: () => gate.then(() => Promise.reject(new Error("transport down"))),
+        },
+      };
+      store.set(threadId, { ...context!, client: patchedClient });
+      yield* trackOpenCode2Permission(
+        store,
+        events,
+        threadId,
+        {
+          requestId: "req_retrack",
+          sessionID: "ses_1",
+          permission: "bash",
+        },
+        { requestType: "command_execution_approval", eventDeps },
+      );
+      const fiber = yield* respondToOpenCode2Request(
+        store,
+        events,
+        threadId,
+        ApprovalRequestId.make("req_retrack"),
+        "accept",
+        eventDeps,
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      // Upstream re-emits the same id while the first reply is in flight;
+      // the re-track lands on the evicted map (session ses_2 marks it newer).
+      yield* trackOpenCode2Permission(
+        store,
+        events,
+        threadId,
+        {
+          requestId: "req_retrack",
+          sessionID: "ses_2",
+          permission: "edit",
+        },
+        { requestType: "file_change_approval", eventDeps },
+      );
+      release();
+      yield* Fiber.join(fiber).pipe(Effect.flip);
+      // The failure-path restore must not clobber the re-registered entry.
+      const restored = store.get(threadId)?.pendingPermissions.get("req_retrack");
+      assert.equal(restored?.sessionID, "ses_2");
+      assert.equal(restored?.permission, "edit");
     }),
   );
 
@@ -385,15 +465,24 @@ describe("OpenCode2Approvals lifecycle fixes", () => {
     }),
   );
 
-  it.effect("evicts the pending question map when the form reply fails", () =>
+  it.effect("restores the pending question entry when the form reply fails", () =>
     Effect.gen(function* () {
       const { store, events } = yield* setup;
       const context = store.get(threadId);
       assert.isDefined(context);
+      let attempts = 0;
+      const formCalls: Array<{ sessionID: string; formID: string; answers: unknown }> = [];
       const patchedClient = {
         ...context!.client,
         sessionForm: {
-          reply: () => Promise.reject(new Error("transport down")),
+          reply: (input: { sessionID: string; formID: string; answers: unknown }) => {
+            attempts += 1;
+            if (attempts === 1) {
+              return Promise.reject(new Error("transport down"));
+            }
+            formCalls.push(input);
+            return Promise.resolve(undefined);
+          },
         },
       };
       store.set(threadId, { ...context!, client: patchedClient });
@@ -417,6 +506,17 @@ describe("OpenCode2Approvals lifecycle fixes", () => {
         eventDeps,
       ).pipe(Effect.flip);
       assert.equal(exit._tag, "ProviderAdapterRequestError");
+      assert.equal(store.get(threadId)?.pendingQuestions.has("q_dead"), true);
+      // Retry resubmits through the restored entry and succeeds.
+      yield* respondToOpenCode2UserInput(
+        store,
+        events,
+        threadId,
+        ApprovalRequestId.make("q_dead"),
+        {},
+        eventDeps,
+      );
+      assert.equal(formCalls.length, 1);
       assert.equal(store.get(threadId)?.pendingQuestions.has("q_dead"), false);
     }),
   );
@@ -554,7 +654,7 @@ describe("OpenCode2Approvals hardening (sweep A)", () => {
         { requestType: "command_execution_approval", eventDeps },
       );
       // The hanging reply must trip the 10s budget on virtual time, not
-      // hang the suite; the pending map still evicts so the thread unwedges.
+      // hang the suite; the pending entry restores so a retry stays possible.
       const fiber = yield* respondToOpenCode2Request(
         store,
         events,
@@ -572,7 +672,7 @@ describe("OpenCode2Approvals hardening (sweep A)", () => {
       }
       const exit = yield* Fiber.join(fiber).pipe(Effect.flip);
       assert.equal(exit._tag, "ProviderAdapterRequestError");
-      assert.equal(store.get(threadId)?.pendingPermissions.has("req_hang"), false);
+      assert.equal(store.get(threadId)?.pendingPermissions.has("req_hang"), true);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

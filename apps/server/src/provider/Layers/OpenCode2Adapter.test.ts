@@ -8,7 +8,6 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -372,10 +371,20 @@ it.layer(gateHarness.TestLayer)("OpenCode2AdapterConnectionGate", (it) => {
           });
         });
         const threadId = ThreadId.make("thread-oc2-adapter-start-failure");
-        const exit = yield* Effect.exit(
+        // A rejected subscribe must surface as a typed
+        // `ProviderAdapterRequestError` (not a defect): `Effect.flip` dies
+        // on defects, so this fails if the subscribe rejection escapes the
+        // typed channel again.
+        const failure = (yield* Effect.flip(
           adapter.startSession({ threadId, runtimeMode: "full-access" }),
-        );
-        NodeAssert.equal(Exit.isFailure(exit), true);
+        )) as {
+          readonly _tag: string;
+          readonly method?: unknown;
+          readonly detail?: unknown;
+        };
+        NodeAssert.equal(failure._tag, "ProviderAdapterRequestError");
+        NodeAssert.equal(failure.method, "event.subscribe");
+        NodeAssert.match(String(failure.detail), /subscribe boom/);
         NodeAssert.equal(gateHarness.store.get(threadId), undefined);
         NodeAssert.equal(yield* adapter.hasSession(threadId), false);
         yield* adapter.stopAll().pipe(Effect.ignore);

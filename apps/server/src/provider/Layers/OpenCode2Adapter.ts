@@ -210,6 +210,19 @@ export const makeOpenCode2Adapter = Effect.fn("makeOpenCode2Adapter")(function* 
             // first would hang scope close on a live stream.
             // @effect-diagnostics-next-line abortControllerInEffect:off - aborted by a scope finalizer to cancel the event.subscribe read
             const eventsAbortController = new AbortController();
+            const subscribeEvents = (): Effect.Effect<
+              Awaited<ReturnType<OpenCode2SessionClient["event"]["subscribe"]>>,
+              OpenCode2AdapterError
+            > =>
+              Effect.tryPromise({
+                try: () => context.client.event.subscribe({ signal: eventsAbortController.signal }),
+                catch: (cause: unknown) =>
+                  openCode2RequestError(
+                    "event.subscribe",
+                    cause instanceof Error ? cause.message : String(cause),
+                    cause,
+                  ),
+              });
             const writeNativeEventBestEffort = (frame: OpenCode2RawEvent): Effect.Effect<void> =>
               Effect.gen(function* () {
                 if (nativeEventLogger === undefined) {
@@ -229,31 +242,23 @@ export const makeOpenCode2Adapter = Effect.fn("makeOpenCode2Adapter")(function* 
                   pumpThreadId,
                 );
               }).pipe(Effect.ignore);
-            yield* startOpenCode2EventPump(
-              yield* Effect.promise(() =>
-                context.client.event.subscribe({ signal: eventsAbortController.signal }),
-              ),
-              {
-                threadId: pumpThreadId,
-                events: runtimeEvents,
-                store,
-                randomEventId,
-                nowIso: nowIsoDefault,
-                onRawEvent: (frame) => {
-                  runFork(writeNativeEventBestEffort(frame));
-                },
-                // Reconnect owns the v1 backoff budgets (250ms base, 5s cap,
-                // 64-attempt cap, 10s connection gate) inside the pump; without
-                // it a transport drop ends the feed after the first failure.
-                // The closure reuses the session-scoped AbortSignal so a
-                // resubscribe still tears down with stop (the abort finalizer
-                // above rejects the parked read before the pump interrupt).
-                resubscribe: () =>
-                  Effect.promise(() =>
-                    context.client.event.subscribe({ signal: eventsAbortController.signal }),
-                  ),
+            yield* startOpenCode2EventPump(yield* subscribeEvents(), {
+              threadId: pumpThreadId,
+              events: runtimeEvents,
+              store,
+              randomEventId,
+              nowIso: nowIsoDefault,
+              onRawEvent: (frame) => {
+                runFork(writeNativeEventBestEffort(frame));
               },
-            ).pipe(Effect.forkIn(context.sessionScope));
+              // Reconnect owns the v1 backoff budgets (250ms base, 5s cap,
+              // 64-attempt cap, 10s connection gate) inside the pump; without
+              // it a transport drop ends the feed after the first failure.
+              // The closure reuses the session-scoped AbortSignal so a
+              // resubscribe still tears down with stop (the abort finalizer
+              // above rejects the parked read before the pump interrupt).
+              resubscribe: () => subscribeEvents(),
+            }).pipe(Effect.forkIn(context.sessionScope));
             // Added after the fork: scope finalizers run LIFO, so the pending
             // read aborts before the pump fiber is interrupted (see above).
             yield* Scope.addFinalizer(
