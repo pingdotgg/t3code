@@ -657,6 +657,27 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("keeps a literal $ in the base dir it hands to systemd-run", () =>
+    Effect.gen(function* () {
+      const { service, commands, makeService } = yield* makeHarness();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* service.install();
+      commands.length = 0;
+
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dollar-" });
+      const baseDir = path.join(home, "${UNSET}", ".t3");
+      const inside = yield* makeService(undefined, "1.2.4", baseDir, true);
+      yield* inside.install();
+
+      const handoff = commands.find((command) => command.startsWith("systemd-run "));
+      expect(handoff).toContain(
+        `${pinnedRuntimePaths(path, baseDir, "1.2.4", "linux").entryPath} service install`,
+      );
+      expect(handoff).toContain(`--base-dir ${path.join(home, "$${UNSET}", ".t3")}`);
+    }),
+  );
+
   it.effect("restarts from inside the service by queuing the restart", () =>
     Effect.gen(function* () {
       const { service, commands, makeService } = yield* makeHarness();

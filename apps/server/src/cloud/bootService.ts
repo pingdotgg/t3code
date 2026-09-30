@@ -867,7 +867,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         "service",
         "install",
         "--base-dir",
-        input.baseDir,
+        // systemd expands $VAR in arguments (not in the executable path).
+        input.baseDir.replaceAll("$", () => "$$"),
         ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
       ]);
       return plan;
