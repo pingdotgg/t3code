@@ -70,13 +70,16 @@ list. Each window card shows how much of the pool is left and a bar with one seg
 kept in the same column across windows. Accounts are ordered by their 5-hour reset, soonest
 first, or by the first available window when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
-when the next reset lands and how much it hands back. The hatched
-part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
-where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
-with banked reset credits show a ticket count and the **Use reset** action in the account details.
-Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
-Keychain. On narrow screens, numbered rows below
-the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+when the next reset lands and how much it hands back. On web and desktop, the tick on a bar marks
+where spending evenly would leave you, and a window spending faster says **Ahead of pace**. On
+mobile, the hatched part of a segment is what the next reset restores. Tap a segment or account
+row for the account's plan, where it is signed in, and its reset time. On web, you can hover too.
+Codex and Claude accounts with banked reset credits show a ticket count and the **Use reset**
+action in the account details; with a single account, web and desktop also show it next to the
+provider name. Claude resets are not available when the server runs on macOS, where Claude keeps
+its login in the Keychain. With several accounts, web and desktop name each segment under the bar,
+and mobile lists numbered rows with each account's quota, countdown, and credits. Tap a name or
+row to open its details.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
