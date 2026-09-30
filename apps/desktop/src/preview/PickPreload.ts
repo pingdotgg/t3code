@@ -14,6 +14,7 @@ import type {
   PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
@@ -132,7 +133,6 @@ interface AnnotationSession {
 }
 
 let activeSession: AnnotationSession | null = null;
-let idSequence = 0;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
 
 const applyAnnotationTheme = (
@@ -220,10 +220,7 @@ window.addEventListener("mousedown", suppressNavigationButton, true);
 window.addEventListener("mouseup", requestNavigationForButton, true);
 window.addEventListener("auxclick", suppressNavigationButton, true);
 
-const nextId = (prefix: string): string => {
-  idSequence += 1;
-  return `${prefix}_${idSequence.toString(36)}`;
-};
+const nextId = createAnnotationIdSource();
 
 const rectFromDomRect = (rect: DOMRect): PreviewAnnotationRect => ({
   x: rect.left,
