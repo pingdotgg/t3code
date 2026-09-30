@@ -4,6 +4,7 @@ import {
   makeTraceSink,
   otlpSerializationLayer,
 } from "@t3tools/shared/observability";
+import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
@@ -20,7 +21,12 @@ import * as BrowserTraceCollector from "../BrowserTraceCollector.ts";
 export const ObservabilityLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const serializationLayer = otlpSerializationLayer(config.otlpProtocol);
+
+    const traces = config.otlpTracesExport;
+    const metrics = config.otlpMetricsExport;
+    // The trace serializer stays in the returned context because the browser
+    // trace forwarder exports on the same signal.
+    const serializationLayer = otlpSerializationLayer(traces.protocol);
     const resource = ServerConfig.otlpResource(config);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
@@ -51,8 +57,8 @@ export const ObservabilityLive = Layer.unwrap(
             ? undefined
             : yield* OtlpTracer.make({
                 url: config.otlpTracesUrl,
-                exportInterval: `${config.otlpExportIntervalMs} millis`,
-                headers: config.otlpHeaders,
+                exportInterval: `${traces.exportIntervalMs} millis`,
+                headers: traces.headers,
                 resource,
               });
 
@@ -77,11 +83,23 @@ export const ObservabilityLive = Layer.unwrap(
         ? Layer.empty
         : OtlpMetrics.layer({
             url: config.otlpMetricsUrl,
-            exportInterval: `${config.otlpExportIntervalMs} millis`,
-            headers: config.otlpHeaders,
+            exportInterval: `${metrics.exportIntervalMs} millis`,
+            headers: metrics.headers,
             resource,
-          }).pipe(Layer.provideMerge(serializationLayer));
+          }).pipe(Layer.provide(otlpSerializationLayer(metrics.protocol)));
 
-    return Layer.mergeAll(ServerLoggerLive, traceReferencesLayer, tracerLayer, metricsLayer);
+    // Logged once the server's loggers are installed, so the warnings use them.
+    const otelWarningsLayer = Layer.effectDiscard(
+      Effect.forEach(config.otelEnvironment.warnings, (warning) => Effect.logWarning(warning)),
+    );
+
+    return otelWarningsLayer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(ServerLoggerLive, traceReferencesLayer, tracerLayer, metricsLayer),
+      ),
+      Layer.provide(
+        OtelEnvironment.layerResourceAttributes(config.otelEnvironment.resourceAttributes),
+      ),
+    );
   }),
 );

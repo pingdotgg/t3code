@@ -339,15 +339,11 @@ export function createPullRequestRouter() {
         }
         const operation = run(id);
         return yield* (reads.has(tag) ? operation.pipe(readTimeout(id)) : operation).pipe(
-          Effect.catch((error) => {
-            if (
-              (reads.has(tag) || rejectedBeforeDispatch(error)) &&
-              index + 1 < candidates.length
-            ) {
-              return visit(index + 1);
-            }
-            return Effect.fail(error);
-          }),
+          Effect.catchIf(
+            (error) =>
+              (reads.has(tag) || rejectedBeforeDispatch(error)) && index + 1 < candidates.length,
+            () => visit(index + 1),
+          ),
           Effect.map((result) =>
             typeof result === "object" && result !== null && "projectId" in result
               ? {
