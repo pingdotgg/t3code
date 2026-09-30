@@ -37,11 +37,19 @@ export function composerSubmissionIntentForEnter(input: {
     input.sendShortcut === "mod-enter" ||
     (input.sendShortcut === "mod-enter-multiline" && /[\r\n]/.test(input.prompt ?? ""));
   if (input.isMobileViewport || (requiresModifier && !input.modifierKey)) return null;
-  if (input.shiftKey && !(requiresModifier && input.modifierKey && input.isRunning)) return null;
+  if (
+    input.shiftKey &&
+    !(requiresModifier && input.modifierKey && (input.isRunning || input.isDraftThread))
+  ) {
+    return null;
+  }
   if (input.isRunning && input.modifierKey && (!requiresModifier || input.shiftKey)) {
     return "alternate";
   }
-  return input.modifierKey && input.isDraftThread ? "background" : "foreground";
+  if (input.modifierKey && input.isDraftThread && (!requiresModifier || input.shiftKey)) {
+    return "background";
+  }
+  return "foreground";
 }
 
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";

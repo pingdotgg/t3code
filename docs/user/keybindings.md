@@ -11,8 +11,9 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 
 **Follow-up behavior** chooses Queue or Steer while the agent runs. Use
 `mod+Enter` to do the opposite for one message. When sending requires `mod+Enter`,
-use `mod+Shift+Enter` for the opposite action. In a new thread, `mod+Enter` keeps
-starting the thread in the background.
+use `mod+Shift+Enter` for the opposite action. In a new thread, `mod+Enter`
+starts the thread in the background when Enter itself sends. When sending
+requires `mod+Enter`, `mod+Shift+Enter` starts that thread in the background.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
 Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the

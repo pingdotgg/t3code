@@ -152,6 +152,31 @@ describe("composerSubmissionIntentForEnter", () => {
     ).toBe("background");
   });
 
+  it.each([
+    ["mod-enter", "one line", false, "foreground"],
+    ["mod-enter", "two\nlines", false, "foreground"],
+    ["mod-enter-multiline", "two\nlines", false, "foreground"],
+    ["mod-enter-multiline", "one line", false, "background"],
+    ["enter", "one line", false, "background"],
+    ["mod-enter", "one line", true, "background"],
+    ["mod-enter-multiline", "two\nlines", true, "background"],
+    ["enter", "one line", true, null],
+  ] as const)(
+    "resolves a draft with %s for %j and shift=%s",
+    (sendShortcut, prompt, shiftKey, expected) => {
+      expect(
+        composerSubmissionIntentForEnter({
+          isMobileViewport: false,
+          shiftKey,
+          modifierKey: true,
+          isDraftThread: true,
+          sendShortcut,
+          prompt,
+        }),
+      ).toBe(expected);
+    },
+  );
+
   it("keeps Mod+Enter in the foreground for an active thread", () => {
     expect(
       composerSubmissionIntentForEnter({
