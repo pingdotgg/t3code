@@ -1,4 +1,5 @@
 import { translate } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import type {
@@ -41,24 +42,33 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
-  {
-    repo_conventions: {
-      label: "Repository conventions",
-      description: "In each project, matches recent change descriptions and change request titles.",
-    },
-    conventional_commits: {
-      label: "Conventional Commits",
-      description: "Use Conventional Commit prefixes and keep change request text concise.",
-    },
-    custom: {
-      label: "Custom instructions",
-      description:
-        "Use your instructions for change descriptions and change requests in every project.",
-    },
-  };
+const MODE_OPTIONS = {
+  repo_conventions: {
+    labelKey: "uiSourceControlWritingStyleRepoConventions",
+    label: "Repository conventions",
+    descriptionKey: "uiSourceControlWritingStyleRepoConventionsDescription",
+    description: "In each project, matches recent change descriptions and change request titles.",
+  },
+  conventional_commits: {
+    labelKey: "uiSourceControlWritingStyleConventionalCommits",
+    label: "Conventional Commits",
+    descriptionKey: "uiSourceControlWritingStyleConventionalCommitsDescription",
+    description: "Use Conventional Commit prefixes and keep change request text concise.",
+  },
+  custom: {
+    labelKey: "uiSourceControlWritingStyleCustom",
+    label: "Custom instructions",
+    descriptionKey: "uiSourceControlWritingStyleCustomDescription",
+    description:
+      "Use your instructions for change descriptions and change requests in every project.",
+  },
+} satisfies Record<
+  SourceControlWritingStyleMode,
+  { labelKey: string; label: string; descriptionKey: string; description: string }
+>;
 
 export function SourceControlWritingSettingsSection() {
+  const { t } = useTranslation("common");
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
@@ -135,7 +145,9 @@ export function SourceControlWritingSettingsSection() {
         settingKeys={["sourceControlWritingStyle"]}
         mixed={writingStyleMixed}
         {...searchableSetting("source-control-writing-style")}
-        description={MODE_OPTIONS[style.mode].description}
+        description={t(MODE_OPTIONS[style.mode].descriptionKey, {
+          defaultValue: MODE_OPTIONS[style.mode].description,
+        })}
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
@@ -177,14 +189,16 @@ export function SourceControlWritingSettingsSection() {
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
-                  value === null ? "Mixed" : MODE_OPTIONS[value].label
+                  value === null
+                    ? t("uiSourceControlWritingStyleMixed", { defaultValue: "Mixed" })
+                    : t(MODE_OPTIONS[value].labelKey, { defaultValue: MODE_OPTIONS[value].label })
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
                 <SelectItem key={mode} hideIndicator value={mode}>
-                  {MODE_OPTIONS[mode].label}
+                  {t(MODE_OPTIONS[mode].labelKey, { defaultValue: MODE_OPTIONS[mode].label })}
                 </SelectItem>
               ))}
             </SelectPopup>

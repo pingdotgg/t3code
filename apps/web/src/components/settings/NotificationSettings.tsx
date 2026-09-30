@@ -1,4 +1,5 @@
 import { translate } from "@t3tools/i18n";
+import { useTranslation } from "@t3tools/i18n/react";
 import { useState } from "react";
 
 import {
@@ -12,7 +13,15 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
+const NOTIFICATION_MODE_LABEL_KEYS = {
+  off: "uiThreadNotificationModeOff",
+  notifications: "uiThreadNotificationModeNotificationsOnly",
+  sound: "uiThreadNotificationModeSoundOnly",
+  "notifications-and-sound": "uiThreadNotificationModeNotificationsWithSound",
+} as const;
+
 export function NotificationSettings() {
+  const { t } = useTranslation("common");
   const mode = useScopedSettings((settings) => settings.notificationMode);
   const updateSettings = useUpdateScopedSettings();
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
@@ -84,12 +93,21 @@ export function NotificationSettings() {
             className="w-full sm:w-56"
             aria-label={translate("common:uiThreadNotifications", "Thread notifications")}
           >
-            <SelectValue>{NOTIFICATION_MODE_LABELS[mode]}</SelectValue>
+            <SelectValue>
+              {t(NOTIFICATION_MODE_LABEL_KEYS[mode], {
+                defaultValue: NOTIFICATION_MODE_LABELS[mode],
+              })}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {Object.entries(NOTIFICATION_MODE_LABELS).map(([value, label]) => (
               <SelectItem key={value} hideIndicator value={value}>
-                {label}
+                {t(
+                  NOTIFICATION_MODE_LABEL_KEYS[value as keyof typeof NOTIFICATION_MODE_LABEL_KEYS],
+                  {
+                    defaultValue: label,
+                  },
+                )}
               </SelectItem>
             ))}
           </SelectPopup>
