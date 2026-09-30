@@ -1,63 +1,68 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+// @vitest-environment jsdom
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
+import { closeHistory, undoDepth } from "@tiptap/pm/history";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { editableOwnsUndo } from "./editableFocus";
+import { editableOwnsUndo, registerEditableUndoHistory } from "./editableFocus";
 
-// The unit project has no DOM; these stand in for the elements the helper inspects.
-class FakeElement extends EventTarget {
-  constructor(
-    readonly editable: boolean,
-    readonly textContent = "",
-  ) {
-    super();
-  }
-  closest() {
-    return this.editable ? this : null;
-  }
-}
-class FakeInput extends FakeElement {
-  constructor(readonly value: string) {
-    super(true);
-  }
-}
-
-class FakeTextArea extends FakeInput {}
-
-beforeEach(() => {
-  vi.stubGlobal("Element", FakeElement);
-  vi.stubGlobal("HTMLInputElement", FakeInput);
-  vi.stubGlobal("HTMLTextAreaElement", FakeTextArea);
+const cleanups: (() => void)[] = [];
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0)) cleanup();
 });
-afterEach(() => vi.unstubAllGlobals());
+
+function composer() {
+  const editor = new Editor({ extensions: [StarterKit], content: "" });
+  cleanups.push(() => editor.destroy());
+  cleanups.push(registerEditableUndoHistory(editor.view.dom, () => undoDepth(editor.state) > 0));
+  return editor;
+}
 
 describe("editableOwnsUndo", () => {
-  it("yields to native undo only when the focused field has text", () => {
-    expect(editableOwnsUndo(new FakeInput(""))).toBe(false);
-    expect(editableOwnsUndo(new FakeInput("draft"))).toBe(true);
-    expect(editableOwnsUndo(new FakeElement(true, ""))).toBe(false);
-    expect(editableOwnsUndo(new FakeElement(true, "draft"))).toBe(true);
+  it("lets an untouched empty composer yield, while preserving a draft", () => {
+    const editor = composer();
+    expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+    editor.commands.insertContent("draft");
+    expect(editableOwnsUndo(editor.view.dom)).toBe(true);
   });
 
-  it("keeps native undo for a field that was edited after the notice", async () => {
-    vi.useFakeTimers();
-    let onInput: ((event: Event) => void) | undefined;
-    vi.stubGlobal("window", {
-      addEventListener: (_type: string, handler: (event: Event) => void) => (onInput = handler),
-    });
-    vi.resetModules();
-    const fresh = await import("./editableFocus");
-    const field = new FakeElement(true, "");
-    const since = Date.now();
-    expect(fresh.editableOwnsUndo(field, since)).toBe(false);
-    vi.advanceTimersByTime(10);
-    onInput?.({ target: field } as unknown as Event);
-    expect(fresh.editableOwnsUndo(field, since)).toBe(true);
-    expect(fresh.editableOwnsUndo(new FakeElement(true, ""), since)).toBe(false);
-    expect(fresh.editableOwnsUndo(field, Date.now() + 1)).toBe(false);
-    vi.useRealTimers();
+  it("preserves deleted text even when deletion precedes a thread notice", () => {
+    const editor = composer();
+    editor.commands.insertContent("draft");
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    editor.commands.clearContent();
+    // Programmatic editor transactions emit no DOM input event. Thread notices
+    // must not reset ownership of the editor's existing undo stack.
+    expect(editor.view.dom.textContent).toBe("");
+    expect(editableOwnsUndo(editor.view.dom)).toBe(true);
+    editor.commands.undo();
+    expect(editor.getText()).toBe("draft");
   });
 
-  it("ignores non-editable targets", () => {
-    expect(editableOwnsUndo(new FakeElement(false, "Undo"))).toBe(false);
+  it("yields again after the editor exhausts its undo stack", () => {
+    const editor = composer();
+    editor.commands.insertContent("draft");
+    editor.commands.undo();
+    expect(editor.getText()).toBe("");
+    expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+  });
+
+  it("keeps independent editor histories and releases unmounted editors", () => {
+    const edited = composer();
+    const untouched = composer();
+    edited.commands.insertContent("draft");
+    edited.commands.clearContent();
+    expect(editableOwnsUndo(edited.view.dom)).toBe(true);
+    expect(editableOwnsUndo(untouched.view.dom)).toBe(false);
+    const release = registerEditableUndoHistory(untouched.view.dom, () => false);
+    release();
+    expect(editableOwnsUndo(untouched.view.dom)).toBe(true);
+  });
+
+  it("preserves native input history and ignores non-editable targets", () => {
+    expect(editableOwnsUndo(document.createElement("input"))).toBe(true);
+    expect(editableOwnsUndo(document.createElement("textarea"))).toBe(true);
+    expect(editableOwnsUndo(document.createElement("button"))).toBe(false);
     expect(editableOwnsUndo(null)).toBe(false);
   });
 });

@@ -19,7 +19,7 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { editableOwnsUndo, isEditableFocused } from "../lib/editableFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
-import { threadUndoNoticeShownAt, undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
+import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
@@ -62,8 +62,8 @@ function ChatRouteGlobalShortcuts() {
       ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
       : false,
   );
-  // Capture phase: the composer's editor claims mod+z (and marks it handled)
-  // even when it is empty, which would otherwise starve the thread Undo notice.
+  // Resolve thread undo before editor handlers, yielding whenever the focused
+  // editable owns history so one shortcut cannot undo both kinds of action.
   useEffect(() => {
     const onUndoKeyDown = (event: KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
@@ -72,7 +72,7 @@ function ChatRouteGlobalShortcuts() {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
-          editableFocus: editableOwnsUndo(event.target, threadUndoNoticeShownAt()),
+          editableFocus: editableOwnsUndo(event.target),
           modelPickerOpen: isModelPickerOpen(),
         },
       });

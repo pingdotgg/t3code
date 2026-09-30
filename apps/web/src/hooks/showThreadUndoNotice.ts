@@ -28,7 +28,6 @@ export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => (
 let liveUndos: UndoOptions[] = [];
 let expiry: ReturnType<typeof setTimeout> | undefined;
 let expiryPaused = false;
-let lastShownAt = 0;
 const UNDO_NOTICE_TTL_MS = 5_000;
 
 function expireUndos() {
@@ -112,7 +111,6 @@ export function undoLatestThreadAction(): boolean {
 export function showThreadUndoNotice(options: UndoOptions) {
   if (!options.claim.isCurrent()) return;
   liveUndos.push(options);
-  lastShownAt = Date.now();
   refreshNotice();
   scheduleExpiry();
 }
@@ -121,9 +119,4 @@ export function showThreadUndoNotice(options: UndoOptions) {
 export function setThreadUndoNoticeHeld(held: boolean) {
   expiryPaused = held;
   if (liveUndos.length > 0) scheduleExpiry();
-}
-
-/** When the latest undoable action was shown; edits after it may have native history. */
-export function threadUndoNoticeShownAt() {
-  return lastShownAt;
 }
