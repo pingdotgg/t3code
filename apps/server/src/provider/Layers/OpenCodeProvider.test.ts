@@ -605,6 +605,11 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.message, "OpenCode could not load its model list.");
+      // A failed catalog read still leaves the session able to compact.
+      NodeAssert.deepEqual(
+        snapshot.slashCommands.map((command) => command.name),
+        ["compact"],
+      );
     }),
   );
 

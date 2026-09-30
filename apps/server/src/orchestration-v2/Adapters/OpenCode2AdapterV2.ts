@@ -1098,7 +1098,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           nodeId: turn.input.rootNodeId,
           type: "compaction",
           driver,
-          title: status === "running" ? "Compacting context" : "Context compacted",
+          title:
+            status === "running"
+              ? "Compacting context"
+              : status === "completed"
+                ? "Context compacted"
+                : status === "failed"
+                  ? "Compaction failed"
+                  : "Compaction interrupted",
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });

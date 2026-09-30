@@ -464,22 +464,24 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
             : byOpenCodeRuntime(runtimeProbe.get, {
                 v2: Effect.all([
                   snapshot.getSnapshot,
-                  listOpenCode2Workspace(cwd).pipe(Effect.timeout("20 seconds")),
+                  listOpenCode2Workspace(cwd).pipe(
+                    Effect.timeout("20 seconds"),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderDriverError({
+                          driver: DRIVER_KIND,
+                          instanceId,
+                          detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                          cause,
+                        }),
+                    ),
+                  ),
                 ]).pipe(
                   Effect.map(([machineSnapshot, { skills, commands }]) => ({
                     ...machineSnapshot,
                     skills: openCode2SkillsToServerProviderSkills(skills),
                     slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
                   })),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderDriverError({
-                        driver: DRIVER_KIND,
-                        instanceId,
-                        detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
-                        cause,
-                      }),
-                  ),
                 ),
                 v1: Effect.all([
                   snapshot.getSnapshot,

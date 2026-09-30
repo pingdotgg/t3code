@@ -534,6 +534,8 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
         settings.customModels,
         DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       ),
+      // Compaction does not depend on the model catalog.
+      slashCommands: [COMPACT_SLASH_COMMAND],
       probe: probe("error", "OpenCode could not load its model list."),
     });
   }
