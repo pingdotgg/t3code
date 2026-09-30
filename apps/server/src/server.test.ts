@@ -71,6 +71,7 @@ import {
   Option,
   Path,
   PubSub,
+  Ref,
   Stream,
   Schema,
 } from "effect";
@@ -4724,6 +4725,39 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "providerStatuses",
         payload: { providers: nextProviders },
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not refresh providers when clients subscribe to server config", () =>
+    Effect.gen(function* () {
+      const refreshCount = yield* Ref.make(0);
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({
+              keybindings: [],
+              issues: [],
+            }),
+            streamChanges: Stream.empty,
+          },
+          providerRegistry: {
+            getProviders: Effect.succeed([]),
+            refresh: () => Ref.update(refreshCount, (count) => count + 1).pipe(Effect.as([])),
+            streamChanges: Stream.empty,
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.take(1), Stream.runDrain),
+        ),
+      );
+      yield* Effect.yieldNow;
+
+      assert.equal(yield* Ref.get(refreshCount), 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
