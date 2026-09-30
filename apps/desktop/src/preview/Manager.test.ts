@@ -2599,9 +2599,7 @@ describe("PreviewManager", () => {
           send: (channel: string, ...args: unknown[]) => {
             webviewSend(channel, ...args);
             if (channel === "preview:start-pick") {
-              Effect.runSync(
-                Deferred.succeed(registrations++ === 0 ? firstReady : secondReady, undefined),
-              );
+              Deferred.doneUnsafe(registrations++ === 0 ? firstReady : secondReady, Effect.void);
             }
           },
           once: vi.fn(),
