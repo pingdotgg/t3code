@@ -256,7 +256,6 @@ export function ThreadSwipeable(props: {
         decided: false,
         direction: "end",
       };
-      event.currentTarget.setPointerCapture?.(event.pointerId);
     },
     [close],
   );
@@ -267,6 +266,7 @@ export function ThreadSwipeable(props: {
       if (!gesture || event.pointerId !== gesture.pointerId) return;
       gestureRef.current = null;
       if (gesture.decided) {
+        swallowClickRef.current = true;
         close();
       }
     },
@@ -293,6 +293,9 @@ export function ThreadSwipeable(props: {
       // Sub-threshold movement reveals nothing: without this guard the
       // end-side layer would go visible on any tap that twitches a pixel.
       if (!next.decided) return;
+      // Capturing on press retargets even an ordinary tap's click to this
+      // wrapper instead of the row inside it. Capture only a recognized swipe.
+      if (!gesture.decided) event.currentTarget.setPointerCapture?.(event.pointerId);
       const content = contentRef.current;
       if (content) {
         content.style.transition = "none";
@@ -365,6 +368,9 @@ export function ThreadSwipeable(props: {
   const handleClickCapture = useCallback((event: ReactMouseEvent) => {
     if (!swallowClickRef.current) return;
     swallowClickRef.current = false;
+    // Keyboard and assistive activation have no preceding pointerdown to
+    // clear a swallow left behind when the browser omitted the drag's click.
+    if (event.detail === 0) return;
     event.preventDefault();
     event.stopPropagation();
   }, []);
@@ -388,7 +394,7 @@ export function ThreadSwipeable(props: {
       aria-label={action.label}
       onClick={handleActionPress(action)}
       className={cn(
-        "flex h-full w-18 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 text-2xs font-medium text-white outline-none",
+        "flex h-full w-18 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 text-2xs font-medium text-white outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-inset",
         action.className,
       )}
     >
@@ -419,6 +425,11 @@ export function ThreadSwipeable(props: {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={cancelGesture}
+        onLostPointerCapture={(event) => {
+          // Taking capture from the touched child emits a bubbling loss on
+          // that child. Only losing this wrapper's capture cancels the swipe.
+          if (event.target === event.currentTarget) cancelGesture(event);
+        }}
       >
         {props.children}
       </div>
