@@ -61,7 +61,9 @@ export const runPiSessionCommand = Effect.fn("runPiSessionCommand")(function* (
     "gh",
     ChildProcess.make(
       ghShell ? escapeWindowsShellArg(ghCommand) : ghCommand,
-      sanitizeShellModeArgsForPlatform(["gist", "create", "--public=false", outputPath]),
+      ghShell
+        ? sanitizeShellModeArgsForPlatform(["gist", "create", "--public=false", outputPath])
+        : ["gist", "create", "--public=false", outputPath],
       {
         env: environment,
         shell: ghShell,

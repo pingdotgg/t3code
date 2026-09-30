@@ -215,7 +215,7 @@ const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.Process
       command,
       ChildProcess.make(
         shell ? escapeWindowsShellArg(spawnTarget) : spawnTarget,
-        sanitizeShellModeArgsForPlatform(["--version"]),
+        shell ? sanitizeShellModeArgsForPlatform(["--version"]) : ["--version"],
         {
           env: environment,
           shell,

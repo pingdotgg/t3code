@@ -604,6 +604,35 @@ describe("PiAdapter", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("keeps thinking and text deltas sharing an index in separate items", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "think then answer" });
+      yield* fake.takeRequest("prompt");
+      yield* takeEvent("turn.started");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "hmm" },
+      });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "hi" },
+      });
+      const first = yield* takeEvent("content.delta");
+      const second = yield* takeEvent("content.delta");
+      assert.equal(first.payload.streamKind, "reasoning_text");
+      assert.equal(second.payload.streamKind, "assistant_text");
+      assert.notEqual(first.itemId, second.itemId);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("does not repeat an unchanged usage report when the turn settles", () =>
     Effect.gen(function* () {
       const { fake, adapter, takeEventsThrough } = yield* makeHarness();
@@ -738,6 +767,27 @@ describe("PiAdapter", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("rejects steering after its turn was stopped", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "do the thing" });
+      yield* fake.takeRequest("prompt");
+      yield* takeEvent("turn.started");
+      yield* adapter.interruptTurn(THREAD_ID, turn.turnId);
+      const completed = yield* takeEvent("turn.completed");
+      assert.equal(completed.payload.state, "interrupted");
+      const error = yield* adapter
+        .steerTurn({ threadId: THREAD_ID, turnId: turn.turnId, input: "too late" })
+        .pipe(Effect.flip);
+      assert.equal((error as { readonly _tag?: unknown })._tag, "ProviderAdapterValidationError");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("rejects steering a turn that is not active", () =>
     Effect.gen(function* () {
       const { adapter } = yield* makeHarness();
@@ -754,6 +804,69 @@ describe("PiAdapter", () => {
         })
         .pipe(Effect.flip);
       assert.equal(error._tag, "ProviderAdapterValidationError");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects a /compact turn that carries attachments", () =>
+    Effect.gen(function* () {
+      const { adapter } = yield* makeHarness();
+      const serverConfig = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachment = {
+        type: "file",
+        id: "attach-12345678-1234-1234-1234-123456789012",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+      } as const;
+      yield* fs.makeDirectory(serverConfig.attachmentsDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(serverConfig.attachmentsDir, `${attachment.id}.bin`),
+        "hello",
+      );
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const error = yield* adapter
+        .sendTurn({ threadId: THREAD_ID, input: "/compact", attachments: [attachment] })
+        .pipe(Effect.flip);
+      assert.equal((error as { readonly _tag?: unknown })._tag, "ProviderAdapterValidationError");
+      // Rejected before installation: no turn is left active behind it.
+      assert.deepEqual((yield* adapter.readThread(THREAD_ID)).turns, []);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects steering /compact with attachments", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "do the thing" });
+      yield* fake.takeRequest("prompt");
+      yield* takeEvent("turn.started");
+      const error = yield* adapter
+        .steerTurn({
+          threadId: THREAD_ID,
+          turnId: turn.turnId,
+          input: "/compact",
+          attachments: [
+            {
+              type: "file",
+              id: "attach-12345678-1234-1234-1234-123456789012",
+              name: "notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 5,
+            } as const,
+          ],
+        })
+        .pipe(Effect.flip);
+      assert.equal((error as { readonly _tag?: unknown })._tag, "ProviderAdapterValidationError");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

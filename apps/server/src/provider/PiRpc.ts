@@ -218,7 +218,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   // Windows npm shims (pi.cmd) cannot execute with shell: false; resolve the
   // same way the other CLI providers do so a normal global install works.
   // Shell-mode launches join command and args into one cmd.exe string, so
-  // both are escaped to preserve boundaries when paths contain spaces.
+  // both are escaped to preserve boundaries when paths contain spaces —
+  // but only in shell mode. A direct .exe launch passes argv untouched,
+  // and escaping there would corrupt values that never see cmd.exe.
   const { command: spawnTarget, shell } = resolveWindowsSpawn(options.command, {
     env: options.env,
   });
@@ -229,7 +231,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     .spawn(
       ChildProcess.make(
         shell ? escapeWindowsShellArg(spawnTarget) : spawnTarget,
-        sanitizeShellModeArgsForPlatform([...options.args], platform),
+        shell ? sanitizeShellModeArgsForPlatform([...options.args], platform) : [...options.args],
         {
           ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
           env: options.env,
@@ -336,6 +338,13 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
           }
           return;
         }
+        // Orphaned correlated response: its caller timed out or was
+        // interrupted and already cleaned up. It must not reach the events
+        // queue — the pump would misread it as a session event — while
+        // id-less responses (deferred fire-and-forget acks) still flow
+        // through below.
+        yield* Effect.logDebug("Dropping orphaned pi response.", { id: record["id"] });
+        return;
       }
       yield* Queue.offer(events, record);
     });

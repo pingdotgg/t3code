@@ -584,7 +584,10 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       kind: PiStreamItem["kind"],
       contentIndex: number,
     ): PiStreamItem => {
-      const key = `m${turn.messageOrdinal}:c${contentIndex}`;
+      // Keyed by stream kind as well as index: Pi emits thinking and text
+      // deltas under independent content-index sequences, so sharing a key
+      // would publish one modality's deltas with the other's streamKind.
+      const key = `m${turn.messageOrdinal}:c${contentIndex}:${kind}`;
       const existing = turn.streamItems.get(key);
       if (existing !== undefined) return existing;
       const item: PiStreamItem = {
@@ -1694,6 +1697,15 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             });
           }
           const compactCommand = parsePiCompactCommand(text);
+          // /compact takes no attachments: the compact RPC carries no payload
+          // channel, so accepting them here would silently drop every file.
+          if (compactCommand !== null && attachments.length > 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: "Attachments cannot be sent with /compact; send them with a prompt instead.",
+            });
+          }
           // Resolved before a turn is installed: a failure here (an unreadable
           // attachment) must not leave a turn active.
           const payload =
@@ -1819,6 +1831,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           const preCheck = ctx.activeTurn;
           if (
             preCheck === null ||
+            preCheck.interrupted ||
             (input.turnId !== undefined && preCheck.turnId !== input.turnId)
           ) {
             return yield* new ProviderAdapterValidationError({
@@ -1828,16 +1841,26 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             });
           }
           const compactCommand = parsePiCompactCommand(text);
+          if (compactCommand !== null && attachments.length > 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "steerTurn",
+              issue: "Attachments cannot be sent with /compact; send them with a prompt instead.",
+            });
+          }
           const payload =
             compactCommand === null ? yield* resolvePromptPayload(ctx, text, attachments) : null;
           return yield* ctx.eventPermit.withPermits(1)(
             Effect.gen(function* () {
               const latest = ctx.activeTurn;
-              if (latest === null || latest.turnId !== preCheck.turnId) {
+              // interruptTurn flags the same object and tears it down
+              // asynchronously; steering into it would resurrect work after
+              // the user stopped it, so a stopped turn fails like a gone one.
+              if (latest === null || latest.turnId !== preCheck.turnId || latest.interrupted) {
                 return yield* new ProviderAdapterValidationError({
                   provider: PROVIDER,
                   operation: "steerTurn",
-                  issue: "The Pi turn settled while preparing the steer message.",
+                  issue: "The Pi turn ended while preparing the steer message.",
                 });
               }
               if (compactCommand !== null) {
