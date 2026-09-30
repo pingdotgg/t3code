@@ -72,7 +72,18 @@ function nextMarkerText(marker: ListMarker): string {
 }
 
 function formatOrderedNumber(value: number, numberText: string): string {
-  return Number.isSafeInteger(value) ? String(value).padStart(numberText.length, "0") : numberText;
+  if (!Number.isSafeInteger(value)) return numberText;
+  // Keep the width only for explicitly zero-padded markers ("01.").
+  return numberText.startsWith("0")
+    ? String(value).padStart(numberText.length, "0")
+    : String(value);
+}
+
+/** Visual indent width with tabs expanded to four-column stops, as in CommonMark. */
+function indentWidth(indent: string): number {
+  let width = 0;
+  for (const char of indent) width = char === "\t" ? width + 4 - (width % 4) : width + 1;
+  return width;
 }
 
 /**
@@ -89,6 +100,8 @@ function renumberFollowingItems(
   marker: Extract<ListMarker, { kind: "ordered" }>,
   firstNumber: number,
 ): { end: number; text: string } | null {
+  const tokens = inlineTokenRanges(value);
+  const baseWidth = indentWidth(marker.indent);
   let expected = firstNumber;
   let position = afterLineEnd;
   let end = -1;
@@ -98,12 +111,15 @@ function renumberFollowingItems(
     const lineStart = position + 1;
     const nextBreak = value.indexOf("\n", lineStart);
     const lineEnd = nextBreak === -1 ? value.length : nextBreak;
+    position = lineEnd;
+    // A line that starts inside a multiline chip is part of that chip's text.
+    if (tokens.some((token) => lineStart > token.start && lineStart < token.end)) continue;
     const line = value.slice(lineStart, lineEnd);
     const parsed = parseListMarker(line);
-    const lineIndent = line.match(/^[ \t]*/)?.[0] ?? "";
+    const width = indentWidth(line.match(/^[ \t]*/)?.[0] ?? "");
     if (
       parsed?.marker.kind === "ordered" &&
-      parsed.marker.indent === marker.indent &&
+      width === baseWidth &&
       parsed.marker.delimiter === marker.delimiter
     ) {
       const current = parsed.marker;
@@ -116,10 +132,9 @@ function renumberFollowingItems(
         end = numberEnd;
       }
       expected += 1;
-    } else if (line.trim() === "" || lineIndent.length <= marker.indent.length) {
+    } else if (line.trim() === "" || width <= baseWidth) {
       break;
     }
-    position = lineEnd;
   }
   return end === -1 ? null : { end, text };
 }
@@ -131,15 +146,21 @@ function segmentSource(
   return segment.source;
 }
 
-/** True when splitting at the caret would cut an inline chip in two. */
-function isInsideInlineToken(value: string, cursor: number): boolean {
+/** Expanded offsets of every inline chip in the prompt. */
+function inlineTokenRanges(value: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
   let offset = 0;
   for (const segment of splitPromptIntoComposerSegments(value)) {
     const end = offset + segmentSource(segment).length;
-    if (segment.type !== "text" && cursor > offset && cursor < end) return true;
+    if (segment.type !== "text") ranges.push({ start: offset, end });
     offset = end;
   }
-  return false;
+  return ranges;
+}
+
+/** True when splitting at the caret would cut an inline chip in two. */
+function isInsideInlineToken(value: string, cursor: number): boolean {
+  return inlineTokenRanges(value).some((range) => cursor > range.start && cursor < range.end);
 }
 
 function currentLine(value: string, cursor: number): { start: number; end: number; text: string } {
@@ -150,8 +171,8 @@ function currentLine(value: string, cursor: number): { start: number; end: numbe
 }
 
 /**
- * Enter on a list item line: continue the list, or exit it when the item is
- * empty. Returns null for non-list lines, carets inside the marker, and
+ * Enter on a list item line: continue the list (renumbering the ordered items
+ * below), or exit it when the item is empty. Returns null for non-list lines, carets inside the marker, and
  * carets inside an inline chip — all fall through to a plain newline.
  */
 export function listContinuationForEnter(value: string, cursor: number): ComposerListEdit | null {
