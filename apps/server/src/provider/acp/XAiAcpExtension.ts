@@ -1404,14 +1404,28 @@ function xAiPromptFailure(
     });
   }
   if (notification.stopReason === "error") {
+    // Grok's raw result is unbounded provider text: keep it only as the cause.
+    const agentResult = nonEmptyString(notification.agentResult);
     return new EffectAcpErrors.AcpRequestError({
       code: -32603,
-      errorMessage:
-        nonEmptyString(notification.agentResult) ?? "Grok ended the turn with an error.",
+      errorMessage: "Grok ended the turn with an error.",
+      operation: "receive-response",
+      ...(agentResult === undefined ? {} : { cause: new XAiPromptError({ agentResult }) }),
     });
   }
   return null;
 }
+
+/** Grok's own text for a failed prompt, carried only as a cause. */
+export class XAiPromptError extends Schema.TaggedError<XAiPromptError>()("XAiPromptError", {
+  agentResult: Schema.String,
+}) {
+  override get message() {
+    return "Grok reported a prompt failure.";
+  }
+}
+
+export const isXAiPromptError = Schema.is(XAiPromptError);
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
