@@ -67,6 +67,25 @@ describe("provider compatibility", () => {
     }
   });
 
+  it("supports OpenCode 2 and gives OpenCode 1.x limited support", () => {
+    const opencode = ProviderDriverKind.make("opencode");
+    for (const [version, expected] of [
+      ["2.0.18", "supported"],
+      ["2.1.0", "supported"],
+      ["1.99.0", "graceful"],
+      ["1.14.19", "graceful"],
+      ["1.14.18", "broken"],
+    ] as const) {
+      const advisory = resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        opencode,
+        version,
+      );
+      assert.strictEqual(advisory?.status, expected, `OpenCode ${version}`);
+      assert.strictEqual(advisory?.recommendedRange, ">=2.0.18");
+    }
+  });
+
   it("compares Cursor build dates without treating semver prereleases as stable", () => {
     const cursor = ProviderDriverKind.make("cursor");
     const cursorPolicy: ProviderCompatibilityPolicy = {

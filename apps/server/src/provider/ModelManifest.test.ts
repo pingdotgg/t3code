@@ -11,6 +11,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
 /**
  * Test policy: this file covers manifest machinery, not manifest contents.
@@ -581,6 +582,62 @@ describe("ModelManifest service", () => {
       ),
     ),
   );
+});
+
+// TEMPORARY V2 preview stopgap; remove with `withPreviewCompatibility` (#2829).
+describe("compatibility policy by release channel", () => {
+  const OPENCODE = ProviderDriverKind.make("opencode");
+  // Main's OpenCode policy (#14198): stable and nightly have no OpenCode 2 runtime.
+  const remote: ModelManifest.ModelManifestData = {
+    ...REMOTE_MANIFEST,
+    compatibility: [
+      {
+        driver: OPENCODE,
+        t3CodeRange: ">=0.0.42",
+        recommendedRange: ">=1.14.19 <2.0.0",
+        recommendedVersion: "1.14.19",
+        ranges: [
+          { range: ">=2.0.0", status: "broken" },
+          { range: ">=1.14.19 <2.0.0", status: "supported" },
+          { range: "<1.14.19", status: "broken" },
+        ],
+      },
+    ],
+  };
+
+  for (const [channel, t3CodeVersion, expected, openCode2Status] of [
+    [
+      "preview builds keep the bundled policy",
+      "0.0.44-preview.20260929.1",
+      { ...remote, compatibility: ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility },
+      "supported",
+    ],
+    ["stable builds adopt the fetched policy", "0.0.44", remote, "broken"],
+    ["nightly builds adopt the fetched policy", "0.0.44-nightly.20260929.1", remote, "broken"],
+  ] as const) {
+    it.live(channel, () =>
+      Effect.gen(function* () {
+        const openCode2 = (manifest: ModelManifest.ModelManifestData) =>
+          resolveProviderCompatibility(manifest.compatibility, OPENCODE, "2.0.18", t3CodeVersion)
+            ?.status;
+        const refreshed = yield* (yield* ModelManifest.makeForVersion(t3CodeVersion)).refresh;
+        assert.deepStrictEqual(refreshed, expected);
+        assert.strictEqual(openCode2(refreshed), openCode2Status);
+
+        // A restart reads the fetched manifest back from the disk cache.
+        const rebooted = yield* (yield* ModelManifest.makeForVersion(t3CodeVersion)).current;
+        assert.deepStrictEqual(rebooted, expected);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          serviceLayers({
+            prefix: "model-manifest-channel-compatibility-test",
+            response: () => Response.json(remote),
+          }),
+        ),
+      ),
+    );
+  }
 });
 
 it.effect("caches valid compatibility policies and keeps them after a malformed refresh", () => {
