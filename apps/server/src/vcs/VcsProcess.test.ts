@@ -54,6 +54,20 @@ const captureProcessResult = (
     Effect.flip,
   );
 
+const processOutput = (code: number, stderr: string): ProcessRunner.ProcessRunOutput => ({
+  stdout: "",
+  stderr,
+  code: ChildProcessSpawner.ExitCode(code),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+const FSYNC_STDERR =
+  "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported";
+
 describe("VcsProcess.run", () => {
   it.effect.each([
     { stderr: "fatal: Unable to create '/private/repo/index.lock': File exists", retryable: true },
@@ -92,6 +106,69 @@ describe("VcsProcess.run", () => {
         expect(error.retryable === true).toBe(retryable);
         const encoded = yield* encodeExitError(error);
         expect(encoded).not.toContain("/private/repo");
+      }),
+  );
+
+  it.effect("retries one full-fsync rejection with writeout-only", () =>
+    Effect.gen(function* () {
+      const seen: Array<ReadonlyArray<string>> = [];
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.sync(() => {
+              seen.push(input.args);
+              return processOutput(
+                input.args.includes("core.fsyncMethod=fsync") ? 128 : 0,
+                input.args.includes("core.fsyncMethod=fsync") ? FSYNC_STDERR : "",
+              );
+            }),
+        }),
+      );
+      const output = yield* service.run({
+        ...baseInput,
+        operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+        args: [
+          "-C",
+          "/Volumes/share",
+          "-c",
+          "core.fsync=objects,reference",
+          "-c",
+          "core.fsyncMethod=fsync",
+          "add",
+          "-A",
+        ],
+      });
+      expect(output.exitCode).toBe(0);
+      expect(seen).toHaveLength(2);
+      expect(seen[1]).toContain("core.fsyncMethod=writeout-only");
+      expect(seen[1]).not.toContain("core.fsyncMethod=fsync");
+      expect(seen[1]?.join(" ")).not.toContain("tmp_obj_Pseg66");
+    }),
+  );
+
+  it.effect(
+    "does not rewrite a non-fsync failure that merely says the operation is unsupported",
+    () =>
+      Effect.gen(function* () {
+        let attempts = 0;
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.sync(() => {
+                attempts += 1;
+                return processOutput(128, "fatal: Operation not supported");
+              }),
+          }),
+        );
+        const error = yield* service
+          .run({
+            ...baseInput,
+            args: ["-c", "core.fsyncMethod=fsync", "add", "-A"],
+          })
+          .pipe(Effect.flip);
+        expect(attempts).toBe(1);
+        assert.instanceOf(error, VcsProcessExitError);
+        expect(error.detail).toBe("Process exited with a non-zero status.");
       }),
   );
 

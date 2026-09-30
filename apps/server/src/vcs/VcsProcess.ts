@@ -113,6 +113,14 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
+// macOS maps core.fsyncMethod=fsync to F_FULLFSYNC. SMB, NFS, and AFP return
+// ENOTSUP for that flush; writeout-only is the strongest flush they support.
+const isUnsupportedFullFsync = (stderr: string) =>
+  /fsync error on [^\n]+: operation not supported/i.test(stderr);
+
+const WRITEOUT_ONLY_FSYNC = "core.fsyncMethod=writeout-only";
+const FULL_FSYNC = "core.fsyncMethod=fsync";
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
@@ -176,6 +184,17 @@ export const make = Effect.gen(function* () {
     }
 
     if (!input.allowNonZeroExit && result.code !== 0) {
+      // One rewrite, then the replacement arg no longer matches FULL_FSYNC.
+      if (
+        input.command === "git" &&
+        input.args.includes(FULL_FSYNC) &&
+        isUnsupportedFullFsync(result.stderr)
+      ) {
+        return yield* runUnbounded({
+          ...input,
+          args: input.args.map((arg) => (arg === FULL_FSYNC ? WRITEOUT_ONLY_FSYNC : arg)),
+        });
+      }
       const failureKind = classifyNonZeroExit(input.command, result.stderr);
       return yield* VcsProcessExitError.fromProcessExit(
         baseError,
