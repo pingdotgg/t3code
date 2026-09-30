@@ -2,6 +2,7 @@
 
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
 import { ChevronsUpDownIcon, XIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
@@ -169,9 +170,14 @@ function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.
   );
 }
 
-function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
+function AutocompleteList({
+  className,
+  header,
+  ...props
+}: AutocompletePrimitive.List.Props & { header?: ReactNode }) {
   return (
     <ScrollArea scrollbarGutter scrollFade>
+      {header}
       <AutocompletePrimitive.List
         className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
         data-slot="autocomplete-list"

@@ -154,6 +154,7 @@ export function CommandPalette(props: {
   const closing = useRef(false);
   const inputRef = useRef<TextInput>(null);
   const listRef = useRef<FlatList<CommandPaletteItem>>(null);
+  const [searchStatusHeight, setSearchStatusHeight] = useState(0);
   const { width, height } = useWindowDimensions();
   const searchEnvironmentIds = useMemo(
     () => environments.map((environment) => environment.environmentId),
@@ -458,27 +459,33 @@ export function CommandPalette(props: {
                   />
                 </View>
               </View>
-              <ThreadSearchStatus
-                sources={search.sources}
-                retry={search.retry}
-                onOpenConnections={() =>
-                  close(() =>
-                    navigation.navigate("SettingsSheet", {
-                      screen: "SettingsContent",
-                      params: { screen: "SettingsEnvironments" },
-                    }),
-                  )
-                }
-              />
               <FlatList
                 ref={listRef}
+                ListHeaderComponent={
+                  <View
+                    onLayout={(event) => setSearchStatusHeight(event.nativeEvent.layout.height)}
+                  >
+                    <ThreadSearchStatus
+                      sources={search.sources}
+                      retry={search.retry}
+                      onOpenConnections={() =>
+                        close(() =>
+                          navigation.navigate("SettingsSheet", {
+                            screen: "SettingsContent",
+                            params: { screen: "SettingsEnvironments" },
+                          }),
+                        )
+                      }
+                    />
+                  </View>
+                }
                 data={results}
                 extraData={selectedKey}
                 keyboardShouldPersistTaps="handled"
                 keyExtractor={(item) => item.key}
                 getItemLayout={(_, index) => ({
                   length: ROW_HEIGHT,
-                  offset: ROW_HEIGHT * index,
+                  offset: searchStatusHeight + ROW_HEIGHT * index,
                   index,
                 })}
                 contentContainerClassName="pb-2"

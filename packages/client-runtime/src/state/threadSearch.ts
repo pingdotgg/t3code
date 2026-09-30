@@ -89,6 +89,7 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         const unsupported =
           phase === "unsupported" ||
           (result._tag === "Failure" &&
+            !result.waiting &&
             Cause.pretty(result.cause).includes(
               `Unknown request tag: ${ORCHESTRATION_WS_METHODS.searchThreads}`,
             ));

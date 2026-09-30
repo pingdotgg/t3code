@@ -307,6 +307,27 @@ it("recognizes the old server unknown search RPC without treating generic failur
   }
 });
 
+it("reports recovery pending instead of retaining an old unsupported RPC verdict", () => {
+  const h = harness();
+  try {
+    const unsupported = AsyncResult.failure<OrchestrationSearchThreadsResult, Error>(
+      Cause.die(`Unknown request tag: ${ORCHESTRATION_WS_METHODS.searchThreads}`),
+    );
+    h.registry.set(h.b, unsupported);
+    expect(h.read().sources[1]?.status).toBe("unsupported");
+    h.registry.set(h.b, AsyncResult.waiting(unsupported));
+    expect(h.read().sources[1]?.status).toBe("pending");
+    expect(h.read().isLoading).toBe(true);
+    expect(h.read().matches).toHaveLength(1);
+    h.registry.set(h.b, AsyncResult.success(oneMatch));
+    expect(h.read().sources[1]?.status).toBe("complete");
+    expect(h.read().isLoading).toBe(false);
+    expect(h.read().matches).toHaveLength(2);
+  } finally {
+    h.registry.dispose();
+  }
+});
+
 it("qualifies a full response as possibly limited, not proven truncated", () => {
   const h = harness();
   try {

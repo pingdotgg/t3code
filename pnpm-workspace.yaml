@@ -49,8 +49,8 @@ catalog:
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
   typescript: 7.0.2
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.3
-  vite-plus: 0.3.3
+  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vite-plus: 1.0.0
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
@@ -180,6 +180,7 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
+  alchemy@2.0.0-beta.79: patches/alchemy@2.0.0-beta.79.patch
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
@@ -196,6 +197,7 @@ patchedDependencies:
   expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
   expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
+  node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

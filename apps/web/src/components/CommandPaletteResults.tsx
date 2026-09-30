@@ -1,5 +1,6 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -18,6 +19,7 @@ import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
+  header?: ReactNode;
   groups: ReadonlyArray<CommandPaletteGroup>;
   highlightedItemValue?: string | null;
   isActionsOnly: boolean;
@@ -26,19 +28,16 @@ interface CommandPaletteResultsProps {
 }
 
 export function CommandPaletteResults(props: CommandPaletteResultsProps) {
-  if (props.groups.length === 0) {
-    return (
-      <div className="py-10 text-center text-sm text-muted-foreground">
-        {props.emptyStateMessage ??
-          (props.isActionsOnly
-            ? "No matching actions."
-            : "No matching commands, projects, or threads.")}
-      </div>
-    );
-  }
-
   return (
-    <CommandList>
+    <CommandList header={props.header}>
+      {props.groups.length === 0 ? (
+        <div className="py-10 text-center text-sm text-muted-foreground">
+          {props.emptyStateMessage ??
+            (props.isActionsOnly
+              ? "No matching actions."
+              : "No matching commands, projects, or threads.")}
+        </div>
+      ) : null}
       {props.groups.map((group) => (
         <CommandGroup items={group.items} key={group.value}>
           <CommandGroupLabel>{group.label}</CommandGroupLabel>

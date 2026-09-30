@@ -3012,8 +3012,14 @@ function OpenCommandPaletteDialog(props: {
           </div>
         </div>
       ) : null}
-      <ThreadSearchStatus sources={threadSearch.sources} retry={threadSearch.retry} />
       <CommandPaletteResults
+        header={
+          <ThreadSearchStatus
+            sources={threadSearch.sources}
+            retry={threadSearch.retry}
+            onOpenConnections={() => setOpen(false)}
+          />
+        }
         groups={displayedGroups}
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}

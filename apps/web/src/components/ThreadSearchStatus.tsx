@@ -9,6 +9,7 @@ import { Button } from "./ui/button";
 export function ThreadSearchStatus(props: {
   readonly sources: ReadonlyArray<ThreadSearchSource>;
   readonly retry: () => void;
+  readonly onOpenConnections?: () => void;
 }) {
   if (props.sources.length === 0) return null;
   const messages = props.sources.flatMap((source) => {
@@ -33,7 +34,7 @@ export function ThreadSearchStatus(props: {
       {props.sources.some(
         (source) => source.status === "disconnected" || source.status === "unsupported",
       ) ? (
-        <Link to="/settings/connections" className="underline">
+        <Link to="/settings/connections" className="underline" onClick={props.onOpenConnections}>
           Manage connections
         </Link>
       ) : null}
