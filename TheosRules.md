@@ -1,6 +1,6 @@
 # Theo's rules
 
-Rules from Theo about how T3 Code should be built. They apply to every surface: web, desktop, and mobile. Captured from PR reviews and the T3 Code dev Discord.
+Review guidance distilled from Theo's maintainer discussions and related PRs. Apply it to the relevant surface and context; current maintainer direction, AGENTS.md, CONTRIBUTING.md, and the release runbook govern specific decisions.
 
 ## Product and interface
 
@@ -10,15 +10,15 @@ No animation, transition, layout shift, or reflow unless the user asked for it o
 
 ### 2. Taste rules are enforced before merge, not after
 
-A change that breaks one of these rules gets addressed before it merges, and the rule lands here so it is not relitigated. Regret is not a review process.
+Address taste regressions before merge. Record recurring constraints so future reviews can apply them consistently.
 
-### 3. Redundant information is a defect
+### 3. Remove redundant status that adds no useful information
 
-If the interface says something that is already conveyed elsewhere, it is waste, not reinforcement. Delete it, especially anything that adds height to the composer.
+Status already conveyed elsewhere should earn any extra space it takes, especially above the composer. Remove duplication that adds height without helping the user.
 
-### 4. The composer must never regress
+### 4. Prioritize composer regressions
 
-The composer is the most-used surface in the app. A composer regression outranks almost everything else and gets reverted first, even when the change that caused it is good.
+Fix composer regressions promptly. Revert a change when that is the fastest way to restore the experience, even if the feature itself is desirable; polish elsewhere can wait.
 
 ### 5. Minimize churn for the majority of users
 
@@ -34,53 +34,53 @@ Users get stuck on empty states no matter how obvious the button seems. Every fi
 
 ## Defaults and settings
 
-### 8. Never change a user's defaults without permission
+### 8. Agree on changes to established defaults before merge
 
-Defaults are the product. A change that silently alters what users already rely on is the most serious kind of regression, and it calls for a process investigation, not just a revert.
+Defaults are part of the product. Get explicit maintainer agreement before changing behavior users already rely on. An unexpected default change calls for a process investigation as well as a fix.
 
 ### 9. Every setting must earn its place
 
-Each config option is maintained indefinitely, so new ones require team discussion before merge. Default to not adding it.
+Each config option creates an ongoing maintenance commitment, so new ones require team agreement before merge. Default to not adding it.
 
-### 10. Every setting has exactly one home
+### 10. Make each setting's scope explicit
 
-Keep a manifest of what the settings are and which tier each lives in: client-specific, global, or server-specific. A setting that plausibly belongs in two places is designed wrong.
+Keep track of where settings live: client-specific, global, or server-specific. Make ownership and inheritance clear, including supported project overrides; ambiguity about scope is the problem.
 
 ## Scope and features
 
-### 11. Don't build features that become support requests
+### 11. Keep thread import from becoming a sync commitment
 
-Features that invite follow-up asks (sync, auto-import, migration tooling) are scope traps. Smooth onboarding instead of building the feature the request would grow into.
+For threads imported from other tools, favor smooth onboarding over an ongoing promise of sync, auto-import, and migration support. Consider the follow-up support commitment when choosing scope.
 
-### 12. The triage bar
+### 12. Tighten the triage bar during a release freeze
 
-A change over ~10 lines of code for an issue reported by fewer than ~1,000 users is not now. Do not spend main-branch time on it.
+During a declared stable-release freeze, defer noncritical work and focus on getting the release out. The 10-line / 1,000-report threshold came from a specific freeze, not a standing bar for bug fixes.
 
 ### 13. Performance on large threads is the bar
 
-Benchmark against "hell threads" (hundreds of messages, long sessions). If it feels fast there, it is fast everywhere.
+Benchmark against "hell threads" (hundreds of messages, long sessions). Large-thread responsiveness is an important bar; it does not replace checking other affected workloads and platforms.
 
 ### 14. Never ship a default that isn't viable
 
-A default model, provider, or mode that is weak, slow, or burns through usage is a confusing regression even when well-intentioned. Operate as though it doesn't exist and fall back to what the user already has.
+Evaluate default models on the task they will perform and their usage cost. For title and text generation, prefer the user's existing harness over a dedicated model that performs poorly or exhausts usage. This is not a blanket fallback policy for every provider or mode.
 
 ### 15. Enforce cross-surface parity with machines, not heroics
 
-Contracts changing on the wire must reach every client through pipelines and CI checks that fail loudly, not agents hand-porting changes.
+Where clients cannot share contract types directly, use generated bindings or CI parity checks to catch drift. Swift API parity should not depend solely on agents manually porting every change.
 
-### 16. When a dependency fights you, replace it
+### 16. Reconsider integrations that keep fighting you
 
-If an integration costs days of fighting, the more reliable design wins. Rip it out in favor of the flow you control.
+When an integration keeps failing, evaluate a simpler, more reliable flow with the team. The Electron authentication discussion favored considering a redirect flow; time spent debugging alone is not a reason to remove every troublesome dependency.
 
-### 17. Never inconvenience the mainstream platform for a legacy minority
+### 17. Keep Apple Silicon downloads straightforward
 
-ARM Mac users are never made worse off so Intel holdouts have it easier. Legacy support may cost the legacy users effort, never the mainstream ones.
+Do not send Apple Silicon users an Intel build or complicate their download to accommodate Intel Macs. An explicitly labeled Intel download may take extra steps. This decision concerns Mac distribution, not a blanket rule for every minority platform.
 
 ## Releases and process
 
-### 18. Freeze main before a stable release
+### 18. Honor declared release freezes
 
-Only critical bug fixes merge during a freeze window. Reliability of the release outranks everything anyone wants to land.
+When maintainers declare a freeze, only critical bug fixes merge during that window. A freeze is not required for every stable release: the release workflow can promote a verified nightly while main continues advancing.
 
 ### 19. Scope creep is why releases never ship
 
@@ -90,13 +90,13 @@ Only critical bug fixes merge during a freeze window. Reliability of the release
 
 Heavily dogfood the exact nightly, conclude there are no meaningful regressions, then ship. Merge → think it's fine → ship stable → hit bugs is how bad releases happen.
 
-### 21. Stable only ships code already proven on nightly
+### 21. Promote the verified nightly for normal stable releases
 
-Stable builds the nightly that went out, not whatever is on `main` at release time.
+The normal manual stable release builds the latest published nightly's commit, not whatever is on `main` at release time. Follow the [release runbook](docs/operations/release.md) for explicit-tag releases, including release-branch fixes.
 
-### 22. Huge unreviewed PRs don't merge before a release
+### 22. Leave substantial review work out of the release candidate
 
-A PR with a hundred comments and no review is not getting in before a stable cut, no matter how wanted the feature is.
+Do not rush a large or heavily debated PR into a stable cut just because the feature is wanted. Leave time to review and verify it for a later release.
 
 ### 23. Build automated nets for regressions
 
@@ -114,6 +114,6 @@ Do not build on or rework a surface someone has open PRs against. Coordinate fir
 
 Whoever sets the rules follows them visibly, including skipping the PR they most want in the release.
 
-### 27. Users' bugs outrank the founder's
+### 27. The founder's bugs need not come first
 
-Reports from real users get prioritized slightly higher than internal ones, including Theo's own.
+Theo has explicitly put another reporter's bugs ahead of his own. The founder's status does not automatically give his reports priority.
