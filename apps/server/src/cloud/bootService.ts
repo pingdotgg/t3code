@@ -229,9 +229,9 @@ export interface BootServiceManager {
   /** Best-effort recovery after a failed repair of an installed service. */
   readonly restart: ReadonlyArray<BootServiceStep>;
   /**
-   * Replaces stop + activate when the caller runs inside the service, where a
-   * stop would kill it before the start. The last entry queues the restart
-   * with the service manager instead of waiting for it.
+   * Replaces stop + activate for `restart` when the caller runs inside the
+   * service, where a stop would kill it before the start. The last entry
+   * queues the restart with the service manager instead of waiting for it.
    */
   readonly handoff?: ReadonlyArray<BootServiceStep>;
   /** Uninstall, before the unit file is removed. */
@@ -854,13 +854,25 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // written, from the same read the downgrade check uses; the stop that
     // normally serialises against the launcher is skipped on purpose.
     const start = options?.start !== false;
-    // From inside the service the files are written as for start=false, with
-    // the same guard against a concurrent remote update, and the service
-    // manager restarts onto them.
-    const handoff = installed && start && runningInsideService ? manager.handoff : undefined;
-    const deferred = installed && (!start || handoff !== undefined);
-    const stopped = installed && start && handoff === undefined;
-    if (stopped) {
+    if (installed && start && runningInsideService && manager.kind === "systemd") {
+      // Stopping the unit from inside it kills this process before the start.
+      // A transient unit runs the same install from outside, stop first, so it
+      // still serialises with a remote update the launcher may be starting.
+      yield* runStep("handing the install to a transient unit", "systemd-run", [
+        "--user",
+        "--collect",
+        "--quiet",
+        `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
+        runtimePaths.entryPath,
+        "service",
+        "install",
+        "--base-dir",
+        input.baseDir,
+        ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
+      ]);
+      return plan;
+    }
+    if (installed && start) {
       yield* runSteps(manager.stop);
     }
 
@@ -889,7 +901,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      if (deferred) {
+      if (!start && installed) {
         // Written first: once the files below name the new version, the
         // running service is behind them, and a failure between the two
         // writes must not leave it looking current. The launcher removes the
@@ -908,7 +920,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
-      if (deferred) {
+      if (!start && installed) {
         // The launcher only writes this file while a remote update is in
         // flight. One that began after the check above lands either before
         // this write (then the launcher's copy in memory is what it keeps
@@ -922,10 +934,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       }
       yield* writeDurably(unitPath, manager.render(plan));
 
-      if (handoff !== undefined) {
-        // The launcher clears the restart marker once it runs this version.
-        yield* runSteps(handoff);
-      } else if (start) {
+      if (start) {
         yield* runSteps(manager.activate);
         yield* fs.remove(restartPendingPath, { force: true });
       }
@@ -934,7 +943,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
       ),
       Effect.tapError(() =>
-        stopped ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
     return plan;
@@ -951,6 +960,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ) {
       return false;
     }
+    // Writes no state, and the launcher lets an update transition in flight
+    // finish before the queued stop tears it down.
     if (runningInsideService && manager.handoff !== undefined) {
       yield* runSteps(manager.handoff);
       return true;

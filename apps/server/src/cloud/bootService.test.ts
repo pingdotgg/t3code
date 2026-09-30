@@ -629,31 +629,31 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("updates from inside the service without stopping the process doing it", () =>
+  it.effect("hands an install from inside the service to a transient unit", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands, makeService } = yield* makeHarness();
       const path = yield* Path.Path;
-      yield* service.install();
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+      const state = yield* fs.readFileString(statePath);
       commands.length = 0;
 
+      const baseDir = path.dirname(path.dirname(statePath));
       const newer = yield* makeService(undefined, "1.2.4", undefined, true);
-      const plan = yield* newer.install();
+      yield* newer.install({ allowDowngrade: true });
 
       expect(
         commands.filter(
-          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+          (command) =>
+            (command.startsWith("systemctl ") || command.startsWith("systemd-run ")) &&
+            !command.includes("show-environment"),
         ),
       ).toEqual([
-        "systemctl --user daemon-reload",
-        "systemctl --user enable t3code.service",
-        "systemctl --user restart --no-block t3code.service",
+        `systemd-run --user --collect --quiet --setenv=T3_BOOT_SERVICE_UNIT= ${pinnedRuntimePaths(path, baseDir, "1.2.4", "linux").entryPath} service install --base-dir ${baseDir} --allow-downgrade`,
       ]);
-      expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
-      // Until the launcher comes back on 1.2.4 and clears it.
-      expect(
-        yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
-      ).toBe(true);
+      // The transient unit writes them after stopping the launcher.
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
     }),
   );
 
@@ -677,15 +677,15 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("leaves the service running when a handoff from inside it fails", () =>
+  it.effect("leaves the service running when a restart handoff from inside it fails", () =>
     Effect.gen(function* () {
       const { service, commands, control, makeService } = yield* makeHarness();
       yield* service.install();
       commands.length = 0;
       control.failCommand = "systemctl --user daemon-reload";
 
-      const newer = yield* makeService(undefined, "1.2.4", undefined, true);
-      const error = yield* newer.install().pipe(Effect.flip);
+      const inside = yield* makeService(undefined, "1.2.3", undefined, true);
+      const error = yield* inside.restart.pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceCommandError");
       // Nothing was stopped, so there is nothing to bring back.
       expect(
