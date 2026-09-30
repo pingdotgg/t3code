@@ -2494,9 +2494,20 @@ it.effect("ProviderServiceLive persists the Pi resume cursor when a turn settles
         turnEntryIds: ["user-1"],
       };
       pi.updateSession(threadId, (session) => ({ ...session, resumeCursor: settledCursor }));
-      const collector = yield* Stream.runForEach(provider.streamEvents, () => Effect.void).pipe(
-        Effect.forkScoped,
-      );
+      // Snapshot the binding at the moment turn.completed is delivered: the
+      // cursor must already be persisted then, not after.
+      const seenAtDelivery = yield* Ref.make<unknown>(null);
+      const collector = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type === "turn.completed") {
+            const atDelivery = yield* directory.getBinding(threadId);
+            yield* Ref.set(
+              seenAtDelivery,
+              Option.isSome(atDelivery) ? atDelivery.value.resumeCursor : null,
+            );
+          }
+        }),
+      ).pipe(Effect.forkScoped);
       // Let the service subscription attach before publishing: an unbounded
       // PubSub drops messages published with zero subscribers.
       yield* sleep(50);
@@ -2511,6 +2522,7 @@ it.effect("ProviderServiceLive persists the Pi resume cursor when a turn settles
       });
       yield* sleep(50);
       yield* Fiber.interrupt(collector);
+      assert.deepEqual(yield* Ref.get(seenAtDelivery), settledCursor);
       const binding = yield* directory.getBinding(threadId);
       assert.isTrue(Option.isSome(binding));
       if (Option.isSome(binding)) {

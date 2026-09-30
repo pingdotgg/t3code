@@ -1810,8 +1810,17 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               issue: "Turn requires non-empty text or attachments.",
             });
           }
-          const active = ctx.activeTurn;
-          if (active === null || (input.turnId !== undefined && active.turnId !== input.turnId)) {
+          // Fast pre-check only: payload preparation awaits image reads and
+          // skill discovery, during which the pump may settle the turn. The
+          // permit is deliberately NOT held across those awaits (it would
+          // stall the pump, including dialogs Pi may raise mid-discovery);
+          // the turn is revalidated under the permit below, atomically with
+          // the send.
+          const preCheck = ctx.activeTurn;
+          if (
+            preCheck === null ||
+            (input.turnId !== undefined && preCheck.turnId !== input.turnId)
+          ) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
               operation: "steerTurn",
@@ -1821,29 +1830,41 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           const compactCommand = parsePiCompactCommand(text);
           const payload =
             compactCommand === null ? yield* resolvePromptPayload(ctx, text, attachments) : null;
-          if (compactCommand !== null) {
-            active.manualCompactInFlight = true;
-            yield* ctx.connection
-              .send(compactRecord(compactCommand))
-              .pipe(Effect.mapError(requestError("compact")));
-            ctx.pendingCompactResponses.push({ turnId: active.turnId, kind: "steer" });
-          } else if (payload !== null) {
-            yield* ctx.connection
-              .send({
-                type: "prompt",
-                message: payload.message,
-                streamingBehavior: "steer",
-                ...(payload.images.length === 0 ? {} : { images: payload.images }),
-              })
-              .pipe(Effect.mapError(requestError("prompt")));
-            ctx.pendingPromptResponses.push({ turnId: active.turnId, kind: "steer" });
-          }
-          active.settleProbeGeneration += 1;
-          return {
-            threadId: input.threadId,
-            turnId: active.turnId,
-            resumeCursor: ctx.session.resumeCursor,
-          } satisfies ProviderTurnStartResult;
+          return yield* ctx.eventPermit.withPermits(1)(
+            Effect.gen(function* () {
+              const latest = ctx.activeTurn;
+              if (latest === null || latest.turnId !== preCheck.turnId) {
+                return yield* new ProviderAdapterValidationError({
+                  provider: PROVIDER,
+                  operation: "steerTurn",
+                  issue: "The Pi turn settled while preparing the steer message.",
+                });
+              }
+              if (compactCommand !== null) {
+                latest.manualCompactInFlight = true;
+                yield* ctx.connection
+                  .send(compactRecord(compactCommand))
+                  .pipe(Effect.mapError(requestError("compact")));
+                ctx.pendingCompactResponses.push({ turnId: latest.turnId, kind: "steer" });
+              } else if (payload !== null) {
+                yield* ctx.connection
+                  .send({
+                    type: "prompt",
+                    message: payload.message,
+                    streamingBehavior: "steer",
+                    ...(payload.images.length === 0 ? {} : { images: payload.images }),
+                  })
+                  .pipe(Effect.mapError(requestError("prompt")));
+                ctx.pendingPromptResponses.push({ turnId: latest.turnId, kind: "steer" });
+              }
+              latest.settleProbeGeneration += 1;
+              return {
+                threadId: input.threadId,
+                turnId: latest.turnId,
+                resumeCursor: ctx.session.resumeCursor,
+              } satisfies ProviderTurnStartResult;
+            }),
+          );
         }),
       );
 

@@ -1,5 +1,9 @@
 import type { ProviderSessionCommandInput, ProviderSessionCommandResult } from "@t3tools/contracts";
-import { resolveWindowsSpawn } from "@t3tools/shared/shell";
+import {
+  escapeWindowsShellArg,
+  resolveWindowsSpawn,
+  sanitizeShellModeArgsForPlatform,
+} from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -55,11 +59,15 @@ export const runPiSessionCommand = Effect.fn("runPiSessionCommand")(function* (
   const { command: ghCommand, shell: ghShell } = resolveWindowsSpawn("gh", { env: environment });
   const result = yield* spawnAndCollect(
     "gh",
-    ChildProcess.make(ghCommand, ["gist", "create", "--public=false", outputPath], {
-      env: environment,
-      shell: ghShell,
-      cwd,
-    }),
+    ChildProcess.make(
+      ghShell ? escapeWindowsShellArg(ghCommand) : ghCommand,
+      sanitizeShellModeArgsForPlatform(["gist", "create", "--public=false", outputPath]),
+      {
+        env: environment,
+        shell: ghShell,
+        cwd,
+      },
+    ),
   ).pipe(Effect.timeout("60 seconds"));
   if (result.code !== 0) {
     return yield* new PiRpcError({

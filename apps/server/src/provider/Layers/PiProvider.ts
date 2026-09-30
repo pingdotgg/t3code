@@ -11,7 +11,11 @@
 import { type PiSettings, ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import { resolveWindowsSpawn } from "@t3tools/shared/shell";
+import {
+  escapeWindowsShellArg,
+  resolveWindowsSpawn,
+  sanitizeShellModeArgsForPlatform,
+} from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -209,10 +213,14 @@ const runPiVersionCommand = (piSettings: PiSettings, environment: NodeJS.Process
     const { command: spawnTarget, shell } = resolveWindowsSpawn(command, { env: environment });
     return yield* spawnAndCollect(
       command,
-      ChildProcess.make(spawnTarget, ["--version"], {
-        env: environment,
-        shell,
-      }),
+      ChildProcess.make(
+        shell ? escapeWindowsShellArg(spawnTarget) : spawnTarget,
+        sanitizeShellModeArgsForPlatform(["--version"]),
+        {
+          env: environment,
+          shell,
+        },
+      ),
     );
   });
 

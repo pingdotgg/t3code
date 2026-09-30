@@ -27,7 +27,11 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { resolveWindowsSpawn } from "@t3tools/shared/shell";
+import {
+  escapeWindowsShellArg,
+  resolveWindowsSpawn,
+  sanitizeShellModeArgsForPlatform,
+} from "@t3tools/shared/shell";
 
 export class PiRpcError extends Schema.TaggedErrorClass<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -213,6 +217,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // Windows npm shims (pi.cmd) cannot execute with shell: false; resolve the
   // same way the other CLI providers do so a normal global install works.
+  // Shell-mode launches join command and args into one cmd.exe string, so
+  // both are escaped to preserve boundaries when paths contain spaces.
   const { command: spawnTarget, shell } = resolveWindowsSpawn(options.command, {
     env: options.env,
   });
@@ -221,13 +227,17 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
 
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(spawnTarget, [...options.args], {
-        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        env: options.env,
-        extendEnv: false,
-        shell,
-        detached: platform !== "win32",
-      }),
+      ChildProcess.make(
+        shell ? escapeWindowsShellArg(spawnTarget) : spawnTarget,
+        sanitizeShellModeArgsForPlatform([...options.args], platform),
+        {
+          ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+          env: options.env,
+          extendEnv: false,
+          shell,
+          detached: platform !== "win32",
+        },
+      ),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
 

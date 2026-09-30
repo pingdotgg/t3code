@@ -3442,7 +3442,9 @@ function ChatViewBody(
             timeout: 0,
           });
         }
-        if (promptRef.current === promptForSend) {
+        // Only clear a draft the command actually came from. A menu pick
+        // already removed its trigger and passes the command separately.
+        if (providerCommand === undefined && promptRef.current === promptForSend) {
           promptRef.current = "";
           clearComposerDraftContent(composerDraftTarget);
           composerRef.current?.resetCursorState();

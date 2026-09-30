@@ -10,6 +10,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -57,6 +58,8 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
   const entries: Array<unknown> = [];
   const stats: Array<unknown> = [];
   let droppedGetStates = 0;
+  let holdGetCommands = false;
+  const heldGetCommands: Array<PiRpcRecord> = [];
   let sessionFile = initialSessionFile;
   let forks = 0;
   let stdinBuffer = "";
@@ -97,6 +100,10 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
       case "get_session_stats":
         return { ...base, data: stats.shift() ?? {} };
       case "get_commands":
+        if (holdGetCommands) {
+          heldGetCommands.push(record);
+          return undefined;
+        }
         return { ...base, data: { commands: [] } };
       case "get_last_assistant_text":
         return { ...base, data: { text: "Pi's last response" } };
@@ -158,6 +165,21 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
     dropNextGetStates: (count: number) => {
       droppedGetStates = count;
     },
+    setHoldGetCommands: (held: boolean) => {
+      holdGetCommands = held;
+    },
+    /** Answer every held get_commands discovery request. */
+    releaseHeldGetCommands: () =>
+      Effect.gen(function* () {
+        for (const record of heldGetCommands.splice(0)) {
+          yield* emit({
+            type: "response",
+            id: record["id"],
+            success: true,
+            data: { commands: [] },
+          });
+        }
+      }),
     queueStats: (data: unknown) => stats.push(data),
     lastSpawn: () => lastSpawn,
     /** Simulates Pi exiting: its stdout closes. */
@@ -684,6 +706,35 @@ describe("PiAdapter", () => {
       assert.equal(steerRecord["streamingBehavior"], "steer");
       assert.include(String(steerRecord["message"] ?? ""), "actually do the other thing");
       assert.lengthOf((yield* adapter.readThread(THREAD_ID)).turns, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects steering a turn that settled while preparing the message", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      // Hold skill discovery from the start so the session never learns
+      // skill names and the steer below blocks inside payload preparation.
+      fake.setHoldGetCommands(true);
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "do the thing" });
+      yield* fake.takeRequest("prompt");
+      yield* takeEvent("turn.started");
+      const steering = yield* Effect.forkScoped(
+        adapter.steerTurn({ threadId: THREAD_ID, turnId: turn.turnId, input: "do $other instead" }),
+      );
+      // The steer is stuck in skill discovery; settle the turn meanwhile.
+      yield* fake.takeRequest("get_commands");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const completed = yield* takeEvent("turn.completed");
+      assert.equal(completed.turnId, turn.turnId);
+      yield* fake.releaseHeldGetCommands();
+      const error = yield* Fiber.join(steering).pipe(Effect.flip);
+      assert.equal((error as { readonly _tag?: unknown })._tag, "ProviderAdapterValidationError");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

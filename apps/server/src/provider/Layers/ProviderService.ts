@@ -373,8 +373,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
         }).pipe(
-          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+          // The cursor persists before the terminal event publishes so a
+          // subscriber acting on completion (or a crash right after it)
+          // observes the fresh rollback boundary, not the previous one.
           Effect.andThen(() => persistPiTurnResumeCursor(source, canonicalEvent)),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
         ),
       ),
     );

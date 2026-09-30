@@ -342,7 +342,14 @@ export function useThreadComposerState() {
               { text: "Open", onPress: () => void Linking.openURL(result.url) },
             ]);
           }
-          if (getComposerDraftSnapshot(threadKey).text === draft.text) {
+          // Only clear a draft the command actually came from. A menu pick
+          // already removed its trigger and passes the command separately,
+          // so clearing here would discard remaining text that was never
+          // part of the command.
+          if (
+            providerCommand === undefined &&
+            getComposerDraftSnapshot(threadKey).text === draft.text
+          ) {
             setComposerDraftText(threadKey, "");
           }
         } catch (error) {

@@ -17,6 +17,7 @@ import {
   resolveKnownWindowsCliDirs,
   resolveWindowsEnvironment,
   resolveWindowsSpawn,
+  sanitizeShellModeArgsForPlatform,
 } from "./shell.ts";
 
 describe("extractPathFromShellOutput", () => {
@@ -517,5 +518,28 @@ describe("resolveExecutablePath", () => {
     expect(
       resolveExecutablePath("definitely-missing", { platform: "linux", env: { PATH: "" } }),
     ).toBeNull();
+  });
+});
+
+describe("sanitizeShellModeArgsForPlatform", () => {
+  it("leaves arguments untouched off Windows", () => {
+    expect(
+      sanitizeShellModeArgsForPlatform(["--session", "C:\\Users\\Jane Doe\\s.json"], "darwin"),
+    ).toEqual(["--session", "C:\\Users\\Jane Doe\\s.json"]);
+  });
+
+  it("quotes arguments with spaces on Windows", () => {
+    const [flag, sessionDir] = sanitizeShellModeArgsForPlatform(
+      ["--session-dir", "C:\\Users\\Jane Doe\\.pi\\sessions"],
+      "win32",
+    );
+    // Wrapping quotes are themselves caret-escaped for cmd.exe.
+    expect(flag).toBe('^"--session-dir^"');
+    expect(sessionDir).toBe('^"C:\\Users\\Jane^ Doe\\.pi\\sessions^"');
+  });
+
+  it("escapes embedded quotes and metacharacters on Windows", () => {
+    const [escaped] = sanitizeShellModeArgsForPlatform(['say "hi" & bye'], "win32");
+    expect(escaped).toBe('^"say^ \\^"hi\\^"^ ^&^ bye^"');
   });
 });
