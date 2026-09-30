@@ -71,6 +71,7 @@ import {
   Option,
   Path,
   PubSub,
+  Ref,
   Stream,
   Schema,
 } from "effect";
@@ -4727,6 +4728,39 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("does not refresh providers when clients subscribe to server config", () =>
+    Effect.gen(function* () {
+      const refreshCount = yield* Ref.make(0);
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            loadConfigState: Effect.succeed({
+              keybindings: [],
+              issues: [],
+            }),
+            streamChanges: Stream.empty,
+          },
+          providerRegistry: {
+            getProviders: Effect.succeed([]),
+            refresh: () => Ref.update(refreshCount, (count) => count + 1).pipe(Effect.as([])),
+            streamChanges: Stream.empty,
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.take(1), Stream.runDrain),
+        ),
+      );
+      yield* Effect.yieldNow;
+
+      assert.equal(yield* Ref.get(refreshCount), 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect(
     "routes websocket rpc subscribeServerLifecycle replays snapshot and streams updates",
     () =>
@@ -6406,6 +6440,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 matches: [
                   {
                     threadId: ThreadId.make("thread-1"),
+                    messageId: MessageId.make("message-1"),
                     title: "Thread A",
                     projectTitle: "Project A",
                     branch: null,
@@ -6494,6 +6529,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepStrictEqual(searchResult.matches, [
         {
           threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-1"),
           projectId: ProjectId.make("project-a"),
           source: "user",
           snippet: "official search result",

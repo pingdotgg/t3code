@@ -7,6 +7,7 @@ import {
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_SIDEBAR_META_FONT_SIZE,
   DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_STATUS_LINE_FONT_SIZE,
@@ -22,6 +23,7 @@ import {
 } from "@t3tools/contracts/settings";
 
 import { readBrowserClientSettings } from "../clientPersistenceStorage";
+import { isElectron } from "../env";
 import { reportClientError } from "../lib/clientLogger";
 import { useSettings } from "./useSettings";
 import { syncBrowserChromeTheme } from "./useTheme";
@@ -89,6 +91,7 @@ export function applyFontSizes(sizes: {
   statusLineFontSize: FontSize;
   sidebarFontSize: FontSize;
   sidebarMetaFontSize: FontSize;
+  sidebarIconSize: FontSize;
   toolFontSize: FontSize;
   inputFontSize: FontSize;
   pullRequestsBodyFontSize: FontSize;
@@ -103,6 +106,7 @@ export function applyFontSizes(sizes: {
   style.setProperty("--app-status-line-font-size", `${sizes.statusLineFontSize}px`);
   style.setProperty("--app-sidebar-font-size", `${sizes.sidebarFontSize}px`);
   style.setProperty("--app-sidebar-meta-font-size", `${sizes.sidebarMetaFontSize}px`);
+  style.setProperty("--app-sidebar-icon-size", `${sizes.sidebarIconSize}px`);
   style.setProperty("--app-tool-font-size", `${sizes.toolFontSize}px`);
   style.setProperty("--app-input-font-size", `${sizes.inputFontSize}px`);
   style.setProperty("--pr-body-font-size", `${sizes.pullRequestsBodyFontSize}px`);
@@ -154,7 +158,10 @@ export function applySidebarTranslucency(translucency: SidebarTranslucency): voi
     return;
   }
 
-  document.documentElement.setAttribute(SIDEBAR_TRANSLUCENCY_ATTRIBUTE, translucency);
+  document.documentElement.setAttribute(
+    SIDEBAR_TRANSLUCENCY_ATTRIBUTE,
+    isElectron ? translucency : "off",
+  );
 }
 
 function setNativeVibrancyAttribute(enabled: boolean): void {
@@ -227,6 +234,7 @@ if (typeof document !== "undefined") {
       storedSettings?.sidebarMetaFontSize,
       DEFAULT_SIDEBAR_META_FONT_SIZE,
     ),
+    sidebarIconSize: normalizeFontSize(storedSettings?.sidebarIconSize, DEFAULT_SIDEBAR_ICON_SIZE),
     toolFontSize: normalizeFontSize(storedSettings?.toolFontSize, DEFAULT_TOOL_FONT_SIZE),
     inputFontSize: normalizeFontSize(storedSettings?.inputFontSize, DEFAULT_INPUT_FONT_SIZE),
     pullRequestsBodyFontSize: normalizeFontSize(
@@ -244,6 +252,7 @@ export function useAppFont() {
   const statusLineFontSize = useSettings((settings) => settings.statusLineFontSize);
   const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const sidebarMetaFontSize = useSettings((settings) => settings.sidebarMetaFontSize);
+  const sidebarIconSize = useSettings((settings) => settings.sidebarIconSize);
   const sidebarRowSpacing = useSettings((settings) => settings.sidebarRowSpacing);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
   const inputFontSize = useSettings((settings) => settings.inputFontSize);
@@ -266,6 +275,7 @@ export function useAppFont() {
       statusLineFontSize,
       sidebarFontSize,
       sidebarMetaFontSize,
+      sidebarIconSize,
       toolFontSize,
       inputFontSize,
       pullRequestsBodyFontSize,
@@ -276,6 +286,7 @@ export function useAppFont() {
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,
+    sidebarIconSize,
     toolFontSize,
     inputFontSize,
     pullRequestsBodyFontSize,
@@ -320,6 +331,7 @@ export function useAppFont() {
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,
+    sidebarIconSize,
     sidebarRowSpacing,
     toolFontSize,
     inputFontSize,

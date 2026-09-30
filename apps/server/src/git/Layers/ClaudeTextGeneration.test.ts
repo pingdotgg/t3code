@@ -7,7 +7,6 @@ import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { type TextGenerationShape } from "../Services/TextGeneration.ts";
-import { sanitizeThreadTitle } from "../Utils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
@@ -274,11 +273,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
             },
           });
 
-          expect(generated.title).toBe(
-            sanitizeThreadTitle(
-              '"Reconnect failures after restart because the session state does not recover"',
-            ),
-          );
+          expect(generated.title).toBe("Reconnect failures after restart because the se...");
         }),
     ),
   );
@@ -308,7 +303,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGenerationLive", (it) => {
               },
             });
 
-            expect(generated.title).toBe(sanitizeThreadTitle("Use Claude home"));
+            expect(generated.title).toBe("Use Claude home");
           }),
       );
     }),

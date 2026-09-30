@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MessageId,
   ProjectId,
   ThreadId,
   type OrchestrationSearchThreadsResult,
@@ -99,6 +100,7 @@ it("merges successful environments and silently ignores failures", () => {
     matches: [
       {
         threadId: ThreadId.make("thread-a"),
+        messageId: MessageId.make("message-a"),
         projectId: ProjectId.make("project-a"),
         source: "user",
         snippet: "needle",

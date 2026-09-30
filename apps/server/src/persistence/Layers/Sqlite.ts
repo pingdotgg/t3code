@@ -3,6 +3,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+import { compactLegacyActivityPayloads } from "../ActivityPayloadCompactor.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -34,6 +35,7 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* runMigrations();
+    yield* Effect.forkScoped(compactLegacyActivityPayloads);
   }),
 );
 

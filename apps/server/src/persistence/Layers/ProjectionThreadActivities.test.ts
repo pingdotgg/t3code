@@ -1,6 +1,6 @@
 import { EventId, ThreadId, TurnId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import { ProjectionThreadActivityRepository } from "../Services/ProjectionThreadActivities.ts";
 import { ProjectionThreadActivityRepositoryLive } from "./ProjectionThreadActivities.ts";
@@ -88,6 +88,34 @@ layer("ProjectionThreadActivityRepository", (it) => {
         assert.notProperty(row, "summary");
         assert.notProperty(row, "tone");
       }
+    }),
+  );
+
+  it.effect("rehydrates the latest large payload after an activity is updated", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadActivityRepository;
+      const threadId = ThreadId.make("thread-updated-tool-payload");
+      const activityId = EventId.make("activity-updated-tool-payload");
+      const createdAt = "2026-09-12T00:00:00.000Z";
+      const upsert = (marker: string) =>
+        repository.upsert({
+          activityId,
+          threadId,
+          turnId: null,
+          tone: "tool",
+          kind: "tool.completed",
+          summary: marker,
+          payload: { data: { content: marker.repeat(20_000) } },
+          createdAt,
+        });
+
+      yield* upsert("first");
+      yield* upsert("second");
+
+      const stored = yield* repository.getById({ threadId, activityId });
+      assert.deepStrictEqual(stored.pipe(Option.getOrThrow).payload, {
+        data: { content: "second".repeat(20_000) },
+      });
     }),
   );
 

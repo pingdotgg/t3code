@@ -26,6 +26,7 @@ import {
   type OrchestrationEventStoreShape,
 } from "../Services/OrchestrationEventStore.ts";
 import { redactSensitiveValues } from "../../orchestration/auditRedaction.ts";
+import { compactActivityPayload } from "../activityPayloadBlob.ts";
 
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
@@ -162,23 +163,63 @@ const makeEventStore = Effect.gen(function* () {
     execute: (request) =>
       sql`
         SELECT
-          sequence,
-          event_id AS "eventId",
-          event_type AS "type",
-          aggregate_kind AS "aggregateKind",
-          stream_id AS "aggregateId",
-          occurred_at AS "occurredAt",
-          command_id AS "commandId",
-          causation_event_id AS "causationEventId",
-          correlation_id AS "correlationId",
-          payload_json AS "payload",
-          metadata_json AS "metadata"
-        FROM orchestration_events
-        WHERE sequence > ${request.sequenceExclusive}
-        ORDER BY sequence ASC
+          events.sequence,
+          events.event_id AS "eventId",
+          events.event_type AS "type",
+          events.aggregate_kind AS "aggregateKind",
+          events.stream_id AS "aggregateId",
+          events.occurred_at AS "occurredAt",
+          events.command_id AS "commandId",
+          events.causation_event_id AS "causationEventId",
+          events.correlation_id AS "correlationId",
+          CASE
+            WHEN blobs.data_json IS NULL THEN events.payload_json
+            ELSE json_set(
+              events.payload_json,
+              '$.activity.payload.data',
+              json(blobs.data_json)
+            )
+          END AS "payload",
+          events.metadata_json AS "metadata"
+        FROM orchestration_events AS events
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = CASE
+            WHEN json_valid(events.payload_json)
+              THEN json_extract(events.payload_json, '$.activity.id')
+            ELSE NULL
+          END
+        WHERE events.sequence > ${request.sequenceExclusive}
+        ORDER BY events.sequence ASC
         LIMIT ${request.limit}
       `,
   });
+
+  const upsertActivityPayloadBlob = (input: {
+    readonly activityId: string;
+    readonly dataJson: string;
+    readonly sizeBytes: number;
+    readonly occurredAt: string;
+  }) =>
+    sql`
+      INSERT INTO activity_payload_blobs (
+        activity_id,
+        data_json,
+        size_bytes,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${input.activityId},
+        ${input.dataJson},
+        ${input.sizeBytes},
+        ${input.occurredAt},
+        ${input.occurredAt}
+      )
+      ON CONFLICT (activity_id) DO UPDATE SET
+        data_json = excluded.data_json,
+        size_bytes = excluded.size_bytes,
+        updated_at = excluded.updated_at
+    `;
 
   const redactActivityEvent = (
     event: Omit<OrchestrationEvent, "sequence">,
@@ -208,7 +249,23 @@ const makeEventStore = Effect.gen(function* () {
 
   const append: OrchestrationEventStoreShape["append"] = (inputEvent) => {
     const event = redactActivityEvent(inputEvent);
-    return appendEventRow({
+    const activity =
+      event.type === "thread.activity-appended" && "activity" in event.payload
+        ? event.payload.activity
+        : null;
+    const compacted =
+      activity === null ? null : compactActivityPayload(activity.kind, activity.payload);
+    const payloadJson =
+      activity === null || compacted === null || compacted.dataJson === null
+        ? event.payload
+        : {
+            ...event.payload,
+            activity: {
+              ...activity,
+              payload: compacted.payload,
+            },
+          };
+    const appendRow = appendEventRow({
       eventId: event.eventId,
       aggregateKind: event.aggregateKind,
       streamId: event.aggregateId,
@@ -218,9 +275,25 @@ const makeEventStore = Effect.gen(function* () {
       actorKind: inferActorKind(event),
       occurredAt: event.occurredAt,
       commandId: event.commandId,
-      payloadJson: event.payload,
+      payloadJson,
       metadataJson: event.metadata,
-    }).pipe(
+    });
+    const activityDataJson = compacted?.dataJson ?? null;
+    const persist =
+      activity !== null && compacted !== null && activityDataJson !== null
+        ? sql.withTransaction(
+            Effect.gen(function* () {
+              yield* upsertActivityPayloadBlob({
+                activityId: activity.id,
+                dataJson: activityDataJson,
+                sizeBytes: compacted.sizeBytes,
+                occurredAt: event.occurredAt,
+              });
+              return yield* appendRow;
+            }),
+          )
+        : appendRow;
+    return persist.pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "OrchestrationEventStore.append:insert",
@@ -228,7 +301,7 @@ const makeEventStore = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((row) =>
-        decodeEvent(row).pipe(
+        decodeEvent({ ...row, payload: event.payload }).pipe(
           Effect.mapError(toPersistenceDecodeError("OrchestrationEventStore.append:rowToEvent")),
         ),
       ),
