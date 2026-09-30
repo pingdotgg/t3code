@@ -25,28 +25,12 @@ import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
-import {
-  CommandReceiptStoreV2,
-  type CommandReceiptV2,
-  type ProjectCommandReceiptV2,
-  layer as commandReceiptStoreLayer,
-} from "./CommandReceiptStore.ts";
-import {
-  EffectOutboxV2,
-  type OrchestrationEffectRequestV2,
-  type PendingOrchestrationEffectV2,
-  layer as effectOutboxLayer,
-} from "./EffectOutbox.ts";
-import { EventStoreV2 } from "./EventStore.ts";
-import {
-  ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
-  ProjectionStoreV2,
-} from "./ProjectionStore.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventStore from "./EventStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import {
-  TurnItemPositionStoreV2,
-  layer as turnItemPositionStoreLayer,
-} from "./TurnItemPositionStore.ts";
+import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 /**
  * ERRORS
@@ -95,7 +79,7 @@ export interface EventSinkV2Shape {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+    readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
@@ -139,14 +123,14 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
-    readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+    readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
     readonly cancelUnsettledEffects?: {
-      readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+      readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
     };
   }) => Effect.Effect<
     {
-      readonly receipt: CommandReceiptV2;
+      readonly receipt: CommandReceiptStore.CommandReceiptV2;
       readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
       readonly committed: boolean;
       readonly cancelledEffectCount: number;
@@ -159,7 +143,7 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
-  }) => Effect.Effect<CommandReceiptV2, EventSinkV2Error>;
+  }) => Effect.Effect<CommandReceiptStore.CommandReceiptV2, EventSinkV2Error>;
   /**
    * Append a project event, fold it into its row and record the receipt in one
    * transaction. A reused command id commits nothing and returns its receipt.
@@ -171,7 +155,7 @@ export interface EventSinkV2Shape {
     readonly acceptedAt: DateTime.Utc;
     readonly event: UnsequencedProjectEvent;
   }) => Effect.Effect<
-    { readonly receipt: ProjectCommandReceiptV2; readonly committed: boolean },
+    { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error
   >;
   /** Record a rejected project command, or return the receipt its command id already has. */
@@ -181,7 +165,7 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
-  }) => Effect.Effect<ProjectCommandReceiptV2, EventSinkV2Error>;
+  }) => Effect.Effect<CommandReceiptStore.ProjectCommandReceiptV2, EventSinkV2Error>;
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
@@ -208,23 +192,23 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
 const baseLayer: Layer.Layer<
   EventSinkV2,
   never,
-  | CommandReceiptStoreV2
-  | EffectOutboxV2
-  | EventStoreV2
-  | ProjectionStoreV2
+  | CommandReceiptStore.CommandReceiptStoreV2
+  | EffectOutbox.EffectOutboxV2
+  | EventStore.EventStoreV2
+  | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | SqlClient.SqlClient
-  | TurnItemPositionStoreV2
+  | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   EventSinkV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const commandReceipts = yield* CommandReceiptStoreV2;
-    const effectOutbox = yield* EffectOutboxV2;
-    const eventStore = yield* EventStoreV2;
-    const projectionStore = yield* ProjectionStoreV2;
+    const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
-    const turnItemPositions = yield* TurnItemPositionStoreV2;
+    const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -326,7 +310,7 @@ const baseLayer: Layer.Layer<
             )
             VALUES (
               'thread-projections',
-              ${ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION},
+              ${ProjectionStore.ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION},
               ${sequence},
               ${now}
             )
@@ -535,7 +519,7 @@ const baseLayer: Layer.Layer<
           }
           yield* applyStoredEvents(storedEvents);
           yield* effectOutbox.enqueue(input.effects);
-          const receipt: CommandReceiptV2 = {
+          const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
             threadId: input.threadId,
             commandType: input.commandType,
@@ -577,7 +561,7 @@ const baseLayer: Layer.Layer<
       return yield* sql.withTransaction(
         Effect.gen(function* () {
           const sequence = yield* eventStore.latestSequence({ threadId: input.threadId });
-          const receipt: CommandReceiptV2 = {
+          const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
             threadId: input.threadId,
             commandType: input.commandType,
@@ -611,7 +595,7 @@ const baseLayer: Layer.Layer<
       function* (input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0]) {
         const result = yield* sql.withTransaction(
           Effect.gen(function* () {
-            const reserved: ProjectCommandReceiptV2 = {
+            const reserved: CommandReceiptStore.ProjectCommandReceiptV2 = {
               commandId: input.commandId,
               projectId: input.projectId,
               commandType: input.commandType,
@@ -642,7 +626,7 @@ const baseLayer: Layer.Layer<
     )(function* (input: Parameters<EventSinkV2Shape["commitRejectedProjectCommand"]>[0]) {
       return yield* sql.withTransaction(
         Effect.gen(function* () {
-          const receipt: ProjectCommandReceiptV2 = {
+          const receipt: CommandReceiptStore.ProjectCommandReceiptV2 = {
             commandId: input.commandId,
             projectId: input.projectId,
             commandType: input.commandType,
@@ -867,14 +851,14 @@ export const layerFromStores = baseLayer;
 export const layer: Layer.Layer<
   EventSinkV2,
   never,
-  EventStoreV2 | ProjectionStoreV2 | SqlClient.SqlClient
+  EventStore.EventStoreV2 | ProjectionStore.ProjectionStoreV2 | SqlClient.SqlClient
 > = baseLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      commandReceiptStoreLayer,
-      effectOutboxLayer,
+      CommandReceiptStore.layer,
+      EffectOutbox.layer,
       ProjectStore.layer,
-      turnItemPositionStoreLayer,
+      TurnItemPositionStore.layer,
     ),
   ),
 );

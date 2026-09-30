@@ -24,9 +24,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
-import { CheckpointServiceV2, layer as checkpointServiceLayer } from "./CheckpointService.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
-import { EventSinkV2 } from "./EventSink.ts";
+import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -270,7 +270,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             Layer.mergeAll(
               IdAllocator.layer,
               refLookupFails
-                ? checkpointServiceLayer.pipe(
+                ? CheckpointService.layer.pipe(
                     Layer.provide(
                       Layer.mergeAll(
                         IdAllocator.layer,
@@ -290,14 +290,14 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
                       ),
                     ),
                   )
-                : Layer.mock(CheckpointServiceV2)({
+                : Layer.mock(CheckpointService.CheckpointServiceV2)({
                     materializeBaselineCheckpoint: () =>
                       Effect.die(
                         "baseline materialization must be skipped when ordinal 0 is ready",
                       ),
                     capture: () => Effect.succeed(captured),
                   }),
-              Layer.mock(EventSinkV2)({
+              Layer.mock(EventSink.EventSinkV2)({
                 commitCommand: (input) =>
                   Ref.set(committed, input.events).pipe(
                     Effect.as({
@@ -455,11 +455,11 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
-            Layer.mock(CheckpointServiceV2)({
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () => Effect.die("a discarded run has no baseline"),
               capture: () => Effect.die("a discarded run must not be captured"),
             }),
-            Layer.mock(EventSinkV2)({
+            Layer.mock(EventSink.EventSinkV2)({
               commitCommand: (input) =>
                 Ref.set(committed, input.events).pipe(Effect.as({ committed: true } as never)),
             }),
@@ -684,14 +684,14 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
-            Layer.mock(CheckpointServiceV2)({
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
               capture: () => Effect.succeed(captured),
             }),
             // Commit straight into the projection so the test reads what a
             // client would see after the capture lands.
-            Layer.mock(EventSinkV2)({
+            Layer.mock(EventSink.EventSinkV2)({
               commitCommand: (input) =>
                 Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
                   Effect.andThen(Ref.update(commits, (count) => count + 1)),

@@ -19,8 +19,8 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
-import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -37,7 +37,7 @@ const adapter = {
 const database = SqlitePersistenceMemory;
 const testLayer = Layer.mergeAll(
   database,
-  projectionLayer.pipe(Layer.provide(database)),
+  ProjectionStore.layer.pipe(Layer.provide(database)),
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.makeLayer([adapter]),
@@ -49,8 +49,8 @@ it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
     Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const projections = yield* ProjectionStoreV2;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
       const threadId = ThreadId.make("thread:control-dispatch");
       const now = yield* DateTime.now;
@@ -278,8 +278,8 @@ it.effect(
 
 it.effect("implements a proposed plan that the command projection leaves out", () =>
   Effect.gen(function* () {
-    const orchestrator = yield* OrchestratorV2;
-    const projections = yield* ProjectionStoreV2;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = ThreadId.make("thread:implement-plan");
     const planId = PlanId.make("plan:implement-plan");
     const now = yield* DateTime.now;

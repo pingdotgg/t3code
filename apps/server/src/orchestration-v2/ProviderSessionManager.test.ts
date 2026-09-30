@@ -31,21 +31,17 @@ import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/unstable/http";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { EventSinkV2, EventSinkWriteError, layer as eventSinkLayer } from "./EventSink.ts";
-import { layer as eventStoreLayer } from "./EventStore.ts";
-import {
-  IdAllocatorV2,
-  type IdAllocatorV2Shape,
-  layer as idAllocatorLayer,
-} from "./IdAllocator.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   ProviderAdapterEventStreamError,
   type ProviderAdapterV2Event,
@@ -54,25 +50,22 @@ import {
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2Shape,
 } from "./ProviderAdapter.ts";
-import { makeSingleLayer as makeProviderAdapterRegistryLayer } from "./ProviderAdapterRegistry.ts";
-import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
-import {
-  ProviderSessionManagerV2,
-  layerWithOptions as providerSessionManagerLayerWithOptions,
-} from "./ProviderSessionManager.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
-const TestStoresLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
+const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provide(TestDatabaseLayer),
 );
-const TestEventSinkLayer = eventSinkLayer.pipe(
+const TestEventSinkLayer = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(TestStoresLayer, TestDatabaseLayer)),
 );
 const FailingReleaseEventSinkLayer = Layer.effect(
-  EventSinkV2,
+  EventSink.EventSinkV2,
   Effect.gen(function* () {
-    const delegate = yield* EventSinkV2;
-    return EventSinkV2.of({
+    const delegate = yield* EventSink.EventSinkV2;
+    return EventSink.EventSinkV2.of({
       ...delegate,
       write: (input) =>
         input.events.some(
@@ -80,7 +73,7 @@ const FailingReleaseEventSinkLayer = Layer.effect(
             event.type === "provider-session.updated" &&
             (event.payload.status === "stopped" || event.payload.status === "error"),
         )
-          ? Effect.fail(new EventSinkWriteError({ eventCount: input.events.length }))
+          ? Effect.fail(new EventSink.EventSinkWriteError({ eventCount: input.events.length }))
           : delegate.write(input),
     });
   }),
@@ -145,7 +138,7 @@ function makeProviderSession(input: {
 }
 
 function makeThreadCreatedEvent(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly threadId: ThreadId;
   readonly now: DateTime.Utc;
   readonly projectId?: ProjectId;
@@ -198,7 +191,7 @@ function makeThreadCreatedEvent(input: {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
@@ -374,7 +367,7 @@ function makeTestLayer(input: {
   const configuredEventSinkLayer = input.failReleaseEventWrites
     ? FailingReleaseEventSinkLayer
     : TestEventSinkLayer;
-  const registryLayer = makeProviderAdapterRegistryLayer(
+  const registryLayer = ProviderAdapterRegistry.makeSingleLayer(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
@@ -389,15 +382,15 @@ function makeTestLayer(input: {
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
     }),
   );
-  const providerEventIngestorTestLayer = providerEventIngestorLayer.pipe(
-    Layer.provide(Layer.mergeAll(configuredEventSinkLayer, idAllocatorLayer, TestStoresLayer)),
+  const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
+    Layer.provide(Layer.mergeAll(configuredEventSinkLayer, IdAllocator.layer, TestStoresLayer)),
   );
   return Layer.mergeAll(
     TestStoresLayer,
     configuredEventSinkLayer,
-    idAllocatorLayer,
+    IdAllocator.layer,
     TestMcpRegistryLayer,
-    providerSessionManagerLayerWithOptions({
+    ProviderSessionManager.layerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
@@ -405,7 +398,7 @@ function makeTestLayer(input: {
         Layer.mergeAll(
           registryLayer,
           configuredEventSinkLayer,
-          idAllocatorLayer,
+          IdAllocator.layer,
           providerEventIngestorTestLayer,
           TestMcpRegistryLayer,
           TestStoresLayer,
@@ -422,7 +415,7 @@ const fakeHttpServer = HttpServer.HttpServer.of({
   serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
 });
 
-const fakeEnvironment = ServerEnvironment.of({
+const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-provider-session-manager")),
   getDescriptor: Effect.die("unused"),
 });
@@ -432,7 +425,7 @@ const TestMcpRegistryLayer = Layer.effect(
   McpSessionRegistry.__testing.make(),
 ).pipe(
   Layer.provide(Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
-  Layer.provide(Layer.succeed(ServerEnvironment, fakeEnvironment)),
+  Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment)),
   Layer.provide(NodeServices.layer),
 );
 
@@ -478,9 +471,9 @@ function runBrowserAccessScenario(input: {
     });
 
     yield* Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const providerSessionId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
@@ -521,7 +514,7 @@ function runBrowserAccessScenario(input: {
 }
 
 function makePendingRuntimeRequestEvents(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -662,9 +655,9 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
       });
 
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const firstThreadId = ThreadId.make("thread-provider-session-manager-concurrent-a");
       const secondThreadId = ThreadId.make("thread-provider-session-manager-concurrent-b");
@@ -728,9 +721,9 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const firstThreadId = ThreadId.make("thread-provider-session-manager-logout-a");
       const secondThreadId = ThreadId.make("thread-provider-session-manager-logout-b");
@@ -793,9 +786,9 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
       );
 
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-single-flight");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -844,9 +837,9 @@ it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts 
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-shutdown");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -886,9 +879,9 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-shutdown-subscription");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -928,9 +921,9 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-provider-stop");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
@@ -1001,9 +994,9 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-mcp");
@@ -1062,9 +1055,9 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-no-browser");
@@ -1166,9 +1159,9 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >([]);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-mcp-release-failure");
@@ -1218,9 +1211,9 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >([]);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-replacement-mcp");
@@ -1290,9 +1283,9 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-superseded-mcp");
@@ -1366,9 +1359,9 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-stable-mcp");
@@ -1444,9 +1437,9 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-stale-record");
@@ -1501,9 +1494,9 @@ it.effect(
       >([]);
       const duringOpen = yield* Ref.make<Effect.Effect<void>>(Effect.void);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread-provider-session-manager-open-race");
@@ -1573,9 +1566,9 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >([]);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const registry = yield* McpSessionRegistry.McpSessionRegistry;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-terminal-detach");
@@ -1612,10 +1605,10 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = yield* idAllocator.allocate.project({
         fixtureName: "provider-session-manager-idle",
@@ -1660,10 +1653,10 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const threadId = yield* idAllocator.allocate.thread({
         fixtureName: "provider-session-manager-hung-close",
@@ -1708,9 +1701,9 @@ it.effect("ProviderSessionManagerV2 defers idle release while background work is
     const state = yield* Ref.make(emptyState);
     const pendingWork = yield* Ref.make(true);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = yield* idAllocator.allocate.thread({
         fixtureName: "provider-session-manager-idle-pin",
@@ -1761,9 +1754,9 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = yield* idAllocator.allocate.thread({
         fixtureName: "provider-session-manager-pin-cap",
@@ -1818,10 +1811,10 @@ it.effect(
       const checkEntered = yield* Deferred.make<void>();
       const checkGate = yield* Deferred.make<void>();
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStoreV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-busy-during-check",
@@ -1945,9 +1938,9 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
     const checkEntered = yield* Deferred.make<void>();
     const checkGate = yield* Deferred.make<void>();
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = yield* idAllocator.allocate.thread({
         fixtureName: "provider-session-manager-stale-pin",
@@ -2037,10 +2030,10 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStoreV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-active",
@@ -2132,10 +2125,10 @@ it.effect("ProviderSessionManagerV2 uses the same release path for runtime failu
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = yield* idAllocator.allocate.project({
         fixtureName: "provider-session-manager-runtime-error",
@@ -2182,10 +2175,10 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = yield* idAllocator.allocate.project({
         fixtureName: "provider-session-manager-stream-error",
@@ -2236,10 +2229,10 @@ it.effect("ProviderSessionManagerV2 marks pending runtime requests non-live on r
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = yield* idAllocator.allocate.project({
         fixtureName: "provider-session-manager-request-expire",
@@ -2302,10 +2295,10 @@ it.effect("ProviderSessionManagerV2 terminalizes a pending input transcript item
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = yield* idAllocator.allocate.project({
         fixtureName: "provider-session-manager-request-expire",
@@ -2375,10 +2368,10 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const projectionStore = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const projectId = yield* idAllocator.allocate.project({
         fixtureName: "provider-session-manager-session-request",
@@ -2462,10 +2455,10 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStoreV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-request-expire",
@@ -2543,10 +2536,10 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStoreV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-multi-thread-active",
@@ -2690,9 +2683,9 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-shared-runtime",
@@ -2866,9 +2859,9 @@ it.effect(
         resumesBeforeUnload = (yield* Ref.get(state)).resumeCount;
       });
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-unload-race",
@@ -2961,9 +2954,9 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSinkV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const now = yield* DateTime.now;
         const projectId = yield* idAllocator.allocate.project({
           fixtureName: "provider-session-manager-exclusive-runtime",
@@ -3023,10 +3016,10 @@ for (const workspaceState of ["missing", "file"] as const) {
       if (workspaceState === "file") yield* fileSystem.writeFileString(cwd, "not a directory");
       const state = yield* Ref.make(emptyState);
       yield* Effect.gen(function* () {
-        const manager = yield* ProviderSessionManagerV2;
-        const eventSink = yield* EventSinkV2;
-        const projectionStore = yield* ProjectionStoreV2;
-        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const threadId = ThreadId.make(`thread-${workspaceState}-workspace`);
         const providerSessionId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
@@ -3073,10 +3066,10 @@ it.effect(
       yield* fileSystem.makeDirectory(cwd);
       const state = yield* Ref.make(emptyState);
       yield* Effect.gen(function* () {
-        const manager = yield* ProviderSessionManagerV2;
-        const eventSink = yield* EventSinkV2;
-        const projectionStore = yield* ProjectionStoreV2;
-        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const threadId = ThreadId.make("thread-deleted-live-workspace");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,

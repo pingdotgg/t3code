@@ -10,22 +10,22 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
+import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
-import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
-import { LegacyV1ThreadImporter } from "./legacy/LegacyV1ThreadImporter.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import { OrchestrationV2LayerLive, ProjectServiceLayerLive } from "./runtimeLayer.ts";
 
 const projectId = ProjectId.make("project:upgrade");
@@ -119,9 +119,13 @@ const unusedEnrichment = {
 const makeRuntimeLayer = (dbPath: string) => {
   const platform = Layer.merge(
     NodeServices.layer,
-    Layer.mock(SourceControlProviderRegistry)({ resolveLink: () => Effect.die("unused") }),
+    Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+      resolveLink: () => Effect.die("unused"),
+    }),
   );
-  const serverConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-project-upgrade-" });
+  const serverConfig = ServerConfig.layerTest(process.cwd(), {
+    prefix: "t3-project-upgrade-",
+  });
   const checkpointStore = CheckpointStore.layer.pipe(
     Layer.provide(
       VcsDriverRegistry.layer.pipe(
@@ -136,24 +140,24 @@ const makeRuntimeLayer = (dbPath: string) => {
     ProjectServiceLayerLive,
   ).pipe(
     Layer.provide(
-      Layer.mock(ProjectEnrichmentService)({
+      Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
         peek: () => Effect.succeed(unusedEnrichment),
         getAvailable: () => Effect.succeed(unusedEnrichment),
         invalidate: () => Effect.void,
       }),
     ),
     Layer.provide(
-      Layer.mock(WorkspacePaths)({
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
         normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
       }),
     ),
-    Layer.provide(mcpSessionRegistryTestLayer),
+    Layer.provide(McpSessionRegistryTestkit.layer),
     Layer.provideMerge(makeSqlitePersistenceLive(dbPath)),
     Layer.provide(checkpointStore),
     Layer.provide(serverConfig),
-    Layer.provide(ServerSettingsService.layerTest()),
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
-      Layer.succeed(ProviderInstanceRegistry, {
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: () => Effect.succeed(undefined),
         listInstances: Effect.succeed([]),
         listUnavailable: Effect.succeed([]),
@@ -181,7 +185,7 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
       // Seed the released V1 schema, then boot the V2 runtime, which runs 055+, on the same file.
       yield* seedV1Database.pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
       yield* Effect.gen(function* () {
-        yield* (yield* LegacyV1ThreadImporter).reconcileShells;
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).reconcileShells;
         assert.deepEqual(yield* readSettings, expectedSettings);
         const project = yield* (yield* ProjectService.ProjectService).getById(projectId);
         assert.equal(project._tag, "Some");

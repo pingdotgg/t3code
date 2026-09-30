@@ -31,13 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  OrchestratorDispatchError,
-  OrchestratorProjectionError,
-  OrchestratorV2,
-  type OrchestratorV2DispatchResult,
-  type OrchestratorV2Error,
-} from "./Orchestrator.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -117,7 +111,7 @@ export interface ThreadManagementSendInput {
 }
 
 export interface ThreadManagementSendResult {
-  readonly dispatch: OrchestratorV2DispatchResult;
+  readonly dispatch: Orchestrator.OrchestratorV2DispatchResult;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "messages" | "turnItems"
@@ -155,7 +149,7 @@ export type ThreadManagementInterruptResult =
   | {
       readonly type: "interrupt_requested";
       readonly run: OrchestrationV2Run;
-      readonly dispatch: OrchestratorV2DispatchResult;
+      readonly dispatch: Orchestrator.OrchestratorV2DispatchResult;
     }
   | { readonly type: "no_active_run" }
   | {
@@ -271,7 +265,7 @@ export const ThreadManagementError = Schema.Union([
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
 
-type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
+type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
   readonly ensureLegacyTranscript: (
@@ -279,16 +273,16 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
-  ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
-  readonly getTimelinePage: OrchestratorV2["Service"]["getTimelinePage"];
-  readonly getMessageCount: OrchestratorV2["Service"]["getMessageCount"];
-  readonly getThreadRecords: OrchestratorV2["Service"]["getThreadRecords"];
+  ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
+  readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
+  readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
+  readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
-  ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
-  readonly getCheckpointContext: OrchestratorV2["Service"]["getCheckpointContext"];
-  readonly getThreadSnapshot: OrchestratorV2["Service"]["getThreadSnapshot"];
-  readonly getThreadSnapshotWindow: OrchestratorV2["Service"]["getThreadSnapshotWindow"];
+  ) => Effect.Effect<OrchestrationV2ThreadProjection, Orchestrator.OrchestratorV2Error>;
+  readonly getCheckpointContext: Orchestrator.OrchestratorV2["Service"]["getCheckpointContext"];
+  readonly getThreadSnapshot: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshot"];
+  readonly getThreadSnapshotWindow: Orchestrator.OrchestratorV2["Service"]["getThreadSnapshotWindow"];
   readonly getProjectThreadRecords: <K extends ProjectionRecordField>(
     input: { readonly projectId: ProjectId; readonly threadId: ThreadId },
     fields: ReadonlyArray<K>,
@@ -303,8 +297,8 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<OrchestrationV2ThreadProjection, ThreadManagementError>;
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
-  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
-  readonly getThreadShell: OrchestratorV2["Service"]["getThreadShell"];
+  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
+  readonly getThreadShell: Orchestrator.OrchestratorV2["Service"]["getThreadShell"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
@@ -318,10 +312,10 @@ export interface ThreadManagementServiceShape {
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
-  readonly getThreadEventSequence: OrchestratorV2["Service"]["getThreadEventSequence"];
-  readonly streamStoredEvents: OrchestratorV2["Service"]["streamStoredEvents"];
-  readonly streamStoredEventsFrom: OrchestratorV2["Service"]["streamStoredEventsFrom"];
-  readonly streamDomainEvents: OrchestratorV2["Service"]["streamDomainEvents"];
+  readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
+  readonly streamStoredEvents: Orchestrator.OrchestratorV2["Service"]["streamStoredEvents"];
+  readonly streamStoredEventsFrom: Orchestrator.OrchestratorV2["Service"]["streamStoredEventsFrom"];
+  readonly streamDomainEvents: Orchestrator.OrchestratorV2["Service"]["streamDomainEvents"];
 }
 
 export class ThreadManagementService extends Context.Service<
@@ -380,7 +374,7 @@ function latestSteerableRun(
 }
 
 const make = Effect.gen(function* () {
-  const orchestrator = yield* OrchestratorV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
 
   const ensureLegacyTranscript = Effect.fn(
@@ -400,7 +394,7 @@ const make = Effect.gen(function* () {
     ensureLegacyTranscript(threadId).pipe(
       Effect.mapError(
         (cause) =>
-          new OrchestratorProjectionError({
+          new Orchestrator.OrchestratorProjectionError({
             threadId,
             cause,
           }),
@@ -417,7 +411,7 @@ const make = Effect.gen(function* () {
     ).pipe(
       Effect.mapError(
         (cause) =>
-          new OrchestratorDispatchError({
+          new Orchestrator.OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause,
@@ -758,13 +752,11 @@ const legacyV1ThreadImporterNoopLayer = Layer.succeed(
   }),
 );
 
-export const layer: Layer.Layer<ThreadManagementService, never, OrchestratorV2> = Layer.effect(
-  ThreadManagementService,
-  make,
-).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer));
+export const layer: Layer.Layer<ThreadManagementService, never, Orchestrator.OrchestratorV2> =
+  Layer.effect(ThreadManagementService, make).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer));
 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
-  LegacyV1ThreadImporter.LegacyV1ThreadImporter | OrchestratorV2
+  LegacyV1ThreadImporter.LegacyV1ThreadImporter | Orchestrator.OrchestratorV2
 > = Layer.effect(ThreadManagementService, make);

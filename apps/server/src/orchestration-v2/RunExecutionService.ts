@@ -35,14 +35,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import {
-  IdAllocatorV2,
-  type IdAllocatorV2AllocationError,
-  type IdAllocatorV2Shape,
-} from "./IdAllocator.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as CheckpointService from "./CheckpointService.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2RuntimePolicy,
@@ -50,9 +46,9 @@ import type {
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
-import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
+import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
-import { RunFinalizationObserver } from "./RunFinalizationService.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -200,8 +196,11 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
   readonly open: OpenRunOwnedSubagentProjection;
   readonly status: RunOwnedSubagentTerminalStatus;
   readonly completedAt: DateTime.Utc;
-  readonly allocateEventId: () => Effect.Effect<EventId, IdAllocatorV2AllocationError>;
-}): Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, IdAllocatorV2AllocationError> {
+  readonly allocateEventId: () => Effect.Effect<EventId, IdAllocator.IdAllocatorV2AllocationError>;
+}): Effect.Effect<
+  ReadonlyArray<OrchestrationV2DomainEvent>,
+  IdAllocator.IdAllocatorV2AllocationError
+> {
   return Effect.gen(function* () {
     const events: Array<OrchestrationV2DomainEvent> = [];
     // Prefer lifetime linkage over currently-open rows: subagent/turn-item
@@ -524,20 +523,20 @@ export class RunExecutionServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   RunExecutionServiceV2,
   never,
-  | CheckpointServiceV2
-  | EventSinkV2
-  | IdAllocatorV2
-  | ProviderEventIngestorV2
-  | ServerSettingsService
+  | CheckpointService.CheckpointServiceV2
+  | EventSink.EventSinkV2
+  | IdAllocator.IdAllocatorV2
+  | ProviderEventIngestor.ProviderEventIngestorV2
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
-    const checkpointService = yield* CheckpointServiceV2;
-    const eventSink = yield* EventSinkV2;
-    const idAllocator = yield* IdAllocatorV2;
-    const providerEventIngestor = yield* ProviderEventIngestorV2;
-    const serverSettings = yield* ServerSettingsService;
-    const finalizationObserver = yield* RunFinalizationObserver;
+    const checkpointService = yield* CheckpointService.CheckpointServiceV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -1422,7 +1421,7 @@ export const layer: Layer.Layer<
 );
 
 function makeInterruptResultTurnItem(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;

@@ -15,12 +15,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import {
-  forkableSourceRunStatusError,
-  isForkableSourceRunStatus,
-  layer,
-  ThreadForkServiceV2,
-} from "./ThreadForkService.ts";
+import * as ThreadForkService from "./ThreadForkService.ts";
 
 const sourceThreadId = ThreadId.make("thread:fork-snoozed-source");
 const targetThreadId = ThreadId.make("thread:fork-awake-target");
@@ -113,7 +108,7 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
 
 const planFork = (sourceRun: OrchestrationV2Run) =>
   Effect.gen(function* () {
-    const service = yield* ThreadForkServiceV2;
+    const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
       sourceProjection: makeSourceProjection(sourceRun),
       sourceRun,
@@ -129,19 +124,19 @@ const planFork = (sourceRun: OrchestrationV2Run) =>
       creationSource: "mobile",
       createdAt: forkCreatedAt,
     });
-  }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(ThreadForkService.layer));
 
 it("treats usage-limited and other provider-finished runs as forkable", () => {
-  assert.isTrue(isForkableSourceRunStatus("completed"));
-  assert.isTrue(isForkableSourceRunStatus("waiting"));
-  assert.isTrue(isForkableSourceRunStatus("failed"));
-  assert.isTrue(isForkableSourceRunStatus("interrupted"));
-  assert.isTrue(isForkableSourceRunStatus("cancelled"));
-  assert.isFalse(isForkableSourceRunStatus("running"));
-  assert.isFalse(isForkableSourceRunStatus("starting"));
-  assert.isFalse(isForkableSourceRunStatus("queued"));
-  assert.isFalse(isForkableSourceRunStatus("preparing"));
-  assert.isFalse(isForkableSourceRunStatus("rolled_back"));
+  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("completed"));
+  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("waiting"));
+  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("failed"));
+  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("interrupted"));
+  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("cancelled"));
+  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("running"));
+  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("starting"));
+  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("queued"));
+  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("preparing"));
+  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("rolled_back"));
 });
 
 it.effect("keeps a fork awake when its source thread is snoozed", () =>
@@ -192,7 +187,7 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error._tag, "ThreadForkPlanError");
       assert.equal(error.sourceThreadId, sourceThreadId);
       assert.equal(error.targetThreadId, targetThreadId);
-      assert.equal(error.cause, forkableSourceRunStatusError(sourceRun));
+      assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
   }),
 );
