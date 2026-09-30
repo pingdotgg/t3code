@@ -119,6 +119,12 @@ internal class TerminalInputView(
         return accepted
       }
 
+      override fun closeConnection() {
+        // Target cleanup can finish composition without calling this wrapper.
+        editFromInputConnection { super.closeConnection() }
+        flushCommittedText()
+      }
+
       override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
         if (this@TerminalInputView.text.isNotEmpty()) {
           return editFromInputConnection { super.deleteSurroundingText(beforeLength, afterLength) }

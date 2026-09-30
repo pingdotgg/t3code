@@ -81,6 +81,20 @@ class TerminalInputViewTest {
   }
 
   @Test
+  fun closingTheInputConnectionCommitsTheCandidateOnce() {
+    val output = mutableListOf<String>()
+    val editor = TerminalInputView(RuntimeEnvironment.getApplication(), output::add)
+    val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
+
+    input.setComposingText("hello", 1)
+    assertEquals(emptyList<String>(), output)
+    input.closeConnection()
+    input.closeConnection()
+
+    assertEquals(listOf("hello"), output)
+  }
+
+  @Test
   fun composingTextIsSentOnceWhenCommitted() {
     val output = mutableListOf<String>()
     val editor = TerminalInputView(RuntimeEnvironment.getApplication(), output::add)
