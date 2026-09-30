@@ -1,8 +1,8 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
-import type { ComponentProps } from "react";
-import { ChevronDownIcon, type LucideIcon } from "lucide-react";
+import type { ComponentProps, ComponentType, SVGProps } from "react";
+import { ChevronDownIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -52,7 +52,7 @@ export function ComposerControlIcon({
   opticalSize = "default",
   size = "sm",
 }: {
-  icon: LucideIcon;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   className?: string | undefined;
   opticalSize?: "default" | "large";
   size?: ComposerControlSize;
