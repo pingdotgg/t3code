@@ -56,6 +56,45 @@ async function makeThreadReadModel(input: { readonly now: string; readonly threa
   );
 }
 
+function makeHandoffCommand(input: {
+  readonly now: string;
+  readonly threadId: ThreadId;
+  readonly branch: string;
+  readonly worktreePath: string;
+  readonly workspaceBinding?: {
+    readonly canonicalPath: string;
+    readonly worktreePath: string;
+    readonly branch: string;
+    readonly generation: number;
+  };
+}) {
+  return {
+    type: "thread.workspace.handoff",
+    commandId: CommandId.make("cmd-workspace-handoff"),
+    threadId: input.threadId,
+    branch: input.branch,
+    worktreePath: input.worktreePath,
+    ...(input.workspaceBinding !== undefined ? { workspaceBinding: input.workspaceBinding } : {}),
+    markerMessageId: MessageId.make("message-handoff-marker"),
+    continuation: {
+      id: asQueuedTurnId("queued-turn-handoff"),
+      threadId: input.threadId,
+      message: {
+        messageId: asMessageId("message-handoff"),
+        role: "user",
+        text: "continue in workspace",
+        attachments: [],
+      },
+      runtimeMode: "approval-required",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      createdAt: input.now,
+      updatedAt: input.now,
+      failedAt: null,
+      failureMessage: null,
+    },
+  } as const;
+}
+
 describe("decider queued turns", () => {
   it("preserves pull request monitor provenance on queued turns", async () => {
     const now = "2026-03-01T00:00:00.000Z";
@@ -870,5 +909,186 @@ describe("decider queued turns", () => {
         branch: "feature/handoff",
       },
     });
+  });
+});
+
+describe("decider redundant workspace handoff", () => {
+  async function makeBoundReadModel(input: {
+    readonly now: string;
+    readonly threadId: ThreadId;
+    readonly branch: string;
+    readonly worktreePath: string;
+    readonly bound?: boolean;
+  }) {
+    const readModel = await makeThreadReadModel({ now: input.now, threadId: input.threadId });
+    if (input.bound === false) {
+      return readModel;
+    }
+    return {
+      ...readModel,
+      threads: readModel.threads.map((thread) =>
+        thread.id === input.threadId
+          ? {
+              ...thread,
+              branch: input.branch,
+              worktreePath: input.worktreePath,
+              workspaceBinding: {
+                canonicalPath: input.worktreePath,
+                worktreePath: input.worktreePath,
+                branch: input.branch,
+                generation: 1,
+              },
+            }
+          : thread,
+      ),
+    };
+  }
+
+  it("omits the transition marker when the thread is already bound to that worktree and branch", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-already-bound");
+    const readModel = await makeBoundReadModel({
+      now,
+      threadId,
+      branch: "t3code/perf-next-four",
+      worktreePath: "/tmp/perf-next-four",
+    });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: makeHandoffCommand({
+          now,
+          threadId,
+          branch: "t3code/perf-next-four",
+          worktreePath: "/tmp/perf-next-four",
+          workspaceBinding: {
+            canonicalPath: "/tmp/perf-next-four",
+            worktreePath: "/tmp/perf-next-four",
+            branch: "t3code/perf-next-four",
+            generation: 1,
+          },
+        }),
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual([
+      "thread.meta-updated",
+      "thread.queued-turn-created",
+    ]);
+  });
+
+  it("still queues the continuation so a repeated handoff never strands its caller", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-already-bound-continuation");
+    const readModel = await makeBoundReadModel({
+      now,
+      threadId,
+      branch: "t3code/perf-next-four",
+      worktreePath: "/tmp/perf-next-four",
+    });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: makeHandoffCommand({
+          now,
+          threadId,
+          branch: "t3code/perf-next-four",
+          worktreePath: "/tmp/perf-next-four",
+        }),
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.at(-1)?.payload).toMatchObject({
+      queuedTurn: { origin: { kind: "workspace-handoff", role: "continuation" } },
+    });
+  });
+
+  it("treats a worktree alias that resolves to the bound canonical path as already bound", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-alias-bound");
+    const readModel = await makeBoundReadModel({
+      now,
+      threadId,
+      branch: "t3code/perf-next-four",
+      worktreePath: "/tmp/perf-next-four",
+    });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: makeHandoffCommand({
+          now,
+          threadId,
+          branch: "t3code/perf-next-four",
+          worktreePath: "/tmp/alias/../perf-next-four",
+          workspaceBinding: {
+            canonicalPath: "/tmp/perf-next-four",
+            worktreePath: "/tmp/alias/../perf-next-four",
+            branch: "t3code/perf-next-four",
+            generation: 1,
+          },
+        }),
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).not.toContain("thread.message-sent");
+  });
+
+  it("emits the marker when the bound worktree is re-pointed at a different branch", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-branch-changed");
+    const readModel = await makeBoundReadModel({
+      now,
+      threadId,
+      branch: "t3code/perf-next-four",
+      worktreePath: "/tmp/perf-next-four",
+    });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: makeHandoffCommand({
+          now,
+          threadId,
+          branch: "t3code/perf-next-five",
+          worktreePath: "/tmp/perf-next-four",
+        }),
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toContain("thread.message-sent");
+  });
+
+  it("emits the marker for a legacy thread that carries no workspace binding", async () => {
+    const now = "2026-03-01T00:00:00.000Z";
+    const threadId = asThreadId("thread-legacy-unbound");
+    const readModel = await makeBoundReadModel({
+      now,
+      threadId,
+      branch: "t3code/perf-next-four",
+      worktreePath: "/tmp/perf-next-four",
+      bound: false,
+    });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: makeHandoffCommand({
+          now,
+          threadId,
+          branch: "t3code/perf-next-four",
+          worktreePath: "/tmp/perf-next-four",
+        }),
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toContain("thread.message-sent");
   });
 });

@@ -143,6 +143,7 @@
 - Delegation discovery is not a prompt-only reliability boundary. Expose one canonical `delegate_work` interface for singular and batch creation, derive project defaults server-side and delegated model defaults from settings, and keep legacy creation tools as compatibility adapters.
 - A workspace handoff must atomically persist the new branch/worktree and ensure a dispatchable queued continuation; reuse an existing user-queued turn instead of appending duplicate work.
 - Workspace handoff retries must reuse a durable orchestration command ID. If every response is lost, preserve the created worktree because the binding may already have committed; only roll back after a definitive server rejection, and surface cleanup failures.
+- A handoff that re-targets the worktree and branch the thread is already bound to is not a move: compare the canonical path (not the requested spelling) plus branch, and omit the `Moved to` marker instead of appending a divider per request. Still queue the continuation, because the caller is told to end its turn and let T3 resume — dropping it strands the turn rather than merely hiding noise. Ownership stays claimed at the same generation, so the binding is persisted either way.
 - Local desktop flavors must never use Official's `~/.t3` home. If a divergent build replaces role auth tables with scope-only tables, append a repair above the latest auth migration; replaying an earlier repair is impossible once the ledger high-water mark has passed it.
 
 ## PR reviews and checkpoint provenance

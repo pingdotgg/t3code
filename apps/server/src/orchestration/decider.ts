@@ -2931,7 +2931,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       } as const;
       // The marker is the invariant of a handoff: it records the workspace move
       // whether the thread continues on a generated continuation or on a turn
-      // the user had already queued.
+      // the user had already queued. It is suppressed only when the request
+      // re-targets the worktree and branch the thread is already bound to,
+      // which is not a move: callers re-assert the binding they just created
+      // (a retry after a lost response, or an agent re-entering the workspace
+      // it is already working in) and each of those would otherwise append
+      // another "Moved to" divider for a transition that never happened.
+      //
+      // Compare the canonical path rather than the requested one so an aliased
+      // spelling of the bound worktree is recognised as the same destination.
+      // Ownership is still claimed upstream at the same generation, so the
+      // binding this command carries is persisted either way.
+      const alreadyBoundHere =
+        thread.workspaceBinding !== undefined && thread.workspaceBinding !== null
+          ? thread.workspaceBinding.canonicalPath ===
+              (command.workspaceBinding?.canonicalPath ?? command.worktreePath) &&
+            thread.workspaceBinding.branch === command.branch
+          : thread.worktreePath === command.worktreePath && thread.branch === command.branch;
       const markerEvent: PlannedOrchestrationEvent = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -2952,33 +2968,38 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
-      if (firstQueuedTurn !== undefined) {
-        return [metaUpdatedEvent, markerEvent];
+      const events: PlannedOrchestrationEvent[] = [metaUpdatedEvent];
+      if (!alreadyBoundHere) {
+        events.push(markerEvent);
       }
-      return [
-        metaUpdatedEvent,
-        markerEvent,
-        {
-          ...withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt: command.continuation.createdAt,
-            commandId: command.commandId,
-          }),
-          type: "thread.queued-turn-created",
-          payload: {
-            threadId: command.threadId,
-            // The origin is derived here, not trusted from the caller: it is
-            // what suppresses the boilerplate bubble, so an untagged or
-            // mistagged continuation would re-expose it or render a second
-            // divider. It must also agree with the marker it accompanies.
-            queuedTurn: {
-              ...command.continuation,
-              origin: { ...handoffOrigin, role: "continuation" },
-            },
+      if (firstQueuedTurn !== undefined) {
+        return events;
+      }
+      // The continuation is queued even for a redundant handoff. Its caller is
+      // told to end the turn and let T3 resume the task in the bound worktree,
+      // so dropping it here would strand the turn instead of merely omitting a
+      // redundant divider.
+      events.push({
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.continuation.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-created",
+        payload: {
+          threadId: command.threadId,
+          // The origin is derived here, not trusted from the caller: it is
+          // what suppresses the boilerplate bubble, so an untagged or
+          // mistagged continuation would re-expose it or render a second
+          // divider. It must also agree with the marker it accompanies.
+          queuedTurn: {
+            ...command.continuation,
+            origin: { ...handoffOrigin, role: "continuation" },
           },
         },
-      ];
+      });
+      return events;
     }
 
     case "thread.title.regeneration.complete": {
