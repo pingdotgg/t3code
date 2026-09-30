@@ -37,6 +37,24 @@ describe("editableOwnsUndo", () => {
     expect(editableOwnsUndo(new FakeElement(true, "draft"))).toBe(true);
   });
 
+  it("keeps native undo for a field that was edited after the notice", async () => {
+    vi.useFakeTimers();
+    let onInput: ((event: Event) => void) | undefined;
+    vi.stubGlobal("window", {
+      addEventListener: (_type: string, handler: (event: Event) => void) => (onInput = handler),
+    });
+    vi.resetModules();
+    const fresh = await import("./editableFocus");
+    const field = new FakeElement(true, "");
+    const since = Date.now();
+    expect(fresh.editableOwnsUndo(field, since)).toBe(false);
+    vi.advanceTimersByTime(10);
+    onInput?.({ target: field } as unknown as Event);
+    expect(fresh.editableOwnsUndo(field, since)).toBe(true);
+    expect(fresh.editableOwnsUndo(field, Date.now() + 1)).toBe(false);
+    vi.useRealTimers();
+  });
+
   it("ignores non-editable targets", () => {
     expect(editableOwnsUndo(new FakeElement(false, "Undo"))).toBe(false);
     expect(editableOwnsUndo(null)).toBe(false);
