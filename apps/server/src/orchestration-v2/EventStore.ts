@@ -1,4 +1,6 @@
 import {
+  type ApplicationProjectEvent,
+  type ApplicationStoredEvent,
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -12,7 +14,10 @@ import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import {
+  OrchestrationEventStore,
+  type UnsequencedProjectEvent,
+} from "../persistence/Services/OrchestrationEventStore.ts";
 
 export class EventStoreAppendEventsError extends Schema.TaggedError<EventStoreAppendEventsError>()(
   "EventStoreAppendEventsError",
@@ -52,6 +57,9 @@ export interface EventStoreV2Shape {
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventStoreV2Error>;
+  readonly appendProjectEvent: (
+    event: UnsequencedProjectEvent,
+  ) => Effect.Effect<ApplicationProjectEvent, EventStoreV2Error>;
   readonly read: (input?: {
     readonly afterSequence?: number;
     readonly throughSequence?: number;
@@ -65,9 +73,9 @@ export interface EventStoreV2Shape {
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
   }) => Effect.Effect<number, EventStoreV2Error>;
-  readonly publishCommitted: (
-    events: ReadonlyArray<OrchestrationV2StoredEvent>,
-  ) => Effect.Effect<void>;
+  /** Latest sequence across project and V2 thread events. */
+  readonly latestApplicationSequence: Effect.Effect<number, EventStoreV2Error>;
+  readonly publishCommitted: (events: ReadonlyArray<ApplicationStoredEvent>) => Effect.Effect<void>;
 }
 
 export class EventStoreV2 extends Context.Service<EventStoreV2, EventStoreV2Shape>()(
@@ -114,6 +122,12 @@ const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore> = Lay
               }),
           ),
         ),
+      appendProjectEvent: (event) =>
+        applicationEvents
+          .appendProjectEvent(event)
+          .pipe(
+            Effect.mapError((cause) => new EventStoreAppendEventsError({ eventCount: 1, cause })),
+          ),
       read,
       readByCommandId: ({ commandId }) =>
         applicationEvents
@@ -129,6 +143,9 @@ const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore> = Lay
               }),
           ),
         ),
+      latestApplicationSequence: applicationEvents.latestApplicationSequence.pipe(
+        Effect.mapError((cause) => new EventStoreReadEventsError({ cause })),
+      ),
       publishCommitted: applicationEvents.publishCommitted,
     });
   }),

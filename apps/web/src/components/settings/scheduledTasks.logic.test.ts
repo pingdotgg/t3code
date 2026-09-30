@@ -1,4 +1,4 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, scheduledTaskLegacyUpsert } from "@t3tools/contracts";
 import type { ModelSelection, ScheduledTask } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -462,5 +462,79 @@ describe("moveDetachesThreadBinding", () => {
       nextProjectId: "project:one",
     });
     expect(patch).not.toHaveProperty("threadId");
+  });
+});
+
+describe("legacy scheduled-task edits", () => {
+  it("retains live untouched fields and requires the existing task", () => {
+    const live: ScheduledTask = {
+      ...task,
+      prompt: "Changed by another client",
+      enabled: false,
+      creationSource: "mcp",
+    };
+    const input = scheduledTaskLegacyUpsert(live, {
+      id: task.id,
+      projectId: task.projectId,
+      title: "Renamed",
+    });
+    expect(input).toMatchObject({
+      id: task.id,
+      requireExisting: true,
+      title: "Renamed",
+      prompt: live.prompt,
+      enabled: false,
+      creationSource: "mcp",
+    });
+    expect(input).not.toHaveProperty("nextRunAt");
+    expect(input).not.toHaveProperty("runCount");
+  });
+
+  it("merges a workspace control edit without losing the live branch", () => {
+    const live: ScheduledTask = {
+      ...task,
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: "main",
+        startFromOrigin: false,
+        branch: "keep-this-branch",
+      },
+    };
+    const input = scheduledTaskLegacyUpsert(live, {
+      id: task.id,
+      projectId: task.projectId,
+      workspaceStrategyPatch: { startFromOrigin: true },
+    });
+    expect(input.workspaceStrategy).toEqual({
+      type: "worktree",
+      baseRef: "main",
+      startFromOrigin: true,
+      branch: "keep-this-branch",
+    });
+  });
+
+  it("moves projects and explicitly detaches the old thread binding", () => {
+    const live: ScheduledTask = { ...task, threadId: "thread:bound" as ScheduledTask["threadId"] };
+    const draft = { ...taskToDraft(live), projectId: "project-other" };
+    const patch = buildPatch(draft, live);
+    expect(patch).not.toBeNull();
+    expect(patch?.threadId).toBeNull();
+    const input = scheduledTaskLegacyUpsert(live, patch!);
+    expect(input.projectId).toBe("project-other");
+    expect(input.threadId).toBeNull();
+    expect(input).not.toHaveProperty("nextProjectId");
+  });
+
+  it("replaces the workspace kind without leaking fields from the old kind", () => {
+    const live: ScheduledTask = {
+      ...task,
+      workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+    };
+    const input = scheduledTaskLegacyUpsert(live, {
+      id: task.id,
+      projectId: task.projectId,
+      workspaceStrategy: { type: "root" },
+    });
+    expect(input.workspaceStrategy).toEqual({ type: "root" });
   });
 });

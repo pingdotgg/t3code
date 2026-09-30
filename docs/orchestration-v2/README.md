@@ -57,7 +57,7 @@ Raw provider diagnostics store what the provider actually sent or received for d
 
 V2 should integrate with the existing orchestration command/event/projection infrastructure patterns rather than creating an unrelated event system. The V2-specific work is the graph model, provider lifecycle semantics, adapter contracts, normalizers, policies, and projections.
 
-While V1 is still present, V2 should own a V2 event schema and V2 event table. It should not force V2 semantics through the old `OrchestrationEvent` TypeScript union. The old union is a V1 semantic model, not the target V2 event vocabulary. A later migration can replace V1 with V2, but the target model should stay V2-native.
+V2 owns its event schema. The V1 command and event unions are gone; V1 rows survive only as input to the legacy importer (`apps/server/src/orchestration-v2/legacy/`), and project events keep their own application event shape.
 
 ## Minimal Mental Model
 

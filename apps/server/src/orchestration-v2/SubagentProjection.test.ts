@@ -201,7 +201,9 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(
     delegatedTaskProgress({
       ...projection,
-      providerThreads: [{ pendingBackgroundTasks: [{ taskId: "background-audit" }] }],
+      providerThreads: [
+        { pendingBackgroundTasks: [{ taskId: "background-audit", kind: "command" }] },
+      ],
     }).state,
     "waiting_for_children",
   );

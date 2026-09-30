@@ -406,11 +406,19 @@ const XAiTaskLifecycleNotification = Schema.Struct({
     sessionUpdate: Schema.String,
     task_id: Schema.optional(Schema.String),
     tool_call_id: Schema.optional(Schema.String),
+    command: Schema.optional(Schema.String),
+    description: Schema.optional(Schema.NullOr(Schema.String)),
+    monitor_description: Schema.optional(Schema.NullOr(Schema.String)),
     task_snapshot: Schema.optional(
       Schema.Struct({
         task_id: Schema.optional(Schema.String),
         output: Schema.optional(Schema.String),
         exit_code: Schema.optional(Schema.NullOr(Schema.Number)),
+        command: Schema.optional(Schema.String),
+        display_command: Schema.optional(Schema.NullOr(Schema.String)),
+        description: Schema.optional(Schema.NullOr(Schema.String)),
+        // `TaskKind` in grok-build crates/common/xai-tool-runtime/src/notification.rs.
+        kind: Schema.optional(Schema.String),
       }),
     ),
   }),
@@ -425,6 +433,37 @@ export interface XAiBackgroundTaskLifecycleMutation {
   readonly status: "running" | "completed" | "failed";
   /** Final output from `task_completed.task_snapshot`, when Grok sent one. */
   readonly output?: string;
+  /** What the task is and how to name it, when Grok said. */
+  readonly report?:
+    | { readonly kind: "command"; readonly label?: string; readonly exitCode?: number }
+    | { readonly kind: "monitor"; readonly label?: string };
+}
+
+function xAiBackgroundTaskReport(
+  update: XAiTaskLifecycleNotification["update"],
+): XAiBackgroundTaskLifecycleMutation["report"] {
+  const snapshot = update.task_snapshot;
+  const monitorDescription = nonEmptyString(update.monitor_description ?? undefined);
+  const displayCommand = nonEmptyString(snapshot?.display_command ?? undefined);
+  const isMonitor =
+    snapshot?.kind === "monitor" ||
+    monitorDescription !== undefined ||
+    displayCommand?.startsWith("[monitor]") === true;
+  // Grok's snapshot defaults `kind` to bash; anything that carries a command is one.
+  const isCommand =
+    snapshot?.kind === "bash" || snapshot?.command !== undefined || update.command !== undefined;
+  if (!isMonitor && !isCommand) return undefined;
+  const label =
+    monitorDescription ??
+    nonEmptyString(snapshot?.description ?? undefined) ??
+    nonEmptyString(update.description ?? undefined) ??
+    displayCommand?.replace(/^\[monitor\]\s*/, "") ??
+    nonEmptyString(snapshot?.command) ??
+    nonEmptyString(update.command);
+  const named = label === undefined ? {} : { label };
+  if (isMonitor) return { kind: "monitor", ...named };
+  const exitCode = snapshot?.exit_code;
+  return { kind: "command", ...named, ...(typeof exitCode === "number" ? { exitCode } : {}) };
 }
 
 export function xAiBackgroundTaskLifecycleMutation(
@@ -439,12 +478,14 @@ export function xAiBackgroundTaskLifecycleMutation(
   if (taskId === undefined) return null;
   const exitCode = update.task_snapshot?.exit_code;
   const output = update.task_snapshot?.output;
+  const report = xAiBackgroundTaskReport(update);
   return {
     sessionId: notification.sessionId,
     taskId,
     status:
       status === "completed" && typeof exitCode === "number" && exitCode !== 0 ? "failed" : status,
     ...(output === undefined ? {} : { output }),
+    ...(report === undefined ? {} : { report }),
   };
 }
 

@@ -1,6 +1,36 @@
-import type { OrchestrationThreadShell, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  OrchestrationV2ThreadShell,
+  ProjectId,
+  RuntimeMode,
+  ThreadId,
+  ThreadLinkedPullRequest,
+  ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-export function v2PullRequestThread(thread: OrchestrationThreadShell): OrchestrationV2ThreadShell {
+
+/** The thread fields pull request tests set; timestamps are ISO strings. */
+export interface PullRequestTestThread {
+  readonly id: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly modelSelection: ModelSelection;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
+  readonly branchPullRequest?: ThreadLinkedPullRequest | null;
+  readonly latestUserMessageAt: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly archivedAt: string | null;
+  readonly settledOverride: OrchestrationV2ThreadShell["settledOverride"];
+  readonly settledAt: string | null;
+}
+
+export function v2PullRequestThread(thread: PullRequestTestThread): OrchestrationV2ThreadShell {
   return {
     id: thread.id,
     projectId: thread.projectId,

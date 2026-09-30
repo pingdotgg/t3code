@@ -7,6 +7,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
   assertVisibleTurnItemsMirrorLocalTurnItems,
+  backgroundNotifications,
   projectionFor,
 } from "../shared.ts";
 import { GROK_MONITOR_PROMPT, GROK_MONITOR_TICKS } from "./input.ts";
@@ -89,6 +90,15 @@ export function assertGrokMonitorOutput(
       : undefined,
     { outcome: { outcome: "selected", optionId: "allow-once" } },
   );
+
+  // The timeline names the monitor from Grok's task_completed snapshot.
+  assert.deepEqual(backgroundNotifications(projection), [
+    {
+      summary: 'Monitor "Watch three tick echoes" finished',
+      outcome: "completed",
+      source: { kind: "monitor" },
+    },
+  ]);
 
   // Grok's own wake reply is a provider continuation, not more of run 1.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);

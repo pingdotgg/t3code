@@ -6,6 +6,7 @@ import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
+  backgroundNotifications,
   projectionFor,
 } from "../shared.ts";
 import { GROK_BACKGROUND_SUBAGENT_PROMPT } from "./input.ts";
@@ -95,6 +96,15 @@ export function assertGrokBackgroundSubagentOutput(
     "the subagent's reply must land in its child thread",
   );
   assert.notInclude(runAssistantTexts(projection, rootRun?.id), "SUBAGENT_DONE");
+
+  // The timeline says which subagent finished, and opens its thread.
+  assert.deepEqual(backgroundNotifications(projection), [
+    {
+      summary: 'Subagent "Sleep then reply done" finished',
+      outcome: "completed",
+      source: { kind: "subagent", childThreadId: subagent.childThreadId },
+    },
+  ]);
 
   // Grok's reply to the finished subagent is a provider continuation.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);

@@ -9,9 +9,62 @@ import {
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
   walkThreadRelationships,
+  threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
+  it.each([
+    ["running", "completed"],
+    ["completed", "running"],
+    ["running", "running"],
+    ["completed", "completed"],
+    ["waiting", "failed"],
+    ["interrupted", "pending"],
+  ])("keeps parent %s independent of child %s", (parentStatus, childStatus) => {
+    const parent = ThreadId.make("parent");
+    const child = ThreadId.make("child");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: parent,
+          activityRunStatus: parentStatus,
+          status: "cancelled",
+          lineage: { parentThreadId: null },
+        },
+        {
+          id: child,
+          activityRunStatus: childStatus,
+          lineage: { parentThreadId: parent, relationshipToParent: "fork" },
+        },
+      ] as never,
+      projection: null,
+    });
+    expect(threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, child)[0]!)).toBe(
+      parentStatus,
+    );
+    expect(
+      threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, parent)[0]!),
+    ).toBe(childStatus);
+  });
+
+  it("does not label a missing parent with its child's running status", () => {
+    const parent = ThreadId.make("missing-parent");
+    const child = ThreadId.make("child");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: child,
+          status: "running",
+          lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+        },
+      ] as never,
+      projection: null,
+    });
+    expect(
+      threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, child)[0]!),
+    ).toBeNull();
+  });
+
   it("keeps an older activity run visible over a newer cancelled run", () => {
     const parent = ThreadId.make("thread-parent");
     const child = ThreadId.make("thread-child");

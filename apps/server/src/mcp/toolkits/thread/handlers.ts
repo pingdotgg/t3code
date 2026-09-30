@@ -18,7 +18,7 @@ import {
   readWritableThread,
   unavailable,
 } from "../../threadAccess.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -112,8 +112,8 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   t3_thread_search: (input) =>
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
-      const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-      const result = yield* query.searchThreads(input).pipe(Effect.mapError(unavailable));
+      const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const result = yield* threadSearch.search(input).pipe(Effect.mapError(unavailable));
       return { matches: result.matches.filter((match) => match.projectId === caller.projectId) };
     }),
   t3_thread_fork: (input) =>

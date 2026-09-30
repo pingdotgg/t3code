@@ -957,7 +957,11 @@ export const layer = Layer.effect(
               // left the caller's project — the scoped view must answer
               // not-found rather than let the upsert drag the row back and
               // overwrite a definition the caller can no longer see.
-              if (existingTask !== null && existingTask.projectId !== input.projectId) {
+              if (
+                input.id === undefined &&
+                existingTask !== null &&
+                existingTask.projectId !== input.projectId
+              ) {
                 return yield* taskError("Schedule task not found.", { taskId: id });
               }
               // Keep the existing next_run_at when the schedule itself is untouched:

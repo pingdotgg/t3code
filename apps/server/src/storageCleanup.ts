@@ -28,7 +28,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
-import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import { OrchestratorV2 } from "./orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreV2 } from "./orchestration-v2/ProjectionStore.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
@@ -108,7 +108,7 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* Settings.ServerSettingsService;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
   const engine = yield* OrchestratorV2;
   const projections = yield* ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
@@ -151,7 +151,7 @@ export const make = Effect.gen(function* () {
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const active = yield* projections.getShellSnapshot();
     const archived = yield* projections.getShellSnapshot({ location: "archive" });
-    const projects = yield* snapshots.getProjectShellsWithoutEnrichment();
+    const projects = yield* projectStore.listShells();
     return { projects, threads: [...active.threads, ...archived.threads] };
   });
 

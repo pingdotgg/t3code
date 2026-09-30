@@ -17,7 +17,6 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
-import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
 import {
   EventSinkV2,
@@ -26,11 +25,11 @@ import {
   layer as eventSinkLayer,
 } from "../orchestration-v2/EventSink.ts";
 import { layer as eventStoreLayer } from "../orchestration-v2/EventStore.ts";
-import { layer as idAllocatorLayer } from "../orchestration-v2/IdAllocator.ts";
+import { IdAllocatorV2, layer as idAllocatorLayer } from "../orchestration-v2/IdAllocator.ts";
 import {
   LegacyV1ThreadImporter,
   layer as legacyImporterLayer,
-} from "../orchestration-v2/LegacyV1ThreadImporter.ts";
+} from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
@@ -39,8 +38,9 @@ import {
   ProjectionStoreV2,
   layer as projectionStoreLayer,
 } from "../orchestration-v2/ProjectionStore.ts";
+import { layer as projectStoreLayer } from "../orchestration-v2/ProjectStore.ts";
 import { layer as threadCommandExecutorLayer } from "../orchestration-v2/ThreadCommandExecutor.ts";
-import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -54,8 +54,7 @@ const eventPersistenceLayer = eventSinkLayer.pipe(
 const servicesLayer = Layer.mergeAll(
   legacyImporterLayer.pipe(Layer.provideMerge(eventPersistenceLayer)),
   projectionMaintenanceLayer.pipe(Layer.provide(eventPersistenceLayer)),
-  OrchestrationLayerLive,
-  ProjectionProjectRepositoryLive,
+  projectStoreLayer,
   idAllocatorLayer,
   threadCommandExecutorLayer,
   Layer.succeed(WorkspacePaths.WorkspacePaths, {
@@ -333,22 +332,24 @@ it.effect(
         assert.lengthOf(projection.messages, 4);
         assert.equal(yield* importer.pendingThreadCount, 0);
         const rows = yield* sql<{
-          readonly legacy_deleted_at: string | null;
           readonly v2_deleted_at: string | null;
           readonly project_deleted_at: string | null;
         }>`
-        SELECT legacy.deleted_at AS legacy_deleted_at,
-          v2.deleted_at AS v2_deleted_at,
+        SELECT v2.deleted_at AS v2_deleted_at,
           project.deleted_at AS project_deleted_at
-        FROM projection_threads AS legacy
-        JOIN orchestration_v2_projection_threads AS v2 ON v2.thread_id = legacy.thread_id
-        JOIN projection_projects AS project ON project.project_id = legacy.project_id
-        WHERE legacy.thread_id = ${threadId}
+        FROM orchestration_v2_projection_threads AS v2
+        JOIN projection_projects AS project ON project.project_id = v2.project_id
+        WHERE v2.thread_id = ${threadId}
       `;
         assert.lengthOf(rows, 1);
-        assert.isNotNull(rows[0]?.legacy_deleted_at);
         assert.isNotNull(rows[0]?.v2_deleted_at);
         assert.isNotNull(rows[0]?.project_deleted_at);
+        // The legacy V1 row is only an import source; deletion writes V2 events only.
+        const legacyEvents = yield* sql`
+          SELECT sequence FROM orchestration_events
+          WHERE application_event_version = 1 AND stream_id = ${threadId}
+        `;
+        assert.deepEqual(legacyEvents, []);
 
         const cleanup = yield* sql<{
           readonly command_id: string;
@@ -417,6 +418,83 @@ it.effect("rejects a child deletion command ID already accepted for an unrelated
         WHERE thread_id = ${threadId}
       `;
       assert.deepEqual(cleanup, []);
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("deletes a project without force once its imported threads were deleted in V2", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:imported-emptied");
+    const threadId = ThreadId.make("thread:imported-emptied");
+    yield* seedProject(projectId);
+    // V2 never writes the V1 thread table, so this row stays live there.
+    yield* sql`
+      INSERT INTO projection_threads (
+        thread_id, project_id, title, model_selection_json,
+        runtime_mode, interaction_mode, branch, worktree_path, latest_turn_id,
+        created_at, updated_at, archived_at, deleted_at
+      ) VALUES (
+        ${threadId}, ${projectId}, 'Imported thread', '{"instanceId":"codex","model":"gpt-5.4"}',
+        'full-access', 'default', NULL, NULL, NULL,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, NULL
+      )
+    `;
+    yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
+
+    yield* Effect.gen(function* () {
+      const importer = yield* LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const service = yield* ProjectService.make;
+      yield* importer.reconcileShells;
+      const early = yield* service
+        .delete({ commandId: CommandId.make("command:emptied:early"), projectId })
+        .pipe(Effect.flip);
+      assert.equal(early._tag, "ProjectNotEmptyError");
+
+      // Delete the imported thread the way thread.delete does.
+      yield* importer.ensureTranscript(threadId);
+      const command = {
+        type: "thread.delete" as const,
+        commandId: CommandId.make("command:emptied:thread-delete"),
+        threadId,
+      };
+      const now = yield* DateTime.now;
+      const plan = yield* planThreadDeletion({
+        command,
+        projection: yield* projections.getThreadRecords(threadId, [
+          "runs",
+          "attempts",
+          "nodes",
+          "runtimeRequests",
+          "subagents",
+          "providerSessions",
+        ]),
+        attachmentIds: [],
+        now,
+        idAllocator,
+      });
+      yield* eventSink.commitCommand({
+        commandId: command.commandId,
+        commandType: command.type,
+        threadId,
+        acceptedAt: now,
+        events: plan.events,
+        effects: plan.effects,
+      });
+      const legacy = yield* sql<{ readonly deleted_at: string | null }>`
+        SELECT deleted_at FROM projection_threads WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(legacy, [{ deleted_at: null }]);
+
+      const deleted = yield* service.delete({
+        commandId: CommandId.make("command:emptied:project-delete"),
+        projectId,
+      });
+      assert.isNotNull(deleted.deletedAt);
+      assert.isTrue(Option.isNone(yield* service.getById(projectId)));
     }).pipe(Effect.provide(servicesLayer));
   }).pipe(Effect.provide(databaseLayer)),
 );

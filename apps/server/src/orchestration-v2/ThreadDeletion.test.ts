@@ -149,7 +149,6 @@ it.effect("cancels active work without reviving a run while disposing delegated 
               delegatedCompletion: {
                 disposition: "open",
                 nextGeneration: 3,
-                settledDeliveryCount: 1,
                 delivery: { generation: 2, messageId: queuedRun.userMessageId, taskIds: [taskId] },
               },
             }
@@ -216,7 +215,6 @@ it.effect("cancels active work without reviving a run while disposing delegated 
     assert.deepEqual(deleted.runs.find((run) => run.id === parentRun.id)?.delegatedCompletion, {
       disposition: "disposed",
       nextGeneration: 3,
-      settledDeliveryCount: 1,
       delivery: null,
     });
     assert.equal(deleted.subagents[0]?.completionDelivery?.state, "disposed");

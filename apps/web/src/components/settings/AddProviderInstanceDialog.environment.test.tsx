@@ -117,7 +117,8 @@ describe("AddProviderInstanceDialog environment routing", () => {
       },
     });
     let tree = render();
-    (findByChildren(tree, "Next").props.onClick as () => void)();
+    // Codex offers ChatGPT sign-in first; manual setup keeps the existing CLI flow.
+    (findByChildren(tree, "Configure manually").props.onClick as () => void)();
     tree = render();
     (findByChildren(tree, "Next").props.onClick as () => void)();
     tree = render();
@@ -126,7 +127,12 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
       operation: "create",
       instanceId: "codex_3",
-      instance: { driver: "codex", enabled: true, displayName: "Codex" },
+      instance: {
+        driver: "codex",
+        enabled: true,
+        displayName: "Codex",
+        config: { setupMode: "existing" },
+      },
     });
   });
 

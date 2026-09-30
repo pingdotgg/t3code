@@ -181,6 +181,35 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 
+/** Older servers can save through upsert, but cannot merge edits atomically after this snapshot. */
+export function scheduledTaskLegacyUpsert(
+  task: ScheduledTask,
+  patch: ScheduledTaskUpdateInput,
+): ScheduledTaskUpsertInput {
+  const sparse = patch.workspaceStrategyPatch;
+  return {
+    id: task.id,
+    requireExisting: true,
+    creationSource: task.creationSource,
+    title: patch.title ?? task.title,
+    prompt: patch.prompt ?? task.prompt,
+    enabled: patch.enabled ?? task.enabled,
+    schedule: patch.schedule ?? task.schedule,
+    projectId: patch.nextProjectId ?? task.projectId,
+    threadId: patch.threadId === undefined ? task.threadId : patch.threadId,
+    workspaceStrategy: patch.workspaceStrategy ?? {
+      ...task.workspaceStrategy,
+      ...(sparse?.branch !== undefined ? { branch: sparse.branch } : {}),
+      ...(sparse?.worktreePath !== undefined ? { worktreePath: sparse.worktreePath } : {}),
+      ...(sparse?.baseRef !== undefined ? { baseRef: sparse.baseRef } : {}),
+      ...(sparse?.startFromOrigin !== undefined ? { startFromOrigin: sparse.startFromOrigin } : {}),
+    },
+    modelSelection: patch.modelSelection ?? task.modelSelection,
+    runtimeMode: patch.runtimeMode ?? task.runtimeMode,
+    interactionMode: task.interactionMode,
+  };
+}
+
 /** Partial update that flips only the enabled flag — never overwrites other fields. */
 export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,

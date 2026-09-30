@@ -19,6 +19,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  scheduledTaskLegacyUpsert,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -609,6 +610,7 @@ function ScheduledTaskEditorDialog({
       // editingTaskMissing already guarantees the task is in the live list.
       const editingTask = tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId);
       if (editingTask === undefined) {
+        submissionPending.current = false;
         setSaving(false);
         return;
       }
@@ -619,7 +621,15 @@ function ScheduledTaskEditorDialog({
         modelSelection,
         workspaceStrategy,
       );
-      result = patch === null ? null : await updateTask({ environmentId, input: patch });
+      result =
+        patch === null
+          ? null
+          : environment?.serverConfig?.environment.capabilities.scheduledTaskUpdate === true
+            ? await updateTask({ environmentId, input: patch })
+            : await upsertTask({
+                environmentId,
+                input: scheduledTaskLegacyUpsert(editingTask, patch),
+              });
     } else {
       const input: ScheduledTaskUpsertInput = {
         title: draft.title.trim(),

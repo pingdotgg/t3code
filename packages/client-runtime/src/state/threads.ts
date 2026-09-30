@@ -435,17 +435,37 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
 
   type EventItem = Extract<OrchestrationV2ThreadStreamItem, { kind: "event" }>;
+  type SequencedItem = Extract<
+    OrchestrationV2ThreadStreamItem,
+    { kind: "event" | "unknown-event" }
+  >;
   const applyEventsLocked = Effect.fn("EnvironmentThreadState.applyEventsLocked")(function* (
-    items: ReadonlyArray<EventItem>,
+    items: ReadonlyArray<SequencedItem>,
   ) {
-    let sequence = yield* SubscriptionRef.get(lastSequence);
-    const fresh = items.filter((item) => {
-      if (item.sequence <= sequence) return false;
+    const appliedSequence = yield* SubscriptionRef.get(lastSequence);
+    let sequence = appliedSequence;
+    const fresh: EventItem[] = [];
+    for (const item of items) {
+      if (item.sequence <= sequence) continue;
+      // An event type from a newer server still moves the resume cursor past it.
       sequence = item.sequence;
-      return true;
-    });
-    if (fresh.length === 0) return;
+      if (item.kind === "event") {
+        fresh.push(item);
+        continue;
+      }
+      yield* Effect.logDebug("Skipped a thread event type this client does not know.").pipe(
+        Effect.annotateLogs({
+          environmentId,
+          threadId,
+          // Bounded: the type comes from a newer server and is not validated here.
+          eventType: item.eventType.slice(0, 64),
+          sequence: item.sequence,
+        }),
+      );
+    }
+    if (sequence === appliedSequence) return;
     yield* SubscriptionRef.set(lastSequence, sequence);
+    if (fresh.length === 0) return;
 
     const waiting = yield* Ref.get(awaitingCompletion);
     // Apply against the latest projection/history in one update so a concurrent
@@ -593,9 +613,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     yield* applyLock.withPermits(1)(
       Effect.gen(function* () {
-        let events: EventItem[] = [];
+        let events: SequencedItem[] = [];
         for (const item of items) {
-          if (item.kind === "event" && item.event.type !== "thread.deleted") {
+          if (
+            item.kind === "unknown-event" ||
+            (item.kind === "event" && item.event.type !== "thread.deleted")
+          ) {
             events.push(item);
             continue;
           }

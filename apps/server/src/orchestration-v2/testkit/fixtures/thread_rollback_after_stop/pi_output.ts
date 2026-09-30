@@ -12,6 +12,7 @@ import {
   THREAD_ROLLBACK_AFTER_PROMPT,
   THREAD_ROLLBACK_FIRST_PROMPT,
   THREAD_ROLLBACK_SECOND_PROMPT,
+  TURN_INTERRUPT_MID_TOOL_PROMPT,
 } from "../shared.ts";
 
 function field(value: unknown, key: string): unknown {
@@ -40,6 +41,8 @@ export function assertPiThreadRollbackAfterStopOutput(
   const runStatus = (ordinal: number) =>
     projection.runs.find((run) => run.ordinal === ordinal)?.status;
   assert.equal(runStatus(1), "completed");
+  // The fork drops the stopped turn too, so it must leave the transcript.
+  assert.equal(runStatus(2), "rolled_back");
   assert.equal(runStatus(3), "rolled_back");
   assert.equal(runStatus(4), "completed");
 
@@ -67,7 +70,10 @@ export function assertPiThreadRollbackAfterStopOutput(
     THREAD_ROLLBACK_FIRST_PROMPT,
     THREAD_ROLLBACK_AFTER_PROMPT,
   ]);
-  assertVisibleUserMessagesExclude(projection, [THREAD_ROLLBACK_SECOND_PROMPT]);
+  assertVisibleUserMessagesExclude(projection, [
+    TURN_INTERRUPT_MID_TOOL_PROMPT,
+    THREAD_ROLLBACK_SECOND_PROMPT,
+  ]);
 
   // Pi's surviving branch holds only turn 1.
   const finalAnswer = projection.turnItems.findLast((item) => item.type === "assistant_message");

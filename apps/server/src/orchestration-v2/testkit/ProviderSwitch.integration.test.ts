@@ -47,7 +47,7 @@ import { layer as eventStoreLayer } from "../EventStore.ts";
 import {
   LegacyV1ThreadImporter,
   layer as legacyV1ThreadImporterLayer,
-} from "../LegacyV1ThreadImporter.ts";
+} from "../legacy/LegacyV1ThreadImporter.ts";
 import { OrchestratorDispatchError, OrchestratorV2 } from "../Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import { EffectOutboxV2, layer as effectOutboxLayer } from "../EffectOutbox.ts";

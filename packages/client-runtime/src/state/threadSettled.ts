@@ -1,5 +1,4 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -28,14 +27,6 @@ interface QueuedThreadShell {
   readonly latestRun?: SettlementRunLike | null;
   readonly session?: SettlementRuntimeLike | null;
   readonly runtime?: SettlementRuntimeLike | null;
-}
-
-interface SettlementThreadShell extends QueuedThreadShell {
-  readonly createdAt: string;
-  readonly settledOverride: "settled" | "active" | null;
-  readonly settledAt: string | null;
-  readonly hasPendingApprovals: boolean;
-  readonly hasPendingUserInput: boolean;
 }
 
 /**

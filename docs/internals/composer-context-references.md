@@ -23,8 +23,8 @@ union is open: a kind this build does not know decodes to `UnknownContextRecord`
 `payload` preserved, and known kinds are excluded from that member so a malformed image record
 fails its own schema rather than sliding through unchecked. `OrchestrationMessageContext` wraps
 the records with `ForwardCompatibleArray`, so one undecodable record is dropped instead of failing
-the whole message. The field is optional on `OrchestrationMessage`, both turn-start commands, and
-`ThreadMessageSentPayload`. The decider and projector carry it through untouched.
+the whole message. The field is optional on the V2 conversation message and the commands that
+start or queue a turn; the orchestrator carries it through untouched.
 
 ## Identity namespaces
 

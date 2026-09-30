@@ -1,6 +1,8 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
+import * as SchemaGetter from "effect/SchemaGetter";
 
 import {
   CheckpointId,
@@ -44,7 +46,7 @@ import {
   ThreadPullRequestLinkSource,
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
-} from "./orchestration.ts";
+} from "./threadPullRequest.ts";
 import {
   ProviderApprovalDecision,
   ProviderApprovalOption,
@@ -414,6 +416,17 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /** Latest accepted rollback. Only its failure is recorded in `rollbackFailure`. */
+  rollbackRequestId: Schema.optional(CommandId),
+  /** Latest rollback that failed after every retry; cleared when the next rollback starts. */
+  rollbackFailure: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        requestId: CommandId,
+        message: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -471,13 +484,28 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
   nextGeneration: PositiveInt,
-  // Optional for compatibility with cohorts persisted before bounded
-  // follow-up delivery was introduced. Missing means no delivery has settled.
-  settledDeliveryCount: Schema.optional(NonNegativeInt),
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
 export type OrchestrationV2DelegatedCompletionCohort =
   typeof OrchestrationV2DelegatedCompletionCohort.Type;
+
+/** Background work that restart recovery cancelled; the next provider turn is told once. */
+export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
+  kind: Schema.Literals(["subagent", "shell", "monitor", "task"]),
+  label: TrimmedNonEmptyString,
+  /** Stable identity (turn item or provider task id) so same-named work is not merged. */
+  id: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2RestartCancelledBackgroundWork =
+  typeof OrchestrationV2RestartCancelledBackgroundWork.Type;
+
+/** Replaces a run's recorded restart-cancelled work without touching its lifecycle. */
+export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
+  runId: RunId,
+  restartCancelledBackgroundWork: Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
+});
+export type OrchestrationV2RunBackgroundWorkCancelled =
+  typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
@@ -500,6 +528,13 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /**
+   * Set by restart recovery on the thread's latest started run. Delivered to
+   * the provider with the first later run that reaches a provider turn.
+   */
+  restartCancelledBackgroundWork: Schema.optional(
+    Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
+  ),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
@@ -660,16 +695,87 @@ export const OrchestrationV2ProviderSessionDetached = Schema.Struct({
 export type OrchestrationV2ProviderSessionDetached =
   typeof OrchestrationV2ProviderSessionDetached.Type;
 
+/** The literal `kind` a union member is stored and sent with. */
+function encodedKind(member: Schema.Top): string {
+  const encoded = SchemaAST.toEncoded(member.ast);
+  const kind = SchemaAST.isObjects(encoded)
+    ? encoded.propertySignatures.find((property) => property.name === "kind")?.type
+    : undefined;
+  if (kind !== undefined && SchemaAST.isLiteral(kind) && typeof kind.literal === "string") {
+    return kind.literal;
+  }
+  throw new Error("Each member of a kind union needs a literal string `kind`.");
+}
+
+/**
+ * A union tagged by `kind` that tolerates kinds this build does not know.
+ * After the known members comes a decode-only arm: an object with an unknown
+ * `kind`, or none, decodes through `fallback` to a known member instead of
+ * failing, so a newer server can add kinds without breaking older clients and
+ * rows written before a kind existed still load. `unknown` builds that arm's
+ * input around the given `kind` field. A known kind whose fields do not decode
+ * still fails. Kinds are the encoded ones, which a member may rename on decode.
+ * The arm never encodes; values always match a known member first.
+ */
+function kindUnionWithFallback<
+  const Members extends ReadonlyArray<Schema.Top & { readonly Encoded: { readonly kind: string } }>,
+  Unknown extends Schema.Top,
+>(
+  members: Members,
+  unknown: (kind: Schema.optional<Schema.String>) => Unknown,
+  fallback: (value: Unknown["Type"]) => Schema.Union<Members>["Encoded"],
+) {
+  const knownKinds: ReadonlySet<string> = new Set(members.map(encodedKind));
+  const unknownKind = unknown(
+    Schema.optional(
+      Schema.String.check(
+        Schema.makeFilter(
+          (kind: string) => !knownKinds.has(kind) || "A known kind must decode in full.",
+        ),
+      ),
+    ),
+  ).pipe(
+    Schema.decodeTo(Schema.Union(members), {
+      decode: SchemaGetter.transform(fallback),
+      encode: SchemaGetter.forbidden(() => "Unknown kinds are decode-only."),
+    }),
+  );
+  // Members are tried in order, so the fallback must come last.
+  return Schema.Union([...members, unknownKind]);
+}
+
+const PendingBackgroundTaskFields = {
+  taskId: TrimmedNonEmptyString,
+  /** The work's name: a subagent's title, a command's description, a monitor's. */
+  description: Schema.optional(TrimmedNonEmptyString),
+};
+
 /**
  * Provider-owned background work that can outlive the root turn (for example a
  * Claude background Bash task). Associated with the provider thread so shared
- * runtimes cannot make an unrelated app thread look busy.
+ * runtimes cannot make an unrelated app thread look busy. Adapters pick the
+ * kind; `background_task` is work they cannot name. Rosters persisted before
+ * kinds existed carry no `kind` and load as `background_task`.
  */
-export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
-  taskId: TrimmedNonEmptyString,
-  description: Schema.optional(TrimmedNonEmptyString),
-  taskType: Schema.optional(TrimmedNonEmptyString),
-});
+export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
+  [
+    Schema.Struct({
+      ...PendingBackgroundTaskFields,
+      kind: Schema.Literal("subagent"),
+      /** The subagent's own thread, when it has one. */
+      childThreadId: Schema.optional(ThreadId),
+    }),
+    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("command") }),
+    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("monitor") }),
+    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("background_task") }),
+  ],
+  (kind) => Schema.Struct({ ...PendingBackgroundTaskFields, kind }),
+  ({ taskId, description }) => ({
+    taskId,
+    ...(description === undefined ? {} : { description }),
+    kind: "background_task",
+  }),
+);
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
 /** Provider and adapter metadata that should not overwrite the app thread's title. */
@@ -835,19 +941,65 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
-// A notification records an observed event, not whether its payload has reached the agent.
-// Provider delivery, wake policy, and agent-facing instructions belong to the backend.
-export const OrchestrationV2Notification = Schema.Struct({
-  source: Schema.Union([
+const SubagentNotificationSource = Schema.Struct({
+  kind: Schema.Literal("subagent"),
+  /** The subagent's own thread, when the notification reports one subagent. */
+  childThreadId: Schema.optional(ThreadId),
+});
+const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+
+/**
+ * What a notification reports on. Several pieces of work of one kind share
+ * that kind; mixed or unnamed work is `background_task`.
+ *
+ * Sources are stored and sent in the shape clients before `subagent` and
+ * `command` existed decode, since they reject a kind they do not know: a
+ * command is `background_command`, and a subagent is `background_task` with
+ * `work: "subagent"`, a field those clients ignore. Encoding picks the first
+ * member that fits, so those come first. The plain `subagent` and `command`
+ * members after them decode values that were already decoded once.
+ */
+export const OrchestrationV2NotificationSource = kindUnionWithFallback(
+  [
     Schema.Struct({
       kind: Schema.Literal("delegated_task"),
       taskIds: Schema.Array(NodeId),
+      /** The task's own thread, when the notification reports one task. */
+      childThreadId: Schema.optional(ThreadId),
     }),
     Schema.Struct({
-      kind: Schema.Literals(["background_task", "background_command", "monitor"]),
-      nativeRef: Schema.optional(OrchestrationV2ProviderRef),
-    }),
-  ]),
+      kind: Schema.Literal("background_task"),
+      work: Schema.Literal("subagent"),
+      childThreadId: Schema.optional(ThreadId),
+    }).pipe(
+      Schema.decodeTo(Schema.toType(SubagentNotificationSource), {
+        decode: SchemaGetter.transform(({ childThreadId }) =>
+          childThreadId === undefined
+            ? { kind: "subagent" as const }
+            : { kind: "subagent" as const, childThreadId },
+        ),
+        encode: SchemaGetter.transform(({ childThreadId }) => ({
+          kind: "background_task" as const,
+          work: "subagent" as const,
+          ...(childThreadId === undefined ? {} : { childThreadId }),
+        })),
+      }),
+    ),
+    Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
+    SubagentNotificationSource,
+    CommandNotificationSource,
+    Schema.Struct({ kind: Schema.Literal("monitor") }),
+    Schema.Struct({ kind: Schema.Literal("background_task") }),
+  ],
+  (kind) => Schema.Struct({ kind }),
+  () => ({ kind: "background_task" }),
+);
+export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
+
+// A notification records an observed event, not whether its payload has reached the agent.
+// Provider delivery, wake policy, and agent-facing instructions belong to the backend.
+export const OrchestrationV2Notification = Schema.Struct({
+  source: OrchestrationV2NotificationSource,
   // Item status describes this timeline record; outcome describes the reported work.
   outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
   summary: TrimmedNonEmptyString,
@@ -1367,6 +1519,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.updated"),
     payload: OrchestrationV2Run,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.background-work-cancelled"),
+    payload: OrchestrationV2RunBackgroundWorkCancelled,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2152,6 +2309,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.background-work-cancelled"),
+    payload: OrchestrationV2RunBackgroundWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run-attempt.created"),
     payload: OrchestrationV2RunAttemptJson,
   }),
@@ -2482,6 +2644,7 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),
+    manualContinuationOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     /** Resolve untargeted delivery against the server's serialized thread state. */
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
@@ -2533,6 +2696,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+    holdQueue: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -2666,6 +2830,26 @@ export const OrchestrationV2Command = Schema.Union([
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+/**
+ * Commands only the server dispatches. They stay out of
+ * `OrchestrationV2Command`, the `dispatchCommand` payload, so no client can
+ * send them.
+ */
+const OrchestrationV2InternalCommand = Schema.Union([
+  /** Records that the provider rollback `requestId` failed for good. */
+  Schema.Struct({
+    type: Schema.Literal("checkpoint.rollback.fail"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: CommandId,
+    message: TrimmedNonEmptyString,
+  }),
+]);
+export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
+
+/** Everything the server's orchestrator accepts: client commands plus internal ones. */
+export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -2849,6 +3033,48 @@ export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
 });
 export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
 
+const knownDomainEventTypes: ReadonlySet<string> = new Set(
+  OrchestrationV2DomainEvent.members.flatMap((member) => {
+    const type = member.fields.type;
+    return "literals" in type ? type.literals : [type.literal];
+  }),
+);
+
+/**
+ * A thread event whose type this build does not know. Newer servers add event
+ * types; older clients decode them to this case and skip them, still advancing
+ * their resume cursor, instead of failing the whole subscription. A known type
+ * whose payload does not decode still fails. Decode-only: servers never send it.
+ */
+const OrchestrationV2UnknownThreadStreamEvent = Schema.Struct({
+  kind: Schema.Literal("event"),
+  sequence: NonNegativeInt,
+  event: Schema.Struct({
+    type: Schema.String.check(
+      Schema.makeFilter(
+        (type: string) =>
+          !knownDomainEventTypes.has(type) || "A known event type must decode in full.",
+      ),
+    ),
+  }),
+}).pipe(
+  Schema.decodeTo(
+    Schema.Struct({
+      kind: Schema.Literal("unknown-event"),
+      sequence: NonNegativeInt,
+      eventType: Schema.String,
+    }),
+    {
+      decode: SchemaGetter.transform((item) => ({
+        kind: "unknown-event" as const,
+        sequence: item.sequence,
+        eventType: item.event.type,
+      })),
+      encode: SchemaGetter.forbidden(() => "Servers never send unknown thread events."),
+    },
+  ),
+);
+
 export const OrchestrationV2ThreadStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("synchronized"),
@@ -2871,6 +3097,8 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
     sequence: NonNegativeInt,
     event: OrchestrationV2DomainEvent,
   }),
+  // After the known arm: union members are tried in order.
+  OrchestrationV2UnknownThreadStreamEvent,
 ]);
 export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStreamItem.Type;
 

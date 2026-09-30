@@ -322,6 +322,39 @@ describe("AcpRuntimeModel", () => {
     }
   });
 
+  it("clears prior ACP locations when an update explicitly replaces them", () => {
+    const toolCall = (locations?: EffectAcpSchema.ToolCallLocation[] | null) => {
+      const parsed = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "read-1",
+          kind: "read",
+          ...(locations === undefined ? {} : { locations }),
+        },
+      } satisfies EffectAcpSchema.SessionNotification);
+      const event = parsed.events.find((candidate) => candidate._tag === "ToolCallUpdated");
+      if (!event || event._tag !== "ToolCallUpdated") {
+        throw new Error("expected a tool call update");
+      }
+      return event.toolCall;
+    };
+
+    const created = toolCall([{ path: "README" }]);
+    expect(mergeToolCallState(created, toolCall()).data.locations).toEqual([{ path: "README" }]);
+    const cleared = mergeToolCallState(created, toolCall([]));
+    expect(cleared.data.locations).toEqual([]);
+    expect(mergeToolCallState(created, toolCall(null)).data.locations).toEqual([]);
+    expect(
+      decideToolCallUpdateEmission({
+        previous: created,
+        next: cleared,
+        lastEmittedDetailLength: 0,
+        skippedSinceEmit: 0,
+      }).emit,
+    ).toBe(true);
+  });
+
   it("trims padded current mode updates before emitting a mode change", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",

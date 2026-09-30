@@ -1,3 +1,4 @@
+import { scheduledTaskLegacyUpsert } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ProjectId,
@@ -629,7 +630,12 @@ function TaskForm({
         return;
       }
       const patch = buildScheduledTaskUpdateInput(draft, liveTask);
-      result = patch === null ? null : await update({ environmentId, input: patch });
+      result =
+        patch === null
+          ? null
+          : config?.environment.capabilities.scheduledTaskUpdate === true
+            ? await update({ environmentId, input: patch })
+            : await upsert({ environmentId, input: scheduledTaskLegacyUpsert(liveTask, patch) });
     } else {
       const input: ScheduledTaskUpsertInput = {
         title: draft.title.trim(),

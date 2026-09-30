@@ -12,6 +12,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 
@@ -25,12 +26,22 @@ import {
 import { EventSinkV2 } from "./EventSink.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2RollbackThreadInput } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
+// A root that does not exist never overlaps, so other owners decide isolation.
+const unrelatedProject = Option.some({
+  workspaceRoot: "/nonexistent/t3-rollback-project",
+} as never);
 const checkpointRollbackServiceLayer = checkpointRollbackLayer.pipe(
-  Layer.provide(NodeServices.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(unrelatedProject) }),
+    ),
+  ),
 );
 
 it.effect("rejects a non-ready checkpoint before opening a session or restoring files", () => {
@@ -403,6 +414,7 @@ it.effect.each([
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
           getThreadRecords: () => Effect.succeed(projection),
+          getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
           getCheckpointContext: () =>
             Effect.succeed({
               checkpointScopes: [{ cwd: process.cwd() }],
@@ -479,13 +491,21 @@ it.effect.skipIf(!symlinksSupported)(
             threads: [],
             archivedThreads: [{ id: otherId, deletedAt: null, worktreePath: alias } as never],
           }),
+        getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
         getCheckpointContext: () =>
           Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
       } as never);
       const isolated = yield* isCheckpointRestoreIsolated(
         { id: threadId, worktreePath: cwd },
         { cwd },
-        { fileSystem, projections },
+        {
+          fileSystem,
+          path,
+          projections,
+          projects: ProjectStore.ProjectStoreV2.of({
+            get: () => Effect.succeed(unrelatedProject),
+          } as never),
+        },
       );
       assert.isFalse(isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

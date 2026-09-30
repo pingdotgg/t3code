@@ -1,11 +1,16 @@
 import { assert } from "@effect/vitest";
-import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  ProviderReplayTranscript,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
+  backgroundNotifications,
   projectionFor,
 } from "../shared.ts";
 import {
@@ -136,6 +141,24 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
   );
   assert.equal(agentB?.status, "cancelled");
   assert.equal(agentA?.status, "completed");
+  // Each wake names the subagent that woke the root, and opens its thread.
+  const agentWake = (
+    name: string,
+    outcome: "completed" | "cancelled",
+    childThreadId: ThreadId | null | undefined,
+  ) => ({
+    summary: `Subagent "${name}" ${outcome === "completed" ? "finished" : "was stopped"}`,
+    outcome,
+    source:
+      childThreadId == null
+        ? { kind: "subagent" as const }
+        : { kind: "subagent" as const, childThreadId },
+  });
+  assert.deepEqual(backgroundNotifications(projection), [
+    agentWake("Agent A", "completed", agentA?.childThreadId),
+    agentWake("Agent B", "cancelled", agentB?.childThreadId),
+    agentWake("Agent A", "completed", agentA?.childThreadId),
+  ]);
   assert.equal(agentA?.result, "A_SECOND");
   assert.equal(agentA?.model, AGENT_A_OBSERVED_MODEL);
   // The resume re-attributes Agent A to the run that sent the SendMessage.

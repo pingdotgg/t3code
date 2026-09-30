@@ -955,6 +955,27 @@ it.effect("scoped runNow loses to a racing project move and never dispatches", (
 );
 
 it.effect(
+  "legacy explicit-id upsert can move an unbound task without restarting its schedule",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService;
+      const seeded = yield* seedTask;
+      const moved = yield* tasks.upsert({
+        ...seeded,
+        requireExisting: true,
+        projectId: otherProjectId,
+        title: "Moved by an older client",
+      });
+      assert.equal(moved.task.projectId, otherProjectId);
+      assert.equal(moved.task.title, "Moved by an older client");
+      assert.equal(moved.task.nextRunAt, seeded.nextRunAt);
+      const stored = yield* findSeeded;
+      assert.equal(stored?.projectId, otherProjectId);
+      assert.equal(stored?.nextRunAt, seeded.nextRunAt);
+    }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect(
   "replayed commandId upsert loses to a racing project move instead of dragging it back",
   () =>
     Effect.gen(function* () {

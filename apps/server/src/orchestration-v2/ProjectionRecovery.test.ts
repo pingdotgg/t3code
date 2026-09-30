@@ -339,7 +339,9 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
         forkedFrom: null,
         createdAt: now,
         updatedAt: now,
-        pendingBackgroundTasks: [{ taskId: "background", description: "Still running" }],
+        pendingBackgroundTasks: [
+          { taskId: "background", description: "Still running", kind: "command" },
+        ],
       },
     });
     const prepared = yield* createThread("prepared-continuation");
