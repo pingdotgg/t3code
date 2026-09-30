@@ -261,10 +261,12 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   /**
    * Windows has no process groups, so `process.kill` reaches only pi itself
    * and leaves extension subprocesses running with inherited stdio handles.
-   * `taskkill /T` reaps the whole tree.
+   * `taskkill /T` reaps the whole tree. The kill is attempted even when the
+   * parent already exited: an exited parent with live descendants is exactly
+   * the leak this exists for, and a miss on a reaped PID fails harmlessly
+   * (ignored below).
    */
   const terminateWindowsTree = Effect.gen(function* () {
-    if (hasExited()) return;
     const taskkill = yield* spawner.spawn(
       ChildProcess.make("taskkill", ["/PID", String(child.pid), "/T", "/F"]),
     );
@@ -325,15 +327,27 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     });
 
   // Watch exit before the reader so an immediate crash can populate
-  // `exitDeferred` before stdout-close diagnosis runs.
+  // `exitDeferred` before stdout-close diagnosis runs. The transport is
+  // failed here as well: an extension subprocess can inherit stdout and hold
+  // it open after Pi exits, which would otherwise leave the reader and event
+  // pump blocked and pending requests waiting out their timeouts.
+  // `failTransport` is first-claim-wins, so the richer stdout-close
+  // diagnosis still takes precedence when it lands first.
   yield* child.exitCode.pipe(
     Effect.matchEffect({
       onFailure: (cause) =>
-        Deferred.fail(exitDeferred, new PiRpcError({ operation: "exit", cause })),
+        Effect.gen(function* () {
+          const error = new PiRpcError({ operation: "exit", cause });
+          yield* Deferred.fail(exitDeferred, error);
+          yield* failTransport(error);
+        }),
       onSuccess: (code) =>
-        Effect.suspend(() => {
+        Effect.gen(function* () {
           childExited = true;
-          return Deferred.succeed(exitDeferred, Number(code));
+          yield* Deferred.succeed(exitDeferred, Number(code));
+          yield* failTransport(
+            new PiRpcError({ operation: "exit", detail: `Pi exited with code ${code}.` }),
+          );
         }),
     }),
     Effect.forkIn(scope),

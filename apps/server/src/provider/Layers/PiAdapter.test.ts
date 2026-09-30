@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -53,6 +54,7 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
   const requests = yield* Queue.unbounded<PiRpcRecord>();
   const entries: Array<unknown> = [];
   const stats: Array<unknown> = [];
+  let droppedGetStates = 0;
   let sessionFile = initialSessionFile;
   let forks = 0;
   let stdinBuffer = "";
@@ -68,6 +70,10 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
     const base = { type: "response", id: record["id"], command: record["type"], success: true };
     switch (record["type"]) {
       case "get_state":
+        if (droppedGetStates > 0) {
+          droppedGetStates -= 1;
+          return undefined;
+        }
         return {
           ...base,
           data: {
@@ -146,6 +152,10 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
         }
       }),
     queueEntries: (data: unknown) => entries.push(data),
+    /** Next N get_state requests go unanswered so the probe times out. */
+    dropNextGetStates: (count: number) => {
+      droppedGetStates = count;
+    },
     queueStats: (data: unknown) => stats.push(data),
     lastSpawn: () => lastSpawn,
     /** Simulates Pi exiting: its stdout closes. */
@@ -494,6 +504,40 @@ describe("PiAdapter", () => {
         beforeTokens: 90_000,
         afterTokens: 12_000,
       });
+      const completed = yield* takeEvent("turn.completed");
+      assert.equal(completed.turnId, turn.turnId);
+      assert.equal(completed.payload.state, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("retries a failed idle probe before settling a command-only turn", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      // A leading-slash prompt goes out fire-and-forget; only its id-less ack
+      // schedules the single idle probe for this command-only turn.
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "/fake-command" });
+      yield* fake.takeRequest("prompt");
+      // Wait for turn installation: an ack processed before activeTurn is set
+      // is consumed without scheduling a probe.
+      yield* takeEvent("turn.started");
+      // The first idle probe times out; the turn must not finalize on that
+      // unknown result while Pi may still be running the command. Time is
+      // frozen under test, so advance past the probe timeout and the retry
+      // delay explicitly.
+      fake.dropNextGetStates(1);
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+
+      // Two get_state probes: the dropped first attempt and its retry. The
+      // old finalize-on-first-failure behavior only ever sends one.
+      yield* fake.takeRequest("get_state");
+      yield* TestClock.adjust("2500 millis");
+      yield* TestClock.adjust("500 millis");
+      yield* fake.takeRequest("get_state");
       const completed = yield* takeEvent("turn.completed");
       assert.equal(completed.turnId, turn.turnId);
       assert.equal(completed.payload.state, "completed");
