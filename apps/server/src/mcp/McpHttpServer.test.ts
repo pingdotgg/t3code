@@ -85,11 +85,17 @@ it("filters tools/list independently by credential capability", async () => {
     jsonrpc: "2.0",
     id: 1,
     result: {
-      tools: [{ name: "preview_open" }, { name: "device_list" }, { name: "device_close" }],
+      tools: [
+        { name: "preview_open" },
+        { name: "device_list" },
+        { name: "device_close" },
+        { name: "terminal_start" },
+      ],
     },
   });
   const disabled = McpHttpServer.filterAdvertisedToolsForTest(response, new Set(["preview"]));
   const deviceOnly = McpHttpServer.filterAdvertisedToolsForTest(response, new Set(["device"]));
+  const terminalOnly = McpHttpServer.filterAdvertisedToolsForTest(response, new Set(["terminal"]));
   const enabled = McpHttpServer.filterAdvertisedToolsForTest(
     response,
     new Set(["preview", "device"]),
@@ -99,6 +105,7 @@ it("filters tools/list independently by credential capability", async () => {
       readonly result: { readonly tools: ReadonlyArray<{ readonly name: string }> };
     };
   expect(decode(disabled).result.tools.map((tool) => tool.name)).toEqual(["preview_open"]);
+  expect(decode(terminalOnly).result.tools.map((tool) => tool.name)).toEqual(["terminal_start"]);
   expect(decode(deviceOnly).result.tools.map((tool) => tool.name)).toEqual([
     "device_list",
     "device_close",

@@ -76,9 +76,12 @@ export interface TerminalManagerShape {
    *
    * Reuses an existing session for the same thread/terminal id and restores
    * persisted history on first open.
+   * An initial command runs non-interactively instead of loading a user shell.
+   * Reopening an exited command session preserves its result; use restart to rerun.
    */
   readonly open: (
     input: TerminalOpenInput,
+    options?: { readonly command: string },
   ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
   /**

@@ -275,7 +275,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   ) =>
     serverSettings.getSettings.pipe(
       Effect.map((settings) => {
-        const capabilities = new Set<McpInvocationContext.McpCapability>();
+        const capabilities = new Set<McpInvocationContext.McpCapability>(["terminal"]);
         if (settings.enableAgentBrowserAccess) capabilities.add("preview");
         if (settings.enableDeviceSupport && settings.enableAgentDeviceAccess) {
           capabilities.add("device");

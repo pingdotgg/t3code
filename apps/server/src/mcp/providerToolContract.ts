@@ -5,11 +5,13 @@ import { Tool } from "effect/unstable/ai";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PullRequestMonitorToolkit } from "./toolkits/pullRequestMonitor/tools.ts";
 import { CollaborativeAcceptanceToolkit } from "./toolkits/collaborativeAcceptance/tools.ts";
+import { TerminalToolkit } from "./toolkits/terminal/tools.ts";
 
 const providerMcpTools = [
   ...Object.values(PreviewToolkit.tools),
   ...Object.values(PullRequestMonitorToolkit.tools),
   ...Object.values(CollaborativeAcceptanceToolkit.tools),
+  ...Object.values(TerminalToolkit.tools),
 ].sort((left, right) => left.name.localeCompare(right.name));
 
 export const fingerprintProviderMcpToolContract = (): string =>
