@@ -21,7 +21,9 @@ function makeConfig(
     readonly accentColor?: string;
   }>,
 ): ServerConfig {
-  return { providers } as unknown as ServerConfig;
+  return {
+    providers: providers.map((provider) => ({ enabled: true, ...provider })),
+  } as unknown as ServerConfig;
 }
 
 function makeThread(environmentId: EnvironmentId, instanceId: string): EnvironmentThreadShell {
