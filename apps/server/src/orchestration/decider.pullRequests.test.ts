@@ -295,7 +295,7 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
         for (const planned of events) {
           const event = { ...planned, sequence: model.snapshotSequence + 1 };
           const encoded = yield* Schema.encodeEffect(OrchestrationEvent)(event);
-          const decoded = yield* Schema.decodeUnknownEffect(OrchestrationEvent)(encoded);
+          const decoded = yield* Schema.decodeEffect(OrchestrationEvent)(encoded);
           // Older detail-event unions must never receive the new PR discriminants.
           expect(isThreadDetailEvent(decoded)).toBe(false);
           model = yield* projectEvent(model, decoded);

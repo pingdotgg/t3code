@@ -29,6 +29,7 @@ import {
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
+  type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -53,6 +54,7 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
+  setThreadAutoSettle,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -71,18 +73,27 @@ type ThreadCommandTarget = {
   readonly input: { readonly threadId: string };
 };
 
-/** Serializes commands for one thread, including a first turn that is still creating its worktree. */
-export const threadCommandConcurrency = {
+/** Turn start holds the worktree lane until bootstrap finishes. */
+export const threadTurnCommandConcurrency = {
   mode: "serial" as const,
   key: ({ environmentId, input }: ThreadCommandTarget) =>
     JSON.stringify([environmentId, input.threadId]),
 };
 
-/** Pin state is independent of worktree bootstrap, so pinning must not wait behind it. */
+/** Pin commands can run during bootstrap, but remain ordered with other state changes. */
 export const threadPinCommandConcurrency = {
   mode: "serial" as const,
   key: ({ environmentId, input }: ThreadCommandTarget) =>
     JSON.stringify([environmentId, input.threadId, "pin"]),
+};
+
+/** Other commands wait for bootstrap and fence pinning to preserve user action order. */
+export const threadCommandConcurrency = {
+  mode: "serial" as const,
+  key: (target: ThreadCommandTarget) => [
+    threadTurnCommandConcurrency.key(target),
+    threadPinCommandConcurrency.key(target),
+  ],
 };
 
 export type {
@@ -100,6 +111,7 @@ export type {
   PinThreadInput,
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
+  SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -185,6 +197,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency: threadPinCommandConcurrency,
     }),
+    setAutoSettle: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-auto-settle",
+      execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
+      scheduler,
+      concurrency,
+    }),
     reorderActive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-active",
       execute: (input: ReorderActiveThreadInput) => reorderActiveThread(input),
@@ -225,7 +243,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:start-turn",
       execute: (input: StartThreadTurnInput) => startThreadTurn(input),
       scheduler,
-      concurrency,
+      concurrency: threadTurnCommandConcurrency,
     }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",

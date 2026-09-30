@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface ShortcutModifierState {
   metaKey: boolean;
@@ -28,10 +28,18 @@ export function areShortcutModifierStatesEqual(
 
 export function useShortcutModifierState(): ShortcutModifierState {
   const [state, setState] = useState(EMPTY_SHORTCUT_MODIFIER_STATE);
+  const stateRef = useRef(EMPTY_SHORTCUT_MODIFIER_STATE);
 
   useEffect(() => {
+    const updateState = (next: ShortcutModifierState) => {
+      // Even a no-op state dispatch can cost work in the sidebar's large tree.
+      // Ordinary typing must return before dispatching a React update.
+      if (areShortcutModifierStatesEqual(stateRef.current, next)) return;
+      stateRef.current = next;
+      setState(next);
+    };
     const onKeyboardEvent = (event: KeyboardEvent) => {
-      setState((current) => shortcutModifierStateAfterKeyboardEvent(current, event));
+      updateState(shortcutModifierStateAfterKeyboardEvent(stateRef.current, event));
     };
     // Dictation tools (Wispr Flow) paste with a synthetic ⌘V whose Meta keyup
     // never reaches the page, so the tracked state stays "⌘ held" forever and
@@ -39,11 +47,7 @@ export function useShortcutModifierState(): ShortcutModifierState {
     // treat it like a blur and reset. A physically held modifier re-registers
     // on the next real key event.
     const onResetEvent = () => {
-      setState((current) =>
-        areShortcutModifierStatesEqual(current, EMPTY_SHORTCUT_MODIFIER_STATE)
-          ? current
-          : EMPTY_SHORTCUT_MODIFIER_STATE,
-      );
+      updateState(EMPTY_SHORTCUT_MODIFIER_STATE);
     };
 
     window.addEventListener("keydown", onKeyboardEvent, true);

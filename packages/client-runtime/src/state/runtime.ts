@@ -60,6 +60,7 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
+  readonly sensitiveInput?: boolean;
   readonly label: string;
   readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly idleTtlMs?: number;
@@ -93,11 +94,13 @@ export type AtomCommandConcurrency<W> =
   /** Every invocation runs independently. */
   | { readonly mode: "parallel" }
   | {
-      /**
-       * `serial` preserves every invocation in FIFO order, `singleFlight` shares an active
-       * invocation, and `latest` coalesces queued invocations to the newest input.
-       */
-      readonly mode: "serial" | "singleFlight" | "latest";
+      /** Reserves every key together, preserving FIFO order with any overlapping command. */
+      readonly mode: "serial";
+      readonly key: (input: W) => string | ReadonlyArray<string>;
+    }
+  | {
+      /** `singleFlight` shares an active invocation; `latest` coalesces queued inputs. */
+      readonly mode: "singleFlight" | "latest";
       readonly key: (input: W) => string;
     };
 
@@ -164,8 +167,32 @@ export function createAtomCommandScheduler(): AtomCommandScheduler {
         return execute();
       }
 
-      const key = concurrency.key(input);
       const state = stateFor(registry);
+      if (concurrency.mode === "serial") {
+        const key = concurrency.key(input);
+        const keys = typeof key === "string" ? [key] : key;
+        const previous = keys.flatMap((key) => {
+          const pending = state.serial.get(key);
+          return pending === undefined ? [] : [pending];
+        });
+        // Wait for every reserved lane even if an earlier direct caller rejected.
+        const current =
+          previous.length === 0
+            ? execute()
+            : previous.length === 1
+              ? previous[0]!.then(execute, execute)
+              : Promise.allSettled(previous).then(execute);
+        for (const key of keys) state.serial.set(key, current);
+        const release = () => {
+          for (const key of keys) {
+            if (state.serial.get(key) === current) state.serial.delete(key);
+          }
+        };
+        void current.then(release, release);
+        return current;
+      }
+
+      const key = concurrency.key(input);
       if (concurrency.mode === "singleFlight") {
         const existing = state.singleFlight.get(key) as
           | Promise<AtomCommandResult<A, E>>
@@ -184,25 +211,6 @@ export function createAtomCommandScheduler(): AtomCommandScheduler {
           () => {
             if (state.singleFlight.get(key) === current) {
               state.singleFlight.delete(key);
-            }
-          },
-        );
-        return current;
-      }
-
-      if (concurrency.mode === "serial") {
-        const previous = state.serial.get(key);
-        const current = previous === undefined ? execute() : previous.then(execute, execute);
-        state.serial.set(key, current);
-        void current.then(
-          () => {
-            if (state.serial.get(key) === current) {
-              state.serial.delete(key);
-            }
-          },
-          () => {
-            if (state.serial.get(key) === current) {
-              state.serial.delete(key);
             }
           },
         );
@@ -581,7 +589,11 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
       .atom(followStreamInEnvironment(target.environmentId, options.subscribe(target.input)))
       .pipe(
         Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
-        Atom.withLabel(`${options.label}:${key}`),
+        Atom.withLabel(
+          options.sensitiveInput
+            ? `${options.label}:${target.environmentId}`
+            : `${options.label}:${key}`,
+        ),
       );
   });
   return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>

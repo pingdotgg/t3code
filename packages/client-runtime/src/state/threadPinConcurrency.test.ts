@@ -2,7 +2,11 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { threadCommandConcurrency, threadPinCommandConcurrency } from "./threadCommands.ts";
+import {
+  threadCommandConcurrency,
+  threadPinCommandConcurrency,
+  threadTurnCommandConcurrency,
+} from "./threadCommands.ts";
 import { createAtomCommandScheduler } from "./runtime.ts";
 
 const target = {
@@ -17,7 +21,7 @@ function startPendingBootstrap() {
   const worktreeReady = new Promise<void>((resolve) => {
     finishWorktree = resolve;
   });
-  const bootstrap = scheduler.schedule(registry, threadCommandConcurrency, target, async () => {
+  const bootstrap = scheduler.schedule(registry, threadTurnCommandConcurrency, target, async () => {
     await worktreeReady;
     return AsyncResult.success(undefined);
   });
