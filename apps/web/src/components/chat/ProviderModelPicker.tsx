@@ -10,6 +10,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   ModelEsque,
@@ -229,13 +230,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       driverKind={selection.entry.driverKind}
                       displayName={selection.entry.displayName}
                       accentColor={selection.entry.accentColor}
-                      className="size-4 rounded-full bg-[var(--chat-composer-glass-surface,var(--background))] ring-2 ring-[var(--chat-composer-glass-surface,var(--background))]"
+                      className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
                       iconClassName="size-4"
                     />
                   ) : null,
                 )}
               {selectedEntries.length > 3 ? (
-                <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-[var(--chat-composer-glass-surface,var(--background))] text-[9px] ring-2 ring-[var(--chat-composer-glass-surface,var(--background))]">
+                <span className="relative z-30 flex size-4 items-center justify-center rounded-full bg-(--chat-composer-glass-surface,var(--background)) text-3xs ring-2 ring-(--chat-composer-glass-surface,var(--background))">
                   +{selectedEntries.length - 3}
                 </span>
               ) : null}
@@ -250,7 +251,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
               indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
               badgeClassName={cn(
-                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-[7px]",
+                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
                 size === "xs" && "shadow-none",
               )}
             />
@@ -308,6 +309,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
+        {props.selectedModels === undefined ? (
+          <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
+        ) : null}
       </PopoverPopup>
     </Popover>
   );

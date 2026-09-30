@@ -1449,6 +1449,44 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    for (const splitIndex of [false, true]) {
+      it.effect(`keeps the preceding second cached in review previews (split: ${splitIndex})`, () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* writeTextFile(cwd, ".gitattributes", "stable.txt filter=probe\n");
+          yield* writeTextFile(cwd, "stable.txt", "unchanged\n");
+          yield* writeTextFile(
+            cwd,
+            ".git/filter.cjs",
+            'require("node:fs").appendFileSync(".git/filter-runs", "read\\n"); process.stdin.pipe(process.stdout);',
+          );
+          yield* git(cwd, ["config", "filter.probe.clean", "node .git/filter.cjs"]);
+          yield* fs.utimes(path.join(cwd, "stable.txt"), 1_699_999_999.5, 1_699_999_999.5);
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "cache stable file"]);
+          if (splitIndex) yield* git(cwd, ["update-index", "--split-index"]);
+          const indexPath = path.join(cwd, ".git", "index");
+          yield* fs.utimes(indexPath, 1_700_000_000, 1_700_000_000);
+          const originalIndex = yield* fs.readFile(indexPath);
+          const originalMtime = (yield* fs.stat(indexPath)).mtime;
+          yield* writeTextFile(cwd, ".git/filter-runs", "");
+          yield* writeTextFile(cwd, "untracked.txt", "new\n");
+          const preview = yield* driver.getReviewDiffPreview({ cwd });
+          assert.deepStrictEqual(
+            preview.sources.find((source) => source.kind === "working-tree")!.files,
+            [{ path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 }],
+          );
+          assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/filter-runs")), "");
+          assert.deepStrictEqual(yield* fs.readFile(indexPath), originalIndex);
+          assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, originalMtime);
+        }),
+      );
+    }
+
     for (const [timestamp, splitIndex] of [
       [1_700_000_000, false],
       [1_700_000_000.9999, false],
@@ -1877,6 +1915,35 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
+      }),
+    );
+
+    it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["repack", "-d"]);
+        yield* writeTextFile(cwd, "second.txt", "second\n");
+        yield* git(cwd, ["add", "second.txt"]);
+        yield* git(cwd, ["commit", "-m", "second commit"]);
+        yield* git(cwd, ["push"]);
+        yield* git(cwd, ["repack", "-d"]);
+        // Two packs make `git gc --auto` due, and without detaching it would run inside the fetch.
+        yield* git(cwd, ["config", "gc.autoPackLimit", "1"]);
+        yield* git(cwd, ["config", "gc.autoDetach", "false"]);
+        yield* git(cwd, ["config", "maintenance.autoDetach", "false"]);
+        const packCount = git(cwd, ["count-objects", "-v"]).pipe(
+          Effect.map((stdout) => stdout.match(/^packs: (\d+)$/m)?.[1]),
+        );
+        assert.equal(yield* packCount, "2");
+
+        yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+
+        assert.equal(yield* packCount, "2");
       }),
     );
 

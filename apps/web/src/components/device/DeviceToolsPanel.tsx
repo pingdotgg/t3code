@@ -640,7 +640,7 @@ function EventLogSection(props: {
         />
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <ol className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-[11px] leading-relaxed">
+        <ol className="max-h-64 overflow-y-auto px-3 py-2 font-mono text-2xs leading-relaxed">
           {entries.length === 0 ? (
             <li className="text-muted-foreground">No events yet.</li>
           ) : (

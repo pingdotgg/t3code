@@ -1,5 +1,5 @@
 import type { EnvironmentPresentation } from "../../state/environments";
-import type { SettingsScopeSearch } from "./settingsScope";
+import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
 type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
 
@@ -52,4 +52,26 @@ export function selectProjectAxis(search: SettingsScopeSearch, value: string): S
   if (value !== ALL_PROJECTS_VALUE) next.project = value;
   if (search.machine) next.machine = search.machine;
   return next;
+}
+
+/** Provider configuration always belongs to one environment, including project scopes. */
+export function selectSingleEnvironmentScope(
+  search: SettingsScopeSearch,
+  scope: ResolvedSettingsScope,
+  environments: readonly {
+    readonly environmentId: EnvironmentPresentation["environmentId"];
+    readonly connection: Pick<EnvironmentPresentation["connection"], "phase">;
+  }[],
+  primaryEnvironmentId: string | null,
+): SettingsScopeSearch {
+  if (search.machine || scope.kind === "unavailable") return search;
+  const selectedIds = new Set(scope.environmentIds);
+  const candidates = environments.filter((environment) =>
+    selectedIds.has(environment.environmentId),
+  );
+  const selected =
+    candidates.find((environment) => environment.environmentId === primaryEnvironmentId) ??
+    candidates.find((environment) => environment.connection.phase === "connected") ??
+    candidates[0];
+  return selected ? { ...search, machine: selected.environmentId } : search;
 }
