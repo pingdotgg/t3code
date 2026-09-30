@@ -11,13 +11,14 @@ import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
 
-/** Owns the available conversation space. Floating cards never reserve it themselves. */
 export function ChatCanvas({
   composerOverlayElement,
+  detailsCardOpen,
   children,
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style" | "ref"> & {
   composerOverlayElement: HTMLElement | null;
+  detailsCardOpen: boolean;
 }) {
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -96,14 +97,28 @@ export function ChatCanvas({
     const container = { width: measurements.width, height: measurements.height };
     return {
       container,
-      layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
+      layout: resolveChatCanvasLayout({
+        ...measurements,
+        container,
+        preview,
+        detailsCard,
+        detailsCardOpen,
+      }),
       previewKey: preview?.key ?? null,
       reportPreview,
       clearPreview,
       registerTimeline,
       reportDetailsCard,
     };
-  }, [measurements, preview, detailsCard, reportPreview, clearPreview, reportDetailsCard]);
+  }, [
+    measurements,
+    preview,
+    detailsCard,
+    detailsCardOpen,
+    reportPreview,
+    clearPreview,
+    reportDetailsCard,
+  ]);
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>
@@ -118,6 +133,7 @@ export function ChatCanvas({
             "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
             "--chat-lane-inset-start": `${layout.chat.insetStart}px`,
             "--chat-lane-inset-end": `${layout.chat.insetEnd}px`,
+            "--chat-lane-inset-top": `${layout.chatInsetTop}px`,
           } as CSSProperties
         }
       >
@@ -126,6 +142,7 @@ export function ChatCanvas({
           aria-hidden
           className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
         />
+        <div aria-hidden className="shrink-0" style={{ height: layout.chatInsetTop }} />
         {children}
       </div>
     </ChatCanvasContext>

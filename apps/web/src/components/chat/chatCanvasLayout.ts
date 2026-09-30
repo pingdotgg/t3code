@@ -9,6 +9,7 @@ import type {
   PreviewMiniPlayerSize,
   PreviewMiniPlayerState,
 } from "~/previewMiniPlayerStore";
+import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
 
 export interface ChatCanvasPreview {
   readonly key: string;
@@ -29,6 +30,7 @@ export function resolveChatCanvasLayout({
   minChatWidth = 640,
   composerHeight = 0,
   detailsCard = null,
+  detailsCardOpen = true,
 }: {
   container: PreviewMiniPlayerSize;
   preview: ChatCanvasPreview | null;
@@ -37,10 +39,14 @@ export function resolveChatCanvasLayout({
   minChatWidth?: number;
   composerHeight?: number;
   detailsCard?: PreviewMiniPlayerObstacles["detailsCard"];
+  detailsCardOpen?: boolean;
 }) {
-  const normalWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
-  const normalLeft = (container.width - normalWidth) / 2;
-  let chat = { left: normalLeft, width: normalWidth, insetStart: 0, insetEnd: 0 };
+  const card = resolveThreadDetailsCardLayout({ container, frame: null, padding, minChatWidth });
+  const insetEnd = detailsCardOpen && card && !card.stacked ? card.width + GAP * 2 : 0;
+  const chatInsetTop = detailsCardOpen && card?.stacked ? card.height + GAP * 2 : 0;
+  const normalWidth = Math.max(0, Math.min(maxChatWidth, container.width - insetEnd - padding * 2));
+  const normalLeft = (container.width - insetEnd - normalWidth) / 2;
+  let chat = { left: normalLeft, width: normalWidth, insetStart: 0, insetEnd };
   let frame: PreviewMiniPlayerFrame | null = null;
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {
@@ -92,14 +98,15 @@ export function resolveChatCanvasLayout({
     const chatBeside = (player: PreviewMiniPlayerFrame) => {
       const normalRight = normalLeft + normalWidth;
       if (player.x >= normalRight + GAP) return chat;
-      const width = Math.min(maxChatWidth, player.x - GAP - padding);
+      if (detailsCardOpen) return null;
+      const width = Math.min(normalWidth, player.x - GAP - padding);
       if (width < minChatWidth) return null;
       const left = Math.min(normalLeft, player.x - GAP - width);
       return {
         left,
         width,
         insetStart: 0,
-        insetEnd: Math.max(0, container.width - left * 2 - width),
+        insetEnd: Math.max(insetEnd, container.width - left * 2 - width),
       };
     };
     let nextChat = chatBeside(frame);
@@ -111,7 +118,7 @@ export function resolveChatCanvasLayout({
     }
     if (nextChat) chat = nextChat;
     else overlapsChat = true;
-    if (overlapsChat && preview.lastInteraction === "resize") {
+    if (overlapsChat && preview.lastInteraction === "resize" && !detailsCardOpen) {
       const width = Math.min(normalWidth, minChatWidth);
       chat = {
         left: padding,
@@ -119,7 +126,7 @@ export function resolveChatCanvasLayout({
         insetStart: 0,
         insetEnd: Math.max(0, container.width - padding * 2 - width),
       };
-    } else if (overlapsChat) {
+    } else if (overlapsChat && preview.lastInteraction !== "resize") {
       const obstacles = {
         detailsCard: cardObstacle,
         composer: { left: chat.left, right: chat.left + chat.width, height: composerHeight },
@@ -162,5 +169,12 @@ export function resolveChatCanvasLayout({
     frame.x + frame.width > detailsCard.left &&
     frame.y < detailsCard.bottom,
   );
-  return { chat, frame, overlapsChat, overlapsDetailsCard };
+  const cardPlacement = resolveThreadDetailsCardLayout({
+    container,
+    frame,
+    overlapsDetailsCard,
+    padding,
+    minChatWidth,
+  });
+  return { chat, frame, overlapsChat, overlapsDetailsCard, chatInsetTop, card, cardPlacement };
 }

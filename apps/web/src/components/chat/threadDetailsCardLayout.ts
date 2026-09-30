@@ -9,33 +9,38 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
-/** The card uses leftover space. It never changes the conversation's width. */
 export function resolveThreadDetailsCardLayout({
   container,
-  chat,
   frame,
   overlapsDetailsCard = false,
+  padding = 20,
+  minChatWidth = 640,
 }: {
   container: { width: number; height: number };
-  chat: { left: number; width: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
+  padding?: number;
+  minChatWidth?: number;
 }) {
   const gap = 12;
-  const width = Math.min(312, container.width - chat.left - chat.width - gap * 2);
-  if (width < 240) return null;
+  if (container.width <= gap * 2 || container.height <= gap * 2) return null;
+  const sideWidth = Math.min(312, container.width - minChatWidth - padding * 2 - gap * 2);
+  const stacked = sideWidth < 240;
+  const width = stacked ? container.width - gap * 2 : sideWidth;
   const x = container.width - width - gap;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.
-  const height =
-    overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap
-      ? Math.min(container.height - gap * 2, frame.y - gap * 2)
-      : container.height - gap * 2;
-  if (height < 160) return null;
+  const availableHeight = container.height - gap * 2;
+  const height = stacked
+    ? Math.min(200, availableHeight * 0.3)
+    : overlapsDetailsCard && frame && frame.x + frame.width > x - gap && frame.x < x + width + gap
+      ? Math.min(availableHeight, Math.max(160, frame.y - gap * 2))
+      : availableHeight;
   return {
     x,
     width,
     y: gap,
     height,
+    stacked,
   } as const;
 }

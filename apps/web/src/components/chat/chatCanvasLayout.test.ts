@@ -13,7 +13,12 @@ const preview: ChatCanvasPreview = {
   source: { width: 1600, height: 1000 },
 };
 const resolve = (width: number, player: ChatCanvasPreview | null = preview, height = 900) =>
-  resolveChatCanvasLayout({ container: { width, height }, preview: player, composerHeight: 180 });
+  resolveChatCanvasLayout({
+    container: { width, height },
+    preview: player,
+    composerHeight: 180,
+    detailsCardOpen: false,
+  });
 const expectClear = (result: ReturnType<typeof resolve>) => {
   const frame = result.frame!;
   const chat = result.chat;
@@ -23,6 +28,34 @@ const expectClear = (result: ReturnType<typeof resolve>) => {
 };
 
 describe("chat canvas layout", () => {
+  it.each([390, 768, 944, 1000, 1200, 1344, 1600])(
+    "keeps chat and the workspace card stable as a preview opens at %i pixels",
+    (width) => {
+      const container = { width, height: 800 };
+      const closed = resolveChatCanvasLayout({ container, preview: null, composerHeight: 180 });
+      for (const playerWidth of [320, 480, 900]) {
+        for (const lastInteraction of ["drag", "resize"] as const) {
+          const opened = resolveChatCanvasLayout({
+            container,
+            preview: { ...preview, width: playerWidth, lastInteraction },
+            composerHeight: 180,
+          });
+          expect(opened.chat).toEqual(closed.chat);
+          expect(opened.chatInsetTop).toBe(closed.chatInsetTop);
+          expect(opened.card).toEqual(closed.card);
+        }
+      }
+      const card = closed.card!;
+      expect(card.x).toBeGreaterThanOrEqual(12);
+      expect(card.x + card.width).toBeLessThanOrEqual(width - 12);
+      if (card.stacked) {
+        expect(card.y + card.height + 12).toBe(closed.chatInsetTop);
+      } else {
+        expect(closed.chat.left + closed.chat.width + 12).toBeLessThanOrEqual(card.x);
+        expect(closed.chat.left).toBe((width - closed.chat.insetEnd - closed.chat.width) / 2);
+      }
+    },
+  );
   it("lifts a growing preview above the composer without snapping at the chat boundary", () => {
     let previous: ReturnType<typeof resolve> | undefined;
     for (let width = 480; width <= 1100; width++) {
@@ -106,6 +139,7 @@ describe("chat canvas layout", () => {
     const result = resolve(1344);
     expect(
       resolveChatCanvasLayout({
+        detailsCardOpen: false,
         container: { width: 1344, height: 900 },
         preview,
         composerHeight: 400,
@@ -114,6 +148,7 @@ describe("chat canvas layout", () => {
   });
   it("constrains a dragged preview below the full top-right card instead of folding it", () => {
     const result = resolveChatCanvasLayout({
+      detailsCardOpen: false,
       container: { width: 1584, height: 988 },
       maxChatWidth: 736,
       composerHeight: 180,
@@ -131,6 +166,7 @@ describe("chat canvas layout", () => {
   });
   it("uses space beside the full card if a tall preview cannot fit below it", () => {
     const result = resolveChatCanvasLayout({
+      detailsCardOpen: false,
       container: { width: 1584, height: 988 },
       maxChatWidth: 736,
       composerHeight: 180,
@@ -159,6 +195,7 @@ describe("chat canvas layout", () => {
       });
       return resolveChatCanvasLayout({
         container,
+        detailsCardOpen: false,
         maxChatWidth: 736,
         composerHeight: 206,
         detailsCard: { left: 1260, right: 1572, bottom: 339 },
@@ -199,6 +236,7 @@ describe("chat canvas layout", () => {
         });
         return resolveChatCanvasLayout({
           container,
+          detailsCardOpen: false,
           maxChatWidth: 736,
           composerHeight: 206,
           detailsCard: { left: 1260, right: 1572, bottom: 339 },
@@ -227,7 +265,7 @@ describe("chat canvas layout", () => {
       expectClear(compact);
       expect(density(layout(500))).toBe("compact");
       expect(density(layout(520))).toBe("essential");
-      expect(density(layout(540))).toBe("hidden");
+      expect(density(layout(540))).toBe("essential");
       expect(layout(600).frame!.width).toBe(600);
       expect(layout(460)).toEqual(compact);
       expect(density(layout(400))).toBe("full");
@@ -235,6 +273,7 @@ describe("chat canvas layout", () => {
   );
   it("requests card folding only when no full-card slot fits and keeps the composer clear", () => {
     const result = resolveChatCanvasLayout({
+      detailsCardOpen: false,
       container: { width: 1584, height: 988 },
       maxChatWidth: 736,
       composerHeight: 180,
