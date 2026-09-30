@@ -1,5 +1,7 @@
+// FileSystem and NodeSocket cannot adopt inherited descriptors; Node owns fd reads and writes here.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
@@ -465,11 +467,22 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     const fd = config.desktopTelemetryFd;
     const readable = yield* Effect.acquireRelease(
       Effect.try({
-        try: () =>
-          NodeFS.createReadStream("", {
-            fd,
-            autoClose: true,
-          }),
+        try: () => {
+          // A filesystem pipe read blocks a libuv worker even after destroy().
+          // Poll the inherited pipe so a crash can exit with the desktop writer open.
+          try {
+            return new NodeNet.Socket({ fd, readable: true, writable: false });
+          } catch (cause) {
+            if (
+              !(cause instanceof Error) ||
+              !("code" in cause) ||
+              cause.code !== "ERR_INVALID_FD_TYPE"
+            ) {
+              throw cause;
+            }
+            return NodeFS.createReadStream("", { fd, autoClose: true });
+          }
+        },
         catch: (cause) => new DesktopTelemetryStreamFailed({ fd, cause }),
       }),
       (stream) =>
