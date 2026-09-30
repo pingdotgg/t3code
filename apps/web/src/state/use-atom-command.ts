@@ -9,8 +9,8 @@ import type { Atom } from "effect/unstable/reactivity";
 import { useCallback, useContext } from "react";
 
 /**
- * Read an atom's current value at call time rather than at render. Writes that queue behind
- * each other must see what the earlier one committed, which a render-time snapshot cannot do.
+ * Read the latest published atom value at call time rather than at render.
+ * This does not include writes that are still queued or awaiting publication.
  */
 export function useAtomReader(): <A>(atom: Atom.Atom<A>) => A {
   const registry = useContext(RegistryContext);

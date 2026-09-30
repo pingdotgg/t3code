@@ -12,10 +12,11 @@ import {
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomCommand, useAtomReader } from "../../state/use-atom-command";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
+import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
 import { Dialog } from "../ui/dialog";
 import { Badge } from "../ui/badge";
@@ -32,6 +33,7 @@ import {
   type WizardNavigation,
 } from "./AddProviderInstanceDialog.logic";
 import { AddProviderInstanceWizardSteps } from "./AddProviderInstanceWizardSteps";
+import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -126,6 +128,7 @@ export function AddProviderInstanceDialog({
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const readAtom = useAtomReader();
   const pendingSave = useRef<object | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -145,6 +148,7 @@ export function AddProviderInstanceDialog({
   };
 
   const [wizardStep, setWizardStep] = useState(0);
+  const [addingChatGptAccount, setAddingChatGptAccount] = useState(false);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
   const [label, setLabel] = useState("");
   const [accentColor, setAccentColor] = useState<string>("");
@@ -207,7 +211,10 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null) return;
 
-    const config = configByDriver[driver] ?? {};
+    const config =
+      driver === "codex"
+        ? { ...configByDriver[driver], setupMode: "existing" }
+        : (configByDriver[driver] ?? {});
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
@@ -223,8 +230,21 @@ export function AddProviderInstanceDialog({
     // keeps the type boundary honest and guards against any future drift in
     // the slug rules.
     const brandedId = ProviderInstanceId.make(instanceId);
+    const latestSettings = readAtom(serverEnvironment.settingsValueAtom(environmentId));
+    if (latestSettings === null) {
+      setSaveError("Could not confirm the save. Check the environment connection and try again.");
+      return;
+    }
+    const latestIdError = validateInstanceId(
+      instanceId,
+      new Set(Object.keys(latestSettings.providerInstances ?? {})),
+    );
+    if (latestIdError !== null) {
+      setSaveError(latestIdError);
+      return;
+    }
     const nextMap = {
-      ...settings.providerInstances,
+      ...latestSettings.providerInstances,
       [brandedId]: nextInstance,
     };
     const submission = {};
@@ -259,17 +279,21 @@ export function AddProviderInstanceDialog({
     }
   };
 
+  if (addingChatGptAccount) {
+    return (
+      <AddManagedCodexAccountDialog
+        environmentId={environmentId}
+        onClose={() => onOpenChange(false)}
+      />
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <WizardPopup>
+      <WizardPopup size="wide">
         <WizardHeader
           title="Add provider instance"
-          description={
-            <>
-              Configure an additional provider instance on {environmentLabel} — for example, a
-              second Codex install pointed at a different workspace.
-            </>
-          }
+          description={<>Add an account or configure a provider on {environmentLabel}.</>}
         >
           <AddProviderInstanceWizardSteps
             currentStep={wizardStep}
@@ -453,7 +477,7 @@ export function AddProviderInstanceDialog({
 
         <WizardFooter>
           <Button
-            variant="outline"
+            variant={wizardStep === 0 ? "ghost-muted" : "outline"}
             disabled={isSaving}
             onClick={() => {
               if (wizardStep === 0) {
@@ -465,7 +489,14 @@ export function AddProviderInstanceDialog({
           >
             {wizardStep === 0 ? "Cancel" : "Back"}
           </Button>
-          {wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
+          {wizardStep === 0 && driver === "codex" ? (
+            <>
+              <Button variant="outline" onClick={() => navigateToStep(1)}>
+                Configure manually
+              </Button>
+              <ChatGptConnectionButton onClick={() => setAddingChatGptAccount(true)} />
+            </>
+          ) : wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
             <Button onClick={() => navigateToStep(wizardStep + 1)}>Next</Button>
           ) : (
             <Button disabled={isSaving} onClick={() => void handleSave()}>

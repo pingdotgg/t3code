@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, type ProviderInstanceConfig } from "@t3tools/contracts";
 import { Cause } from "effect";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -8,6 +8,9 @@ import { visitElements } from "../../test/reactElementTree";
 
 const state = vi.hoisted(() => ({
   read: vi.fn(() => ({ providerInstances: {} })),
+  latest: { providerInstances: {} } as {
+    providerInstances: Record<string, ProviderInstanceConfig>;
+  } | null,
   update: vi.fn(),
   toast: vi.fn(),
   effect: null as (() => void | (() => void)) | null,
@@ -31,8 +34,16 @@ vi.mock("react/compiler-runtime", async () => {
   return { c: reactHookHarness.useMemoCache };
 });
 vi.mock("../../hooks/useSettings", () => ({ useEnvironmentSettings: state.read }));
-vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.update }));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: {
+    updateSettings: {},
+    settingsValueAtom: (environmentId: string) => environmentId,
+  },
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: () => state.update,
+  useAtomReader: () => () => state.latest,
+}));
 vi.mock("../ui/toast", () => ({ toastManager: { add: state.toast } }));
 
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
@@ -57,7 +68,7 @@ function control(tree: ReturnType<typeof render>, text: string) {
 function prepare() {
   let tree = render();
   cleanup = state.effect?.();
-  control(tree, "Next").onClick();
+  control(tree, "Configure manually").onClick();
   tree = render();
   const input = visitElements(tree, (item) => item.props.placeholder === "e.g. Work");
   (input!.props.onChange as (event: { target: { value: string } }) => void)({
@@ -92,6 +103,7 @@ describe("AddProviderInstanceDialog acknowledged save", () => {
     cleanup = undefined;
     hooks.reset();
     vi.clearAllMocks();
+    state.latest = { providerInstances: {} };
   });
 
   it("waits for persistence on the selected environment and ignores duplicate clicks", async () => {
@@ -111,7 +123,7 @@ describe("AddProviderInstanceDialog acknowledged save", () => {
               driver: "codex",
               enabled: true,
               displayName: "Work",
-              config: { binaryPath: "/synthetic/codex" },
+              config: { binaryPath: "/synthetic/codex", setupMode: "existing" },
             },
           },
         },
@@ -126,6 +138,51 @@ describe("AddProviderInstanceDialog acknowledged save", () => {
     expect(close).toHaveBeenCalledWith(false);
     expect(state.toast).toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
   });
+
+  it("preserves providers published after the form rendered", async () => {
+    const tree = prepare();
+    const other = {
+      driver: ProviderDriverKind.make("codex"),
+      displayName: "Other",
+    } satisfies ProviderInstanceConfig;
+    state.latest = { providerInstances: { codex_other: other } };
+    state.update.mockResolvedValue(AsyncResult.success(null));
+    control(tree, "Add instance").onClick();
+    await flush();
+    expect(state.update.mock.lastCall?.[0].input.patch.providerInstances).toMatchObject({
+      codex_other: other,
+      codex_work: { displayName: "Work" },
+    });
+    expect(close).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it.each(["unavailable", "duplicate"])(
+    "keeps the draft without writing when current settings are %s",
+    async (kind) => {
+      const tree = prepare();
+      state.latest =
+        kind === "unavailable"
+          ? null
+          : {
+              providerInstances: {
+                codex_work: { driver: ProviderDriverKind.make("codex"), displayName: "Existing" },
+              },
+            };
+      control(tree, "Add instance").onClick();
+      await flush();
+      expect(state.update).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+      expect(state.toast).not.toHaveBeenCalled();
+      expect(visitElements(render(), (item) => item.props.value === "Work")).not.toBeNull();
+      expect(visitElements(render(), (item) => item.props.role === "alert")).not.toBeNull();
+      state.latest = { providerInstances: {} };
+      state.update.mockResolvedValue(AsyncResult.success(null));
+      control(render(), "Add instance").onClick();
+      await flush();
+      expect(state.update).toHaveBeenCalledTimes(1);
+      expect(close).toHaveBeenCalledExactlyOnceWith(false);
+    },
+  );
 
   it.each(["failure", "interruption", "rejection"])(
     "retains input after %s and allows retry",
@@ -159,6 +216,41 @@ describe("AddProviderInstanceDialog acknowledged save", () => {
       await flush();
       expect(close).toHaveBeenCalledWith(false);
       expect(state.update).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["success", "failure", "rejection"])(
+    "does not release a newer environment save after old %s",
+    async (outcome) => {
+      const oldReceipt = deferred<unknown>();
+      const newReceipt = deferred<unknown>();
+      state.update.mockReturnValueOnce(oldReceipt.promise).mockReturnValueOnce(newReceipt.promise);
+      control(prepare(), "Add instance").onClick();
+      cleanup?.();
+      const newEnvironmentId = EnvironmentId.make("another-device");
+      render(newEnvironmentId);
+      cleanup = state.effect?.();
+      control(render(newEnvironmentId), "Add instance").onClick();
+      if (outcome === "rejection") oldReceipt.reject(new Error("old save"));
+      else
+        oldReceipt.resolve(
+          outcome === "success"
+            ? AsyncResult.success(null)
+            : AsyncResult.failure(Cause.interrupt(1)),
+        );
+      await flush();
+      const tree = render(newEnvironmentId);
+      expect(control(tree, "Adding…").disabled).toBe(true);
+      expect(visitElements(tree, (item) => item.props.role === "alert")).toBeNull();
+      expect(close).not.toHaveBeenCalled();
+      expect(state.toast).not.toHaveBeenCalled();
+      control(tree, "Adding…").onClick();
+      expect(state.update).toHaveBeenCalledTimes(2);
+      expect(state.update.mock.lastCall?.[0].environmentId).toBe(newEnvironmentId);
+      newReceipt.resolve(AsyncResult.success(null));
+      await flush();
+      expect(close).toHaveBeenCalledExactlyOnceWith(false);
+      expect(state.toast).toHaveBeenCalledTimes(1);
     },
   );
 

@@ -13,7 +13,9 @@ and provides a retry path. Only confirmed success may clear the form or announce
 completion.
 
 This boundary spans the form, client command, and authoritative persistence.
-Awaiting a convenience updater that returns `void` does not cross it. Server-owned
+A promise, including `Promise<void>`, confirms persistence only if it resolves
+after the write succeeds and rejects on failure. Scheduling a write or swallowing
+its error does not provide confirmation. Server-owned
 settings require the command's successful receipt for the environment selected at
 submission. Closing, reopening, or changing environments must detach the old
 completion from the new form; it does not cancel or undo a server write.
@@ -22,8 +24,10 @@ The rule applies to explicit settings completion claims in web, Electron, and
 React Native where those forms exist. The additional-provider form and custom-model editors are shared by
 web and Electron. Custom-model add and edit retain their drafts until the
 environment confirms persistence; removal cleans up local preferences only
-after that confirmation. Quiet optimistic preference controls may remain optimistic
-when failures are surfaced and effective state reconciles. This contract does
+after that confirmation. Quiet preference controls may update optimistically only
+if their callers observe write failures, show an error and reconcile the displayed
+value with persisted state. Otherwise they must await persistence. A helper that
+logs a failed write and resolves does not qualify for this exception. This contract does
 not require modal saves for toggles, change shared-setting synchronization, or
 extend to clipboard acknowledgements.
 

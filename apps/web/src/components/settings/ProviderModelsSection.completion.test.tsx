@@ -38,8 +38,8 @@ function render(existing = false) {
     models: existing ? [{ ...custom, isCustom: true }] : [],
     customModels: existing ? [custom] : [],
     hiddenModels: [],
-    favoriteModels: [],
-    modelOrder: [],
+    favoriteModels: ["synthetic", "other"],
+    modelOrder: ["other", "synthetic"],
     onChange: change,
     onHiddenModelsChange: vi.fn(),
     onFavoriteModelsChange: favorite,
@@ -156,6 +156,50 @@ describe("custom model persistence completion", () => {
       visitElements(render(true), (item) => typeof item.props.onSave === "function"),
     ).not.toBeNull();
   });
+  it("cleans up only the removed model after acknowledged removal", async () => {
+    const receipt = deferred();
+    change.mockReturnValue(receipt.promise);
+    button(render(true), "Edit synthetic")();
+    const remove = button(render(true), "Remove synthetic");
+    remove();
+    remove();
+    expect(change).toHaveBeenCalledExactlyOnceWith([]);
+    expect(favorite).not.toHaveBeenCalled();
+    expect(order).not.toHaveBeenCalled();
+    receipt.resolve(true);
+    await flush();
+    expect(favorite).toHaveBeenCalledExactlyOnceWith(["other"]);
+    expect(order).toHaveBeenCalledExactlyOnceWith(["other"]);
+    expect(
+      visitElements(render(true), (item) => typeof item.props.onSave === "function"),
+    ).toBeNull();
+  });
+  it.each(["success", "failure", "rejection"])(
+    "ignores old removal %s while a new card is saving",
+    async (outcome) => {
+      const oldReceipt = deferred();
+      const newReceipt = deferred();
+      change.mockReturnValueOnce(oldReceipt.promise).mockReturnValueOnce(newReceipt.promise);
+      button(render(true), "Remove synthetic")();
+      effects.cleanups.splice(0).forEach((cleanup) => cleanup());
+      hooks.reset();
+      button(addForm(), "Add")();
+      if (outcome === "rejection") oldReceipt.reject(new Error("old save"));
+      else oldReceipt.resolve(outcome === "success");
+      await flush();
+      const tree = render();
+      expect(tree.props.disabled).toBe(true);
+      expect(visitElements(tree, (item) => item.props.value === "synthetic")).not.toBeNull();
+      expect(visitElements(tree, (item) => item.props.role === "alert")).toBeNull();
+      expect(favorite).not.toHaveBeenCalled();
+      expect(order).not.toHaveBeenCalled();
+      button(tree, "Add")();
+      expect(change).toHaveBeenCalledTimes(2);
+      newReceipt.resolve(true);
+      await flush();
+      expect(visitElements(render(), (item) => item.props.value === "synthetic")).toBeNull();
+    },
+  );
   it("ignores a completion after the provider card unmounts", async () => {
     const receipt = deferred();
     change.mockReturnValue(receipt.promise);
