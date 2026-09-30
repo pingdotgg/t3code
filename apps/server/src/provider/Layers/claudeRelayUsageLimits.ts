@@ -24,13 +24,20 @@ const ZAI_HOSTS = new Set(["api.z.ai", "open.bigmodel.cn", "dev.bigmodel.cn"]);
 
 const ZaiQuotaLimit = Schema.Struct({
   type: Schema.String,
-  unit: Schema.optional(Schema.Finite),
-  number: Schema.optional(Schema.Finite),
-  percentage: Schema.optional(Schema.Finite),
-  nextResetTime: Schema.optional(Schema.Finite),
+  unit: Schema.optional(Schema.NullOr(Schema.Finite)),
+  number: Schema.optional(Schema.NullOr(Schema.Finite)),
+  percentage: Schema.optional(Schema.NullOr(Schema.Finite)),
+  nextResetTime: Schema.optional(Schema.NullOr(Schema.Finite)),
 });
+const decodeZaiQuotaLimit = Schema.decodeUnknownOption(ZaiQuotaLimit);
 const ZaiQuotaResponse = Schema.Struct({
-  data: Schema.optional(Schema.Struct({ limits: Schema.optional(Schema.Array(ZaiQuotaLimit)) })),
+  success: Schema.optional(Schema.Boolean),
+  code: Schema.optional(Schema.Finite),
+  data: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ limits: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))) }),
+    ),
+  ),
 });
 
 /** Z.ai's `unit` codes for the windows it is known to report. */
@@ -52,8 +59,8 @@ const ZAI_UNITS: Readonly<
   }),
 };
 
-function isoFromEpochMillis(value: number | undefined): string | undefined {
-  if (value === undefined || value <= 0) return undefined;
+function isoFromEpochMillis(value: number | null | undefined): string | undefined {
+  if (value == null || value <= 0) return undefined;
   const dt = DateTime.make(value);
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
@@ -80,29 +87,42 @@ export function zaiQuotaResponseToLimits(
   response: typeof ZaiQuotaResponse.Type,
   checkedAt: string,
 ): ServerProviderUsageLimits {
+  const failed = () =>
+    makeUnavailableUsageLimits({
+      checkedAt,
+      reason: "probeFailed",
+      message: "Z.ai could not read usage limits.",
+    });
+  if (response.success === false || (response.code !== undefined && response.code !== 200)) {
+    return failed();
+  }
   const windows: ServerProviderUsageWindow[] = [];
-  for (const [index, limit] of (response.data?.limits ?? []).entries()) {
-    if (limit.percentage === undefined) continue;
+  for (const [index, rawLimit] of (response.data?.limits ?? []).entries()) {
+    const decoded = decodeZaiQuotaLimit(rawLimit);
+    if (Option.isNone(decoded)) continue;
+    const limit = decoded.value;
+    const type = limit.type.trim();
+    if (!type || limit.percentage == null) continue;
     const count = limit.number ?? 1;
-    const shape = limit.unit === undefined ? undefined : ZAI_UNITS[limit.unit]?.(count);
-    const tools = limit.type === "TIME_LIMIT";
+    const shape =
+      limit.unit == null || limit.number == null || count <= 0
+        ? undefined
+        : ZAI_UNITS[limit.unit]?.(count);
+    const duration = shape?.windowDurationMins;
+    const tools = type === "TIME_LIMIT";
     const resetsAt = isoFromEpochMillis(limit.nextResetTime);
     windows.push({
-      id: uniqueWindowId(
-        windows,
-        `${limit.type.toLowerCase()}_${limit.unit ?? "x"}_${count}`,
-        index,
-      ),
+      id: uniqueWindowId(windows, `${type.toLowerCase()}_${limit.unit ?? "x"}_${count}`, index),
       kind: tools ? "other" : (shape?.kind ?? "other"),
       label: tools ? "Tool calls" : (shape?.label ?? "Quota"),
       usedPercent: clampPercent(limit.percentage),
-      ...(shape && !tools ? { windowDurationMins: shape.windowDurationMins } : {}),
+      ...(duration !== undefined && Number.isSafeInteger(duration) && duration > 0 && !tools
+        ? { windowDurationMins: duration }
+        : {}),
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
-  return windows.length === 0
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-    : makeUsageLimits({ checkedAt, windows });
+  return windows.length === 0 ? failed() : makeUsageLimits({ checkedAt, windows });
 }
 
 const KIMI_HOST = "api.kimi.com";
@@ -111,38 +131,39 @@ const WEEK_MINS = 7 * 24 * 60;
 /** Kimi sends counts as numbers or numeric strings. */
 const KimiNumber = Schema.Union([Schema.Finite, Schema.String]);
 const kimiQuotaFields = {
-  name: Schema.optional(Schema.String),
-  title: Schema.optional(Schema.String),
-  limit: Schema.optional(KimiNumber),
-  used: Schema.optional(KimiNumber),
-  remaining: Schema.optional(KimiNumber),
-  reset_at: Schema.optional(Schema.String),
-  resetAt: Schema.optional(Schema.String),
-  reset_time: Schema.optional(Schema.String),
-  resetTime: Schema.optional(Schema.String),
-  reset_in: Schema.optional(KimiNumber),
-  resetIn: Schema.optional(KimiNumber),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(Schema.NullOr(Schema.String)),
+  limit: Schema.optional(Schema.NullOr(KimiNumber)),
+  used: Schema.optional(Schema.NullOr(KimiNumber)),
+  remaining: Schema.optional(Schema.NullOr(KimiNumber)),
+  reset_at: Schema.optional(Schema.NullOr(Schema.String)),
+  resetAt: Schema.optional(Schema.NullOr(Schema.String)),
+  reset_time: Schema.optional(Schema.NullOr(Schema.String)),
+  resetTime: Schema.optional(Schema.NullOr(Schema.String)),
+  reset_in: Schema.optional(Schema.NullOr(KimiNumber)),
+  resetIn: Schema.optional(Schema.NullOr(KimiNumber)),
 };
 const KimiQuota = Schema.Struct(kimiQuotaFields);
+const decodeKimiQuota = Schema.decodeUnknownOption(KimiQuota);
 const KimiWindow = Schema.Struct({
-  duration: Schema.optional(KimiNumber),
-  timeUnit: Schema.optional(Schema.String),
+  duration: Schema.optional(Schema.NullOr(KimiNumber)),
+  timeUnit: Schema.optional(Schema.NullOr(Schema.String)),
 });
+const decodeKimiLimit = Schema.decodeUnknownOption(
+  Schema.Struct({
+    ...kimiQuotaFields,
+    scope: Schema.optional(Schema.NullOr(Schema.String)),
+    detail: Schema.optional(Schema.NullOr(KimiQuota)),
+    window: Schema.optional(Schema.NullOr(KimiWindow)),
+  }),
+);
+// Decode rows independently so one unavailable quota does not hide the others.
 const KimiUsageResponse = Schema.Struct({
-  usage: Schema.optional(KimiQuota),
-  limits: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        ...kimiQuotaFields,
-        scope: Schema.optional(Schema.String),
-        detail: Schema.optional(KimiQuota),
-        window: Schema.optional(KimiWindow),
-      }),
-    ),
-  ),
+  usage: Schema.optional(Schema.Unknown),
+  limits: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
 });
 
-function kimiNumber(value: typeof KimiNumber.Type | undefined): number | undefined {
+function kimiNumber(value: typeof KimiNumber.Type | null | undefined): number | undefined {
   if (typeof value === "number") return value;
   const number = value?.trim() ? Number(value) : Number.NaN;
   return Number.isFinite(number) ? number : undefined;
@@ -170,6 +191,7 @@ function kimiResetsAt(quota: typeof KimiQuota.Type, now: number): string | undef
 }
 
 const KIMI_UNIT_MINS: Readonly<Record<string, number>> = {
+  SECOND: 1 / 60,
   MINUTE: 1,
   HOUR: 60,
   DAY: 24 * 60,
@@ -177,20 +199,20 @@ const KIMI_UNIT_MINS: Readonly<Record<string, number>> = {
 };
 
 /** Months vary in length, so a monthly window keeps its count but no fixed duration. */
-function kimiWindowMonths(window: typeof KimiWindow.Type | undefined): number | undefined {
-  if (!window?.timeUnit?.toUpperCase().includes("MONTH")) return undefined;
+function kimiWindowMonths(window: typeof KimiWindow.Type | null | undefined): number | undefined {
+  if (window?.timeUnit?.toUpperCase().replace(/^TIME_UNIT_/, "") !== "MONTH") return undefined;
   const months = kimiNumber(window.duration);
   return months !== undefined && months > 0 ? months : undefined;
 }
 
-function kimiWindowMins(window: typeof KimiWindow.Type | undefined) {
+function kimiWindowMins(window: typeof KimiWindow.Type | null | undefined) {
   const duration = kimiNumber(window?.duration);
-  const unit = Object.keys(KIMI_UNIT_MINS).find((name) =>
-    window?.timeUnit?.toUpperCase().includes(name),
-  );
-  return duration !== undefined && duration > 0 && unit
-    ? duration * KIMI_UNIT_MINS[unit]!
-    : undefined;
+  const unit = window?.timeUnit?.toUpperCase().replace(/^TIME_UNIT_/, "");
+  const multiplier = unit ? KIMI_UNIT_MINS[unit] : undefined;
+  const mins = duration !== undefined && multiplier !== undefined ? duration * multiplier : 0;
+  // The shared wire contract only accepts whole minutes. Keep other quotas
+  // visible without publishing a duration that clients would reject.
+  return Number.isSafeInteger(mins) && mins > 0 ? mins : undefined;
 }
 
 function kimiWindowShape(mins: number): Pick<ServerProviderUsageWindow, "kind" | "label"> {
@@ -218,19 +240,22 @@ export function kimiUsageResponseToLimits(
 ): ServerProviderUsageLimits {
   const now = Date.parse(checkedAt);
   const windows: ServerProviderUsageWindow[] = [];
-  const summaryPercent = response.usage ? kimiUsedPercent(response.usage) : undefined;
-  if (response.usage && summaryPercent !== undefined) {
-    const resetsAt = kimiResetsAt(response.usage, now);
+  const summary = Option.getOrUndefined(decodeKimiQuota(response.usage));
+  const summaryPercent = summary ? kimiUsedPercent(summary) : undefined;
+  if (summary && summaryPercent !== undefined) {
+    const resetsAt = kimiResetsAt(summary, now);
     windows.push({
       id: "weekly",
       kind: "weekly",
-      label: response.usage.name ?? response.usage.title ?? "Weekly",
+      label: summary.name?.trim() || summary.title?.trim() || "Weekly",
       usedPercent: summaryPercent,
       windowDurationMins: WEEK_MINS,
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
-  (response.limits ?? []).forEach((limit, index) => {
+  (response.limits ?? []).forEach((rawLimit, index) => {
+    const limit = Option.getOrUndefined(decodeKimiLimit(rawLimit));
+    if (!limit) return;
     const quota = limit.detail ?? limit;
     const usedPercent = kimiUsedPercent(quota);
     if (usedPercent === undefined) return;
@@ -252,14 +277,25 @@ export function kimiUsageResponseToLimits(
     windows.push({
       id: uniqueWindowId(windows, baseId, index),
       kind: shape?.kind ?? "other",
-      label: limit.name ?? limit.title ?? limit.scope ?? shape?.label ?? "Limit",
+      label:
+        quota.name?.trim() ||
+        quota.title?.trim() ||
+        limit.name?.trim() ||
+        limit.title?.trim() ||
+        limit.scope?.trim() ||
+        shape?.label ||
+        "Limit",
       usedPercent,
       ...(mins === undefined ? {} : { windowDurationMins: mins }),
       ...(resetsAt ? { resetsAt } : {}),
     });
   });
   return windows.length === 0
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+    ? makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Kimi returned no usable usage limits.",
+      })
     : makeUsageLimits({ checkedAt, windows });
 }
 
