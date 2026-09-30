@@ -5,13 +5,18 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { PersistenceDecodeError } from "../Errors.ts";
 import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
+import { ProjectionThreadActivityRepository } from "../Services/ProjectionThreadActivities.ts";
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
+import { ProjectionThreadActivityRepositoryLive } from "./ProjectionThreadActivities.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
+import { compactLegacyActivityPayloadBatch } from "../ActivityPayloadCompactor.ts";
 
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 const layer = it.layer(
-  OrchestrationEventStoreLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+  Layer.merge(OrchestrationEventStoreLive, ProjectionThreadActivityRepositoryLive).pipe(
+    Layer.provideMerge(SqlitePersistenceMemory),
+  ),
 );
 
 layer("OrchestrationEventStore", (it) => {
@@ -169,6 +174,209 @@ layer("OrchestrationEventStore", (it) => {
       assert.include(rows[0]?.payloadJson ?? "", "Retain prompt evidence");
       assert.include(rows[0]?.payloadJson ?? "", "Retain result evidence");
       assert.include(rows[0]?.payloadJson ?? "", "[REDACTED]");
+    }),
+  );
+
+  it.effect("stores large tool data once while event and projection reads stay lossless", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const activities = yield* ProjectionThreadActivityRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-09-15T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-tool-payload-blob");
+      const activityId = EventId.make("activity-tool-payload-blob");
+      const largeOutput = {
+        rawOutput: {
+          content: "unique-large-tool-output-".repeat(10_000),
+        },
+      };
+
+      const appended = yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-tool-payload-blob"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        payload: {
+          threadId,
+          activity: {
+            id: activityId,
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Tool completed",
+            payload: {
+              itemType: "command_execution",
+              data: largeOutput,
+            },
+            turnId: null,
+            createdAt: now,
+          },
+        },
+      });
+      yield* activities.upsert({
+        activityId,
+        threadId,
+        turnId: null,
+        tone: "tool",
+        kind: "tool.completed",
+        summary: "Tool completed",
+        payload: {
+          itemType: "command_execution",
+          data: largeOutput,
+        },
+        createdAt: now,
+      });
+
+      const stored = yield* sql<{
+        readonly blobs: number;
+        readonly eventCopies: number;
+        readonly projectionCopies: number;
+      }>`
+        SELECT
+          (SELECT COUNT(*) FROM activity_payload_blobs) AS blobs,
+          (
+            SELECT COUNT(*) FROM orchestration_events
+            WHERE instr(payload_json, 'unique-large-tool-output-') > 0
+          ) AS eventCopies,
+          (
+            SELECT COUNT(*) FROM projection_thread_activities
+            WHERE instr(payload_json, 'unique-large-tool-output-') > 0
+          ) AS projectionCopies
+      `;
+      assert.deepStrictEqual(stored, [{ blobs: 1, eventCopies: 0, projectionCopies: 0 }]);
+
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence(appended.sequence - 1, 1),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      const replayedActivity = replayed[0]!.payload;
+      assert.deepStrictEqual(
+        replayedActivity && "activity" in replayedActivity
+          ? (replayedActivity.activity.payload as { readonly data?: unknown }).data
+          : undefined,
+        largeOutput,
+      );
+
+      const projected = yield* activities.listByThreadId({ threadId });
+      assert.deepStrictEqual(
+        (projected[0]!.payload as { readonly data?: unknown }).data,
+        largeOutput,
+      );
+    }),
+  );
+
+  it.effect("incrementally compacts legacy tool payloads without changing reads", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const activities = yield* ProjectionThreadActivityRepository;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-09-16T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-legacy-tool-payload");
+      const activityId = EventId.make("activity-legacy-tool-payload");
+      const data = { content: "legacy-large-tool-output-".repeat(10_000) };
+      const activity = {
+        id: activityId,
+        tone: "tool",
+        kind: "tool.completed",
+        summary: "Legacy tool completed",
+        payload: { itemType: "command_execution", data },
+        turnId: null,
+        createdAt: now,
+      } as const;
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.make("evt-legacy-tool-payload")},
+          ${"thread"},
+          ${threadId},
+          ${0},
+          ${"thread.activity-appended"},
+          ${now},
+          ${null},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({ threadId, activity })},
+          ${"{}"}
+        )
+      `;
+      const [persistedEvent] = yield* sql<{ readonly sequence: number }>`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE event_id = ${EventId.make("evt-legacy-tool-payload")}
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES (
+          ${activityId},
+          ${threadId},
+          ${null},
+          ${activity.tone},
+          ${activity.kind},
+          ${activity.summary},
+          ${JSON.stringify(activity.payload)},
+          ${1},
+          ${now}
+        )
+      `;
+
+      assert.equal(yield* compactLegacyActivityPayloadBatch(), 1);
+
+      const rawCopies = yield* sql<{
+        readonly eventCopies: number;
+        readonly projectionCopies: number;
+      }>`
+        SELECT
+          (
+            SELECT COUNT(*) FROM orchestration_events
+            WHERE instr(payload_json, 'legacy-large-tool-output-') > 0
+          ) AS eventCopies,
+          (
+            SELECT COUNT(*) FROM projection_thread_activities
+            WHERE instr(payload_json, 'legacy-large-tool-output-') > 0
+          ) AS projectionCopies
+      `;
+      assert.deepStrictEqual(rawCopies, [{ eventCopies: 0, projectionCopies: 0 }]);
+
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence((persistedEvent?.sequence ?? 1) - 1, 1),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      const replayedPayload = replayed[0]!.payload;
+      assert.deepStrictEqual(
+        replayedPayload && "activity" in replayedPayload
+          ? (replayedPayload.activity.payload as { readonly data?: unknown }).data
+          : undefined,
+        data,
+      );
+      const projected = yield* activities.listByThreadId({ threadId });
+      assert.deepStrictEqual((projected[0]!.payload as { readonly data?: unknown }).data, data);
     }),
   );
 });

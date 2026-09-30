@@ -873,7 +873,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           activities.tone,
           activities.kind,
           activities.summary,
-          activities.payload_json AS "payload",
+          COALESCE(
+            (
+              SELECT json_set(
+                activities.payload_json,
+                '$.data',
+                json(blobs.data_json)
+              )
+              FROM activity_payload_blobs AS blobs
+              WHERE blobs.activity_id = activities.activity_id
+            ),
+            activities.payload_json
+          ) AS "payload",
           activities.sequence,
           activities.created_at AS "createdAt"
         FROM ranked_tasks
@@ -1350,7 +1361,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tone,
           kind,
           summary,
-          payload_json AS "payload",
+          COALESCE(
+            (
+              SELECT json_set(
+                projection_thread_activities.payload_json,
+                '$.data',
+                json(blobs.data_json)
+              )
+              FROM activity_payload_blobs AS blobs
+              WHERE blobs.activity_id = projection_thread_activities.activity_id
+            ),
+            projection_thread_activities.payload_json
+          ) AS "payload",
           sequence,
           created_at AS "createdAt"
         FROM projection_thread_activities
@@ -1372,7 +1394,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tone,
           kind,
           summary,
-          payload_json AS "payload",
+          COALESCE(
+            (
+              SELECT json_set(
+                projection_thread_activities.payload_json,
+                '$.data',
+                json(blobs.data_json)
+              )
+              FROM activity_payload_blobs AS blobs
+              WHERE blobs.activity_id = projection_thread_activities.activity_id
+            ),
+            projection_thread_activities.payload_json
+          ) AS "payload",
           sequence,
           created_at AS "createdAt"
         FROM projection_thread_activities
@@ -1403,7 +1436,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tone,
           kind,
           summary,
-          payload_json AS "payload",
+          COALESCE(
+            (
+              SELECT json_set(
+                projection_thread_activities.payload_json,
+                '$.data',
+                json(blobs.data_json)
+              )
+              FROM activity_payload_blobs AS blobs
+              WHERE blobs.activity_id = projection_thread_activities.activity_id
+            ),
+            projection_thread_activities.payload_json
+          ) AS "payload",
           sequence,
           created_at AS "createdAt"
         FROM projection_thread_activities
@@ -1585,7 +1629,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           tone,
           kind,
           summary,
-          payload_json AS "payload",
+          COALESCE(
+            (
+              SELECT json_set(
+                selected.payload_json,
+                '$.data',
+                json(blobs.data_json)
+              )
+              FROM activity_payload_blobs AS blobs
+              WHERE blobs.activity_id = selected.activity_id
+            ),
+            selected.payload_json
+          ) AS "payload",
           sequence,
           created_at AS "createdAt"
         FROM selected
@@ -1605,7 +1660,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           recent.tone,
           recent.kind,
           recent.summary,
-          recent.payload_json AS "payload",
+          COALESCE(
+            (
+              SELECT json_set(
+                recent.payload_json,
+                '$.data',
+                json(blobs.data_json)
+              )
+              FROM activity_payload_blobs AS blobs
+              WHERE blobs.activity_id = recent.activity_id
+            ),
+            recent.payload_json
+          ) AS "payload",
           recent.sequence,
           recent.created_at AS "createdAt"
         FROM projection_thread_activities AS recent

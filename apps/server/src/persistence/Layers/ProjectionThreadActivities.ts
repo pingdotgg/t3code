@@ -4,6 +4,7 @@ import { EventId, IsoDateTime, NonNegativeInt, TurnId } from "@t3tools/contracts
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 
 import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
+import { compactActivityPayload } from "../activityPayloadBlob.ts";
 
 import {
   DeleteProjectionThreadActivitiesByTurnIdsInput,
@@ -72,28 +73,57 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
           `,
   });
 
+  const upsertActivityPayloadBlob = (input: {
+    readonly activityId: string;
+    readonly dataJson: string;
+    readonly sizeBytes: number;
+    readonly createdAt: string;
+  }) =>
+    sql`
+      INSERT INTO activity_payload_blobs (
+        activity_id,
+        data_json,
+        size_bytes,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${input.activityId},
+        ${input.dataJson},
+        ${input.sizeBytes},
+        ${input.createdAt},
+        ${input.createdAt}
+      )
+      ON CONFLICT (activity_id) DO NOTHING
+    `;
+
   const listProjectionThreadActivityRows = SqlSchema.findAll({
     Request: ListProjectionThreadActivitiesInput,
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          CASE
+            WHEN blobs.data_json IS NULL THEN activities.payload_json
+            ELSE json_set(activities.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM projection_thread_activities AS activities
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = activities.activity_id
+        WHERE activities.thread_id = ${threadId}
         ORDER BY
-          CASE WHEN sequence IS NULL THEN 0 ELSE 1 END ASC,
-          sequence ASC,
-          created_at ASC,
-          activity_id ASC
+          CASE WHEN activities.sequence IS NULL THEN 0 ELSE 1 END ASC,
+          activities.sequence ASC,
+          activities.created_at ASC,
+          activities.activity_id ASC
       `,
   });
 
@@ -106,18 +136,23 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
     execute: ({ threadId, activityId }) =>
       sql`
         SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND activity_id = ${activityId}
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          CASE
+            WHEN blobs.data_json IS NULL THEN activities.payload_json
+            ELSE json_set(activities.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM projection_thread_activities AS activities
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = activities.activity_id
+        WHERE activities.thread_id = ${threadId}
+          AND activities.activity_id = ${activityId}
         LIMIT 1
       `,
   });
@@ -199,8 +234,25 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
       `,
   });
 
-  const upsert: ProjectionThreadActivityRepositoryShape["upsert"] = (row) =>
-    upsertProjectionThreadActivityRow(row).pipe(
+  const upsert: ProjectionThreadActivityRepositoryShape["upsert"] = (row) => {
+    const compacted = compactActivityPayload(row.kind, row.payload);
+    const storedRow = { ...row, payload: compacted.payload };
+    const activityDataJson = compacted.dataJson;
+    const persist =
+      activityDataJson === null
+        ? upsertProjectionThreadActivityRow(storedRow)
+        : sql.withTransaction(
+            Effect.gen(function* () {
+              yield* upsertActivityPayloadBlob({
+                activityId: row.activityId,
+                dataJson: activityDataJson,
+                sizeBytes: compacted.sizeBytes,
+                createdAt: row.createdAt,
+              });
+              yield* upsertProjectionThreadActivityRow(storedRow);
+            }),
+          );
+    return persist.pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProjectionThreadActivityRepository.upsert:query",
@@ -208,6 +260,7 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
         ),
       ),
     );
+  };
 
   const listByThreadId: ProjectionThreadActivityRepositoryShape["listByThreadId"] = (input) =>
     listProjectionThreadActivityRows(input).pipe(
