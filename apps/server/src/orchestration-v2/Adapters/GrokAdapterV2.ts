@@ -19,7 +19,7 @@ import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
@@ -52,10 +52,10 @@ import {
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
-import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
-import { IdAllocatorV2 } from "../IdAllocator.ts";
-import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
-import { ProviderAdapterV2, type ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as IdAllocator from "../IdAllocator.ts";
+import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -112,8 +112,8 @@ export interface GrokAdapterV2Options {
   readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
   readonly fileSystem: FileSystem.FileSystem;
-  readonly idAllocator: IdAllocatorV2["Service"];
-  readonly serverConfig: ServerConfig["Service"];
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+  readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
@@ -217,7 +217,9 @@ const registerGrokAskUserQuestionExtensions = ({
  * overrides launch it asking, so every mutating prompt reaches T3's policy
  * check instead of being bypassed by always-approve or Grok's auto classifier.
  */
-export function grokLaunchRuntimeMode(runtimePolicy: ProviderAdapterV2RuntimePolicy): RuntimeMode {
+export function grokLaunchRuntimeMode(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+): RuntimeMode {
   return runtimePolicy.approvalPolicy === undefined && runtimePolicy.sandboxPolicy === undefined
     ? runtimePolicy.runtimeMode
     : "approval-required";
@@ -339,10 +341,10 @@ export type GrokAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
   | Path.Path
-  | ProviderEventLoggers
-  | ServerConfig;
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ServerConfig.ServerConfig;
 
 export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapterV2DriverEnv> = {
   driverKind: GROK_DRIVER_KIND,
@@ -356,10 +358,10 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
-      const providerEventLoggers = yield* ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig;
-      const continuationRequests = yield* ProviderContinuationRequests;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       return makeGrokAdapterV2({
         instanceId: input.instanceId,
@@ -397,17 +399,17 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
 };
 
 const layer: Layer.Layer<
-  ProviderAdapterV2,
+  ProviderAdapter.ProviderAdapterV2,
   never,
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | IdAllocatorV2
-  | ProviderEventLoggers
-  | ServerConfig
+  | IdAllocator.IdAllocatorV2
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ServerConfig.ServerConfig
 > = Layer.effect(
-  ProviderAdapterV2,
+  ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcessEnvironment;
     const hostPlatform = yield* HostProcessPlatform;
@@ -415,10 +417,10 @@ const layer: Layer.Layer<
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
     const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocatorV2;
-    const providerEventLoggers = yield* ProviderEventLoggers;
-    const serverConfig = yield* ServerConfig;
-    const continuationRequests = yield* ProviderContinuationRequests;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
     return makeGrokAdapterV2({
       instanceId: GROK_DEFAULT_INSTANCE_ID,

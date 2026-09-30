@@ -14,15 +14,15 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
 } from "../../provider/acp/AcpRegistryProbe.ts";
-import { makeAcpRegistryCatalog } from "../../provider/acp/AcpRegistrySupport.ts";
+import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
 import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import {
   decodeAcpReplayTranscript,
   makeAcpReplayCompletenessAssertion,
@@ -84,7 +84,7 @@ const registryLayer = Layer.succeed(
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
-  idAllocatorLayer,
+  IdAllocator.layer,
   serverConfigLayer,
   registryLayer,
 );
@@ -196,9 +196,9 @@ describe("AcpRegistryAdapterV2", () => {
         environment: {},
         childProcessSpawner,
         fileSystem,
-        idAllocator: yield* IdAllocatorV2,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
         resolver: { resolve: () => Effect.die("the runtime is injected") },
-        serverConfig: yield* ServerConfig,
+        serverConfig: yield* ServerConfig.ServerConfig,
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,
@@ -266,9 +266,9 @@ describe("AcpRegistryAdapterV2", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -342,13 +342,13 @@ describe("AcpRegistryAdapterV2", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir: serverConfig.providerStatusCacheDir,
         toolsDir: serverConfig.baseDir + "/tools",
         registryUrl,
