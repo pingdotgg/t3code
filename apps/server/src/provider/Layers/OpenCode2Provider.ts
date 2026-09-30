@@ -74,6 +74,34 @@ class OpenCode2ProbeError extends Data.TaggedError("OpenCode2ProbeError")<{
   readonly detail: string;
 }> {}
 
+/**
+ * Strip URL userinfo before a server URL reaches user-facing text: a URL
+ * such as `https://user:secret@host` must never expose its embedded
+ * credentials in snapshot `probe.message` strings. Non-URL input passes
+ * through unchanged (so a malformed configured value still renders for
+ * debugging, just without anything parsed as userinfo).
+ */
+export function redactOpenCode2ServerUrlUserinfo(serverUrl: string): string {
+  const atIndex = serverUrl.lastIndexOf("@");
+  if (atIndex < 0) {
+    return serverUrl;
+  }
+  const schemeEnd = serverUrl.indexOf("://");
+  if (schemeEnd < 0 || schemeEnd > atIndex) {
+    return serverUrl;
+  }
+  const afterScheme = serverUrl.slice(schemeEnd + 3);
+  const authorityEnd = afterScheme.search(/[?#/]/);
+  const authority = authorityEnd < 0 ? afterScheme : afterScheme.slice(0, authorityEnd);
+  const atInAuthority = authority.lastIndexOf("@");
+  if (atInAuthority < 0) {
+    return serverUrl;
+  }
+  const hostPort = authority.slice(atInAuthority + 1);
+  const rest = authorityEnd < 0 ? "" : afterScheme.slice(authorityEnd);
+  return `${serverUrl.slice(0, schemeEnd + 3)}${hostPort}${rest}`;
+}
+
 function normalizeProbeMessage(message: string): string | undefined {
   const trimmed = message.trim();
   if (trimmed.length === 0) {
@@ -139,7 +167,7 @@ function formatOpenCode2ProbeError(input: {
     ) {
       return {
         installed: true,
-        message: `Couldn't reach the configured OpenCode 2 server at ${input.serverUrl}. Check that the server is running and the URL is correct.`,
+        message: `Couldn't reach the configured OpenCode 2 server at ${redactOpenCode2ServerUrlUserinfo(input.serverUrl)}. Check that the server is running and the URL is correct.`,
       };
     }
     return {

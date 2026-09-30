@@ -36,6 +36,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -114,7 +115,13 @@ export interface OpenCode2SessionClient {
       input: {
         readonly title?: string | undefined;
         readonly agent?: string | undefined;
-        readonly model?: { readonly providerID: string; readonly modelID: string } | undefined;
+        readonly model?:
+          | {
+              readonly providerID: string;
+              readonly modelID: string;
+              readonly variant?: string | undefined;
+            }
+          | undefined;
         readonly permission: OpenCode2PermissionRuleset;
       },
       options?: OpenCode2CallOptions | undefined,
@@ -679,6 +686,13 @@ export interface OpenCode2StartSessionDeps {
   ) => OpenCode2PermissionRuleset;
   readonly instructions?: string | undefined;
   readonly defaultAgent?: string | undefined;
+  readonly defaultModel?:
+    | {
+        readonly providerID: string;
+        readonly modelID: string;
+        readonly variant?: string | undefined;
+      }
+    | undefined;
   readonly mcpRemote?:
     | {
         readonly name: string;
@@ -812,6 +826,20 @@ export const startOpenCode2Session = Effect.fn("startOpenCode2Session")(function
           // the selection instead of the server default; sendTurn can switch
           // in-session from there.
           ...(deps.defaultAgent !== undefined ? { agent: deps.defaultAgent } : {}),
+          // Pin the start-time model at create so the first turn runs under
+          // the selection instead of the server default (mirrors the agent
+          // pin above); sendTurn switches in-session from there.
+          ...(deps.defaultModel !== undefined
+            ? {
+                model: {
+                  providerID: deps.defaultModel.providerID,
+                  modelID: deps.defaultModel.modelID,
+                  ...(deps.defaultModel.variant !== undefined
+                    ? { variant: deps.defaultModel.variant }
+                    : {}),
+                },
+              }
+            : {}),
           permission,
         },
         { signal },
@@ -864,10 +892,11 @@ export const startOpenCode2Session = Effect.fn("startOpenCode2Session")(function
   const raceWinner = store.get(input.threadId);
   if (raceWinner !== undefined) {
     // Another start published first. A newly created remote session belongs
-    // to this loser; a resumed session is shared upstream state. The remove
-    // runs under the 10s submission budget so a hanging cleanup cannot
-    // wedge the winning start.
-    yield* stopOpenCode2Context(context);
+    // to this loser; a resumed session is shared upstream state, so skip the
+    // remote abort walk for it (it would interrupt the winner's live session
+    // and all its descendants). The remove runs under the 10s submission
+    // budget so a hanging cleanup cannot wedge the winning start.
+    yield* stopOpenCode2Context(context, { remoteAbort: started.created });
     if (started.created) {
       yield* runOpenCode2SdkWithTimeout(
         "session.remove",
@@ -880,13 +909,60 @@ export const startOpenCode2Session = Effect.fn("startOpenCode2Session")(function
   }
   store.set(input.threadId, context);
   if (deps.onSessionStart !== undefined) {
-    yield* deps.onSessionStart(context);
+    // Bound the subscribe wait: a hanging `event.subscribe` must fail typed
+    // instead of wedging `startSession` (the session scope cannot cancel a
+    // callback it never got to register).
+    const startExit = yield* deps.onSessionStart(context).pipe(
+      Effect.timeoutOrElse({
+        duration: `${OPENCODE2_CONNECTION_TIMEOUT_MS} millis`,
+        orElse: () =>
+          Effect.fail(
+            openCode2RequestError(
+              "event.subscribe",
+              "OpenCode 2 event stream did not connect within 10 seconds.",
+            ),
+          ),
+      }),
+      Effect.exit,
+    );
+    if (Exit.isFailure(startExit)) {
+      // The context is already published, so a pump/subscribe failure must
+      // tear down the published entry instead of leaking a dead context with
+      // an unclosed scope (mirrors the pre-publish race-loser path above and
+      // v1 `closeStartingOpenCodeContext`): stop the scope, unpublish only if
+      // still current, then surface the typed cause. A created remote session
+      // is left for the reaper; the adapter's own `onSessionStart` cleanup
+      // composes on top of this one.
+      yield* stopOpenCode2Context(context, { remoteAbort: started.created });
+      store.deleteIfCurrent(context);
+      return yield* Effect.failCause(startExit.cause);
+    }
+    // A racing start may have published during the pump fork above: the
+    // winner owns the thread now, so tear down this loser (a created remote
+    // session is orphaned — remove it, mirroring the pre-publish loser path)
+    // and hand out the winner's session.
+    const current = store.get(input.threadId);
+    if (current !== undefined && current !== context) {
+      yield* stopOpenCode2Context(context, { remoteAbort: started.created });
+      if (started.created) {
+        yield* runOpenCode2SdkWithTimeout(
+          "session.remove",
+          (signal) =>
+            context.client.session.remove?.({ sessionID: context.openCodeSessionId }, { signal }) ??
+            Promise.resolve(undefined),
+        ).pipe(Effect.asVoid, Effect.ignore);
+      }
+      return current.session;
+    }
   }
   return session;
 });
 
 /** Mark stopped and close the session scope (idempotent, never fails). */
-export const stopOpenCode2Context = (context: OpenCode2SessionContext): Effect.Effect<boolean> =>
+export const stopOpenCode2Context = (
+  context: OpenCode2SessionContext,
+  options?: { readonly remoteAbort?: boolean | undefined } | undefined,
+): Effect.Effect<boolean> =>
   Effect.gen(function* () {
     const already = yield* Ref.getAndSet(context.stopped, true);
     if (already) {
@@ -906,10 +982,15 @@ export const stopOpenCode2Context = (context: OpenCode2SessionContext): Effect.E
     // handles (event-pump fiber, event-subscribe fetch), but OpenCode must
     // still be told this session is done — and its subagent descendants with
     // it (mirrors v1 `abortOpenCodeSessionForTeardown`: 1s teardown budget).
-    yield* abortOpenCode2Descendants(context).pipe(
-      Effect.timeout(`${OPENCODE2_TEARDOWN_TIMEOUT_MS} millis`),
-      Effect.ignore,
-    );
+    // Skipped when the caller knows the upstream session is shared (a race
+    // loser that resumed an existing session must not interrupt the winner's
+    // live session and its descendants).
+    if (options?.remoteAbort !== false) {
+      yield* abortOpenCode2Descendants(context).pipe(
+        Effect.timeout(`${OPENCODE2_TEARDOWN_TIMEOUT_MS} millis`),
+        Effect.ignore,
+      );
+    }
     // A failed SDK call leaves the turn active upstream; clear it locally so
     // a later `interruptTurn` with no active turn is a no-op (minting a
     // stale abort) rather than a hang, and so `compactThread` doesn't refuse
@@ -1210,9 +1291,9 @@ export const rollbackOpenCode2Thread = Effect.fn("rollbackOpenCode2Thread")(func
  *
  * - `session.create` → `client.session.create` with `location: {directory}`
  *   (structure carries cwd; the SDK has no bare `title`-only create) plus
- *   `title`/`permissions`.
- *   `title`/`permissions`. `agent` pins the default agent when start deps
- *   provide one.
+ *   `title`/`permissions`. `agent` pins the default agent and `model`
+ *   (`{providerID, id, variant?}`) pins the start-time model when start
+ *   deps provide them.
  * - `session.setInstructions` → `client.session.instructions.entry.put`
  *   with the `t3-code:runtime` key (re-asserted on resume like permissions).
  * - `session.addMcpServer` → `client.mcp.add` (attaches the `t3-code`
@@ -1314,6 +1395,18 @@ export const makeOpenCode2SessionClient = (
         Effect.runPromise(
           sdk.session.create({
             ...(createInput.title !== undefined ? { title: createInput.title } : {}),
+            ...(createInput.agent !== undefined ? { agent: createInput.agent as never } : {}),
+            ...(createInput.model !== undefined
+              ? {
+                  model: {
+                    providerID: createInput.model.providerID as never,
+                    id: createInput.model.modelID as never,
+                    ...(createInput.model.variant !== undefined
+                      ? { variant: createInput.model.variant as never }
+                      : {}),
+                  },
+                }
+              : {}),
             ...(directory !== undefined ? { location: { directory: directory as never } } : {}),
             ...(createInput.permission !== undefined
               ? {
@@ -1687,10 +1780,84 @@ export interface OpenCode2EventPumpOptions {
     | undefined;
 }
 
-const baseTranslatorContext = (options: OpenCode2EventPumpOptions): OpenCode2TranslatorContext => ({
-  threadId: options.threadId,
-  ...(options.turnId !== undefined ? { turnId: options.turnId } : {}),
-});
+const baseTranslatorContext = (
+  options: OpenCode2EventPumpOptions,
+  overrides?: { readonly turnId?: TurnId | undefined } | undefined,
+): OpenCode2TranslatorContext => {
+  const turnId = overrides?.turnId ?? options.turnId;
+  return {
+    threadId: options.threadId,
+    ...(turnId !== undefined ? { turnId } : {}),
+  };
+};
+
+/**
+ * Frame ownership for a session-scoped pump: the owning session plus any
+ * child subagent session ids the owning session has spawned. Frames from
+ * unrelated sessions on the same server never reach translation or the
+ * pending maps. Frames with no session id (e.g. `server.connected`) are
+ * stream-level and always owned. Child ids join via `session.created` /
+ * `session.forked` frames that name the owner as parent (`relatedSessionIds`
+ * mirrors v1's set).
+ */
+const openCode2FrameSessionId = (frame: OpenCode2RawEvent): string | undefined => {
+  const data =
+    typeof frame === "object" &&
+    frame !== null &&
+    typeof frame.data === "object" &&
+    frame.data !== null
+      ? (frame.data as Record<string, unknown>)
+      : undefined;
+  if (data === undefined) {
+    return undefined;
+  }
+  const idOf = (value: unknown): string | undefined =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  // Canonical v2 shape: `data.sessionID` (terminal/execution/usage frames).
+  // Creation frames (`session.created`/`session.forked`) report the session
+  // in `data.info.id` instead.
+  return (
+    idOf(data["sessionID"]) ??
+    (typeof data["info"] === "object" && data["info"] !== null
+      ? idOf((data["info"] as Record<string, unknown>)["id"])
+      : undefined)
+  );
+};
+
+const openCode2FrameParentSessionId = (frame: OpenCode2RawEvent): string | undefined => {
+  if (frame.type !== "session.created" && frame.type !== "session.forked") {
+    return undefined;
+  }
+  const data =
+    typeof frame === "object" &&
+    frame !== null &&
+    typeof frame.data === "object" &&
+    frame.data !== null
+      ? (frame.data as {
+          readonly parentID?: unknown;
+          readonly info?: { readonly parentID?: unknown } | undefined;
+        })
+      : undefined;
+  const direct = data?.parentID;
+  if (typeof direct === "string" && direct.length > 0) {
+    return direct;
+  }
+  const nested = data?.info?.parentID;
+  return typeof nested === "string" && nested.length > 0 ? nested : undefined;
+};
+
+const isOpenCode2FrameOwned = (
+  context: OpenCode2SessionContext,
+  frame: OpenCode2RawEvent,
+): boolean => {
+  const frameSessionId = openCode2FrameSessionId(frame);
+  if (frameSessionId === undefined) {
+    return true;
+  }
+  return context.relatedSessionIds.has(frameSessionId);
+};
+
+/** First-frame gate + owned-frame counter for the reconnect loop. */
 
 /**
  * Pump one subscribed session's SSE frames through `makeEventTranslator`
@@ -1722,14 +1889,42 @@ export const startOpenCode2EventPump = Effect.fn("startOpenCode2EventPump")(func
   subscription: OpenCode2EventSubscription,
   options: OpenCode2EventPumpOptions,
 ): Effect.fn.Return<void, OpenCode2AdapterError> {
+  // Non-reconnect (firehose/test) subscriptions consume the caller's
+  // iterable inline, so the pump reads them directly — the per-attempt
+  // first-frame budget below only applies inside the reconnect loop.
   if (options.resubscribe === undefined) {
     yield* runOpenCode2PumpSubscription(subscription, options);
     return;
   }
   const resubscribe = options.resubscribe;
+  // The loop below pumps `current` raw: a first read that settles (frame,
+  // clean end, or transport error) needs no gate — the pump handles all
+  // three directly. Only a first read that never settles can hang the pump,
+  // and that case is covered by the per-resubscribe first-frame gate
+  // further below (a stalled initial feed behaves exactly like a stalled
+  // resubscribe: pump parks, stop interrupts, teardown wins).
   let current: OpenCode2EventSubscription = subscription;
-  for (let attempt = 0; ; attempt += 1) {
-    const outcome = yield* runOpenCode2PumpSubscription(current, options).pipe(Effect.exit);
+  // Consecutive failures only: a subscription counts as failed only when it
+  // ends without delivering any frame; a subscription that delivered frames
+  // for hours proves the server alive and resets the budget instead of
+  // accumulating toward the cap over a long session lifetime. `failures`
+  // persists across loop iterations; the per-subscription flag is set in
+  // runOpenCode2PumpSubscription's frame body below.
+  let failures = 0;
+  let deliveredFrames = false;
+  for (;;) {
+    deliveredFrames = false;
+    const outcome = yield* runOpenCode2PumpSubscription(current, options, {
+      onFrame: () => {
+        deliveredFrames = true;
+      },
+      // First-frame budget for every pumped feed: a subscription that
+      // connects but stalls before its first frame trips the 10s gate
+      // (counted as a failed attempt below) instead of hanging the pump
+      // forever on a dead-but-connected stream.
+      firstFrameTimeoutMs: OPENCODE2_CONNECTION_TIMEOUT_MS,
+    }).pipe(Effect.exit);
+    failures = deliveredFrames ? 0 : failures + 1;
     if (Exit.isSuccess(outcome)) {
       // Clean stream end (server closed the feed): a live context needs the
       // feed back, so reconnect; a stopped/evicted context exits cleanly.
@@ -1740,7 +1935,7 @@ export const startOpenCode2EventPump = Effect.fn("startOpenCode2EventPump")(func
       // Stop raced the failure: teardown owns the error path, exit quietly.
       return;
     }
-    if (attempt >= OPENCODE2_RECONNECT_MAX_ATTEMPTS - 1) {
+    if (failures >= OPENCODE2_RECONNECT_MAX_ATTEMPTS) {
       yield* emitOpenCode2ReconnectExhausted(options).pipe(Effect.ignore);
       if (Exit.isFailure(outcome)) {
         return yield* Effect.failCause(outcome.cause);
@@ -1750,10 +1945,16 @@ export const startOpenCode2EventPump = Effect.fn("startOpenCode2EventPump")(func
         `OpenCode 2 event stream reconnect failed after ${OPENCODE2_RECONNECT_MAX_ATTEMPTS} attempts.`,
       );
     }
-    yield* Effect.sleep(`${openCode2ReconnectDelayMs(attempt)} millis`);
+    yield* Effect.sleep(`${openCode2ReconnectDelayMs(Math.max(0, failures - 1))} millis`);
     if (isOpenCode2PumpStopped(options)) {
       return;
     }
+    // Gate the resubscribe promise itself: a subscribe call that never
+    // resolves must time out instead of hanging the pump forever. The
+    // first-frame budget applies once the subscription exists (see below):
+    // a resubscribed feed that connects but stalls before its first frame
+    // trips the same 10s budget instead of hanging the pump on a
+    // dead-but-connected stream.
     const next = yield* resubscribe().pipe(
       Effect.timeoutOrElse({
         duration: `${OPENCODE2_CONNECTION_TIMEOUT_MS} millis`,
@@ -1774,28 +1975,137 @@ export const startOpenCode2EventPump = Effect.fn("startOpenCode2EventPump")(func
       if (options.store !== undefined) {
         yield* handleOpenCode2StreamError(options.store, options, next.cause).pipe(Effect.ignore);
       }
-      attempt += 1;
-      if (attempt >= OPENCODE2_RECONNECT_MAX_ATTEMPTS - 1) {
+      failures += 1;
+      if (failures >= OPENCODE2_RECONNECT_MAX_ATTEMPTS) {
         yield* emitOpenCode2ReconnectExhausted(options).pipe(Effect.ignore);
         return yield* Effect.failCause(next.cause);
       }
-      yield* Effect.sleep(`${openCode2ReconnectDelayMs(attempt)} millis`);
+      yield* Effect.sleep(`${openCode2ReconnectDelayMs(Math.max(0, failures - 1))} millis`);
       if (isOpenCode2PumpStopped(options)) {
         return;
       }
       continue;
     }
+    // First-frame budget for the resubscribed feed, fused into the pump
+    // itself: instead of drawing a frame up front (which costs an extra
+    // parked `iterator.next()` per attempt under virtual time), the next
+    // loop iteration pumps the resubscribed feed with the same 10s
+    // first-frame budget (see `firstFrameTimeoutMs` below). A feed that
+    // connects but stalls before its first frame trips the gate (counted
+    // as a failed attempt) instead of hanging the pump forever on a
+    // dead-but-connected stream.
     current = next.value;
   }
 });
+
+/** Forward one raw frame through ownership, translation, and pump-in state. */
+const forwardOpenCode2PumpFrame = (
+  subscription: OpenCode2EventSubscription,
+  options: OpenCode2EventPumpOptions,
+  translator: ReturnType<typeof makeEventTranslator>,
+  translatorContextFor: () => OpenCode2TranslatorContext,
+  rawEvent: OpenCode2RawEvent,
+  progress: { readonly onFrame?: (() => void) | undefined } | undefined,
+): Effect.Effect<void, OpenCode2AdapterError> =>
+  Effect.gen(function* () {
+    void subscription;
+    const frame = rawEvent as unknown as OpenCode2RawEvent;
+    options.onRawEvent?.(frame);
+    // Any delivered frame proves the transport alive for the
+    // consecutive-failure budget (the callback is sync; the reconnect
+    // loop reads the flag after the subscription ends).
+    progress?.onFrame?.();
+    const live = options.store?.get(options.threadId);
+    // Child adoption: a `session.created`/`session.forked` frame that names
+    // the owner as parent registers the child id before the ownership
+    // check, so the child's own creation frame (and everything after) is
+    // owned.
+    const newbornParent = live !== undefined ? openCode2FrameParentSessionId(frame) : undefined;
+    if (
+      live !== undefined &&
+      newbornParent !== undefined &&
+      live.relatedSessionIds.has(newbornParent)
+    ) {
+      const childId = openCode2FrameSessionId(frame);
+      if (childId !== undefined) {
+        live.relatedSessionIds.add(childId);
+      }
+    }
+    // Stream-level frames (no session id, e.g. `server.connected`) and
+    // frames naming the owner or an adopted child are owned; frames
+    // naming an unrelated session on the same server are foreign and
+    // never reach translation or the pending maps. `session.created` /
+    // `session.forked` discovery frames for unrelated parents also pass
+    // (child adoption above must observe them; their translated
+    // `thread.started` output is benign — the adapter publishes
+    // thread.started at start and ingestion treats it as a
+    // non-lifecycle notification while a turn is active). Terminal turn
+    // frames additionally gate on the owner inside
+    // handleOpenCode2TranslatedEvent (owner check on `openCodeSessionId`,
+    // with adopted children marking subagent usage), so an unrelated
+    // session's completion can never settle this turn.
+    if (
+      live !== undefined &&
+      frame.type !== "session.created" &&
+      frame.type !== "session.forked" &&
+      !isOpenCode2FrameOwned(live, frame)
+    ) {
+      return;
+    }
+    // Terminal store-owned events settle locally and re-emit with the
+    // active turn id; dedupe of duplicate terminal frames lives in
+    // handleOpenCode2TranslatedEvent's stale guards (clearPumpTurnState
+    // no-ops once the turn cleared).
+    const translatorContext = translatorContextFor();
+    for (const event of translator.translate(frame, translatorContext)) {
+      // Forward every translator event (base behavior): terminal turn
+      // events pair with the store settle below (translator copy + named
+      // pump settle). Swallowing the translator copies here starves queue
+      // readers that expect both. The translator copies are named with the
+      // active turn id via translatorContextFor above, so they no longer
+      // corrupt ingestion as unnamed lifecycle copies.
+      yield* Queue.offer(options.events, event).pipe(Effect.ignore);
+      if (live !== undefined) {
+        yield* handleOpenCode2TranslatedEvent(options.store!, options, frame, event).pipe(
+          Effect.ignore,
+        );
+      }
+    }
+    if (live !== undefined) {
+      // The first owned live frame proves the stream is up (mirrors v1
+      // `server.connected` → `firstConnection`); translator output for it
+      // still flows above. Foreign frames return early above, so reaching
+      // here proves ownership — a busy server's other-thread traffic is
+      // not our connection.
+      yield* Deferred.succeed(live.firstConnection, undefined).pipe(Effect.ignore);
+    }
+  });
 
 /** Run one subscription to completion: forward frames, settle pump-in state. */
 const runOpenCode2PumpSubscription = Effect.fn("runOpenCode2PumpSubscription")(function* (
   subscription: OpenCode2EventSubscription,
   options: OpenCode2EventPumpOptions,
+  progress?:
+    | {
+        readonly onFrame?: (() => void) | undefined;
+        readonly firstFrameTimeoutMs?: number | undefined;
+      }
+    | undefined,
 ): Effect.fn.Return<void, OpenCode2AdapterError> {
   const translator = options.translator ?? makeEventTranslator();
-  const context = baseTranslatorContext(options);
+  // Per-subscription translator context: the active turn can change across
+  // resubscribes (and mid-subscription), so resolve the current turn from
+  // the store for each owned frame instead of capturing it once.
+  const translatorContextFor = (): OpenCode2TranslatorContext => {
+    if (options.store === undefined) {
+      return baseTranslatorContext(options);
+    }
+    const live = options.store.get(options.threadId);
+    if (live?.activeTurnId === undefined) {
+      return baseTranslatorContext(options);
+    }
+    return baseTranslatorContext(options, { turnId: live.activeTurnId as TurnId });
+  };
   const onStreamError = (
     cause: Cause.Cause<OpenCode2AdapterError>,
   ): Stream.Stream<OpenCode2RawEvent, OpenCode2AdapterError> => {
@@ -1814,29 +2124,87 @@ const runOpenCode2PumpSubscription = Effect.fn("runOpenCode2PumpSubscription")(f
       cause,
     ),
   ).pipe(Stream.catchCause(onStreamError));
-  yield* Stream.runForEach(stream, (rawEvent) =>
-    Effect.gen(function* () {
-      const frame = rawEvent as unknown as OpenCode2RawEvent;
-      options.onRawEvent?.(frame);
-      for (const event of translator.translate(frame, context)) {
-        yield* Queue.offer(options.events, event).pipe(Effect.ignore);
-        if (options.store !== undefined) {
-          yield* handleOpenCode2TranslatedEvent(options.store, options, frame, event).pipe(
-            Effect.ignore,
-          );
-        }
-      }
-      if (options.store !== undefined) {
-        // The first live frame proves the stream is up (mirrors v1
-        // `server.connected` → `firstConnection`); translator output for it
-        // still flows above.
-        const session = options.store.get(options.threadId);
-        if (session !== undefined) {
-          yield* Deferred.succeed(session.firstConnection, undefined).pipe(Effect.ignore);
-        }
-      }
-    }),
+  // First-frame budget (reconnect loop only): the first delivery races the
+  // 10s connection budget. The race wraps the whole `runForEach` (not a
+  // per-item timer): the loser's timer is cancelled on completion, so a
+  // feed that delivers fast costs nothing and a stalled feed trips the
+  // gate and fails the subscription with a typed error (counted as a
+  // failed attempt by the caller). Firehose mode passes no budget and
+  // pumps unchanged.
+  const firstFrameBudget = progress?.firstFrameTimeoutMs;
+  if (firstFrameBudget === undefined) {
+    yield* Stream.runForEach(stream, (rawEvent) =>
+      forwardOpenCode2PumpFrame(
+        subscription,
+        options,
+        translator,
+        translatorContextFor,
+        rawEvent,
+        progress,
+      ),
+    );
+    return;
+  }
+  let firstFrameArrived = false;
+  const tapped = stream.pipe(
+    Stream.tap(() =>
+      Effect.sync(() => {
+        firstFrameArrived = true;
+      }),
+    ),
   );
+  // Race the pump against the first-frame budget — but only until the
+  // first frame arrives. The timer is a detached fiber interrupted on
+  // first delivery, so a live feed costs nothing after frame one
+  // (leaving the timer armed for the subscription's lifetime costs one
+  // armed sleep per attempt under virtual time and stalls the reconnect
+  // drive loop). A stalled feed loses the race: the pump fiber is
+  // interrupted and the subscription fails typed (counted as a failed
+  // attempt by the caller).
+  const gateError: OpenCode2AdapterError = openCode2RequestError(
+    "event.subscribe",
+    "OpenCode 2 event stream reconnect did not receive events within 10 seconds.",
+  );
+  const timerEffect: Effect.Effect<Exit.Exit<void, OpenCode2AdapterError>, never> = Effect.exit(
+    Effect.fail(gateError).pipe(Effect.delay(`${firstFrameBudget} millis`)),
+  );
+  const timerExit: Fiber.Fiber<
+    Exit.Exit<void, OpenCode2AdapterError>,
+    never
+  > = yield* timerEffect.pipe(Effect.forkDetach);
+  const pumpEffect: Effect.Effect<Exit.Exit<void, OpenCode2AdapterError>, never> = Effect.exit(
+    Stream.runForEach(tapped, (rawEvent) =>
+      Effect.gen(function* () {
+        yield* forwardOpenCode2PumpFrame(
+          subscription,
+          options,
+          translator,
+          translatorContextFor,
+          rawEvent,
+          progress,
+        );
+        if (firstFrameArrived) {
+          yield* Fiber.interrupt(timerExit);
+        }
+      }),
+    ),
+  );
+  const pumpExit: Fiber.Fiber<
+    Exit.Exit<void, OpenCode2AdapterError>,
+    never
+  > = yield* pumpEffect.pipe(Effect.forkDetach);
+  const winner: Exit.Exit<void, OpenCode2AdapterError> = yield* Effect.raceFirst(
+    Fiber.join(timerExit),
+    Fiber.join(pumpExit),
+  ) as Effect.Effect<Exit.Exit<void, OpenCode2AdapterError>, OpenCode2AdapterError>;
+  yield* Fiber.interrupt(timerExit).pipe(Effect.ignore);
+  yield* Fiber.interrupt(pumpExit).pipe(Effect.ignore);
+  if (Exit.isFailure(winner)) {
+    return yield* Effect.failCause(winner.cause);
+  }
+  if (!firstFrameArrived) {
+    return yield* Effect.fail(gateError);
+  }
 });
 
 /** True when the pump must stop reconnecting (stopped or evicted context). */
@@ -1995,17 +2363,16 @@ export const handleOpenCode2TranslatedEvent = Effect.fn("handleOpenCode2Translat
       return;
     }
     const nowIso = options.nowIso;
-    const frameData =
-      typeof frame === "object" &&
-      frame !== null &&
-      typeof frame.data === "object" &&
-      frame.data !== null
-        ? (frame.data as Record<string, unknown>)
-        : undefined;
-    const frameSessionId =
-      frameData !== undefined && typeof frameData["sessionID"] === "string"
-        ? (frameData["sessionID"] as string)
-        : undefined;
+    // Ownership for terminal settlement keys on the owning session id and
+    // its adopted children: `session.created`/`session.forked` discovery
+    // frames always reach the pump (so adoption can observe them), and
+    // child-terminal frames mark subagent usage without settling the
+    // parent turn. Non-terminal frames were already ownership-filtered by
+    // the pump; terminal frames re-check here because direct callers of
+    // this handler bypass the pump filter.
+    const frameSessionId = openCode2FrameSessionId(frame);
+    const isForeignTerminal =
+      frameSessionId !== undefined && !context.relatedSessionIds.has(frameSessionId);
     // Subagent (non-owner) frames mark subagent involvement but never settle
     // the parent turn: only the owning session's terminal frames close it
     // (mirrors v1 `isParentEvent` gating in `handleSubscribedEvent`).
@@ -2019,7 +2386,7 @@ export const handleOpenCode2TranslatedEvent = Effect.fn("handleOpenCode2Translat
         return;
       }
       case "turn.completed": {
-        if (frameSessionId !== undefined && frameSessionId !== context.openCodeSessionId) {
+        if (isForeignTerminal) {
           markPumpSubagentUsage(context);
           return;
         }
@@ -2051,7 +2418,7 @@ export const handleOpenCode2TranslatedEvent = Effect.fn("handleOpenCode2Translat
         return;
       }
       case "turn.aborted": {
-        if (frameSessionId !== undefined && frameSessionId !== context.openCodeSessionId) {
+        if (isForeignTerminal) {
           markPumpSubagentUsage(context);
           return;
         }

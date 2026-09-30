@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -17,8 +18,17 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderEventLoggers, NoOpProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
-import { OpenCodeRuntime, type OpenCodeRuntimeShape } from "../opencodeRuntime.ts";
+import {
+  OpenCodeRuntime,
+  type OpenCodeRuntimeShape,
+  OpenCodeRuntimeError,
+} from "../opencodeRuntime.ts";
 import { OPENCODE_2_RESPONSES } from "../testFixtures/opencodeProbeResponses.ts";
+import * as OpenCode2Server from "../opencode2/OpenCode2Server.ts";
+import {
+  makeOpenCode2SessionClient,
+  type OpenCode2SessionClient,
+} from "../opencode2/OpenCode2SessionStore.ts";
 import { OpenCode2Driver } from "./OpenCode2Driver.ts";
 
 // Shutdown/stopAll path for the opencode2 driver instance.
@@ -206,4 +216,89 @@ describe("OpenCode2Driver shutdown", () => {
       }).pipe(Effect.scoped),
     );
   });
+});
+
+// A `withConnection` borrow that only wraps client construction releases as
+// soon as the client exists, so a spawned server could idle-stop mid-session
+// (finding #4139617941/#4139673709). The borrow must stay open for the whole
+// session scope and release on scope close. These tests exercise that shape
+// directly against a fake `OpenCode2Server`, without spawning a real server.
+describe("OpenCode2Driver createClient borrow", () => {
+  const fakeConnection = {
+    url: "http://127.0.0.1:4096",
+    client: { session: { create: () => Promise.resolve({ data: { id: "ses_1" } }) } },
+    version: "2.0.18",
+    external: false,
+  } as unknown as OpenCode2Server.OpenCode2Connection;
+
+  const borrowReleased = { current: 0 };
+  const fakeServer = OpenCode2Server.OpenCode2Server.of({
+    withConnection: (use) =>
+      Effect.acquireUseRelease(
+        Effect.void,
+        () => use(fakeConnection),
+        () => Effect.sync(() => (borrowReleased.current += 1)),
+      ),
+  });
+
+  const runCreateClient = (scope: Scope.Closeable) =>
+    Effect.gen(function* () {
+      const ready = yield* Deferred.make<
+        OpenCode2Server.OpenCode2Connection,
+        OpenCodeRuntimeError
+      >();
+      yield* fakeServer
+        .withConnection((connection) =>
+          Deferred.succeed(ready, connection).pipe(Effect.andThen(Effect.never)),
+        )
+        .pipe(
+          Effect.catch((error) => Deferred.fail(ready, error)),
+          Effect.forkScoped,
+        );
+      const connection = yield* Deferred.await(ready);
+      return makeOpenCode2SessionClient(connection.client as never, {
+        directory: "/work/dir",
+      });
+    }).pipe(Effect.provideService(Scope.Scope, scope));
+
+  it.effect("holds the borrow until the session scope closes", () =>
+    Effect.gen(function* () {
+      borrowReleased.current = 0;
+      const scope = yield* Scope.make();
+      const client: OpenCode2SessionClient = yield* runCreateClient(scope);
+      NodeAssert.ok(typeof client.session.create === "function");
+      // Client construction must not release the borrow (this is what the
+      // old `withConnection(wrap(Effect.succeed(client)))` shape did).
+      NodeAssert.equal(borrowReleased.current, 0);
+      yield* Scope.close(scope, Exit.void);
+      NodeAssert.equal(borrowReleased.current, 1);
+    }),
+  );
+
+  it.effect("maps a connection failure to a session.create request error", () =>
+    Effect.gen(function* () {
+      const failing = OpenCode2Server.OpenCode2Server.of({
+        withConnection: () =>
+          Effect.fail(
+            new OpenCodeRuntimeError({ operation: "server.info", detail: "boom" }),
+          ) as never,
+      });
+      const attempted = yield* Effect.gen(function* () {
+        const ready = yield* Deferred.make<
+          OpenCode2Server.OpenCode2Connection,
+          OpenCodeRuntimeError
+        >();
+        yield* failing
+          .withConnection((connection) =>
+            Deferred.succeed(ready, connection).pipe(Effect.andThen(Effect.never)),
+          )
+          .pipe(
+            Effect.catch((error) => Deferred.fail(ready, error)),
+            Effect.forkScoped,
+          );
+        return yield* Deferred.await(ready);
+      }).pipe(Effect.provideService(Scope.Scope, yield* Scope.make()), Effect.exit);
+      NodeAssert.equal(attempted._tag, "Failure");
+    }),
+  );
 });

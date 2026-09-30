@@ -116,14 +116,15 @@ export function isOpenCode2NotFound(cause: unknown): boolean {
  * Lexically normalize a directory spelling so raw string equality stops
  * misreading a trailing slash or `.`/`..` segment as a cwd change (which
  * would needlessly fork the session on every resume). Only widens matches;
- * true locations still compare equal after normalization.
+ * true locations still compare equal after normalization. Path whitespace
+ * is significant (trailing-space directories are legal on Linux), so only
+ * separators and dot segments normalize — never trim.
  */
 export function normalizeOpenCode2Directory(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return trimmed;
+  if (value.length === 0) {
+    return value;
   }
-  const withoutTrailing = trimmed.length > 1 ? trimmed.replace(/\/+$/, "") : trimmed;
+  const withoutTrailing = value.length > 1 ? value.replace(/\/+$/, "") : value;
   const segments: Array<string> = [];
   for (const part of withoutTrailing.split("/")) {
     if (part === "" || part === ".") {

@@ -17,6 +17,7 @@
  */
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -61,7 +62,11 @@ import {
   type OpenCode2AdapterError,
 } from "../opencode2/OpenCode2Protocol.ts";
 import { COMPACT_SLASH_COMMAND } from "../providerSnapshot.ts";
-import { OpenCodeRuntime, openCodeRuntimeErrorDetail } from "../opencodeRuntime.ts";
+import {
+  OpenCodeRuntime,
+  openCodeRuntimeErrorDetail,
+  OpenCodeRuntimeError,
+} from "../opencodeRuntime.ts";
 import { probeOpenCodeRuntime } from "../opencodeVersionProbe.ts";
 import { OPENCODE2_DRIVER_KIND, OpenCode2Settings } from "../OpenCode2Settings.ts";
 import {
@@ -250,7 +255,8 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
       // `server.withConnection`. The client's SSE stream (`event.subscribe`)
       // runs inside the per-session `Scope` (finalizers close the pump when
       // the session stops), so a session must never outlive its server
-      // borrow: `server.withConnection` wraps the whole factory effect, and
+      // borrow: `createClient` forks the `withConnection` borrow into that
+      // session scope (`Effect.never` parks it until scope close), and
       // `OpenCode2Server` itself lives in the driver's scope — closing the
       // instance releases the owner and stops a spawned server (mirrors the
       // v1 driver, where `OpenCodeServerOwner` binds spawned-server lifetime
@@ -276,19 +282,37 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
           createClient: ({
             directory,
           }): Effect.Effect<OpenCode2SessionClient, OpenCode2AdapterError, Scope.Scope> =>
-            server
-              .withConnection((connection) =>
-                Effect.succeed(makeOpenCode2SessionClient(connection.client, { directory })),
-              )
-              .pipe(
-                Effect.mapError((cause) =>
-                  openCode2RequestError(
-                    "session.create",
-                    `Failed to connect to the OpenCode 2 server: ${openCodeRuntimeErrorDetail(cause)}`,
-                    cause,
-                  ),
+            Effect.gen(function* () {
+              // Hold the borrow for the session scope's lifetime: the forked
+              // fiber keeps `withConnection` from completing (so the owner's
+              // release — and its idle-TTL arming — runs only when the session
+              // scope closes), while the deferred hands the already-verified
+              // connection to client construction. Releasing after the await
+              // instead would leave the session's client without a borrower
+              // and a spawned server could idle-stop mid-session.
+              const ready = yield* Deferred.make<
+                OpenCode2Server.OpenCode2Connection,
+                OpenCodeRuntimeError
+              >();
+              yield* server
+                .withConnection((connection) =>
+                  Deferred.succeed(ready, connection).pipe(Effect.andThen(Effect.never)),
+                )
+                .pipe(
+                  Effect.catch((error) => Deferred.fail(ready, error)),
+                  Effect.forkScoped,
+                );
+              const connection = yield* Deferred.await(ready);
+              return makeOpenCode2SessionClient(connection.client, { directory });
+            }).pipe(
+              Effect.mapError((cause) =>
+                openCode2RequestError(
+                  "session.create",
+                  `Failed to connect to the OpenCode 2 server: ${openCodeRuntimeErrorDetail(cause)}`,
+                  cause,
                 ),
               ),
+            ),
         },
       );
       const textGeneration: TextGeneration.TextGeneration["Service"] = makeOpenCode2TextGeneration(

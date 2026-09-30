@@ -31,7 +31,12 @@ import {
   type OpenCode2SessionClient,
   type OpenCode2SessionContext,
 } from "./OpenCode2SessionStore.ts";
-import { makeOpenCode2ResumeCursor } from "./OpenCode2Protocol.ts";
+import {
+  makeOpenCode2ResumeCursor,
+  openCode2RequestError,
+  parseOpenCode2Resume,
+} from "./OpenCode2Protocol.ts";
+import type { OpenCode2PermissionRuleset } from "./OpenCode2Protocol.ts";
 import { OPENCODE2_DRIVER_KIND } from "../OpenCode2Settings.ts";
 
 const threadId = ThreadId.make("thread-oc2-store");
@@ -833,6 +838,7 @@ describe("OpenCode2SessionStore pump-in", () => {
       );
       const context = store.get(threadId) as OpenCode2SessionContext;
       context.openCodeSessionId = sessionId;
+      context.relatedSessionIds.add(sessionId);
       context.activeTurnId = "opencode2-turn-pump";
       context.session = { ...context.session, status: "running" };
       const pumpOptions = {
@@ -1414,6 +1420,194 @@ describe("OpenCode2SessionStore hardening (sweep A)", () => {
         true,
       );
       assert.equal(OPENCODE2_RECONNECT_MAX_ATTEMPTS, 64);
+    }),
+  );
+});
+
+describe("OpenCode2SessionStore start hardening (sweep B)", () => {
+  it.effect("failing onSessionStart tears down the published context", () =>
+    Effect.gen(function* () {
+      const store = makeOpenCode2SessionStore();
+      const state: FakeState = {
+        sessions: new Map(),
+        created: [],
+        forked: [],
+        updated: [],
+        messages: new Map(),
+        failGet: new Set(),
+      };
+      const exit = yield* startOpenCode2Session(
+        store,
+        { threadId, runtimeMode: "full-access" },
+        settings,
+        undefined,
+        "/work/dir",
+        {
+          ...startDeps(state),
+          onSessionStart: () => Effect.fail(openCode2RequestError("event.subscribe", "boom")),
+        },
+      ).pipe(Effect.exit);
+      assert.equal(exit._tag, "Failure");
+      // The published entry is unpublished so a retry starts clean.
+      assert.equal(store.get(threadId), undefined);
+      assert.equal(store.size(), 0);
+    }),
+  );
+
+  it.effect("racing publish during onSessionStart hands out the winner", () =>
+    Effect.gen(function* () {
+      const store = makeOpenCode2SessionStore();
+      const state: FakeState = {
+        sessions: new Map(),
+        created: [],
+        forked: [],
+        updated: [],
+        messages: new Map(),
+        failGet: new Set(),
+      };
+      const removed: Array<string> = [];
+      const base = startDeps(state);
+      // Shared counter so the two racing starts mint distinct remote ids
+      // (each `makeFakeClient` call counts from `ses_1` on its own).
+      let sharedCounter = 0;
+      const trackingCreateClient = (input: { directory: string }) =>
+        Effect.map(base.createClient(input), (client) => ({
+          ...client,
+          session: {
+            ...client.session,
+            create: (_createInput: unknown) => {
+              const id = `ses_race_${(sharedCounter += 1)}`;
+              state.sessions.set(id, { id, directory: input.directory });
+              state.created.push(id);
+              return Promise.resolve({ data: { id, directory: input.directory } });
+            },
+            remove: (removeInput: { sessionID: string }) => {
+              removed.push(removeInput.sessionID);
+              return Promise.resolve(undefined);
+            },
+          },
+        }));
+      let loserId = "";
+      const session = yield* startOpenCode2Session(
+        store,
+        { threadId, runtimeMode: "full-access" },
+        settings,
+        undefined,
+        "/work/dir",
+        {
+          ...base,
+          createClient: trackingCreateClient,
+          onSessionStart: (context: OpenCode2SessionContext) =>
+            Effect.gen(function* () {
+              loserId = context.openCodeSessionId;
+              // A racing start publishes while this start's pump fork runs.
+              yield* startOpenCode2Session(
+                store,
+                { threadId, runtimeMode: "full-access" },
+                settings,
+                undefined,
+                "/work/dir",
+                { ...base, createClient: trackingCreateClient },
+              );
+            }),
+        },
+      );
+      const winner = store.get(threadId) as OpenCode2SessionContext;
+      // The racing start won: this start returns the winner's session and
+      // removes its own created remote session.
+      assert.equal(parseOpenCode2Resume(session.resumeCursor)?.sessionId, winner.openCodeSessionId);
+      assert.notEqual(loserId, winner.openCodeSessionId);
+      assert.deepEqual(removed, [loserId]);
+    }),
+  );
+
+  it.effect("defaultModel pins the start-time model at session.create", () =>
+    Effect.gen(function* () {
+      const store = makeOpenCode2SessionStore();
+      const state: FakeState = {
+        sessions: new Map(),
+        created: [],
+        forked: [],
+        updated: [],
+        messages: new Map(),
+        failGet: new Set(),
+      };
+      const seen: Array<unknown> = [];
+      const base = startDeps(state);
+      yield* startOpenCode2Session(
+        store,
+        { threadId, runtimeMode: "full-access" },
+        settings,
+        undefined,
+        "/work/dir",
+        {
+          ...base,
+          createClient: (input: { directory: string }) =>
+            Effect.map(base.createClient(input), (client) => ({
+              ...client,
+              session: {
+                ...client.session,
+                create: (createInput: {
+                  readonly title?: string | undefined;
+                  readonly agent?: string | undefined;
+                  readonly model?:
+                    | {
+                        readonly providerID: string;
+                        readonly modelID: string;
+                        readonly variant?: string | undefined;
+                      }
+                    | undefined;
+                  readonly permission: OpenCode2PermissionRuleset;
+                }) => {
+                  seen.push(createInput);
+                  return client.session.create(createInput);
+                },
+              },
+            })),
+          defaultModel: {
+            providerID: "anthropic",
+            modelID: "claude-x",
+            variant: "high",
+          },
+        },
+      );
+      assert.deepEqual(seen, [
+        {
+          model: { providerID: "anthropic", modelID: "claude-x", variant: "high" },
+          permission: [],
+        },
+      ]);
+    }),
+  );
+
+  it.effect("makeOpenCode2SessionClient forwards create model/agent to the SDK", () =>
+    Effect.gen(function* () {
+      const seen: Array<unknown> = [];
+      const sdk = {
+        session: {
+          create: (input: unknown) => {
+            seen.push(input);
+            return Effect.succeed({ id: "ses_1", title: "t" });
+          },
+        },
+      } as unknown as Parameters<typeof makeOpenCode2SessionClient>[0];
+      const client = makeOpenCode2SessionClient(sdk);
+      yield* Effect.promise(() =>
+        client.session.create({
+          title: "t",
+          agent: "plan",
+          model: { providerID: "anthropic", modelID: "claude-x", variant: "high" },
+          permission: [],
+        }),
+      );
+      assert.deepEqual(seen, [
+        {
+          title: "t",
+          agent: "plan",
+          model: { providerID: "anthropic", id: "claude-x", variant: "high" },
+          permissions: [],
+        },
+      ]);
     }),
   );
 });

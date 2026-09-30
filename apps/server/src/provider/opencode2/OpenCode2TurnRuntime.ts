@@ -86,6 +86,48 @@ export interface OpenCode2SendTurnDeps {
  */
 const withSubmissionTimeout = withOpenCode2SubmissionTimeout;
 
+/**
+ * Model/variant last applied to the remote session via `switchModel`.
+ * `session.create` never sends the start selection and `session.model` only
+ * records what was requested, so gating the switch on it skips the first
+ * turn (the recorded model already matches) and variant-only changes. The
+ * session id rides along because rollback forks a new session onto the same
+ * context object, which must force a re-apply.
+ */
+interface OpenCode2AppliedModel {
+  readonly sessionId: string;
+  readonly model: string;
+  readonly variant: string | undefined;
+}
+
+const appliedOpenCode2Model = new WeakMap<OpenCode2SessionContext, OpenCode2AppliedModel>();
+
+const needsOpenCode2ModelSwitch = (
+  context: OpenCode2SessionContext,
+  model: string,
+  variant: string | undefined,
+): boolean => {
+  const applied = appliedOpenCode2Model.get(context);
+  return (
+    applied === undefined ||
+    applied.sessionId !== context.openCodeSessionId ||
+    applied.model !== model ||
+    applied.variant !== variant
+  );
+};
+
+const recordOpenCode2ModelSwitch = (
+  context: OpenCode2SessionContext,
+  model: string,
+  variant: string | undefined,
+): void => {
+  appliedOpenCode2Model.set(context, {
+    sessionId: context.openCodeSessionId,
+    model,
+    variant,
+  });
+};
+
 const emitTurnStarted = (
   events: Queue.Enqueue<ProviderRuntimeEvent>,
   input: {
@@ -255,7 +297,7 @@ const submitOpenCode2Turn = Effect.fn("submitOpenCode2Turn")(function* (
     ).pipe(withSubmissionTimeout("session.switchAgent"), Effect.asVoid);
   }
   const modelSlug = `${parsedModel.providerID}/${parsedModel.modelID}`;
-  if (modelSelection?.model !== context.session.model) {
+  if (needsOpenCode2ModelSwitch(context, modelSlug, variant)) {
     yield* runOpenCode2SdkWithTimeout("session.switchModel", (signal) =>
       context.client.session.switchModel(
         {
@@ -266,6 +308,7 @@ const submitOpenCode2Turn = Effect.fn("submitOpenCode2Turn")(function* (
         { signal },
       ),
     ).pipe(withSubmissionTimeout("session.switchModel"), Effect.asVoid);
+    recordOpenCode2ModelSwitch(context, modelSlug, variant);
   }
 
   const turnId = (steeringTurnId ?? `opencode2-turn-${yield* deps.randomTurnId}`) as TurnId;
@@ -669,7 +712,7 @@ export const compactOpenCode2Thread = Effect.fn("compactOpenCode2Thread")(functi
   // Mirror sendTurn: selection-options variant wins, else the slug #variant.
   const compactVariant =
     getModelSelectionStringOptionValue(modelSelection, "variant") ?? parsedModel.variant;
-  if (modelSelection?.model !== context.session.model) {
+  if (needsOpenCode2ModelSwitch(context, modelSlug, compactVariant)) {
     yield* runOpenCode2SdkWithTimeout("session.switchModel", (signal) =>
       context.client.session.switchModel(
         {
@@ -680,6 +723,7 @@ export const compactOpenCode2Thread = Effect.fn("compactOpenCode2Thread")(functi
         { signal },
       ),
     ).pipe(withSubmissionTimeout("session.switchModel"), Effect.asVoid);
+    recordOpenCode2ModelSwitch(context, modelSlug, compactVariant);
     context.session = {
       ...context.session,
       model: modelSelection?.model ?? context.session.model,

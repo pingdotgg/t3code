@@ -5,9 +5,13 @@
  *
  * `trackOpenCode2Permission` / `trackOpenCode2Question` register incoming
  * approval requests (called by the event translator). `respond` /
- * `respondToUserInput` reply through the session client and mark the request
- * terminal. Unknown ids fail typed (`ProviderAdapterRequestError`); already-
- * resolved ids are idempotent no-ops.
+ * `respondToUserInput` claim the pending entry, reply through the session
+ * client, and mark the request terminal. The terminal `request.resolved` /
+ * `user-input.resolved` events themselves come from the SSE translator's
+ * provider echo (`permission.replied` / `form.replied`) — the respond path
+ * never emits them, so each resolution surfaces exactly once. Unknown ids
+ * fail typed (`ProviderAdapterRequestError`); already-resolved ids are
+ * idempotent no-ops.
  *
  * @module provider/opencode2/OpenCode2Approvals
  */
@@ -40,6 +44,7 @@ import {
   type OpenCode2PendingPermission,
   type OpenCode2PendingQuestion,
   type OpenCode2SessionClient,
+  type OpenCode2SessionContext,
   type OpenCode2SessionStore,
 } from "./OpenCode2SessionStore.ts";
 
@@ -177,39 +182,31 @@ export const trackOpenCode2Question = Effect.fn("trackOpenCode2Question")(functi
   });
 });
 
-const resolvePending = Effect.fn("resolvePending")(function* (
-  store: OpenCode2SessionStore,
-  events: Queue.Enqueue<ProviderRuntimeEvent>,
-  threadId: ThreadId,
-  requestId: string,
-  event: {
-    readonly type: "request.resolved" | "user-input.resolved";
-    readonly payload: Record<string, unknown>;
-    readonly eventDeps: OpenCode2ApprovalEventDeps;
-  },
-) {
-  const context = yield* ensureOpenCode2Context(store, threadId);
-  context.pendingPermissions.delete(requestId);
-  context.pendingQuestions.delete(requestId);
-  if (!context.emittedTerminalRequestIds.has(requestId)) {
-    context.emittedTerminalRequestIds.add(requestId);
-    yield* emitApprovalEvent(events, {
-      threadId,
-      type: event.type,
-      requestId: requestId as unknown as RuntimeRequestId,
-      payload: event.payload,
-      eventId: (yield* event.eventDeps.randomEventId) as EventId,
-      createdAt: yield* event.eventDeps.nowIso,
-    });
-  }
-});
+/**
+ * Claim one pending entry for a reply: remove it from both pending maps
+ * before the SDK await so a concurrent reply for the same id finds no entry
+ * (and becomes an idempotent no-op / typed unknown-id instead of a second
+ * submit). No async boundary sits between the lookup and this delete, so the
+ * claim is atomic under Effect's cooperative scheduling. The claim is kept
+ * on failure (the maps evict so a dead request can never wedge the thread);
+ * the terminal event itself arrives via the provider SSE echo, recorded by
+ * `handleOpenCode2TranslatedEvent`.
+ */
+const claimPendingForReply = (context: OpenCode2SessionContext, key: string): void => {
+  context.pendingPermissions.delete(key);
+  context.pendingQuestions.delete(key);
+};
 
 /**
  * Respond to an interactive approval request. Already-resolved ids are
  * idempotent no-ops; unknown ids fail with `ProviderAdapterRequestError`.
- * The requested session id travels with the reply (v2 is session-scoped)
- * and the maps evict on both success and failure so a dead request can
- * never wedge the thread.
+ * The requested session id travels with the reply (v2 is session-scoped).
+ * The pending entry is claimed before the SDK await so concurrent replies
+ * for the same id cannot both submit; the maps stay evicted on failure so
+ * a dead request can never wedge the thread. The terminal
+ * `request.resolved` event arrives via the provider SSE echo
+ * (`permission.replied`); this path only records the id so late frames
+ * settle state without re-emitting.
  */
 export const respondToOpenCode2Request = Effect.fn("respondToOpenCode2Request")(function* (
   store: OpenCode2SessionStore,
@@ -217,7 +214,7 @@ export const respondToOpenCode2Request = Effect.fn("respondToOpenCode2Request")(
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   decision: ProviderApprovalDecision,
-  eventDeps: OpenCode2ApprovalEventDeps,
+  _eventDeps: OpenCode2ApprovalEventDeps,
 ): Effect.fn.Return<void, OpenCode2AdapterError> {
   const context = yield* ensureOpenCode2Context(store, threadId);
   const key = String(requestId);
@@ -232,22 +229,21 @@ export const respondToOpenCode2Request = Effect.fn("respondToOpenCode2Request")(
     );
   }
   const reply = toOpenCode2PermissionReply(decision);
+  claimPendingForReply(context, key);
   const outcome = yield* runOpenCode2SdkWithTimeout("permission.reply", (signal) =>
     context.client.permission.reply(
       { requestID: key, reply, sessionID: request.sessionID },
       { signal },
     ),
   ).pipe(withReplyTimeout("permission.reply"), Effect.exit);
-  context.pendingPermissions.delete(key);
-  context.pendingQuestions.delete(key);
   if (Exit.isFailure(outcome)) {
     return yield* Effect.failCause(outcome.cause);
   }
-  yield* resolvePending(store, events, threadId, key, {
-    type: "request.resolved",
-    payload: { requestType: "permission_approval", decision },
-    eventDeps,
-  });
+  // No synthetic terminal emit: the provider SSE echo (`permission.replied`)
+  // is the sole `request.resolved` source. Recording the id here lets a late
+  // echo settle pending state without re-emitting, and keeps a re-reply of
+  // the same id an idempotent no-op.
+  context.emittedTerminalRequestIds.add(key);
 });
 
 /**
@@ -362,8 +358,11 @@ export const listOpenCode2Descendants = Effect.fn("listOpenCode2Descendants")(fu
  * idempotent no-ops; unknown ids fail typed. Prefers the v2-native
  * session-scoped form reply (`sessionForm.reply`, `Form.Answer` record);
  * falls back to the legacy question reply only when the binding predates
- * forms. The maps evict on both success and failure so a dead request can
- * never wedge the thread.
+ * forms. The pending entry is claimed before the SDK await so concurrent
+ * replies for the same id cannot both submit; the maps stay evicted on
+ * failure so a dead request can never wedge the thread. The terminal
+ * `user-input.resolved` event arrives via the provider SSE echo
+ * (`form.replied` / `form.cancelled`); this path only records the id.
  */
 export const respondToOpenCode2UserInput = Effect.fn("respondToOpenCode2UserInput")(function* (
   store: OpenCode2SessionStore,
@@ -371,7 +370,7 @@ export const respondToOpenCode2UserInput = Effect.fn("respondToOpenCode2UserInpu
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
-  eventDeps: OpenCode2ApprovalEventDeps,
+  _eventDeps: OpenCode2ApprovalEventDeps,
 ): Effect.fn.Return<void, OpenCode2AdapterError> {
   const context = yield* ensureOpenCode2Context(store, threadId);
   const key = String(requestId);
@@ -385,6 +384,7 @@ export const respondToOpenCode2UserInput = Effect.fn("respondToOpenCode2UserInpu
       `Unknown pending user-input request: ${key}`,
     );
   }
+  claimPendingForReply(context, key);
   const outcome =
     context.client.sessionForm !== undefined
       ? yield* runOpenCode2SdkWithTimeout("session.form.reply", (signal) =>
@@ -403,14 +403,11 @@ export const respondToOpenCode2UserInput = Effect.fn("respondToOpenCode2UserInpu
             context.client.question.reply({ requestID: key, answers: coerced }, { signal }),
           ).pipe(withReplyTimeout("question.reply"), Effect.asVoid);
         }).pipe(Effect.exit);
-  context.pendingPermissions.delete(key);
-  context.pendingQuestions.delete(key);
   if (Exit.isFailure(outcome)) {
     return yield* Effect.failCause(outcome.cause);
   }
-  yield* resolvePending(store, events, threadId, key, {
-    type: "user-input.resolved",
-    payload: { answers },
-    eventDeps,
-  });
+  // No synthetic terminal emit: the provider SSE echo (`form.replied` /
+  // `form.cancelled`) is the sole `user-input.resolved` source. Recording
+  // the id here lets a late echo settle pending state without re-emitting.
+  context.emittedTerminalRequestIds.add(key);
 });

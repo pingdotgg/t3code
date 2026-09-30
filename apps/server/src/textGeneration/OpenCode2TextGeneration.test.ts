@@ -18,6 +18,7 @@ interface FakeState {
   readonly createCalls: Array<unknown>;
   readonly switchModelCalls: Array<unknown>;
   readonly switchAgentCalls: Array<unknown>;
+  readonly removeCalls: Array<unknown>;
   readonly promptCalls: Array<unknown>;
   readonly waitCalls: Array<unknown>;
   sessionResult: { readonly id: string };
@@ -25,6 +26,7 @@ interface FakeState {
   promptError: unknown;
   waitError: unknown;
   contextError: unknown;
+  removeError: unknown;
   contextMessages: ReadonlyArray<{
     readonly id: string;
     readonly type: string;
@@ -37,6 +39,7 @@ const state: FakeState = {
   createCalls: [],
   switchModelCalls: [],
   switchAgentCalls: [],
+  removeCalls: [],
   promptCalls: [],
   waitCalls: [],
   sessionResult: { id: "ses_1" },
@@ -44,6 +47,7 @@ const state: FakeState = {
   promptError: undefined,
   waitError: undefined,
   contextError: undefined,
+  removeError: undefined,
   contextMessages: [],
 };
 
@@ -51,6 +55,7 @@ function resetState() {
   state.createCalls.length = 0;
   state.switchModelCalls.length = 0;
   state.switchAgentCalls.length = 0;
+  state.removeCalls.length = 0;
   state.promptCalls.length = 0;
   state.waitCalls.length = 0;
   state.sessionResult = { id: "ses_1" };
@@ -58,6 +63,7 @@ function resetState() {
   state.promptError = undefined;
   state.waitError = undefined;
   state.contextError = undefined;
+  state.removeError = undefined;
   state.contextMessages = [
     {
       id: "msg_a",
@@ -86,6 +92,12 @@ const fakeClient: OpenCode2TextGenerationClient = {
     },
     switchAgent: async (input) => {
       state.switchAgentCalls.push(input);
+    },
+    remove: async (input) => {
+      state.removeCalls.push(input);
+      if (state.removeError !== undefined) {
+        throw state.removeError;
+      }
     },
     prompt: async (input) => {
       state.promptCalls.push(input);
@@ -395,5 +407,97 @@ it.effect("ignores a non-string assistant error message and reads the text", () 
     });
 
     expect(result).toEqual({ subject: "Tighten parsing", body: "Handle JSON locally." });
+  }),
+);
+
+it.effect("applies a plain model selection with no options before prompting", () =>
+  Effect.gen(function* () {
+    state.contextMessages = [
+      {
+        id: "msg_a",
+        type: "assistant",
+        content: [{ type: "text", text: encodeJson({ title: "Tighten parsing" }) }],
+      },
+    ];
+    const textGeneration = makeOpenCode2TextGeneration(withFakeConnection);
+
+    yield* textGeneration.generateThreadTitle({
+      cwd: "/workspace",
+      message: "hello",
+      modelSelection: DEFAULT_MODEL_SELECTION,
+    });
+
+    // No variant/agent options, but the plain `provider/model` choice must
+    // still reach the server — otherwise the turn runs on its default.
+    NodeAssert.deepEqual(state.switchModelCalls, [
+      {
+        sessionID: "ses_1",
+        model: { id: "gpt-5", providerID: "openai" },
+      },
+    ]);
+    NodeAssert.deepEqual(state.switchAgentCalls, []);
+    NodeAssert.equal(state.promptCalls.length, 1);
+  }),
+);
+
+it.effect("removes the ephemeral session after a successful operation", () =>
+  Effect.gen(function* () {
+    state.contextMessages = [
+      {
+        id: "msg_a",
+        type: "assistant",
+        content: [{ type: "text", text: encodeJson({ title: "Tighten parsing" }) }],
+      },
+    ];
+    const textGeneration = makeOpenCode2TextGeneration(withFakeConnection);
+
+    yield* textGeneration.generateThreadTitle({
+      cwd: "/workspace",
+      message: "hello",
+      modelSelection: DEFAULT_MODEL_SELECTION,
+    });
+
+    NodeAssert.deepEqual(state.removeCalls, [{ sessionID: "ses_1" }]);
+  }),
+);
+
+it.effect("still removes the ephemeral session when prompting fails", () =>
+  Effect.gen(function* () {
+    state.promptError = new Error("prompt transport down");
+    const textGeneration = makeOpenCode2TextGeneration(withFakeConnection);
+
+    const error = yield* textGeneration
+      .generateThreadTitle({
+        cwd: "/workspace",
+        message: "hello",
+        modelSelection: DEFAULT_MODEL_SELECTION,
+      })
+      .pipe(Effect.flip);
+
+    NodeAssert.ok(Predicate.isTagged(error, "TextGenerationError"));
+    NodeAssert.deepEqual(state.removeCalls, [{ sessionID: "ses_1" }]);
+  }),
+);
+
+it.effect("a failing session removal never masks the operation result", () =>
+  Effect.gen(function* () {
+    state.removeError = new Error("remove transport down");
+    state.contextMessages = [
+      {
+        id: "msg_a",
+        type: "assistant",
+        content: [{ type: "text", text: encodeJson({ title: "Tighten parsing" }) }],
+      },
+    ];
+    const textGeneration = makeOpenCode2TextGeneration(withFakeConnection);
+
+    const result = yield* textGeneration.generateThreadTitle({
+      cwd: "/workspace",
+      message: "hello",
+      modelSelection: DEFAULT_MODEL_SELECTION,
+    });
+
+    NodeAssert.deepEqual(state.removeCalls, [{ sessionID: "ses_1" }]);
+    expect(result).toEqual({ title: "Tighten parsing" });
   }),
 );

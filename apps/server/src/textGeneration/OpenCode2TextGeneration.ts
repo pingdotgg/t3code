@@ -81,6 +81,13 @@ export interface OpenCode2TextGenerationClient {
       readonly sessionID: string;
       readonly agent: string;
     }) => Promise<unknown>;
+    /**
+     * Delete the ephemeral session (mirrors the provider binding's
+     * `session.remove`). Best-effort: a failed cleanup must not fail the
+     * operation (v1 text generation leaves its server-side sessions in
+     * place the same way).
+     */
+    readonly remove?: (input: { readonly sessionID: string }) => Promise<unknown>;
     readonly prompt: (input: {
       readonly sessionID: string;
       readonly text: string;
@@ -329,25 +336,49 @@ export const makeOpenCode2TextGeneration = (
         const session: OpenCode2SessionHandle = { id: sessionId };
         const sessionContext = { ...promptContext, sessionId: session.id };
 
-        if (selectedVariant !== undefined || selectedAgent !== undefined) {
-          yield* Effect.tryPromise({
-            try: async () => {
-              await client.session.switchModel({
-                sessionID: session.id,
-                model: {
-                  id: parsedModel.modelID,
-                  providerID: parsedModel.providerID,
-                  ...(selectedVariant !== undefined ? { variant: selectedVariant } : {}),
-                },
-              });
-              if (selectedAgent !== undefined) {
-                await client.session.switchAgent({ sessionID: session.id, agent: selectedAgent });
-              }
-            },
-            catch: (cause) =>
-              new OpenCode2TextGenerationPromptRequestError({ ...sessionContext, cause }),
-          });
-        }
+        return yield* runInEphemeralSession(client, session, sessionContext).pipe(
+          // The turn is prompt-then-wait on an ephemeral session, so the
+          // session outlives nothing: delete it once `sessionId` is known so
+          // failures and timeouts cannot leak remote sessions. Removal is
+          // best-effort (and skipped when the client surface predates it) so
+          // cleanup can never mask the operation result.
+          Effect.ensuring(
+            client.session.remove !== undefined
+              ? Effect.tryPromise({
+                  try: () => client.session.remove!({ sessionID: session.id }),
+                  catch: () => undefined,
+                }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        );
+      });
+
+    const runInEphemeralSession = (
+      client: OpenCode2TextGenerationClient,
+      session: OpenCode2SessionHandle,
+      sessionContext: typeof promptContext & { readonly sessionId: string },
+    ): Effect.Effect<string, RunWithClientError> =>
+      Effect.gen(function* () {
+        // `session.create` takes no model: always apply the selection —
+        // a plain `provider/model` choice with no options names no variant
+        // or agent, but skipping the switch would run on the server default.
+        yield* Effect.tryPromise({
+          try: async () => {
+            await client.session.switchModel({
+              sessionID: session.id,
+              model: {
+                id: parsedModel.modelID,
+                providerID: parsedModel.providerID,
+                ...(selectedVariant !== undefined ? { variant: selectedVariant } : {}),
+              },
+            });
+            if (selectedAgent !== undefined) {
+              await client.session.switchAgent({ sessionID: session.id, agent: selectedAgent });
+            }
+          },
+          catch: (cause) =>
+            new OpenCode2TextGenerationPromptRequestError({ ...sessionContext, cause }),
+        });
 
         yield* Effect.tryPromise({
           try: () => client.session.prompt({ sessionID: session.id, text: input.prompt }),

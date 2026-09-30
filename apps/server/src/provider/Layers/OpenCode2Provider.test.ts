@@ -18,6 +18,7 @@ import {
   buildInitialOpenCode2ProviderSnapshot,
   checkOpenCode2ProviderStatus,
   makeOpenCode2RuntimeProbe,
+  redactOpenCode2ServerUrlUserinfo,
 } from "./OpenCode2Provider.ts";
 import { MINIMUM_OPENCODE2_VERSION } from "../opencodeVersionProbe.ts";
 import { OPENCODE2_DRIVER_KIND } from "../OpenCode2Settings.ts";
@@ -58,6 +59,25 @@ it("trims OpenCode2Settings server fields and falls back to the default binary",
 
 it("owns the standalone opencode2 driver slug", () => {
   NodeAssert.equal(String(OPENCODE2_DRIVER_KIND), "opencode2");
+});
+
+it("redacts URL userinfo before it reaches snapshot messages", () => {
+  NodeAssert.equal(
+    redactOpenCode2ServerUrlUserinfo("https://user:secret@host:4096/prefix"),
+    "https://host:4096/prefix",
+  );
+  NodeAssert.equal(
+    redactOpenCode2ServerUrlUserinfo("http://token@127.0.0.1:9999"),
+    "http://127.0.0.1:9999",
+  );
+  NodeAssert.equal(
+    redactOpenCode2ServerUrlUserinfo("http://127.0.0.1:9999"),
+    "http://127.0.0.1:9999",
+  );
+  // Non-URL values pass through (a malformed configured value still
+  // renders for debugging).
+  NodeAssert.equal(redactOpenCode2ServerUrlUserinfo("not a url"), "not a url");
+  NodeAssert.equal(redactOpenCode2ServerUrlUserinfo(""), "");
 });
 
 it.effect("buildInitialOpenCode2ProviderSnapshot returns a disabled snapshot when disabled", () =>
@@ -273,6 +293,35 @@ it.layer(NodeServices.layer)("checkOpenCode2ProviderStatus with configured serve
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.version, "1.18.32");
       NodeAssert.match(snapshot.message ?? "", /1\.x release/);
+    }).pipe(Effect.provide(failingInventoryServer("unreachable"))),
+  );
+
+  it.effect("redacts URL userinfo from the unreachable-server message", () =>
+    Effect.gen(function* () {
+      const settings = makeSettings({
+        serverUrl: "https://operator:s3cret@127.0.0.1:9999",
+        serverPassword: "pw",
+      });
+      const probe = yield* makeOpenCode2RuntimeProbe(
+        Effect.fail(
+          new OpenCodeRuntimeError({
+            operation: "probeOpenCodeVersion",
+            detail: "fetch failed: connect ECONNREFUSED 127.0.0.1:9999",
+          }),
+        ),
+      );
+      const snapshot = yield* checkOpenCode2ProviderStatus(settings, process.cwd(), probe.refresh);
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.match(snapshot.message ?? "", /Couldn't reach the configured OpenCode 2 server/);
+      NodeAssert.ok(
+        !(snapshot.message ?? "").includes("s3cret"),
+        "snapshot message must not contain URL userinfo",
+      );
+      NodeAssert.ok(
+        !(snapshot.message ?? "").includes("operator"),
+        "snapshot message must not contain the URL username",
+      );
+      NodeAssert.match(snapshot.message ?? "", /https:\/\/127\.0\.0\.1:9999/);
     }).pipe(Effect.provide(failingInventoryServer("unreachable"))),
   );
 });

@@ -1,8 +1,10 @@
 import { describe, it, assert } from "@effect/vitest";
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
@@ -129,8 +131,13 @@ describe("OpenCode2Approvals", () => {
       assert.deepEqual(calls.permissionReplies, [{ requestID: "req_1", reply: "once" }]);
       const opened = yield* Queue.take(events);
       assert.equal(opened.type, "request.opened");
-      const resolved = yield* Queue.take(events);
-      assert.equal(resolved.type, "request.resolved");
+      // The terminal `request.resolved` arrives via the provider SSE echo
+      // (`permission.replied`), not the respond path — so the queue holds no
+      // synthetic second event. The id is recorded so a late echo settles
+      // state without re-emitting and a re-reply is an idempotent no-op.
+      assert.equal(yield* Queue.size(events), 0);
+      assert.isTrue(store.get(threadId)?.emittedTerminalRequestIds.has("req_1") ?? false);
+      assert.equal(store.get(threadId)?.pendingPermissions.has("req_1"), false);
       // Re-responding after resolution is an idempotent no-op.
       yield* respondToOpenCode2Request(
         store,
@@ -210,8 +217,11 @@ describe("OpenCode2Approvals", () => {
       assert.deepEqual(calls.questionReplies, [{ requestID: "q_1", answers: [["A"]] }]);
       const requested = yield* Queue.take(events);
       assert.equal(requested.type, "user-input.requested");
-      const resolved = yield* Queue.take(events);
-      assert.equal(resolved.type, "user-input.resolved");
+      // The terminal `user-input.resolved` arrives via the provider SSE echo
+      // (`form.replied`), not the respond path — no synthetic second event.
+      assert.equal(yield* Queue.size(events), 0);
+      assert.isTrue(store.get(threadId)?.emittedTerminalRequestIds.has("q_1") ?? false);
+      assert.equal(store.get(threadId)?.pendingQuestions.has("q_1"), false);
     }),
   );
 
@@ -616,6 +626,74 @@ describe("OpenCode2Approvals hardening (sweep A)", () => {
       // First page + repeated-cursor page, then the guard ends the branch.
       assert.equal(calls, 2);
       assert.deepEqual([...descendants], ["ses_leaf"]);
+    }),
+  );
+
+  it.effect("concurrent replies for the same request submit only once", () =>
+    Effect.gen(function* () {
+      const { store, events, calls } = yield* setup;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const context = store.get(threadId);
+      assert.isDefined(context);
+      const patchedClient = {
+        ...context!.client,
+        permission: {
+          reply: (input: { requestID: string; reply: string }) => {
+            calls.permissionReplies.push({ requestID: input.requestID, reply: input.reply });
+            return gate.then(() => undefined);
+          },
+        },
+      };
+      store.set(threadId, { ...context!, client: patchedClient });
+      yield* trackOpenCode2Permission(
+        store,
+        events,
+        threadId,
+        {
+          requestId: "req_race",
+          sessionID: "ses_1",
+          permission: "bash",
+        },
+        { requestType: "command_execution_approval", eventDeps },
+      );
+      // Both fibers race the same pending id: the first claims it before its
+      // SDK await, so the second finds no entry and fails typed unknown-id
+      // (the id is not terminal yet). Either way it must not submit a
+      // second reply.
+      const first = yield* respondToOpenCode2Request(
+        store,
+        events,
+        threadId,
+        ApprovalRequestId.make("req_race"),
+        "accept",
+        eventDeps,
+      ).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const secondExit = yield* Effect.exit(
+        respondToOpenCode2Request(
+          store,
+          events,
+          threadId,
+          ApprovalRequestId.make("req_race"),
+          "decline",
+          eventDeps,
+        ),
+      );
+      release();
+      yield* Fiber.join(first);
+      assert.equal(calls.permissionReplies.length, 1);
+      assert.deepEqual(calls.permissionReplies[0], { requestID: "req_race", reply: "once" });
+      assert.isTrue(Exit.isFailure(secondExit));
+      if (Exit.isFailure(secondExit)) {
+        const failure = Cause.squash(secondExit.cause);
+        assert.equal((failure as { readonly _tag?: string })._tag, "ProviderAdapterRequestError");
+      }
+      // Drain the opened event so the queue holds no backlog.
+      yield* Queue.take(events);
+      assert.equal(yield* Queue.size(events), 0);
     }),
   );
 

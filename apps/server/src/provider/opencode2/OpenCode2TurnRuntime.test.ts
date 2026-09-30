@@ -918,6 +918,166 @@ describe("OpenCode2TurnRuntime switchModel variant", () => {
   );
 });
 
+describe("OpenCode2TurnRuntime applied-model tracking", () => {
+  const setupWithStartModel = (startModel: string) =>
+    Effect.gen(function* () {
+      const store = makeOpenCode2SessionStore();
+      const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
+      const calls: TurnCalls = {
+        switchedModel: [],
+        switchedAgent: [],
+        prompts: [],
+        commands: [],
+        aborts: 0,
+      };
+      const client = makeClient(calls, "ses_1");
+      yield* startOpenCode2Session(
+        store,
+        {
+          threadId,
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: boundInstanceId, model: startModel },
+        },
+        settings,
+        boundInstanceId,
+        "/work/dir",
+        {
+          createClient: () => Effect.succeed(client),
+          sameDirectory: (left, right) => Effect.succeed(left === right),
+          buildPermissionRules: () => [],
+          nowIso: Effect.succeed("2026-09-29T00:00:00.000Z"),
+        },
+      );
+      return { store, events, calls };
+    });
+
+  it.effect("applies the start selection on the first turn even when it matches", () =>
+    Effect.gen(function* () {
+      // The session record carries the start selection, but session.create
+      // never sent it to the server — the first turn must switch so it runs
+      // on the selection instead of the server default.
+      const { store, events, calls } = yield* setupWithStartModel("anthropic/claude-x");
+      yield* sendOpenCode2Turn(
+        store,
+        events,
+        {
+          threadId,
+          input: "hello",
+          modelSelection: { instanceId: boundInstanceId, model: "anthropic/claude-x" },
+        },
+        turnDeps,
+      );
+      assert.deepEqual(calls.switchedModel, [{ model: "anthropic/claude-x", variant: undefined }]);
+    }),
+  );
+
+  it.effect("switches on a variant-only change when the model slug matches", () =>
+    Effect.gen(function* () {
+      const { store, events, calls } = yield* setupWithStartModel("anthropic/claude-x");
+      yield* sendOpenCode2Turn(
+        store,
+        events,
+        {
+          threadId,
+          input: "one",
+          modelSelection: { instanceId: boundInstanceId, model: "anthropic/claude-x" },
+        },
+        turnDeps,
+      );
+      yield* sendOpenCode2Turn(
+        store,
+        events,
+        {
+          threadId,
+          input: "two",
+          modelSelection: {
+            instanceId: boundInstanceId,
+            model: "anthropic/claude-x",
+            options: [{ id: "variant", value: "high" }],
+          },
+        },
+        turnDeps,
+      );
+      assert.deepEqual(calls.switchedModel, [
+        { model: "anthropic/claude-x", variant: undefined },
+        { model: "anthropic/claude-x", variant: "high" },
+      ]);
+    }),
+  );
+
+  it.effect("skips the switch when the model and variant already applied", () =>
+    Effect.gen(function* () {
+      const { store, events, calls } = yield* setupWithStartModel("anthropic/claude-x");
+      const first = {
+        threadId,
+        input: "one",
+        modelSelection: { instanceId: boundInstanceId, model: "anthropic/claude-x" },
+      };
+      yield* sendOpenCode2Turn(store, events, first, turnDeps);
+      // A steering send reuses the active turn; with the same model it must
+      // not re-apply.
+      yield* sendOpenCode2Turn(store, events, { ...first, input: "two" }, turnDeps);
+      assert.deepEqual(calls.switchedModel, [{ model: "anthropic/claude-x", variant: undefined }]);
+    }),
+  );
+
+  it.effect("compaction applies a start-matching selection the session never received", () =>
+    Effect.gen(function* () {
+      const store = makeOpenCode2SessionStore();
+      const calls: TurnCalls = {
+        switchedModel: [],
+        switchedAgent: [],
+        prompts: [],
+        commands: [],
+        aborts: 0,
+      };
+      let compacts = 0;
+      let waits = 0;
+      const client = makeClient(calls, "ses_1");
+      const compactClient = {
+        ...client,
+        session: {
+          ...client.session,
+          wait: () => {
+            waits += 1;
+            return Promise.resolve(undefined);
+          },
+          compact: () => {
+            compacts += 1;
+            return Promise.resolve(undefined);
+          },
+        },
+      } as unknown as OpenCode2SessionClient;
+      yield* startOpenCode2Session(
+        store,
+        {
+          threadId,
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: boundInstanceId, model: "anthropic/claude-x" },
+        },
+        settings,
+        boundInstanceId,
+        "/work/dir",
+        {
+          createClient: () => Effect.succeed(compactClient),
+          sameDirectory: (left, right) => Effect.succeed(left === right),
+          buildPermissionRules: () => [],
+          nowIso: Effect.succeed("2026-09-29T00:00:00.000Z"),
+        },
+      );
+      yield* compactOpenCode2Thread(
+        store,
+        threadId,
+        { instanceId: boundInstanceId, model: "anthropic/claude-x" },
+        { boundInstanceId },
+      );
+      assert.deepEqual(calls.switchedModel, [{ model: "anthropic/claude-x", variant: undefined }]);
+      assert.equal(compacts, 1);
+      assert.equal(waits, 1);
+    }),
+  );
+});
+
 describe("OpenCode2TurnRuntime hardening (sweep A)", () => {
   it.effect("serializes overlapping sendTurn fibers through the prompt semaphore", () =>
     Effect.gen(function* () {

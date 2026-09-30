@@ -114,7 +114,6 @@ interface TextPartState {
   readonly ordinal: number;
   text: string;
   emitted: string;
-  completed: boolean;
 }
 
 interface ToolState {
@@ -282,10 +281,24 @@ const PERMISSION_OPTIONS: ReadonlyArray<{
   { decision: "decline", label: "Deny" },
 ];
 
-/** Suffix of `next` not yet emitted after `previous`; falls back to the full text on rewrites. */
-function suffixDelta(previous: string, next: string): string {
-  return next.startsWith(previous) ? next.slice(previous.length) : next;
+/** Suffix of `next` not yet emitted after `previous`; undefined on rewrites. */
+function pendingSuffix(previous: string, next: string): string | undefined {
+  // A final `*.ended` text that rewrites (rather than extends) the emitted
+  // prefix has no append-only representation — this protocol has no
+  // replacement operation — so the caller must suppress the delta (the full
+  // text still rides `item.completed`'s detail) instead of re-appending the
+  // whole string and duplicating content downstream.
+  return next.startsWith(previous) ? next.slice(previous.length) : undefined;
 }
+
+/**
+ * Cap on retained completed text-part keys. Terminal parts evict their
+ * assembly state (`text`/`emitted` strings) and keep only the key for
+ * duplicate suppression; the cap bounds that metadata on long-lived
+ * sessions. Evicting the oldest key means a very-late duplicate past the
+ * cap could re-emit — an acceptable bounded-dedup tradeoff.
+ */
+const MAX_COMPLETED_TEXT_PART_KEYS = 512;
 
 function threadUsageFromInfo(
   tokens: Record<string, unknown>,
@@ -352,10 +365,28 @@ export const makeEventTranslator = (
   // timestamp. Tests inject a fixed clock; production uses the live one.
   const nowIso = options?.nowIso ?? (() => DateTime.formatIso(Effect.runSync(DateTime.now)));
   const textParts = new Map<string, TextPartState>();
+  // Completed text-part keys retained for bounded duplicate suppression.
+  // Insertion-ordered: the oldest key evicts past the cap.
+  const completedTextPartKeys = new Set<string>();
   const tools = new Map<string, ToolState>();
   const permissions = new Map<string, string>();
   const forms = new Map<string, ReadonlyArray<FormFieldState>>();
   const retrySignatures = new Map<string, string>();
+
+  // Terminal text parts evict their `text`/`emitted` strings (unbounded
+  // on long-lived sessions) and keep only the key for bounded duplicate
+  // suppression (see MAX_COMPLETED_TEXT_PART_KEYS).
+  const markTextPartCompleted = (key: string): void => {
+    textParts.delete(key);
+    completedTextPartKeys.delete(key);
+    completedTextPartKeys.add(key);
+    if (completedTextPartKeys.size > MAX_COMPLETED_TEXT_PART_KEYS) {
+      const oldest = completedTextPartKeys.values().next().value;
+      if (oldest !== undefined) {
+        completedTextPartKeys.delete(oldest);
+      }
+    }
+  };
 
   const createdAtOf = (created: unknown): string => {
     if (Predicate.isNumber(created) && Number.isFinite(created)) {
@@ -450,15 +481,12 @@ export const makeEventTranslator = (
     const itemType = kind === "reasoning" ? "reasoning" : "assistant_message";
 
     if (phase === "started") {
-      // A duplicate started frame for an already-completed part is a new
-      // logical part reusing the key (retry/replay), not a second stream
-      // for the same item: reset assembly state so the new text does not
-      // inherit the old prefix (which would corrupt the suffix-delta math).
-      const existing = textParts.get(key);
-      const part: TextPartState =
-        existing !== undefined && existing.completed
-          ? { kind, messageID, ordinal, text: "", emitted: "", completed: false }
-          : { kind, messageID, ordinal, text: "", emitted: "", completed: false };
+      // A started frame always begins a fresh logical part for the key
+      // (retry/replay reuses keys): reset assembly state so the new text
+      // does not inherit an old prefix (which would corrupt suffix math),
+      // and clear any completed marker so the new stream can complete.
+      completedTextPartKeys.delete(key);
+      const part: TextPartState = { kind, messageID, ordinal, text: "", emitted: "" };
       textParts.set(key, part);
       return [
         {
@@ -474,6 +502,12 @@ export const makeEventTranslator = (
     }
 
     const part = textParts.get(key);
+    // Terminal state evicted to `completedTextPartKeys` (bounded dedup): a
+    // frame for a completed key is a duplicate terminal, never a new part
+    // (a new logical part always opens with a fresh started frame, which
+    // clears the marker above). Without this guard an evicted key would
+    // look like an orphan and re-emit.
+    if (part === undefined && completedTextPartKeys.has(key)) return [];
     // Orphan delta/ended (no started frame — e.g. a late subscriber joining
     // mid-stream): seed the part so the end boundary still completes the
     // item instead of dropping the only copy of the text.
@@ -487,7 +521,6 @@ export const makeEventTranslator = (
           ordinal,
           text: orphanDelta,
           emitted: "",
-          completed: false,
         };
         textParts.set(key, seeded);
         seeded.emitted = seeded.text;
@@ -504,15 +537,7 @@ export const makeEventTranslator = (
       }
       const orphanText = event.data["text"];
       if (!Predicate.isString(orphanText)) return [];
-      const seeded: TextPartState = {
-        kind,
-        messageID,
-        ordinal,
-        text: orphanText,
-        emitted: orphanText,
-        completed: true,
-      };
-      textParts.set(key, seeded);
+      markTextPartCompleted(key);
       return [
         {
           ...baseOf(context, createdAt, { itemId: key }, raw),
@@ -526,7 +551,6 @@ export const makeEventTranslator = (
         },
       ];
     }
-    if (part.completed) return [];
     if (phase === "delta") {
       const delta = event.data["delta"];
       if (!Predicate.isString(delta) || delta.length === 0) return [];
@@ -546,11 +570,13 @@ export const makeEventTranslator = (
 
     const text = event.data["text"];
     if (!Predicate.isString(text)) return [];
-    part.text = text;
-    part.completed = true;
     const out: Array<ProviderRuntimeEvent> = [];
-    const pending = suffixDelta(part.emitted, text);
-    if (pending.length > 0) {
+    // Rewrite (final text does not extend the emitted prefix): suppress the
+    // delta — there is no replacement operation, and appending the full text
+    // would duplicate content downstream. The final text still rides
+    // `item.completed`'s detail below.
+    const pending = pendingSuffix(part.emitted, text);
+    if (pending !== undefined && pending.length > 0) {
       part.emitted = text;
       out.push({
         ...baseOf(context, createdAt, { itemId: key }, raw),
@@ -571,6 +597,7 @@ export const makeEventTranslator = (
         ...(text.trim().length > 0 ? { detail: text } : {}),
       },
     });
+    markTextPartCompleted(key);
     return out;
   };
 

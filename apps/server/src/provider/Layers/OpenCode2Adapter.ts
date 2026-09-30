@@ -28,7 +28,9 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "node:crypto";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -49,6 +51,7 @@ import {
   buildOpenCode2PermissionRules,
   isSameOpenCode2Directory,
   openCode2RequestError,
+  openCode2SessionClosedError,
   openCode2SessionNotFoundError,
   type OpenCode2AdapterError,
 } from "../opencode2/OpenCode2Protocol.ts";
@@ -56,6 +59,7 @@ import {
   hasOpenCode2Session,
   listOpenCode2Sessions,
   makeOpenCode2SessionStore,
+  OPENCODE2_CONNECTION_TIMEOUT_MS,
   readOpenCode2Thread,
   rollbackOpenCode2Thread,
   startOpenCode2Session,
@@ -63,6 +67,7 @@ import {
   stopOpenCode2Context,
   type OpenCode2RawEvent,
   type OpenCode2SessionClient,
+  type OpenCode2SessionContext,
   type OpenCode2SessionStore,
 } from "../opencode2/OpenCode2SessionStore.ts";
 import {
@@ -126,7 +131,6 @@ const deferred = (operation: string, detail: string): ProviderAdapterError =>
   openCode2RequestError(operation, detail);
 
 let eventSequence = 0;
-let messageSequence = 0;
 let turnSequence = 0;
 
 const randomEventId = Effect.sync(() => `opencode2-event-${(eventSequence += 1)}`);
@@ -155,115 +159,173 @@ export const makeOpenCode2Adapter = Effect.fn("makeOpenCode2Adapter")(function* 
     const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
     const agent =
       input.modelSelection !== undefined ? getModelSelectionAgent(input.modelSelection) : undefined;
-    return yield* startOpenCode2Session(store, input, settings, boundInstanceId, serverConfig.cwd, {
-      createClient,
-      sameDirectory: (left, right) => Effect.succeed(isSameOpenCode2Directory(left, right)),
-      buildPermissionRules: buildOpenCode2PermissionRules,
-      // v1 injects instructions per prompt; v2 carries them per session, so
-      // re-assert on start (and before non-command turns) from the current
-      // selection instead of baking a stale copy.
-      instructions: buildRuntimeInstructions({
-        harness: "OpenCode2",
-        model: input.modelSelection?.model,
-      }),
-      ...(agent !== undefined ? { defaultAgent: agent } : {}),
-      // v1 attaches the `t3-code` remote MCP for AgentDevice threads on
-      // spawned servers; external servers bring their own MCP config.
-      ...(isAgentDeviceMcp(mcpSession)
-        ? {
-            mcpRemote: {
-              name: "t3-code",
-              url: mcpSession.endpoint,
-              headers: { Authorization: mcpSession.authorizationHeader },
-            },
-          }
-        : {}),
-      nowIso: nowIsoDefault,
-      onSessionStart: (context) =>
-        Effect.gen(function* () {
-          const pumpThreadId = context.session.threadId;
-          // `onRawEvent` is a sync callback inside the pump fiber; fork the
-          // best-effort native write with the surrounding services instead
-          // of `Effect.runFork` (separate-services invocation inside Effect).
-          const runFork = Effect.runForkWith(yield* Effect.context<never>());
-          // One AbortController per session scope (v1 parity:
-          // `OpenCodeAdapter.startEventPump`). The abort finalizer (added
-          // after the fork, so LIFO runs it first) aborts the pending
-          // subscribe read BEFORE the forked pump is interrupted —
-          // `iterator.return()` waits for a parked read, so interrupting
-          // first would hang scope close on a live stream.
-          // @effect-diagnostics-next-line abortControllerInEffect:off - aborted by a scope finalizer to cancel the event.subscribe read
-          const eventsAbortController = new AbortController();
-          const writeNativeEventBestEffort = (frame: OpenCode2RawEvent): Effect.Effect<void> =>
-            Effect.gen(function* () {
-              if (nativeEventLogger === undefined) {
-                return;
-              }
-              yield* nativeEventLogger.write(
-                {
-                  observedAt: yield* nowIsoDefault,
-                  event: {
-                    provider: OPENCODE2_DRIVER_KIND,
-                    threadId: pumpThreadId,
-                    providerThreadId: context.openCodeSessionId,
-                    type: frame.type,
-                    payload: frame,
-                  },
-                },
-                pumpThreadId,
-              );
-            }).pipe(Effect.ignore);
-          yield* startOpenCode2EventPump(
-            yield* Effect.promise(() =>
-              context.client.event.subscribe({ signal: eventsAbortController.signal }),
-            ),
-            {
-              threadId: pumpThreadId,
-              events: runtimeEvents,
-              store,
-              randomEventId,
-              nowIso: nowIsoDefault,
-              onRawEvent: (frame) => {
-                runFork(writeNativeEventBestEffort(frame));
-              },
-              // Reconnect owns the v1 backoff budgets (250ms base, 5s cap,
-              // 64-attempt cap, 10s connection gate) inside the pump; without
-              // it a transport drop ends the feed after the first failure.
-              // The closure reuses the session-scoped AbortSignal so a
-              // resubscribe still tears down with stop (the abort finalizer
-              // above rejects the parked read before the pump interrupt).
-              resubscribe: () =>
-                Effect.promise(() =>
-                  context.client.event.subscribe({ signal: eventsAbortController.signal }),
-                ),
-            },
-          ).pipe(Effect.forkIn(context.sessionScope));
-          // Added after the fork: scope finalizers run LIFO, so the pending
-          // read aborts before the pump fiber is interrupted (see above).
-          yield* Scope.addFinalizer(
-            context.sessionScope,
-            Effect.sync(() => eventsAbortController.abort()),
-          );
-          yield* Queue.offer(runtimeEvents, {
-            eventId: (yield* randomEventId) as ProviderRuntimeEvent["eventId"],
-            provider: OPENCODE2_DRIVER_KIND,
-            providerInstanceId: boundInstanceId,
-            threadId: context.session.threadId,
-            createdAt: yield* nowIsoDefault,
-            type: "session.started",
-            payload: { message: "OpenCode 2 session started" },
-          } as unknown as ProviderRuntimeEvent).pipe(Effect.asVoid);
-          yield* Queue.offer(runtimeEvents, {
-            eventId: (yield* randomEventId) as ProviderRuntimeEvent["eventId"],
-            provider: OPENCODE2_DRIVER_KIND,
-            providerInstanceId: boundInstanceId,
-            threadId: context.session.threadId,
-            createdAt: yield* nowIsoDefault,
-            type: "thread.started",
-            payload: { providerThreadId: context.openCodeSessionId },
-          } as unknown as ProviderRuntimeEvent).pipe(Effect.asVoid);
+    // Spawned servers are T3-owned: safe to attach the AgentDevice token.
+    // External servers bring their own MCP config, so never forward the
+    // token there (mirrors `OpenCode2Server.make`'s spawned/external split).
+    const localServer = settings.serverUrl.trim().length === 0;
+    const started = yield* startOpenCode2Session(
+      store,
+      input,
+      settings,
+      boundInstanceId,
+      serverConfig.cwd,
+      {
+        createClient,
+        sameDirectory: (left, right) => Effect.succeed(isSameOpenCode2Directory(left, right)),
+        buildPermissionRules: buildOpenCode2PermissionRules,
+        // v1 injects instructions per prompt; v2 carries them per session, so
+        // re-assert on start (and before non-command turns) from the current
+        // selection instead of baking a stale copy.
+        instructions: buildRuntimeInstructions({
+          harness: "OpenCode2",
+          model: input.modelSelection?.model,
         }),
-    });
+        ...(agent !== undefined ? { defaultAgent: agent } : {}),
+        // v1 attaches the `t3-code` remote MCP for AgentDevice threads on
+        // spawned servers; external servers bring their own MCP config.
+        ...(localServer && isAgentDeviceMcp(mcpSession)
+          ? {
+              mcpRemote: {
+                name: "t3-code",
+                url: mcpSession.endpoint,
+                headers: { Authorization: mcpSession.authorizationHeader },
+              },
+            }
+          : {}),
+        nowIso: nowIsoDefault,
+        onSessionStart: (
+          context: OpenCode2SessionContext,
+        ): Effect.Effect<void, OpenCode2AdapterError> =>
+          Effect.gen(function* () {
+            const pumpThreadId = context.session.threadId;
+            // `onRawEvent` is a sync callback inside the pump fiber; fork the
+            // best-effort native write with the surrounding services instead
+            // of `Effect.runFork` (separate-services invocation inside Effect).
+            const runFork = Effect.runForkWith(yield* Effect.context<never>());
+            // One AbortController per session scope (v1 parity:
+            // `OpenCodeAdapter.startEventPump`). The abort finalizer (added
+            // after the fork, so LIFO runs it first) aborts the pending
+            // subscribe read BEFORE the forked pump is interrupted —
+            // `iterator.return()` waits for a parked read, so interrupting
+            // first would hang scope close on a live stream.
+            // @effect-diagnostics-next-line abortControllerInEffect:off - aborted by a scope finalizer to cancel the event.subscribe read
+            const eventsAbortController = new AbortController();
+            const writeNativeEventBestEffort = (frame: OpenCode2RawEvent): Effect.Effect<void> =>
+              Effect.gen(function* () {
+                if (nativeEventLogger === undefined) {
+                  return;
+                }
+                yield* nativeEventLogger.write(
+                  {
+                    observedAt: yield* nowIsoDefault,
+                    event: {
+                      provider: OPENCODE2_DRIVER_KIND,
+                      threadId: pumpThreadId,
+                      providerThreadId: context.openCodeSessionId,
+                      type: frame.type,
+                      payload: frame,
+                    },
+                  },
+                  pumpThreadId,
+                );
+              }).pipe(Effect.ignore);
+            yield* startOpenCode2EventPump(
+              yield* Effect.promise(() =>
+                context.client.event.subscribe({ signal: eventsAbortController.signal }),
+              ),
+              {
+                threadId: pumpThreadId,
+                events: runtimeEvents,
+                store,
+                randomEventId,
+                nowIso: nowIsoDefault,
+                onRawEvent: (frame) => {
+                  runFork(writeNativeEventBestEffort(frame));
+                },
+                // Reconnect owns the v1 backoff budgets (250ms base, 5s cap,
+                // 64-attempt cap, 10s connection gate) inside the pump; without
+                // it a transport drop ends the feed after the first failure.
+                // The closure reuses the session-scoped AbortSignal so a
+                // resubscribe still tears down with stop (the abort finalizer
+                // above rejects the parked read before the pump interrupt).
+                resubscribe: () =>
+                  Effect.promise(() =>
+                    context.client.event.subscribe({ signal: eventsAbortController.signal }),
+                  ),
+              },
+            ).pipe(Effect.forkIn(context.sessionScope));
+            // Added after the fork: scope finalizers run LIFO, so the pending
+            // read aborts before the pump fiber is interrupted (see above).
+            yield* Scope.addFinalizer(
+              context.sessionScope,
+              Effect.sync(() => eventsAbortController.abort()),
+            );
+            yield* Queue.offer(runtimeEvents, {
+              eventId: (yield* randomEventId) as ProviderRuntimeEvent["eventId"],
+              provider: OPENCODE2_DRIVER_KIND,
+              providerInstanceId: boundInstanceId,
+              threadId: context.session.threadId,
+              createdAt: yield* nowIsoDefault,
+              type: "session.started",
+              payload: { message: "OpenCode 2 session started" },
+            } as unknown as ProviderRuntimeEvent).pipe(Effect.asVoid);
+            yield* Queue.offer(runtimeEvents, {
+              eventId: (yield* randomEventId) as ProviderRuntimeEvent["eventId"],
+              provider: OPENCODE2_DRIVER_KIND,
+              providerInstanceId: boundInstanceId,
+              threadId: context.session.threadId,
+              createdAt: yield* nowIsoDefault,
+              type: "thread.started",
+              payload: { providerThreadId: context.openCodeSessionId },
+            } as unknown as ProviderRuntimeEvent).pipe(Effect.asVoid);
+            return context.session;
+          }).pipe(
+            // The store publishes the context before `onSessionStart` runs, so
+            // a pump/subscribe failure would leak a dead context into the
+            // store with an unclosed scope. Tear down so a retry starts clean
+            // (the in-store remote session is left for the reaper; the losing
+            // path only aborts ids it created itself).
+            Effect.onError(() =>
+              Effect.gen(function* () {
+                const failed: OpenCode2SessionContext | undefined = store.get(input.threadId);
+                yield* stopOpenCode2Context(context);
+                if (failed === context) {
+                  store.deleteIfCurrent(context);
+                }
+              }).pipe(Effect.ignore),
+            ),
+          ),
+      },
+    );
+    // v1 holds the session at `connecting` until the first live pump frame
+    // resolves `firstConnection` (10s budget). The store reports `ready`
+    // eagerly, so gate here: a start that never connects fails typed
+    // instead of returning a dead-but-ready session.
+    const startedContext = store.get(input.threadId);
+    if (startedContext !== undefined && startedContext.session.threadId === started.threadId) {
+      yield* Deferred.await(startedContext.firstConnection).pipe(
+        Effect.timeoutOrElse({
+          duration: `${OPENCODE2_CONNECTION_TIMEOUT_MS} millis`,
+          orElse: () =>
+            Effect.gen(function* () {
+              yield* stopOpenCode2Context(startedContext);
+              store.deleteIfCurrent(startedContext);
+              return yield* openCode2RequestError(
+                "event.subscribe",
+                "OpenCode 2 event stream did not connect within 10 seconds.",
+              );
+            }),
+        }),
+      );
+      // A racing start may have replaced this context while the gate
+      // was pending: the winner owns the thread, so refuse to hand out
+      // the loser's session (the loser is already torn down above).
+      const current = store.get(input.threadId);
+      if (current === undefined || current !== startedContext) {
+        return yield* openCode2SessionClosedError(String(input.threadId));
+      }
+    }
+    return started;
   });
 
   const sendTurn = Effect.fn("sendTurn")(function* (input: ProviderSendTurnInput) {
@@ -279,7 +341,7 @@ export const makeOpenCode2Adapter = Effect.fn("makeOpenCode2Adapter")(function* 
         ? agentOption(getModelSelectionAgent(input.modelSelection))
         : {}),
       randomTurnId: Effect.sync(() => `${(turnSequence += 1)}`),
-      randomMessageId: Effect.sync(() => `msg_opencode2_${(messageSequence += 1)}`),
+      randomMessageId: Effect.sync(() => `msg_${NodeCrypto.randomUUID()}`),
       randomEventId,
       nowIso: nowIsoDefault,
     });

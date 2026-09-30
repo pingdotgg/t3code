@@ -625,6 +625,103 @@ describe("OpenCode2Events", () => {
     NodeAssert.equal(repeat.length, 0);
   });
 
+  it("suppresses rewrite deltas when the final text is not a prefix extension", () => {
+    const translator = makeTranslator();
+    const context = { threadId: THREAD, turnId: TURN };
+    translator.translate(
+      frame("session.text.started", { sessionID: "s", assistantMessageID: "msg_rw", ordinal: 0 }),
+      context,
+    );
+    translator.translate(
+      frame("session.text.delta", {
+        sessionID: "s",
+        assistantMessageID: "msg_rw",
+        ordinal: 0,
+        delta: "Hello worl",
+      }),
+      context,
+    );
+    // Final text rewrites (rather than extends) the emitted prefix: no
+    // content.delta (append-only ingestion would duplicate it), only the
+    // terminal event carrying the full text.
+    const ended = translator.translate(
+      frame("session.text.ended", {
+        sessionID: "s",
+        assistantMessageID: "msg_rw",
+        ordinal: 0,
+        text: "Goodbye world",
+      }),
+      context,
+    );
+    NodeAssert.equal(ended.length, 1);
+    NodeAssert.equal(ended[0]?.type, "item.completed");
+    NodeAssert.deepEqual(ended[0]?.payload, {
+      itemType: "assistant_message",
+      status: "completed",
+      title: "Assistant message",
+      detail: "Goodbye world",
+    });
+  });
+
+  it("evicts completed text parts while suppressing duplicate terminals", () => {
+    const translator = makeTranslator();
+    const context = { threadId: THREAD };
+    const started = (id: string) =>
+      frame("session.text.started", { sessionID: "s", assistantMessageID: id, ordinal: 0 });
+    translator.translate(started("msg_evict"), context);
+    translator.translate(
+      frame("session.text.delta", {
+        sessionID: "s",
+        assistantMessageID: "msg_evict",
+        ordinal: 0,
+        delta: "done",
+      }),
+      context,
+    );
+    translator.translate(
+      frame("session.text.ended", {
+        sessionID: "s",
+        assistantMessageID: "msg_evict",
+        ordinal: 0,
+        text: "done",
+      }),
+      context,
+    );
+    // Duplicate terminal after eviction: suppressed, never re-seeded as an orphan.
+    const repeat = translator.translate(
+      frame("session.text.ended", {
+        sessionID: "s",
+        assistantMessageID: "msg_evict",
+        ordinal: 0,
+        text: "done",
+      }),
+      context,
+    );
+    NodeAssert.equal(repeat.length, 0);
+    // A fresh started frame re-arms the key for a new logical part.
+    const restarted = translator.translate(started("msg_evict"), context);
+    NodeAssert.equal(restarted[0]?.type, "item.started");
+    translator.translate(
+      frame("session.text.delta", {
+        sessionID: "s",
+        assistantMessageID: "msg_evict",
+        ordinal: 0,
+        delta: "again",
+      }),
+      context,
+    );
+    const ended = translator.translate(
+      frame("session.text.ended", {
+        sessionID: "s",
+        assistantMessageID: "msg_evict",
+        ordinal: 0,
+        text: "again",
+      }),
+      context,
+    );
+    NodeAssert.equal(ended[0]?.type, "item.completed");
+  });
+
   it("resets text assembly when a completed key restarts", () => {
     const translator = makeTranslator();
     const context = { threadId: THREAD };
