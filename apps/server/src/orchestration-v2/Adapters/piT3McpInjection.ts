@@ -109,6 +109,8 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
   // matches a built-in option. Split known built-ins while leaving arbitrary
   // extension flags in their native form.
   const args = normalizePiBuiltInEqualsArguments(tokenizeCliArgs(launchArgs));
+  let hasProvider = false;
+  let hasModel = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined) continue;
@@ -130,6 +132,8 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
       if (value === undefined) {
         return { ok: false, message: `Pi launch argument '${arg}' requires a value.` };
       }
+      if (arg === "--provider") hasProvider = true;
+      if (arg === "--model") hasModel = true;
       index += 1;
       continue;
     }
@@ -155,6 +159,12 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
       ok: false,
       message: `Pi launch arguments cannot include positional prompt '${arg}'.`,
     };
+  }
+  // Pi 1.0 exits at startup on `--provider` without `--model`; older versions
+  // silently ran another provider's default model. Rejecting it here makes
+  // every spawn site report the reason instead of a bare exit code.
+  if (hasProvider && !hasModel) {
+    return { ok: false, message: "Pi launch argument '--provider' requires '--model'." };
   }
   return { ok: true, args };
 }

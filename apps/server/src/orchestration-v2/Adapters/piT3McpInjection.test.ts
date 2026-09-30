@@ -137,6 +137,17 @@ describe("pi T3 MCP injection", () => {
     assert.deepInclude(resolvePiLaunchArgs("--plan @instructions.md"), { ok: false });
   });
 
+  it("rejects --provider without --model, which Pi 1.0 refuses at startup", () => {
+    const rejection = {
+      ok: false,
+      message: "Pi launch argument '--provider' requires '--model'.",
+    };
+    assert.deepInclude(resolvePiLaunchArgs("--provider openrouter"), rejection);
+    assert.deepInclude(resolvePiLaunchArgs("--provider=openrouter --models gpt-6"), rejection);
+    assert.isTrue(resolvePiLaunchArgs("--provider openrouter --model=deepseek/v4").ok);
+    assert.isTrue(resolvePiLaunchArgs("--model deepseek/v4").ok);
+  });
+
   it.effect("materializes the MCP bridge with namespaced tool registration", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

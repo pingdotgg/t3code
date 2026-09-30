@@ -70,7 +70,7 @@
     {
       "driver": "pi",
       "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=0.80.5",
+      "recommendedRange": ">=1.0.0",
       "ranges": [
         { "range": ">=0.80.5", "status": "supported" },
         { "range": "<0.80.5", "status": "unsupported" }

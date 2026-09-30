@@ -108,7 +108,7 @@ interface FakePi {
 }
 
 /**
- * Pi 0.87.1's idle `get_state` reply, taken from the `simple` replay fixture
+ * Pi 1.0.0's idle `get_state` reply, taken from the `simple` replay fixture
  * (fixtures/simple/pi_transcript.ndjson) minus the model object. Pi omits
  * `model` when none is selected and `sessionName` until one is set.
  */

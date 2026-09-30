@@ -5,14 +5,16 @@ extensions, skills, context files, and native session history.
 
 ## Set Up Pi
 
-1. Install Pi 0.80.5 or newer on the machine running the T3 Code server.
+1. Install Pi on the machine running the T3 Code server. Pi 1.0 is recommended; 0.80.5 is the
+   oldest version T3 Code supports.
 2. Run Pi once in a terminal and finish the provider login or API-key setup you normally use.
 3. Open T3 Code Settings, enable Pi, and refresh the provider.
 
 If `pi` is not on the server's `PATH`, set Pi's binary path to the executable. Provider environment
 variables and launch arguments are also available for installations that need a custom agent
-directory, endpoint, or model configuration. T3 Code rejects launch arguments that change Pi's
-execution mode or select a session because T3 owns those parts of the process lifecycle.
+directory, endpoint, or model configuration. `--provider` must be paired with `--model`. T3 Code
+rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
+parts of the process lifecycle.
 
 ## What Carries Over
 
