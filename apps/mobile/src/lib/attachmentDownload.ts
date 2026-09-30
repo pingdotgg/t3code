@@ -226,3 +226,18 @@ export async function shareLocalAttachment(input: {
     cached.preview.dispose();
   }
 }
+
+/** Save generated text through the same cache and native handoff as downloaded files. */
+export async function shareTextFile(input: {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly text: string;
+}) {
+  const cached = await createCachedAttachmentFile(input);
+  try {
+    cached.file.write(input.text);
+    await cached.preview.share(new AbortController().signal);
+  } finally {
+    cached.preview.dispose();
+  }
+}

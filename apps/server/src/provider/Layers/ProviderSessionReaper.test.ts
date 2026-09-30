@@ -172,6 +172,7 @@ describe("ProviderSessionReaper", () => {
       steerTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
       respondToUserInput: () => unsupported(),
+      sessionCommand: () => unsupported(),
       stopSession,
       listSessions:
         input.listSessionsImplementation ?? (() => Effect.succeed(input.activeSessions ?? [])),

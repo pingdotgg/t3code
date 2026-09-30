@@ -20,6 +20,8 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSessionCommandInput,
+  ProviderSessionCommandResult,
   ProviderSessionForkInput,
   ProviderSessionStartInput,
   ProviderSteerTurnInput,
@@ -139,6 +141,15 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Run a client-requested session utility (copy/export/share) without
+   * creating an agent turn. Fails when the bound provider has no
+   * `sessionCommand` adapter support.
+   */
+  readonly sessionCommand: (
+    input: ProviderSessionCommandInput,
+  ) => Effect.Effect<ProviderSessionCommandResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

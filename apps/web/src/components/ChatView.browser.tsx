@@ -283,6 +283,9 @@ function createMockEnvironmentApi(input: {
       }) as EnvironmentApi["server"]["exportThreadMarkdown"],
       listProviderCommands: async () => ({ commands: [] }),
       prewarmProviderSession: async () => ({}),
+      sessionCommand: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["server"]["sessionCommand"],
     },
     orchestration: {
       dispatchCommand: input.dispatchCommand,

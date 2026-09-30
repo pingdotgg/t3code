@@ -13,7 +13,7 @@ import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
-import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon } from "../Icons";
+import { ACPRegistryIcon, Gemini, GithubCopilotIcon } from "../Icons";
 import {
   Dialog,
   DialogDescription,
@@ -78,12 +78,6 @@ const COMING_SOON_DRIVER_OPTIONS: readonly DriverOption[] = [
     value: ProviderDriverKind.make("acpRegistry"),
     label: "ACP Registry",
     icon: ACPRegistryIcon,
-    fields: [],
-  },
-  {
-    value: ProviderDriverKind.make("piAgent"),
-    label: "Pi Agent",
-    icon: PiAgentIcon,
     fields: [],
   },
 ];
