@@ -1,6 +1,6 @@
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type OrchestrationV2ContextTransfer } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
@@ -438,3 +438,60 @@ it("shows the parent's own visible status as parent and child activity change", 
   expect(visibleText()).toContain("Done");
   expect(visibleText()).not.toContain("Running");
 });
+
+it.each(["source", "target"])(
+  "shows transfer lifecycle states when viewing the %s thread",
+  async (currentThreadId) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const environmentId = EnvironmentId.make("test");
+    const threads = ["source", "target"].map((id) => ({
+      id,
+      title: `${id} conversation`,
+      status: "running",
+      activityRunStatus: "running",
+      lineage: { parentThreadId: null, relationshipToParent: null },
+    }));
+    state.shells = threads.map((source) => ({ environmentId, source }));
+    const labels: Record<OrchestrationV2ContextTransfer["status"], string> = {
+      pending: "Queued",
+      resolved_native: "Resolved (native)",
+      resolved_portable: "Resolved (portable)",
+      failed: "Failed",
+      consumed: "Consumed",
+      superseded: "Superseded",
+    };
+    const panel = (
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={ThreadId.make(currentThreadId)}
+      />
+    );
+    for (const [status, label] of Object.entries(labels)) {
+      state.projection = {
+        thread: {
+          ...threads.find((thread) => thread.id === currentThreadId),
+          activeProviderThreadId: null,
+        },
+        runs: [],
+        providerThreads: [],
+        providerSessions: [],
+        subagents: [],
+        contextTransfers: [{ sourceThreadId: "source", targetThreadId: "target", status }],
+      };
+      await act(async () => {
+        if (status === "pending") renderer = create(panel);
+        else renderer.update(cloneElement(panel));
+      });
+      const visibleText = renderer.root
+        .findAll((node) => typeof node.type === "string")
+        .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+        .join(" ");
+      expect(visibleText).toContain(
+        currentThreadId === "source" ? "target conversation" : "source conversation",
+      );
+      expect(visibleText).toContain(label);
+      expect(visibleText).not.toContain("Unknown");
+      expect(visibleText).not.toContain("Running");
+    }
+  },
+);

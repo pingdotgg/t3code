@@ -27,6 +27,14 @@ export function threadRelationshipStatusLabel(status: string | null): string {
       return "Stopped";
     case "rolled_back":
       return "Reverted";
+    case "resolved_native":
+      return "Resolved (native)";
+    case "resolved_portable":
+      return "Resolved (portable)";
+    case "consumed":
+      return "Consumed";
+    case "superseded":
+      return "Superseded";
     case "idle":
       return "Idle";
     default:
