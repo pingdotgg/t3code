@@ -2059,7 +2059,7 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        {isElectron && (
+        {isDesktopRuntime && (
           <SettingsRow
             title="Sidebar translucency"
             description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available, with CSS blur as a fallback."
