@@ -464,6 +464,7 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+    pauseForThread: () => Effect.die("ScheduledTaskService.pauseForThread is unused in this test"),
   }),
 );
 
@@ -600,6 +601,21 @@ describe("orchestrator MCP toolkit", () => {
           // In-memory ScheduledTaskService stub so the schedule/list/update/
           // delete tools can be exercised without SQL/launch wiring.
           const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+          const runNowInputs = yield* Ref.make<
+            ReadonlyArray<
+              Parameters<ScheduledTaskService.ScheduledTaskService["Service"]["runNow"]>[0]
+            >
+          >([]);
+          const upsertInputs = yield* Ref.make<
+            ReadonlyArray<
+              Parameters<ScheduledTaskService.ScheduledTaskService["Service"]["upsert"]>[0]
+            >
+          >([]);
+          const updateInputs = yield* Ref.make<
+            ReadonlyArray<
+              Parameters<ScheduledTaskService.ScheduledTaskService["Service"]["update"]>[0]
+            >
+          >([]);
           const scheduledTaskStubLayer = Layer.succeed(
             ScheduledTaskService.ScheduledTaskService,
             ScheduledTaskService.ScheduledTaskService.of({
@@ -607,6 +623,7 @@ describe("orchestrator MCP toolkit", () => {
               subscribeList: () => Stream.empty,
               upsert: (input) =>
                 Effect.gen(function* () {
+                  yield* Ref.update(upsertInputs, (all) => [...all, input]);
                   const task = scheduledTaskFromUpsert(input);
                   yield* Ref.update(scheduledStore, (all) => [
                     ...all.filter((candidate) => candidate.id !== task.id),
@@ -615,27 +632,30 @@ describe("orchestrator MCP toolkit", () => {
                   return { task };
                 }),
               update: (input) =>
-                Ref.modify(scheduledStore, (all) => {
-                  const existing = all.find(
-                    (candidate) =>
-                      candidate.id === input.id && candidate.projectId === input.projectId,
-                  );
-                  if (existing === undefined) return [Option.none(), all];
-                  const task: ScheduledTask = {
-                    ...existing,
-                    ...(input.title === undefined ? {} : { title: input.title }),
-                    ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
-                    ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-                    ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
-                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input.workspaceStrategy === undefined
-                      ? {}
-                      : { workspaceStrategy: input.workspaceStrategy }),
-                  };
-                  return [
-                    Option.some({ task }),
-                    all.map((candidate) => (candidate.id === task.id ? task : candidate)),
-                  ];
+                Effect.gen(function* () {
+                  yield* Ref.update(updateInputs, (all) => [...all, input]);
+                  return yield* Ref.modify(scheduledStore, (all) => {
+                    const existing = all.find(
+                      (candidate) =>
+                        candidate.id === input.id && candidate.projectId === input.projectId,
+                    );
+                    if (existing === undefined) return [Option.none(), all];
+                    const task: ScheduledTask = {
+                      ...existing,
+                      ...(input.title === undefined ? {} : { title: input.title }),
+                      ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+                      ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+                      ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
+                      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                      ...(input.workspaceStrategy === undefined
+                        ? {}
+                        : { workspaceStrategy: input.workspaceStrategy }),
+                    };
+                    return [
+                      Option.some({ task }),
+                      all.map((candidate) => (candidate.id === task.id ? task : candidate)),
+                    ];
+                  });
                 }),
               setEnabled: () =>
                 Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
@@ -652,7 +672,17 @@ describe("orchestrator MCP toolkit", () => {
                     all.filter((candidate) => candidate.id !== existing.id),
                   ];
                 }),
-              runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+              runNow: (input) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(runNowInputs, (all) => [...all, input]);
+                  const all = yield* Ref.get(scheduledStore);
+                  const task = all.find((candidate) => candidate.id === input.id);
+                  if (task === undefined)
+                    return yield* Effect.die("scheduled task missing from stub store");
+                  return { task };
+                }),
+              pauseForThread: () =>
+                Effect.die("ScheduledTaskService.pauseForThread is unused in this test"),
             }),
           );
           const testLayer = Layer.merge(
@@ -1425,6 +1455,14 @@ describe("orchestrator MCP toolkit", () => {
               // Inherits the parent thread's model selection.
               modelSelection: codexSelection,
             });
+            // The caller's modes are pinned into the write transaction: an
+            // unbound task copies them verbatim, so this is the only check
+            // that catches the caller switching modes mid-write.
+            expect((yield* Ref.get(upsertInputs))[0]?.expectedCaller).toMatchObject({
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            });
 
             // list_scheduled_tasks returns the task scoped to this project.
             const scheduledListCall = yield* invoke("list_scheduled_tasks", {});
@@ -1449,6 +1487,45 @@ describe("orchestrator MCP toolkit", () => {
               scheduledTaskId,
               title: "Renamed wake-up",
               enabled: false,
+            });
+
+            // run_scheduled_task_now pins the authorized project and the
+            // caller's live run and modes into the service's claim transaction
+            // so a project move, settled run, or caller mode change committed
+            // after this handler's checks fails the dispatch.
+            const runNowCall = yield* invoke("run_scheduled_task_now", {
+              taskId: scheduledTaskId,
+            });
+            expect(runNowCall.isError).toBe(false);
+            expect((yield* Ref.get(runNowInputs))[0]).toMatchObject({
+              id: scheduledTaskId,
+              projectId,
+              expectedActiveRun: {
+                id: parentRun.id,
+                threadId: parentThreadId,
+                providerInstanceId: codexInstanceId,
+              },
+              expectedCaller: {
+                threadId: parentThreadId,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+              },
+            });
+            // A mode-covering update (re-enabling can arm work) pins the
+            // caller's authorized modes into the same transaction so a
+            // caller-side mode change racing the write fails instead of
+            // outliving its authorization. De-escalating edits like the
+            // enabled:false above carry no pin by design.
+            const reenableCall = yield* invoke("update_scheduled_task", {
+              scheduledTaskId,
+              enabled: true,
+            });
+            expect(reenableCall.isError).toBe(false);
+            const lastUpdate = (yield* Ref.get(updateInputs)).at(-1);
+            expect(lastUpdate?.expectedCaller).toMatchObject({
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+              interactionMode: "default",
             });
 
             // delete_scheduled_task removes it entirely.

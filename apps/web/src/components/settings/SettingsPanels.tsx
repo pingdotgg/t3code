@@ -3483,6 +3483,11 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      {archivedGroups.length > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Unarchiving leaves any scheduled tasks paused. Re-enable them in Scheduled tasks.
+        </p>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
