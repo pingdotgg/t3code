@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -71,6 +72,10 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
       Effect.provide(NodeServices.layer),
     );
     NodeAssert.equal(limits.unavailable, undefined);
+    NodeAssert.equal(
+      limits.credentialFingerprint,
+      NodeCrypto.createHash("sha256").update("opencode-go\0instance-key").digest("hex"),
+    );
     NodeAssert.deepEqual(
       limits.windows.map(({ kind, usedPercent, resetsAt: reset }) => ({
         kind,
@@ -101,7 +106,7 @@ it("reads an OpenRouter key's credit limit and resets daily limits at midnight U
       checkedAt,
     ),
     {
-      id: "openrouter_key",
+      id: "openrouter_key_daily",
       kind: "other",
       label: "OpenRouter · Daily",
       usedPercent: 25,
@@ -133,6 +138,8 @@ it.effect(
         [500, 200],
         [200, 500],
         [200, 401],
+        [401, 200],
+        [403, 200],
       ] as const) {
         const limits = yield* readOpenCodeUsageLimits({
           enabled: true,
@@ -188,10 +195,14 @@ it.effect(
           ["go_weekly", 2],
           ["go_monthly", 3],
         ];
-        // A rejected OpenRouter key has nothing to meter; Go keeps publishing.
+        // Either rejected key leaves the other account's limits available.
         NodeAssert.deepEqual(
           limits.windows.map((window) => [window.id, window.usedPercent]),
-          openRouterStatus === 401 ? go : [...go, ["openrouter_key", 60]],
+          openRouterStatus === 401
+            ? go
+            : goStatus === 401 || goStatus === 403
+              ? [["openrouter_key", 60]]
+              : [...go, ["openrouter_key", 60]],
         );
       }
     }),
@@ -225,7 +236,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
   Effect.gen(function* () {
     for (const [status, reason] of [
       [403, "unsupported"],
-      [401, "probeFailed"],
+      [401, "unsupported"],
       [200, "probeFailed"],
     ] as const) {
       const limits = yield* readOpenCodeUsageLimits({
@@ -250,6 +261,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
         Effect.provide(NodeServices.layer),
       );
       NodeAssert.equal(limits.unavailable?.reason, reason);
+      NodeAssert.equal(limits.credentialFingerprint, undefined);
       NodeAssert.deepEqual(limits.windows, []);
     }
   }),

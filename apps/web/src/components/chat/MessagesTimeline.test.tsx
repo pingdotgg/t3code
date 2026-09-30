@@ -1,4 +1,11 @@
-import { CheckpointRef, EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   act,
   createRef,
@@ -398,6 +405,53 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("leads an unanswered question row with the question text", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "question-entry",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "question-work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "User input requested",
+                  tone: "tool",
+                  questionAnswer: {
+                    requestId: ApprovalRequestId.make("question-request"),
+                    answers: {},
+                    questionTextById: { scope: "Which repository?" },
+                    attachmentsByQuestionId: {},
+                  },
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      const questionToggle = renderer!.root.find(
+        (node) =>
+          node.props["aria-label"] === "Which repository?" && node.props["aria-expanded"] === false,
+      );
+      const markup = JSON.stringify(renderer!.toJSON());
+      // Heading + accessible label.
+      expect(markup.match(/Which repository\?/g)).toHaveLength(2);
+      await act(() => questionToggle.props.onClick());
+      // Expanded history adds a third occurrence alongside heading and label.
+      expect(JSON.stringify(renderer!.toJSON()).match(/Which repository\?/g)).toHaveLength(3);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it.each([
     { toolLifecycleStatus: "inProgress", isAtEnd: true },
     { toolLifecycleStatus: "inProgress", isAtEnd: false },
@@ -739,6 +793,7 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapHitStripWidth,
       resolveTimelineMinimapIndexFromPointer,
       resolveTimelineMinimapInteractiveWidth,
+      resolveTimelineMinimapNavigationInteractive,
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
@@ -793,22 +848,39 @@ describe("MessagesTimeline", () => {
         pointerY: 999,
       }),
     ).toBe(100);
-    expect(resolveTimelineMinimapHasPersistentGutter(832)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(863)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
+    // Comfortable width: the column is capped at 768px.
+    expect(resolveTimelineMinimapHasPersistentGutter(832, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(863, 768)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(864, 768)).toBe(true);
+    // Wider Chat width settings consume the gutter the minimap relies on.
+    expect(resolveTimelineMinimapHasPersistentGutter(1400, 1152)).toBe(true);
+    expect(resolveTimelineMinimapHasPersistentGutter(1200, 1152)).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter(2560, 2560)).toBe(false);
 
     // No usable gutter (zoomed in / narrow pane): the strip must go inert
     // instead of overlaying the centered content column.
-    expect(resolveTimelineMinimapHitStripWidth(768)).toBe(0);
-    expect(resolveTimelineMinimapHitStripWidth(792)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(768, 768)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(792, 768)).toBe(0);
     // Partial gutter: strip shrinks to what fits between the viewport edge
     // and the content column.
-    expect(resolveTimelineMinimapHitStripWidth(820)).toBe(14);
+    expect(resolveTimelineMinimapHitStripWidth(820, 768)).toBe(14);
     // Full gutter: unchanged 40px-wide strip.
-    expect(resolveTimelineMinimapHitStripWidth(872)).toBe(40);
-    expect(resolveTimelineMinimapHitStripWidth(1400)).toBe(40);
-    expect(resolveTimelineMinimapHitStripWidth(0)).toBe(0);
-    expect(resolveTimelineMinimapHitStripWidth(Number.NaN)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(872, 768)).toBe(40);
+    expect(resolveTimelineMinimapHitStripWidth(1400, 768)).toBe(40);
+    // Full Chat width: the column spans the viewport, so the strip is inert
+    // however wide the window gets.
+    expect(resolveTimelineMinimapHitStripWidth(2560, 2560)).toBe(0);
+    // Wide Chat width on a window just wider than the column: partial strip.
+    expect(resolveTimelineMinimapHitStripWidth(1204, 1152)).toBe(14);
+    expect(resolveTimelineMinimapHitStripWidth(0, 0)).toBe(0);
+    expect(resolveTimelineMinimapHitStripWidth(Number.NaN, 768)).toBe(0);
+
+    // Prev/next buttons reach 14px past the strip's left edge; a narrower
+    // strip means they would sit on the content column.
+    expect(resolveTimelineMinimapNavigationInteractive(40)).toBe(true);
+    expect(resolveTimelineMinimapNavigationInteractive(14)).toBe(true);
+    expect(resolveTimelineMinimapNavigationInteractive(8)).toBe(false);
+    expect(resolveTimelineMinimapNavigationInteractive(0)).toBe(false);
 
     // The collapsed target stays narrow, but an open preview keeps its full
     // 20rem width plus the 2rem offset from the minimap rail interactive.

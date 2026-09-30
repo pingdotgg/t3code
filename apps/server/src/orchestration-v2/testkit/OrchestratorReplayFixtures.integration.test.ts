@@ -17,6 +17,7 @@ import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
 import {
+  assertProviderNativeSubagentRootTurns,
   materializeFixtureInput,
   type OrchestratorFixtureInput,
   type ProviderOrchestratorReplayVariant,
@@ -117,6 +118,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {},
   ).pipe(provideDeterministicTestRuntime);
   input.driver.assertOutput(result, transcript);
+  assertProviderNativeSubagentRootTurns(result);
   const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;
   if (expectedAbsentWorkspacePaths !== undefined) {
     yield* Effect.gen(function* () {

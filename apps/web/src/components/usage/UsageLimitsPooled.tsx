@@ -1,8 +1,11 @@
 import {
+  CHATGPT_USAGE_URL,
   collectLimitAccounts,
+  collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
-  formatDuration,
+  cursorUsageWindowDetails,
+  displayLimitWindows,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
@@ -10,9 +13,10 @@ import {
   type LimitPoolWindow,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { AlertTriangleIcon, TicketIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
+import { Fragment, type ReactNode, useState } from "react";
 
+import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -20,6 +24,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
+import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -224,6 +229,7 @@ function PoolSegment({
   color,
   now,
   index,
+  showAccountName,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
@@ -232,6 +238,7 @@ function PoolSegment({
   readonly now: number;
   /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
   readonly index: number;
+  readonly showAccountName: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
@@ -274,7 +281,12 @@ function PoolSegment({
           {index}
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
-          <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+          {showAccountName ? (
+            <AccountName
+              account={account}
+              className="min-w-0 truncate font-medium text-foreground"
+            />
+          ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
           {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
           <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
@@ -463,6 +475,7 @@ function PoolBar({
               color={color}
               now={now}
               index={position + 1}
+              showAccountName={pool.columns.length > 1}
             />
           ) : null,
         )}
@@ -479,17 +492,21 @@ function PoolWindowCard({
   pool,
   color,
   now,
+  label,
+  description,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly label?: string | undefined;
+  readonly description?: string | undefined;
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground">{pool.label}</span>
+        <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
         <span className="flex items-baseline gap-2">
           <span className="text-3xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
@@ -497,14 +514,16 @@ function PoolWindowCard({
           <span className="text-sm text-muted-foreground">left</span>
           {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         </span>
-        {nextRefill ? (
-          <span className="text-xs text-muted-foreground tabular-nums">
-            <span className="font-medium text-foreground">↻ +{nextRefill.restoresPercent}%</span>{" "}
-            {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
+        {nextRefill && pool.columns.length > 1 ? (
+          <span className="text-xs font-medium text-foreground tabular-nums">
+            ↻ +{nextRefill.restoresPercent}%
           </span>
         ) : null}
       </div>
       <PoolBar pool={pool} color={color} now={now} />
+      {description ? (
+        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
+      ) : null}
     </div>
   );
 }
@@ -512,6 +531,7 @@ function PoolWindowCard({
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
+  const windows = displayLimitWindows(pool);
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -524,9 +544,19 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         />
         {label}
       </h2>
-      {pool.windows.map((window) => (
-        <PoolWindowCard key={`${window.kind}:${window.id}`} pool={window} color={color} now={now} />
-      ))}
+      {windows.map((window) => {
+        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+        return (
+          <PoolWindowCard
+            key={`${window.kind}:${window.id}`}
+            pool={window}
+            color={color}
+            now={now}
+            label={details?.label}
+            description={details?.description}
+          />
+        );
+      })}
     </section>
   );
 }
@@ -539,21 +569,63 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
 export function UsageLimitsPooled({
   presentations,
   now,
+  cursorPrompt,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
+  readonly cursorPrompt?: ReactNode;
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
+  const externalLinks = collectExternalUsageLinks(presentations);
+  const cursorPromptAt =
+    Math.max(
+      pools.findIndex((pool) => pool.driver === "codex"),
+      pools.findIndex((pool) => pool.driver === "claudeAgent"),
+    ) + 1;
   return (
     <div className="flex flex-col gap-8">
-      {pools.length === 0 && notices.length === 0 ? (
+      {pools.length === 0 && notices.length === 0 && !cursorPrompt && externalLinks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {pools.map((pool) => (
-        <PoolSection key={pool.driver} pool={pool} now={now} />
+      {pools.map((pool, index) => (
+        <Fragment key={pool.driver}>
+          {index === cursorPromptAt ? cursorPrompt : null}
+          <PoolSection pool={pool} now={now} />
+        </Fragment>
+      ))}
+      {cursorPromptAt === pools.length ? cursorPrompt : null}
+      {externalLinks.map((link) => (
+        <section
+          key={link.url}
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            {link.url === CHATGPT_USAGE_URL ? (
+              <OpenAI className="size-5 shrink-0" aria-hidden="true" />
+            ) : null}
+            <div className="min-w-0 space-y-1">
+              <h2 className="text-sm font-medium">{link.label}</h2>
+              {link.url === CHATGPT_USAGE_URL ? (
+                <p className="text-xs text-muted-foreground">
+                  View usage in ChatGPT with your connected account.
+                </p>
+              ) : link.message ? (
+                <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
+              ) : null}
+            </div>
+          </div>
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            onClick={() => void ensureLocalApi().shell.openExternal(link.url)}
+          >
+            Manage usage
+            <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
+          </Button>
+        </section>
       ))}
       <LimitNotices notices={notices} />
     </div>

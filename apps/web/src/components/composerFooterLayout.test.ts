@@ -6,6 +6,7 @@ import {
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
+  overlayComposerIsResting,
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
@@ -74,6 +75,24 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
         hasWideActions: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("overlayComposerIsResting", () => {
+  it("drops a resting reservation once a status bar replaces the composer", () => {
+    // The composer rested on a scroll, then the thread swapped it for the
+    // subagent bar. The bar's 56px overlay must not keep the resting estimate.
+    const isResting = overlayComposerIsResting({
+      composerMounted: false,
+      composerReportedResting: true,
+    });
+    expect(isResting).toBe(false);
+    expect(resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 56, isResting })).toBe(
+      56,
+    );
+    expect(overlayComposerIsResting({ composerMounted: true, composerReportedResting: true })).toBe(
+      true,
+    );
   });
 });
 

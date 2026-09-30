@@ -2,10 +2,17 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   EnvironmentId,
+  EventId,
+  MessageId,
+  NodeId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +20,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -27,6 +35,10 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import {
+  layerMemory as projectionStoreMemoryLayer,
+  ProjectionStoreV2,
+} from "../orchestration-v2/ProjectionStore.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import {
@@ -135,14 +147,23 @@ const makeTestRelay = Effect.fnUntraced(function* (
   options: {
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
+    /** Starts unlinked with publishing off when false. */
+    readonly linked?: boolean;
+    /** Serves shells from this source instead of `currentShell`. */
+    readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
+    readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
 ) {
-  const values = new Map<string, Uint8Array>([
-    [PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true")],
-    [RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")],
-    [RELAY_ISSUER_SECRET, new TextEncoder().encode("https://relay.example.test")],
-    [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-1")],
-  ]);
+  const values = new Map<string, Uint8Array>(
+    options.linked === false
+      ? []
+      : [
+          [PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true")],
+          [RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")],
+          [RELAY_ISSUER_SECRET, new TextEncoder().encode("https://relay.example.test")],
+          [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-1")],
+        ],
+  );
   const secretReads: string[] = [];
   const secrets = ServerSecretStore.of({
     get: (name) =>
@@ -162,10 +183,18 @@ const makeTestRelay = Effect.fnUntraced(function* (
   });
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
+  // Catch-up publishes read the whole shell once each.
+  const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.of({
     getThreadShell: (threadId) =>
-      Effect.sync(() => shellReads.push(threadId)).pipe(Effect.andThen(Ref.get(currentShell))),
-    getShellSnapshot: unused,
+      Effect.sync(() => shellReads.push(threadId)).pipe(
+        Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
+      ),
+    getShellSnapshot: () =>
+      Effect.sync(() => {
+        catchUp.shellSnapshotReads += 1;
+        return { schemaVersion: 2, snapshotSequence: 1, threads: [], archivedThreads: [] };
+      }),
     ensureLegacyTranscript: unused,
     dispatch: unused,
     getTimelinePage: () => Effect.die("Unused timeline read"),
@@ -184,7 +213,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadEventSequence: unused,
     streamStoredEvents: Stream.empty,
     streamStoredEventsFrom: () => Stream.empty,
-    streamDomainEvents: Stream.empty,
+    streamDomainEvents: options.domainEvents ?? Stream.empty,
   });
   const publications: Array<{
     readonly url: string;
@@ -227,7 +256,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
       update: unused,
       delete: unused,
       getByWorkspaceRoot: unused,
-      snapshot: unused(),
+      snapshot: Effect.succeed({ projects: [] } as never),
+      getShell: unused,
+      listShells: unused,
       getById: () =>
         Effect.succeed(
           Option.some({
@@ -245,7 +276,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications };
+  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -263,6 +294,9 @@ describe("AgentAwarenessRelay", () => {
       "run.created",
       "run.updated",
       "runtime-request.updated",
+      // Pending background work changes can release a held completion.
+      "subagent.updated",
+      "provider-thread.updated",
       "thread.metadata-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
@@ -650,5 +684,234 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 1);
     }),
+  );
+  it.effect("publishes a held completion when its background item ends, not on tool output", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      // The relay pulls the next event only after it has handled the previous one.
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, shellReads, publications } = yield* makeTestRelay({
+        readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+        yield* store.apply(event);
+        yield* Queue.offer(events, event);
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+      });
+
+      const now = yield* DateTime.now;
+      const runId = RunId.make("run:held-item");
+      const run = {
+        id: runId,
+        threadId: THREAD_ID,
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:held-item"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const item = (
+        id: string,
+        fields: Pick<OrchestrationV2TurnItem, "status"> &
+          (
+            | { readonly type: "dynamic_tool"; readonly toolName: string; readonly input: unknown }
+            | {
+                readonly type: "assistant_message";
+                readonly messageId: MessageId;
+                readonly text: string;
+                readonly streaming: boolean;
+              }
+          ),
+      ): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(id),
+        threadId: THREAD_ID,
+        runId,
+        nodeId: NodeId.make("node:held-item"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        ...fields,
+      });
+      const itemEvent = (id: string, payload: OrchestrationV2TurnItem) =>
+        ({
+          id: EventId.make(id),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          runId,
+          occurredAt: now,
+          payload,
+        }) satisfies OrchestrationV2DomainEvent;
+      const background = { type: "dynamic_tool" as const, toolName: "watch", input: {} };
+
+      yield* deliver({
+        id: EventId.make("event:held-item:thread"),
+        type: "thread.created",
+        threadId: THREAD_ID,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Thread",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* deliver({
+        id: EventId.make("event:held-item:run"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: run,
+      });
+      yield* deliver(
+        itemEvent("event:held-item:tool", item("item:tool", { ...background, status: "running" })),
+      );
+      yield* deliver({
+        id: EventId.make("event:held-item:run-completed"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      });
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["running"],
+      );
+
+      // Streaming output never reaches the shell read.
+      const readsBeforeOutput = shellReads.length;
+      yield* deliver(
+        itemEvent(
+          "event:held-item:reply",
+          item("item:reply", {
+            type: "assistant_message",
+            messageId: MessageId.make("message:held-item:reply"),
+            text: "Still watching",
+            streaming: true,
+            status: "running",
+          }),
+        ),
+      );
+      yield* deliver(
+        itemEvent("event:held-item:tick", item("item:tool", { ...background, status: "running" })),
+      );
+      assert.equal(shellReads.length, readsBeforeOutput);
+
+      yield* deliver(
+        itemEvent("event:held-item:end", item("item:tool", { ...background, status: "completed" })),
+      );
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["running", "completed"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(projectionStoreMemoryLayer)),
+  );
+});
+
+describe.sequential("startup catch-up", () => {
+  const link = (secrets: ServerSecretStore["Service"]) =>
+    Effect.all(
+      [
+        secrets.set(RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")),
+        secrets.set(RELAY_ISSUER_SECRET, new TextEncoder().encode("https://relay.example.test")),
+        secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, new TextEncoder().encode("credential-1")),
+      ],
+      { discard: true },
+    );
+  const enablePublishing = (secrets: ServerSecretStore["Service"]) =>
+    secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+  const linkChecks = (secretReads: ReadonlyArray<string>) =>
+    secretReads.filter((name) => name === RELAY_URL_SECRET).length;
+
+  it.effect("checks an unlinked environment once a minute and still catches up once linked", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, secretReads, catchUp } = yield* makeTestRelay({ linked: false });
+      yield* enablePublishing(secrets);
+      yield* relay.start();
+
+      // Get past the backoff ramp, then count checks in a steady window.
+      yield* TestClock.adjust("10 minutes");
+      const checksBeforeWindow = linkChecks(secretReads);
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(linkChecks(secretReads) - checksBeforeWindow, 10);
+      assert.equal(catchUp.shellSnapshotReads, 0);
+
+      yield* link(secrets);
+      yield* TestClock.adjust("1 minute");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("publishes at once when this process links while the check is backed off", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, catchUp } = yield* makeTestRelay({ linked: false });
+      yield* enablePublishing(secrets);
+      yield* relay.start();
+
+      // Backed off to 60 s: the next check is still seconds away.
+      yield* TestClock.adjust("10 minutes");
+      yield* link(secrets);
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 0);
+
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("catches up within 5 s when another process enables publishing on a link", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, catchUp } = yield* makeTestRelay({ linked: false });
+      yield* link(secrets);
+      yield* relay.start();
+
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(catchUp.shellSnapshotReads, 0);
+
+      // `t3 connect publish` writes the opt-in without waking this process.
+      yield* enablePublishing(secrets);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(catchUp.shellSnapshotReads, 1);
+    }).pipe(Effect.scoped),
   );
 });

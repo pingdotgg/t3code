@@ -32,8 +32,10 @@ import {
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
+  workEntryReadOutput,
   workEntryIsVisibleInGroup,
 } from "./MessagesTimeline.logic";
+import type { WorkLogEntry } from "../../session-logic";
 
 describe("expanded tool group scrolling", () => {
   const entries = [{ id: "first" }, { id: "second" }];
@@ -166,6 +168,87 @@ describe("work entry labels", () => {
     expect(liveWorkEntryLabel(browserEntry, undefined, false)).toBe(
       "Clicked in the preview browser",
     );
+  });
+
+  it("labels file reads with the path and never the file body", () => {
+    const readEntry = {
+      ...entry,
+      itemType: "dynamic_tool" as const,
+      toolTitle: "Read",
+      label: "Read",
+      detail: "---\nname: env\n---\n cons t x = 1",
+      toolData: { input: { file_path: "src/env.ts" } },
+      structuredPayload: {
+        type: "dynamic_tool",
+        toolName: "Read",
+        input: { file_path: "src/env.ts" },
+      } as NonNullable<WorkLogEntry["structuredPayload"]>,
+    };
+    expect(workEntryDisplayLabel(readEntry, undefined)).toBe("Read src/env.ts");
+    expect(workEntryReadOutput(readEntry, undefined)).toBe("src/env.ts");
+    expect(workEntryReadOutput(readEntry, "/workspace/ohseearr")).toBe(
+      "/workspace/ohseearr/src/env.ts",
+    );
+    expect(
+      workEntryReadOutput(
+        {
+          structuredPayload: {
+            type: "dynamic_tool",
+            toolName: "Read",
+            input: {},
+          } as NonNullable<WorkLogEntry["structuredPayload"]>,
+          toolData: { locations: [{ path: "src/from-location.ts" }] },
+        },
+        "/workspace/ohseearr",
+      ),
+    ).toBe("/workspace/ohseearr/src/from-location.ts");
+    expect(workEntryReadOutput({ detail: "---", toolData: {} }, undefined)).toBeNull();
+  });
+
+  it("labels Claude Grep from structured input instead of a generic tool heading", () => {
+    expect(
+      workEntryDisplayLabel(
+        {
+          ...entry,
+          itemType: "dynamic_tool",
+          toolTitle: "Grep",
+          label: "Grep",
+          toolData: { input: { pattern: "TODO", path: "apps/web" } },
+          structuredPayload: {
+            type: "dynamic_tool",
+            toolName: "Grep",
+            input: { pattern: "TODO", path: "apps/web" },
+          } as NonNullable<WorkLogEntry["structuredPayload"]>,
+        },
+        undefined,
+      ),
+    ).toBe("Searched TODO in web");
+  });
+
+  it("labels file searches with the adapter title and its search target", () => {
+    expect(
+      workEntryDisplayLabel(
+        {
+          ...entry,
+          itemType: "file_search",
+          label: "Searched TODO in web",
+          toolTitle: "Searched TODO in web",
+          detail: "TODO",
+          toolData: { type: "file_search", pattern: "TODO" },
+        },
+        undefined,
+      ),
+    ).toBe("Searched TODO in web");
+  });
+
+  it("keeps a multi-line approval prompt as its label", () => {
+    const prompt = "Allow this command?\nrm -rf dist";
+    expect(
+      workEntryDisplayLabel(
+        { ...entry, itemType: "approval_request", requestKind: "command", detail: prompt },
+        undefined,
+      ),
+    ).toBe(prompt);
   });
 
   it("keeps custom titles and output for unrecognized tools", () => {
@@ -1904,6 +1987,258 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("folds each run of a provider-native subagent thread like a normal turn", () => {
+    // A Claude subagent's child thread, as projected: no runs, one runless
+    // root turn, and a user prompt for the launch and for a SendMessage resume.
+    const threadId = ThreadId.make("subagent-child");
+    const rootNodeId = NodeId.make("task-root");
+    const at = (second: number) =>
+      DateTime.makeUnsafe(new Date(Date.UTC(2026, 8, 25, 22, 51, second)).toISOString());
+    const base = (id: string, ordinal: number, second: number, endSecond = second) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId: null,
+      nodeId: rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: at(second),
+      completedAt: at(endSecond),
+      updatedAt: at(endSecond),
+    });
+    const prompt = (id: string, ordinal: number, second: number) => ({
+      ...base(id, ordinal, second),
+      type: "user_message" as const,
+      messageId: MessageId.make(id),
+      text: `Prompt ${id}`,
+      attachments: [],
+      inputIntent: "turn_start" as const,
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+    });
+    const answer = (id: string, ordinal: number, second: number) => ({
+      ...base(id, ordinal, second),
+      type: "assistant_message" as const,
+      messageId: MessageId.make(id),
+      text: `Answer ${id}`,
+      streaming: false,
+    });
+    type ResumeState = "running" | "completed" | "failed";
+    const items = (resume: ResumeState) =>
+      [
+        prompt("launch", 1, 0),
+        { ...base("launch-ls", 2, 4), type: "command_execution" as const, input: "ls src" },
+        {
+          ...base("launch-thinking", 3, 8),
+          type: "reasoning" as const,
+          title: "Thinking",
+          text: "Not there.",
+          streaming: false,
+        },
+        answer("launch-answer", 4, 8),
+        prompt("resume", 5, 72),
+        {
+          ...base("resume-ls", 6, 77),
+          type: "command_execution" as const,
+          input: "ls src",
+          status: resume === "running" ? ("running" as const) : ("completed" as const),
+          completedAt: resume === "running" ? null : at(77),
+        },
+        ...(resume === "failed"
+          ? [
+              {
+                ...base("resume-error", 7, 80),
+                type: "error" as const,
+                status: "failed" as const,
+                failure: {
+                  class: "provider_error" as const,
+                  message: "Subagent failed",
+                  code: null,
+                  retryable: null,
+                },
+              },
+            ]
+          : []),
+        ...(resume === "running" ? [] : [answer("resume-answer", 8, 80)]),
+      ].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }));
+    const rows = (input: {
+      resume: ResumeState;
+      working: boolean;
+      expandedRunIds?: ReadonlySet<RunId>;
+    }) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items(input.resume),
+          optimisticMessages: [],
+        }),
+        latestRun: null,
+        isWorking: input.working,
+        runlessWorkActive: input.working,
+        ...(input.expandedRunIds === undefined ? {} : { expandedRunIds: input.expandedRunIds }),
+        activeTurnStartedAt: input.working ? DateTime.formatIso(at(72)) : null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
+      timeline.map((row) =>
+        row.kind === "turn-fold"
+          ? `fold:${row.label}`
+          : row.kind === "message"
+            ? `${row.message.role}:${row.message.id}`
+            : row.kind,
+      );
+
+    // Settled: each run folds its work, keeping its prompt and final answer.
+    const settled = rows({ resume: "completed", working: false });
+    expect(shape(settled)).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "assistant:launch-answer",
+      "user:resume",
+      "fold:Worked for 8.0s",
+      "assistant:resume-answer",
+    ]);
+
+    // Each fold opens on its own.
+    const launchFold = settled.find((row) => row.kind === "turn-fold");
+    if (launchFold?.kind !== "turn-fold") throw new Error("Expected the launch fold");
+    const expanded = rows({
+      resume: "completed",
+      working: false,
+      expandedRunIds: new Set([launchFold.runId]),
+    });
+    expect(shape(expanded)).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "work-toggle",
+      "assistant:launch-answer",
+      "user:resume",
+      "fold:Worked for 8.0s",
+      "assistant:resume-answer",
+    ]);
+
+    // While the resume runs, only the settled launch folds.
+    expect(shape(rows({ resume: "running", working: true }))).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "assistant:launch-answer",
+      "user:resume",
+      "working",
+      "work-live",
+    ]);
+
+    // A failed run stays open, as on a normal thread.
+    expect(shape(rows({ resume: "failed", working: false }))).toEqual([
+      "user:launch",
+      "fold:Worked for 8.0s",
+      "assistant:launch-answer",
+      "user:resume",
+      "work",
+      "work",
+      "assistant:resume-answer",
+    ]);
+  });
+
+  it("shows a provider-native subagent's runless tools as live work while it works", () => {
+    const entries = (commandStatus: "inProgress" | "completed") => [
+      {
+        id: "task-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "task" as never,
+          role: "user" as const,
+          text: "Audit the adapters",
+          runId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "command-entry",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        entry: {
+          id: "command",
+          createdAt: "2026-01-01T00:00:05Z",
+          runId: null,
+          label: "Running git",
+          command: "git diff --stat",
+          requestKind: "command" as const,
+          tone: "tool" as const,
+          toolLifecycleStatus: commandStatus,
+        },
+      },
+    ];
+    const rows = (input: { commandStatus: "inProgress" | "completed"; working: boolean }) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: entries(input.commandStatus),
+        latestRun: null,
+        isWorking: input.working,
+        runlessWorkActive: input.working,
+        activeTurnStartedAt: input.working ? "2026-01-01T00:00:00Z" : null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+
+    const running = rows({ commandStatus: "inProgress", working: true });
+    expect(running.map((row) => row.kind)).toEqual(["message", "working", "work-live"]);
+    expect(running.find((row) => row.kind === "work-live")).toMatchObject({
+      entry: { id: "command" },
+      active: true,
+    });
+
+    // Once the subagent settles, the same entries fold as finished history.
+    const settled = rows({ commandStatus: "completed", working: false });
+    expect(settled.map((row) => row.kind)).toEqual(["message", "turn-fold"]);
+  });
+
+  it("does not treat runless entries as live work on a thread with runs", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "runless-command-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "runless-command",
+            createdAt: "2026-01-01T00:00:05Z",
+            runId: null,
+            label: "Running git",
+            command: "git status",
+            requestKind: "command",
+            tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
+          },
+        },
+      ],
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.some((row) => row.kind === "work-live")).toBe(false);
+    expect(rows.at(-1)?.kind).toBe("thinking");
+  });
+
   it("renders a single completed tool call directly", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -3388,6 +3723,47 @@ describe("v2 run and attempt history", () => {
 
     expect(rows.map((row) => row.id)).toEqual(["work-entry", "interrupt-result"]);
     expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+
+    // The command the interrupt cut short stays visible with its outcome.
+    const stoppedRows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "stopped-command-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "stopped-command",
+            createdAt: "2026-01-01T00:00:01Z",
+            runId,
+            label: "Ran command",
+            tone: "tool",
+            itemType: "command_execution",
+            command: "/bin/bash -lc 'sleep 90 && echo slept'",
+            toolLifecycleStatus: "stopped",
+          },
+        },
+        {
+          id: "interrupt-result",
+          kind: "event",
+          createdAt: "2026-01-01T00:00:03Z",
+          projectedItem: interruptEvent("run_interrupt_result") as never,
+        },
+      ],
+      latestRun: {
+        runId,
+        status: "interrupted",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:03Z",
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(stoppedRows.map((row) => row.id)).toEqual(["stopped-command-entry", "interrupt-result"]);
+    expect(stoppedRows[0]).toMatchObject({
+      kind: "work",
+      displayLabel: "sleep 90 && echo slept",
+    });
   });
 });
 

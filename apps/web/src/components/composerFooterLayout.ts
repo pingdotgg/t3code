@@ -94,6 +94,18 @@ export function resolveComposerTimelineInset(input: {
     : input.overlayHeight;
 }
 
+/**
+ * Whether the overlay's composer is resting. Only a mounted composer can be:
+ * a status bar in its place (a native subagent thread) never is, even if the
+ * composer it replaced last reported resting.
+ */
+export function overlayComposerIsResting(input: {
+  composerMounted: boolean;
+  composerReportedResting: boolean;
+}): boolean {
+  return input.composerMounted && input.composerReportedResting;
+}
+
 export function shouldAnimateComposerRestingTransition(input: {
   hasCompletedInitialLayout: boolean;
   stateChanged: boolean;

@@ -267,7 +267,8 @@ export interface ThreadFeedProps {
   readonly setupWorkingStartedAt?: string | null;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
-  readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
+  /** Null where a pending message cannot be edited (no composer to edit it in). */
+  readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly threadTitle: string;
@@ -277,6 +278,7 @@ export interface ThreadFeedProps {
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
+  readonly runlessWorkActive?: boolean;
   readonly listRef: RefObject<LegendListRef | null>;
   readonly freeze: SharedValue<boolean>;
   readonly anchorMessageId: MessageId | null;
@@ -1770,7 +1772,8 @@ function renderFeedEntry(
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
             </Text>
-            {entry.pendingMessage &&
+            {props.onEditPendingMessage !== null &&
+            entry.pendingMessage &&
             !entry.acknowledged &&
             !entry.pendingMessage.creation &&
             entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
@@ -1780,7 +1783,9 @@ function renderFeedEntry(
                 hitSlop={8}
                 className="size-7 items-center justify-center"
                 onPress={() => {
-                  if (entry.pendingMessage) props.onEditPendingMessage(entry.pendingMessage);
+                  if (entry.pendingMessage && props.onEditPendingMessage) {
+                    props.onEditPendingMessage(entry.pendingMessage);
+                  }
                 }}
               >
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
@@ -2606,6 +2611,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               .map(([groupId]) => groupId),
           ),
           props.activeWorkStartedAt,
+          props.runlessWorkActive ?? false,
         ),
         props.feed,
         props.queuedMessages,
@@ -2615,6 +2621,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       expandedTurnIds,
       expandedWorkGroups,
       props.activeWorkStartedAt,
+      props.runlessWorkActive,
       props.feed,
       props.latestRun,
     ],
@@ -2626,7 +2633,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // content-inset override. Seed the fresh instance synchronously with the
   // current overlay height before the scroll integration's next reaction;
   // on Android the declarative contentInset floor covers this same window.
-  const listMountKey = `${feedThreadKey}:${presentedFeed.length === 0 ? "empty" : "filled"}`;
+  // The thinking row a running thread shows while its messages load is not
+  // content: the list must still remount, and so open at the end, when they
+  // arrive.
+  const listMountKey = `${feedThreadKey}:${presentedFeed.some((entry) => entry.type !== "thinking") ? "filled" : "empty"}`;
   useLayoutEffect(() => {
     const bottom = props.contentInsetEndAdjustment.value;
     if (bottom > 0) {

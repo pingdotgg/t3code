@@ -26,7 +26,7 @@ import { layer as eventSinkLayer } from "../orchestration-v2/EventSink.ts";
 import {
   LegacyV1ThreadImporter,
   layer as importerLayer,
-} from "../orchestration-v2/LegacyV1ThreadImporter.ts";
+} from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 it.effect(
   "snapshots V1, imports transcripts lazily, and preserves both databases across switches",

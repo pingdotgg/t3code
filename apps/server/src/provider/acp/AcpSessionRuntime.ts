@@ -98,6 +98,8 @@ export interface AcpSessionRuntimeOptions {
   readonly interruptPromptOnCancel?: boolean;
   /** Optional provider metadata forwarded on `session/cancel`. */
   readonly cancelMeta?: EffectAcpSchema.CancelNotification["_meta"];
+  /** Optional provider metadata forwarded on `initialize`. */
+  readonly initializeMeta?: EffectAcpSchema.InitializeRequest["_meta"];
   readonly ownDetachedProcessGroup?: boolean;
   readonly ownDescendantProcessGroups?: boolean;
   readonly processGroupPlatform?: NodeJS.Platform;
@@ -2156,6 +2158,7 @@ export const make = (
         protocolVersion: 2,
         clientCapabilities: initializeClientCapabilities,
         clientInfo: options.clientInfo,
+        ...(options.initializeMeta === undefined ? {} : { _meta: options.initializeMeta }),
       } satisfies EffectAcpSchema.InitializeRequest;
 
       const initializeResult = yield* runLoggedRequest(
@@ -2739,18 +2742,36 @@ export const make = (
           ? promptDispatchSemaphore.withPermit(cancel)
           : cancel,
       ...(options.ownDetachedProcessGroup === true ? { terminateProcessGroup } : {}),
+      // A session's mode is its `category: "mode"` config option. ACP v1 agents
+      // that only advertise `modes` (gemini-cli) take `session/set_mode`
+      // instead, which ACP v2 removed.
       setMode: (modeId) =>
-        Ref.get(modeStateRef).pipe(
-          Effect.flatMap((modeState) => {
-            if (modeState?.currentModeId === modeId) {
-              return Effect.succeed({} satisfies EffectAcpSchema.SetSessionModeResponse);
-            }
-            return setConfigOption("mode", modeId).pipe(
-              Effect.tap(() => updateCurrentModeId(modeId)),
-              Effect.as({} satisfies EffectAcpSchema.SetSessionModeResponse),
-            );
-          }),
-        ),
+        Effect.gen(function* () {
+          const modeState = yield* Ref.get(modeStateRef);
+          if (modeState?.currentModeId === modeId) {
+            return {} satisfies EffectAcpSchema.SetSessionModeResponse;
+          }
+          const modeConfigOption = (yield* Ref.get(configOptionsRef))?.find(
+            (option) => option.category === "mode" && option.type === "select",
+          );
+          if (modeConfigOption === undefined && modeState !== undefined) {
+            const started = yield* getStartedState;
+            const payload = { sessionId: started.sessionId, modeId };
+            yield* runLoggedRequest("session/set_mode", payload, acp.agent.setSessionMode(payload));
+            yield* updateCurrentModeId(modeId);
+            return {} satisfies EffectAcpSchema.SetSessionModeResponse;
+          }
+          const response = yield* setConfigOption(modeConfigOption?.id ?? "mode", modeId);
+          // The agent answers with its config options, so the mode it reports
+          // is the mode it runs in, even when it kept another one.
+          const reported = parseSessionModeState({ configOptions: response.configOptions });
+          if (reported === undefined) {
+            yield* updateCurrentModeId(modeId);
+          } else {
+            yield* updateCurrentModeId(reported.currentModeId);
+          }
+          return {} satisfies EffectAcpSchema.SetSessionModeResponse;
+        }),
       setSessionModel: (modelId, meta) =>
         getStartedState.pipe(
           Effect.flatMap((started) => {

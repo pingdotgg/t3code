@@ -381,6 +381,11 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           mcpServers: [],
         });
         assert.equal(session.sessionId, "mock-session-1");
+        // ACP v2 removed session/set_mode; modes are config options there.
+        const setMode = yield* acp.agent
+          .setSessionMode({ sessionId: session.sessionId, modeId: "code" })
+          .pipe(Effect.flip);
+        assert.equal(setMode._tag === "AcpRequestError" ? setMode.code : undefined, -32601);
 
         const prompt = yield* acp.agent.prompt({
           sessionId: session.sessionId,
@@ -924,6 +929,31 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         }),
       );
       yield* Fiber.join(selectModel);
+      const selectMode = yield* acp.agent
+        .setSessionMode({ sessionId: session.sessionId, modeId: "yolo" })
+        .pipe(Effect.forkScoped);
+      const modeSelection = yield* Queue.take(output).pipe(
+        Effect.flatMap(
+          Schema.decodeEffect(
+            Schema.fromJsonString(
+              jsonRpcRequest(
+                "session/set_mode",
+                Schema.Struct({ sessionId: Schema.String, modeId: Schema.String }),
+              ),
+            ),
+          ),
+        ),
+      );
+      assert.equal(modeSelection.params.modeId, "yolo");
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: modeSelection.id,
+          result: {},
+        }),
+      );
+      yield* Fiber.join(selectMode);
 
       yield* acp.handleElicitation(() =>
         Effect.succeed({ action: "accept", content: { branch: "main" } }),

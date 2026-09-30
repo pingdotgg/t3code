@@ -164,10 +164,11 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // The server suppresses the roster while an interruptible activity run exists,
 // so a remaining roster is stronger than checkpoint-oriented waiting.
 // latestRun keeps the latest run's status for history presentation.
+// A failed latest run outranks the roster, so the failure stays visible.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
   if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
-  const hasPendingBackgroundTasks = (thread.pendingBackgroundTasks?.length ?? 0) > 0;
-  const status = hasPendingBackgroundTasks ? "idle" : (thread.activityRunStatus ?? thread.status);
+  const parkAtIdle = (thread.pendingBackgroundTasks?.length ?? 0) > 0 && thread.status !== "failed";
+  const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
     status,
     activeRunId: thread.activeRunId,

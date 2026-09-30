@@ -1,4 +1,5 @@
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -31,13 +32,18 @@ const UsageResponse = Schema.Struct({
 });
 const OpenRouterKeyResponse = Schema.Struct({
   data: Schema.Struct({
-    limit: Schema.optional(Schema.NullOr(Schema.Finite)),
+    limit: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
     limit_remaining: Schema.optional(Schema.NullOr(Schema.Finite)),
     limit_reset: Schema.optional(Schema.NullOr(Schema.String)),
     usage: Schema.optional(Schema.NullOr(Schema.Finite)),
     usage_daily: Schema.optional(Schema.NullOr(Schema.Finite)),
     usage_weekly: Schema.optional(Schema.NullOr(Schema.Finite)),
     usage_monthly: Schema.optional(Schema.NullOr(Schema.Finite)),
+    include_byok_in_limit: Schema.optional(Schema.Boolean),
+    byok_usage: Schema.optional(Schema.NullOr(Schema.Finite)),
+    byok_usage_daily: Schema.optional(Schema.NullOr(Schema.Finite)),
+    byok_usage_weekly: Schema.optional(Schema.NullOr(Schema.Finite)),
+    byok_usage_monthly: Schema.optional(Schema.NullOr(Schema.Finite)),
   }),
 });
 
@@ -54,8 +60,8 @@ const readGoUsage = (apiKey: string) =>
         HttpClientRequest.bearerToken(apiKey),
       ),
     );
-    // A valid Zen key can exist without a Go subscription.
-    if (response.status === 403) return "unsupported" as const;
+    // A rejected key or a Zen key without Go must not block other accounts.
+    if (response.status === 401 || response.status === 403) return "unsupported" as const;
     const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(UsageResponse)),
     );
@@ -98,7 +104,7 @@ export function openRouterKeyToWindow(
 ): ServerProviderUsageWindow | undefined {
   const { data } = response;
   const { limit, limit_remaining: remaining, limit_reset: reset } = data;
-  if (limit === undefined || limit === null || limit <= 0) return undefined;
+  if (limit === null) return undefined;
   // `usage` is lifetime spend; a resetting limit counts only its period's spend.
   const spent =
     reset === "daily"
@@ -108,13 +114,25 @@ export function openRouterKeyToWindow(
         : reset === "monthly"
           ? data.usage_monthly
           : data.usage;
-  const left = remaining ?? (spent === undefined || spent === null ? undefined : limit - spent);
+  const byokSpent = !data.include_byok_in_limit
+    ? 0
+    : reset === "daily"
+      ? data.byok_usage_daily
+      : reset === "weekly"
+        ? data.byok_usage_weekly
+        : reset === "monthly"
+          ? data.byok_usage_monthly
+          : data.byok_usage;
+  const left =
+    remaining ??
+    (limit === 0 ? 0 : spent != null && byokSpent != null ? limit - spent - byokSpent : undefined);
   if (left === undefined) return undefined;
-  const usedPercent = clampPercent(((limit - left) / limit) * 100);
+  // Zero is an exhausted budget, not the unlimited (null) sentinel.
+  const usedPercent = limit === 0 ? 100 : clampPercent(((limit - left) / limit) * 100);
   if (reset === "daily") {
     const now = Date.parse(checkedAt);
     return {
-      id: "openrouter_key",
+      id: "openrouter_key_daily",
       kind: "other",
       label: "OpenRouter · Daily",
       usedPercent,
@@ -150,7 +168,8 @@ const readOpenRouterUsage = (apiKey: string, checkedAt: string) =>
       Effect.flatMap(HttpClientResponse.schemaBodyJson(OpenRouterKeyResponse)),
     );
     const window = openRouterKeyToWindow(body, checkedAt);
-    return window ? [window] : ("unsupported" as const);
+    // An incomplete read must retain the last good bars, not clear them.
+    return window ? [window] : body.data.limit === null ? "unsupported" : "failed";
   });
 
 /**
@@ -210,11 +229,40 @@ export const readOpenCodeUsageLimits = Effect.fn("readOpenCodeUsageLimits")(func
       ],
       { concurrency: "unbounded" },
     );
-    const windows = accounts.flatMap((account) => (typeof account === "string" ? [] : account));
+    // Stable unkeyed hashes allow cross-environment deduplication. These
+    // randomly generated API keys are not guessable account passwords.
+    const fingerprints = [
+      goKey
+        ? NodeCrypto.createHash("sha256").update(`opencode-go\0${goKey}`).digest("hex")
+        : undefined,
+      openRouterKey
+        ? NodeCrypto.createHash("sha256").update(`openrouter\0${openRouterKey}`).digest("hex")
+        : undefined,
+    ];
+    const windows = accounts.flatMap((account, index) =>
+      typeof account === "string"
+        ? []
+        : account.map((window) => ({
+            ...window,
+            credentialFingerprint: fingerprints[index]!,
+          })),
+    );
     // A successful probe replaces every published window, so one account's
     // failed read must not publish the others alone and erase its bars.
     if (accounts.includes("failed")) return failed;
-    return windows.length > 0 ? makeUsageLimits({ checkedAt, windows }) : unsupported;
+    if (windows.length === 0) return unsupported;
+    // Keep the existing Go-only identity. When both accounts report windows,
+    // include both keys so distinct OpenRouter budgets cannot overwrite each other.
+    const credentials = [
+      typeof accounts[0] !== "string" ? `opencode-go\0${goKey}` : undefined,
+      typeof accounts[1] !== "string" ? `openrouter\0${openRouterKey}` : undefined,
+    ].filter((credential) => credential !== undefined);
+    return {
+      ...makeUsageLimits({ checkedAt, windows }),
+      credentialFingerprint: NodeCrypto.createHash("sha256")
+        .update(credentials.join("\0"))
+        .digest("hex"),
+    };
   }).pipe(
     // Covers the credential read too: a stuck mount must not hang the status probe.
     Effect.timeout("10 seconds"),

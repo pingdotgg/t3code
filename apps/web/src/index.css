@@ -163,12 +163,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @theme inline {
   /* Two steps below Tailwind's text-xs (12px) for dense UI: metadata rows,
      badges, counters, keyboard hints and diagnostics tables. 2xs is 11px,
-     3xs is 10px and the floor of the scale. Registered with tailwind-merge in
+     3xs is 10px. Provider icon overlays use 4xs (8px) and 5xs (7px) to fit
+     their smaller badges. Registered with tailwind-merge in
      lib/utils.ts so cn() treats them as font sizes, not colours. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: calc(1 / 0.6875);
   --text-3xs: 0.625rem;
   --text-3xs--line-height: calc(0.875 / 0.625);
+  --text-4xs: 0.5rem;
+  --text-4xs--line-height: 1;
+  --text-5xs: 0.4375rem;
+  --text-5xs--line-height: 1;
   /* Motion. drawer is the decelerating curve for surfaces that slide or pop in
      (composer context, pills). */
   --inset-shadow-control-highlight: 0 1px rgb(255 255 255 / 16%);
@@ -2014,6 +2019,16 @@ code {
   --diff-deletion-foreground: light-dark(var(--color-red-600), var(--color-red-400));
 }
 
+/* Chat width setting. Comfortable keeps the default --chat-content-max-width,
+   which sizes the timeline lane, the composer, and ChatCanvas's width probe. */
+:root[data-chat-width="wide"] {
+  --chat-content-max-width: 72rem;
+}
+
+:root[data-chat-width="full"] {
+  --chat-content-max-width: 100%;
+}
+
 :root[data-diff-color-scheme="blue-orange"] {
   --diff-addition: light-dark(var(--color-blue-600), var(--color-blue-400));
   --diff-deletion: light-dark(var(--color-orange-600), var(--color-orange-400));
@@ -2282,9 +2297,4 @@ code {
       );
     }
   }
-}
-
-/* Instance labels must fit inside the sidebar’s 12px provider badge. */
-.provider-stack-badge-text {
-  font-size: 7px;
 }

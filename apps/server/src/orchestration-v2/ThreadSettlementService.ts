@@ -22,7 +22,8 @@ import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { ProjectionStoreV2, type ProjectionSettlementCandidate } from "./ProjectionStore.ts";
 
@@ -251,12 +252,13 @@ export function autoSettlementSettingsKey(
 export const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const projections = yield* ProjectionStoreV2;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  const terminals = yield* TerminalManager.TerminalManager;
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -266,19 +268,17 @@ export const make = Effect.gen(function* () {
     if (!autoSettlementConfigured(settings)) {
       return;
     }
-    const threads = yield* projections.getSettlementCandidates();
-    const projectShells = yield* snapshots.getProjectShellsWithoutEnrichment();
+    // A sweep for one thread reads only that thread's candidate row.
+    const threads = yield* projections.getSettlementCandidates(threadId);
+    if (threads.length === 0) return;
+    const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     // A merge event re-sweeps every candidate, not just the threads linked to
     // the merged pull request: most threads carry no link and settle from
     // their branch lookup, which would otherwise wait for the next minute's
     // sweep on a possibly stale cached answer.
-    const candidates = threads.filter(
-      (thread) =>
-        (threadId === undefined || thread.id === threadId) &&
-        isAutoSettlementCandidate(thread, nowMs),
-    );
+    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
@@ -506,8 +506,33 @@ export const make = Effect.gen(function* () {
     runSweep(null, threadId),
   );
 
+  // Settling closes the thread's shells that sit at an idle prompt, so they stop
+  // holding the worktree. A terminal running a command (a dev server, an
+  // editor) stays for the user to close.
+  const closeIdleTerminals = Effect.fn("ThreadSettlementServiceV2.closeIdleTerminals")(
+    function* (threadId: ThreadId) {
+      // A thread re-engaged before this event ran keeps its shells.
+      const thread = yield* projections.getThread(threadId);
+      if (thread.settledOverride !== "settled") return;
+      yield* terminals.closeIdle({ threadId });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("closing idle terminals after settlement failed", {
+                threadId,
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      ),
+  );
+
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
+      case "thread.settled":
+        return closeIdleTerminals(event.threadId);
       case "thread.pull-request-synced":
       case "provider-session.detached":
         return worker.enqueue(event.threadId);

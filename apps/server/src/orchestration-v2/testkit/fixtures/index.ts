@@ -12,6 +12,8 @@ import { assertClaudeBackgroundWakeBeforeQueuedPromptOutput } from "./claude_bac
 import { claudeBackgroundWakeBeforeQueuedPromptNoEchoInput } from "./claude_background_wake_before_queued_prompt_no_echo/input.ts";
 import { assertClaudeBackgroundWakeBeforeQueuedPromptNoEchoOutput } from "./claude_background_wake_before_queued_prompt_no_echo/output.ts";
 import { assertClaudeBackgroundTaskInterruptOutput } from "./claude_background_task_interrupt/output.ts";
+import { claudeBackgroundMonitorWakeInput } from "./claude_background_monitor_wake/input.ts";
+import { assertClaudeBackgroundMonitorWakeOutput } from "./claude_background_monitor_wake/output.ts";
 import { claudeBackgroundTaskWakeInput } from "./claude_background_task_wake/input.ts";
 import { assertClaudeBackgroundTaskWakeOutput } from "./claude_background_task_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
@@ -20,6 +22,14 @@ import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
+import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
+import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
+import { assertGrokBackgroundBashOutput } from "./grok_background_bash/output.ts";
+import { grokBackgroundSubagentInput } from "./grok_background_subagent/input.ts";
+import { assertGrokBackgroundSubagentOutput } from "./grok_background_subagent/output.ts";
+import { grokMonitorInput } from "./grok_monitor/input.ts";
+import { assertGrokMonitorOutput } from "./grok_monitor/output.ts";
 import { grokSubagentLineageInput } from "./grok_subagent_lineage/input.ts";
 import { assertGrokSubagentLineageOutput } from "./grok_subagent_lineage/output.ts";
 import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
@@ -38,6 +48,8 @@ import { assertPiMultiTurnOutput } from "./multi_turn/pi_output.ts";
 import { multiTurnInput } from "./multi_turn/input.ts";
 import { openCodeChildApprovalInput } from "./opencode_child_approval/input.ts";
 import { assertOpenCodeChildApprovalOutput } from "./opencode_child_approval/output.ts";
+import { openCodeRunningChildApprovalInput } from "./opencode_running_child_approval/input.ts";
+import { assertOpenCodeRunningChildApprovalOutput } from "./opencode_running_child_approval/output.ts";
 import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
 import {
@@ -67,11 +79,24 @@ import { assertSubagentContinueOutput } from "./subagent_continue/codex_output.t
 import { subagentContinueInput } from "./subagent_continue/input.ts";
 import { assertSubagentV2Output } from "./subagent_v2/codex_output.ts";
 import { subagentV2Input, subagentV2NestedInput } from "./subagent_v2/input.ts";
+import { assertSubagentV2ApprovalOutput } from "./subagent_v2_approval/codex_output.ts";
+import {
+  SUBAGENT_V2_APPROVAL_POLICY,
+  subagentV2ApprovalInput,
+} from "./subagent_v2_approval/input.ts";
 import { assertSubagentV2NestedOutput } from "./subagent_v2_nested/codex_output.ts";
+import { assertSubagentV2NestedApprovalOutput } from "./subagent_v2_nested_approval/codex_output.ts";
+import { subagentV2NestedApprovalInput } from "./subagent_v2_nested_approval/input.ts";
 import { assertClaudeThreadRollbackOutput } from "./thread_rollback/claude_output.ts";
 import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
 import { assertPiThreadRollbackOutput } from "./thread_rollback/pi_output.ts";
+import { assertThreadRollbackAfterRestartOutput } from "./thread_rollback_after_restart/codex_output.ts";
+import { threadRollbackAfterRestartInput } from "./thread_rollback_after_restart/input.ts";
+import { threadRollbackAfterStopInput } from "./thread_rollback_after_stop/input.ts";
+import { assertPiThreadRollbackAfterStopOutput } from "./thread_rollback_after_stop/pi_output.ts";
+import { assertThreadRollbackToStoppedTurnOutput } from "./thread_rollback_to_stopped_turn/codex_output.ts";
+import { threadRollbackToStoppedTurnInput } from "./thread_rollback_to_stopped_turn/input.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
 import { assertTodoListCursorOutput } from "./todo_list/cursor_output.ts";
 import { assertTodoListGrokOutput } from "./todo_list/grok_output.ts";
@@ -85,7 +110,10 @@ import {
 import { assertToolCallReadOnlyClaudeOutput } from "./tool_call_read_only/claude_output.ts";
 import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor_output.ts";
 import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
-import { assertToolCallReadOnlyOnRequestOutput } from "./tool_call_read_only_on_request/output.ts";
+import {
+  assertToolCallReadOnlyOnRequestGrokOutput,
+  assertToolCallReadOnlyOnRequestOutput,
+} from "./tool_call_read_only_on_request/output.ts";
 import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
 import { assertToolCallRestrictedGranularClaudeOutput } from "./tool_call_restricted_granular/claude_output.ts";
 import { assertToolCallRestrictedGranularOutput } from "./tool_call_restricted_granular/codex_output.ts";
@@ -218,6 +246,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "claude_background_monitor_wake",
+    buildInput: claudeBackgroundMonitorWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_background_monitor_wake/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeBackgroundMonitorWakeOutput,
+      },
+    ],
+  },
+  {
     name: "claude_background_task_wake",
     buildInput: claudeBackgroundTaskWakeInput,
     providers: [
@@ -272,6 +316,63 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeResultIsErrorOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_auto_blocked_command",
+    buildInput: grokAutoBlockedCommandInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_auto_blocked_command/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        assertOutput: assertGrokAutoBlockedCommandOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_bash",
+    buildInput: grokBackgroundBashInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL("./grok_background_bash/grok_transcript.ndjson", import.meta.url),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundBashOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_subagent",
+    buildInput: grokBackgroundSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_background_subagent/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: GROK_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_monitor",
+    buildInput: grokMonitorInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL("./grok_monitor/grok_transcript.ndjson", import.meta.url),
+        modelSelection: GROK_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertGrokMonitorOutput,
       },
     ],
   },
@@ -454,7 +555,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
-        assertOutput: assertToolCallReadOnlyOnRequestOutput,
+        assertOutput: assertToolCallReadOnlyOnRequestGrokOutput,
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
@@ -575,6 +676,19 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "subagent_v2_approval",
+    buildInput: subagentV2ApprovalInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL("./subagent_v2_approval/codex_transcript.ndjson", import.meta.url),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: SUBAGENT_V2_APPROVAL_POLICY,
+        assertOutput: assertSubagentV2ApprovalOutput,
+      },
+    ],
+  },
+  {
     name: "subagent_v2_nested",
     buildInput: subagentV2NestedInput,
     providers: [
@@ -583,6 +697,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./subagent_v2_nested/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertSubagentV2NestedOutput,
+      },
+    ],
+  },
+  {
+    name: "subagent_v2_nested_approval",
+    buildInput: subagentV2NestedApprovalInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL(
+          "./subagent_v2_nested_approval/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: SUBAGENT_V2_APPROVAL_POLICY,
+        assertOutput: assertSubagentV2NestedApprovalOutput,
       },
     ],
   },
@@ -610,6 +740,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: OPENCODE_MODEL_SELECTION,
         assertOutput: assertOpenCodeChildApprovalOutput,
+      },
+    ],
+  },
+  {
+    name: "opencode_running_child_approval",
+    buildInput: openCodeRunningChildApprovalInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_running_child_approval/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        assertOutput: assertOpenCodeRunningChildApprovalOutput,
       },
     ],
   },
@@ -1000,6 +1145,52 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./thread_rollback/pi_transcript.ndjson", import.meta.url),
         modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertPiThreadRollbackOutput,
+      },
+    ],
+  },
+  {
+    name: "thread_rollback_after_restart",
+    buildInput: threadRollbackAfterRestartInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL(
+          "./thread_rollback_after_restart/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        assertOutput: assertThreadRollbackAfterRestartOutput,
+      },
+    ],
+  },
+  {
+    name: "thread_rollback_after_stop",
+    buildInput: threadRollbackAfterStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL(
+          "./thread_rollback_after_stop/pi_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: PI_MODEL_SELECTION,
+        assertOutput: assertPiThreadRollbackAfterStopOutput,
+      },
+    ],
+  },
+  {
+    name: "thread_rollback_to_stopped_turn",
+    buildInput: threadRollbackToStoppedTurnInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("codex"),
+        transcriptFile: new URL(
+          "./thread_rollback_to_stopped_turn/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertThreadRollbackToStoppedTurnOutput,
       },
     ],
   },

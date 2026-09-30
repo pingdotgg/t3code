@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -78,7 +79,6 @@ export function resolveOpenCodeServerPassword(
     : input.environment.OPENCODE_SERVER_PASSWORD;
 }
 
-const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_STARTUP_MAX_OUTPUT_CHARS = 64 * 1024;
@@ -289,11 +289,8 @@ export interface OpenCodeRuntimeShape {
 
 function parseServerUrlFromOutput(output: string): string | null {
   for (const line of output.split("\n")) {
-    if (!line.startsWith(OPENCODE_SERVER_READY_PREFIX)) {
-      continue;
-    }
-    const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-    return match?.[1] ?? null;
+    const match = line.match(/server listening on\s+(https?:\/\/[^\s]+)/i);
+    if (match?.[1]) return match[1];
   }
   return null;
 }
@@ -592,6 +589,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
+  const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, env ? { env } : {});
 
@@ -693,6 +691,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ...(input.environment !== undefined ? { environment: input.environment } : {}),
       });
 
+      // Scopes close in reverse order. Forking this before the group kill is
+      // registered forgets the ledger entry only once the group is stopped.
+      const ledgerScope = yield* Scope.fork(runtimeScope);
       const child = yield* spawner
         .spawn(
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -742,7 +743,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
         Effect.ignore,
       );
+      // Registered before recording, so an interrupt while the ledger writes
+      // still stops the group.
       yield* Scope.addFinalizer(runtimeScope, terminateChild);
+      const forgetServer = yield* serverLedger.track({ pid: Number(child.pid), port, args });
+      yield* Scope.addFinalizer(ledgerScope, forgetServer);
 
       const stdoutRef = yield* Ref.make<string | null>("");
       const stderrRef = yield* Ref.make<string | null>("");

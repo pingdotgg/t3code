@@ -4,6 +4,7 @@ import type { OrchestrationV2TurnItem, ProviderReplayTranscript } from "@t3tools
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
   assertBaseProjection,
+  assertNoAcpClientFileOrTerminalRequests,
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
   assertVisibleTurnItemsMirrorLocalTurnItems,
@@ -56,13 +57,43 @@ export function assertToolCallReadOnlyOnRequestOutput(
     writes.some((item) => item.status === "completed"),
     "the approved write must complete",
   );
-  // A file_change projected from an ACP v1 diff ({ oldText, newText }) carries
-  // no content today; the adapter reads only the v2 patch form.
+  // Grok's write reports an ACP v1 diff ({ path, oldText, newText }); the
+  // file_change must still carry it, like the v2 patch form.
   for (const item of writes) {
     const content = writtenContent(item);
-    if (content === undefined) continue;
+    assert.isDefined(content, `the approved ${item.type} must carry what it wrote`);
     assert.include(content, PROBE_CONTENT, "the approved write must carry the requested content");
   }
+}
+
+// T3 advertises no client fs or terminal to Grok, so Grok reads and writes the
+// workspace itself and gates the write with its own permission prompt: T3
+// answers that prompt (the shared assertion pins it as the only request) and
+// never serves a file or terminal request.
+export function assertToolCallReadOnlyOnRequestGrokOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertToolCallReadOnlyOnRequestOutput(result, transcript);
+  assertNoAcpClientFileOrTerminalRequests(transcript);
+  const permissionKinds = transcript.entries.flatMap((entry) => {
+    if (entry.type !== "emit_inbound") return [];
+    const frame = entry.frame as {
+      method?: unknown;
+      params?: { toolCall?: { kind?: unknown } };
+    };
+    return frame.method === "session/request_permission" ? [frame.params?.toolCall?.kind] : [];
+  });
+  assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
+
+  // Grok's edit prompt is the one whose "always" answer lasts only the session.
+  const approval = projectionFor(result, transcript.scenario).turnItems.find(
+    (item) => item.type === "approval_request",
+  );
+  assert.deepEqual(
+    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
+    ["cancel", "decline", "acceptForSession", "accept"],
+  );
 }
 
 function writtenContent(item: OrchestrationV2TurnItem): string | undefined {

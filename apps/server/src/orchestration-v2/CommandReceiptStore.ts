@@ -1,4 +1,4 @@
-import { CommandId, NonNegativeInt, ThreadId } from "@t3tools/contracts";
+import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -62,14 +62,35 @@ export const CommandReceiptV2 = Schema.Struct({
 });
 export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
 
+/** Receipt for a project command; shares the receipt table with thread commands. */
+export const ProjectCommandReceiptV2 = Schema.Struct({
+  commandId: CommandId,
+  projectId: ProjectId,
+  commandType: Schema.String,
+  acceptedAt: Schema.DateTimeUtc,
+  resultSequence: NonNegativeInt,
+  status: CommandReceiptV2Status,
+  error: Schema.NullOr(Schema.String),
+});
+export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
+
+type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
+
 export interface CommandReceiptStoreV2Shape {
   readonly insertIfAbsent: (
-    receipt: CommandReceiptV2,
+    receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
-  readonly upsert: (receipt: CommandReceiptV2) => Effect.Effect<void, CommandReceiptStoreV2Error>;
+  readonly upsert: (
+    receipt: AnyCommandReceiptV2,
+  ) => Effect.Effect<void, CommandReceiptStoreV2Error>;
+  /** A thread command's receipt; none when the command id belongs to a project command. */
   readonly getByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<CommandReceiptV2>, CommandReceiptStoreV2Error>;
+  /** A project command's receipt; none when the command id belongs to a thread command. */
+  readonly getProjectByCommandId: (
+    commandId: CommandId,
+  ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreV2Error>;
 }
 
 export class CommandReceiptStoreV2 extends Context.Service<
@@ -82,6 +103,12 @@ export class CommandReceiptStoreV2 extends Context.Service<
  */
 const decodeReceipt = Schema.decodeUnknownEffect(
   CommandReceiptV2.mapFields((fields) => ({
+    ...fields,
+    acceptedAt: Schema.DateTimeUtcFromString,
+  })),
+);
+const decodeProjectReceipt = Schema.decodeUnknownEffect(
+  ProjectCommandReceiptV2.mapFields((fields) => ({
     ...fields,
     acceptedAt: Schema.DateTimeUtcFromString,
   })),
@@ -99,11 +126,12 @@ function fromApplicationReceipt(receipt: OrchestrationCommandReceipt) {
   });
 }
 
-function toApplicationReceipt(receipt: CommandReceiptV2): OrchestrationCommandReceipt {
+function toApplicationReceipt(receipt: AnyCommandReceiptV2): OrchestrationCommandReceipt {
   return {
     commandId: receipt.commandId,
-    aggregateKind: "thread",
-    aggregateId: receipt.threadId,
+    ...("projectId" in receipt
+      ? { aggregateKind: "project" as const, aggregateId: receipt.projectId }
+      : { aggregateKind: "thread" as const, aggregateId: receipt.threadId }),
     commandType: receipt.commandType,
     acceptedAt: DateTime.formatIso(receipt.acceptedAt),
     resultSequence: receipt.resultSequence,
@@ -157,6 +185,23 @@ const baseLayer: Layer.Layer<CommandReceiptStoreV2, never, OrchestrationCommandR
                   cause,
                 }),
             ),
+          ),
+        getProjectByCommandId: (commandId) =>
+          receipts.getByCommandId({ commandId }).pipe(
+            Effect.flatMap((receipt) =>
+              Option.isNone(receipt) || receipt.value.aggregateKind !== "project"
+                ? Effect.succeed(Option.none())
+                : decodeProjectReceipt({
+                    commandId: receipt.value.commandId,
+                    projectId: receipt.value.aggregateId,
+                    commandType: receipt.value.commandType,
+                    acceptedAt: receipt.value.acceptedAt,
+                    resultSequence: receipt.value.resultSequence,
+                    status: receipt.value.status,
+                    error: receipt.value.error,
+                  }).pipe(Effect.map(Option.some)),
+            ),
+            Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
           ),
       } satisfies CommandReceiptStoreV2Shape);
     }),

@@ -160,7 +160,9 @@ describe("resolveThreadListV2Status", () => {
         makeThread({
           id: ThreadId.make("t"),
           title: "t",
-          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run Codex review" }],
+          pendingBackgroundTasks: [
+            { taskId: "bg-1", description: "Run Codex review", kind: "command" },
+          ],
           runtime: {
             status: "idle",
             activeRunId: null,

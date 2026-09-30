@@ -562,6 +562,16 @@ function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
 }
 
+function threadSettlement(
+  thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
+): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
+  const settled = thread.settledOverride === "settled";
+  return {
+    settled,
+    settledAt: settled && thread.settledAt !== null ? DateTime.formatIso(thread.settledAt) : null,
+  };
+}
+
 function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpThreadListItem {
   return {
     threadId: shell.id,
@@ -575,6 +585,7 @@ function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpTh
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
     linkedPullRequest: shell.linkedPullRequest ?? null,
+    ...threadSettlement(shell),
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
     itemCount: shell.visibleItemCount,
@@ -621,6 +632,7 @@ function threadDetail(
       (request) => request.status === "pending",
     ).length,
     archived: projection.thread.archivedAt !== null,
+    ...threadSettlement(projection.thread),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
@@ -1720,6 +1732,10 @@ const make = Effect.gen(function* () {
           .filter(
             (thread) =>
               statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
+          )
+          .filter(
+            (thread) =>
+              input.settled === undefined || threadSettlement(thread).settled === input.settled,
           )
           .filter(
             (thread) =>

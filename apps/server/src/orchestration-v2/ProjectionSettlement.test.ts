@@ -252,7 +252,7 @@ for (const [name, testLayer] of [
             forkedFrom: null,
             createdAt: old,
             updatedAt: old,
-            pendingBackgroundTasks: [{ taskId: "running-task" }],
+            pendingBackgroundTasks: [{ taskId: "running-task", kind: "command" }],
           },
         });
         const candidates = yield* store.getSettlementCandidates();
@@ -295,6 +295,77 @@ for (const [name, testLayer] of [
           "ProjectionStoreThreadNotFoundError",
         );
       }).pipe(Effect.provide(testLayer)),
+  );
+}
+
+const pullRequestLink = (number: number) => ({
+  host: "github.com",
+  repository: "owner/repository",
+  number,
+  url: `https://github.com/owner/repository/pull/${number}`,
+  source: "manual" as const,
+  linkedAt: DateTime.formatIso(old),
+  snapshot: null,
+  stack: null,
+});
+
+for (const [name, testLayer] of [
+  ["sql", SqlLayer],
+  ["memory", layerMemory],
+] as const) {
+  it.effect(`${name}: lists only active threads with pull request links, oldest first`, () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      yield* createThread("no-links");
+      yield* createThread("empty-links", { pullRequests: [] });
+      yield* createThread("archived-link", {
+        archivedAt: old,
+        pullRequests: [pullRequestLink(1)],
+      });
+      const settled = yield* createThread("settled-link", {
+        settledOverride: "settled",
+        settledAt: old,
+        updatedAt: DateTime.subtract(now, { days: 12 }),
+        pullRequests: [pullRequestLink(2)],
+      });
+      const open = yield* createThread("open-link", {
+        pullRequests: [pullRequestLink(3), pullRequestLink(4)],
+      });
+
+      const threads = yield* store.getThreadsWithPullRequests();
+      assert.deepEqual(
+        threads.map((thread) => [thread.id, thread.settledOverride, thread.pullRequests?.length]),
+        [
+          [settled, "settled", 1],
+          [open, null, 2],
+        ],
+      );
+    }).pipe(Effect.provide(testLayer)),
+  );
+}
+
+for (const [name, testLayer] of [
+  ["sql", SqlLayer],
+  ["memory", layerMemory],
+] as const) {
+  it.effect(`${name}: an unsettled-only shell read skips settled threads`, () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      const open = yield* createThread("unsettled-open");
+      const reopened = yield* createThread("unsettled-reopened", { settledOverride: "active" });
+      yield* createThread("unsettled-manual", { settledOverride: "settled", settledAt: old });
+      yield* createThread("unsettled-auto", { settledAt: old });
+      yield* createThread("unsettled-archived", { archivedAt: old });
+
+      const shell = yield* store.getShellSnapshot({ location: "active", unsettledOnly: true });
+      assert.deepEqual(
+        new Set(shell.threads.map((thread) => thread.id)),
+        new Set([open, reopened]),
+      );
+      assert.equal(shell.archivedThreads.length, 0);
+      const all = yield* store.getShellSnapshot({ location: "active" });
+      assert.equal(all.threads.length, 4);
+    }).pipe(Effect.provide(testLayer)),
   );
 }
 
@@ -361,4 +432,39 @@ it.effect(
       assert.isTrue(messagePlan.some((row) => row.detail.includes("messages_latest_user_idx")));
       assert.isFalse(messagePlan.some((row) => row.detail.includes("TEMP B-TREE")));
     }).pipe(Effect.provide(SqlLayer)),
+);
+
+it.effect("shell failure lookups stay on the thread's own turn items", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const failed = yield* createThread("failed-latest");
+    yield* createRun(failed, "failed");
+    const queries: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const record: Statement.Transformer = (statement) =>
+      Effect.sync(() => {
+        queries.push(statement.compile());
+        return statement;
+      });
+    const shell = yield* store
+      .getShellSnapshot()
+      .pipe(Effect.provideService(Statement.CurrentTransformer, record));
+    assert.deepEqual(
+      shell.threads.map((thread) => thread.id),
+      [failed],
+    );
+    const shellQuery = queries.find(([query]) =>
+      query.includes("AS blocking_failure_payload_json"),
+    );
+    assert.isDefined(shellQuery);
+    const plan = yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${shellQuery![0]}`,
+      shellQuery![1],
+    );
+    // A failed run's root node is often null, and every runless item shares that
+    // node_id, so a node_ordinal lookup walks the whole history once per thread.
+    const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
+    assert.lengthOf(itemLookups, 2);
+    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
+  }).pipe(Effect.provide(SqlLayer)),
 );

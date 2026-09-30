@@ -2,7 +2,11 @@ import { assert } from "@effect/vitest";
 import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
-import { assertSemanticProjectionIntegrity, projectionFor } from "../shared.ts";
+import {
+  assertSemanticProjectionIntegrity,
+  backgroundNotifications,
+  projectionFor,
+} from "../shared.ts";
 import {
   CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_FINAL_PROMPT,
   CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_RESUME_PROMPT,
@@ -77,4 +81,16 @@ export function assertClaudeBackgroundWakeBeforeQueuedPromptOutput(
   const continuationReplies = runs.filter((run) => !run.fromUser).flatMap((run) => run.replies);
   assert.sameMembers(continuationReplies, ["A_REPORTED", STOP_WAKE_REPLY]);
   assert.isTrue(projection.runs.every((run) => run.status === "completed"));
+  // TaskStop ended Agent B and its Bash together; the stop wake names both,
+  // and mixed kinds report as generic background work.
+  assert.deepEqual(
+    backgroundNotifications(projection).map(({ summary, source }) => [summary, source.kind]),
+    [
+      ['Subagent "Agent A" finished', "subagent"],
+      [
+        'Subagent "Agent B" and command "Sleep 60 seconds then echo B_DONE" were stopped',
+        "background_task",
+      ],
+    ],
+  );
 }

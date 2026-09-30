@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageWindow,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -14,14 +15,17 @@ import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
+  collectExternalUsageLinks,
   collectLimitNotices,
   collectLimitPools,
+  displayLimitWindows,
   elapsedShare,
   formatResetsIn,
   limitsNotice,
   paceOf,
   providersWithLimits,
   remainingPercent,
+  usesChatGptSharing,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -199,6 +203,74 @@ describe("pools", () => {
     });
     // The fresher native snapshot wins; the hub row is pre-filtered by email.
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
+  });
+
+  it("merges OpenCode Go limits from machines with the same API key", () => {
+    const go = provider({
+      driver: ProviderDriverKind.make("opencode"),
+      instanceId: ProviderInstanceId.make("opencode"),
+      auth: { status: "authenticated" },
+      usageLimits: {
+        checkedAt,
+        credentialFingerprint: "shared-go-key",
+        windows: [{ ...window, id: "go_rolling", usedPercent: 3 }],
+      },
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [go] } }],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [
+              {
+                ...go,
+                usageLimits: {
+                  ...go.usageLimits!,
+                  checkedAt: "2026-09-03T11:30:00.000Z",
+                  windows: [{ ...window, id: "go_rolling", usedPercent: 4 }],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.environments).toEqual([
+      { environmentId: "env-a", label: "Laptop" },
+      { environmentId: "env-b", label: "Desktop" },
+    ]);
+    expect(collectLimitPools(accounts, now)[0]?.windows[0]?.members).toHaveLength(1);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(4);
+
+    const differentKey = {
+      ...go,
+      usageLimits: { ...go.usageLimits!, credentialFingerprint: "other-go-key" },
+    };
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: { providers: [differentKey] },
+    });
+    expect(collectLimitAccounts(input)).toHaveLength(2);
+
+    input.set(EnvironmentId.make("env-a"), {
+      ...laptop,
+      serverConfig: {
+        providers: [{ ...go, auth: { status: "authenticated", email: "same@example.com" } }],
+      },
+    });
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: {
+        providers: [
+          { ...differentKey, auth: { status: "authenticated", email: "SAME@example.com" } },
+        ],
+      },
+    });
+    expect(collectLimitAccounts(input)).toHaveLength(1);
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
@@ -664,6 +736,43 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
   });
 
+  it("does not reserve empty columns for disjoint account quotas", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("go", [window, weekly]),
+        account("openrouter", [
+          { id: "openrouter_key", kind: "other", label: "Credit limit", usedPercent: 60 },
+        ]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([["go"], ["go"], ["openrouter"]]);
+    expect(pool!.windows.map((row) => row.columns.length)).toEqual([1, 1, 1]);
+  });
+
+  it("keeps columns aligned when quota overlap connects accounts indirectly", () => {
+    const monthly: ServerProviderUsageWindow = {
+      id: "monthly",
+      kind: "monthly",
+      label: "Monthly",
+      usedPercent: 30,
+    };
+    const [pool] = collectLimitPools(
+      [
+        account("a", [window]),
+        account("b", [window, weekly]),
+        account("c", [weekly, monthly]),
+        account("d", [monthly]),
+      ],
+      now,
+    );
+    expect(keys(pool!)).toEqual([
+      ["a", "b", null, null],
+      [null, "b", "c", null],
+      [null, null, "c", "d"],
+    ]);
+  });
+
   it("falls back to weekly resets when no account reports a session", () => {
     const [pool] = collectLimitPools(
       [
@@ -684,6 +793,53 @@ describe("pooled account columns", () => {
     ];
     expect(keys(collectLimitPools(accounts, now)[0]!)).toEqual([["a", "b", "y", "z"]]);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual([["a", "b", "y", "z"]]);
+  });
+});
+
+describe("Cursor limit presentation", () => {
+  const cursorAccount: LimitAccount = {
+    key: "cursor",
+    driver: ProviderDriverKind.make("cursor"),
+    displayName: "Cursor",
+    email: undefined,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: "Cursor",
+    redeem: null,
+    limits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 49 },
+        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 9 },
+        { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 15 },
+      ],
+    },
+  };
+
+  it("hides the combined percentage and orders the two pools", () => {
+    const [pool] = collectLimitPools([cursorAccount], now);
+    const display = displayLimitWindows(pool!);
+    expect(display.map((window) => window.id)).toEqual(["autoPercentUsed", "apiPercentUsed"]);
+  });
+
+  it("keeps the combined percentage as a card if either allowance is missing", () => {
+    const [pool] = collectLimitPools(
+      [
+        {
+          ...cursorAccount,
+          limits: {
+            ...cursorAccount.limits,
+            windows: cursorAccount.limits.windows.filter(
+              (window) => window.id !== "apiPercentUsed",
+            ),
+          },
+        },
+      ],
+      now,
+    );
+    const display = displayLimitWindows(pool!);
+    expect(display.map((window) => window.id)).toEqual(["totalPercentUsed", "autoPercentUsed"]);
   });
 });
 
@@ -1006,5 +1162,84 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("external usage settings", () => {
+  it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
+    const managed = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported", message: "Track usage in ChatGPT." },
+        externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: {
+            providers: [managed, { ...managed, instanceId: ProviderInstanceId.make("personal") }],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("b"),
+        { entry: { target: { label: "B" } }, serverConfig: { providers: [managed] } },
+      ],
+    ]);
+    expect(collectExternalUsageLinks(presentations)).toEqual([
+      {
+        ...managed.usageLimits!.externalUsage,
+        message: "Track usage in ChatGPT.",
+        accounts: [`${managed.instanceId} on A`, "personal on A", `${managed.instanceId} on B`],
+      },
+    ]);
+    expect(collectLimitAccounts(presentations)).toEqual([]);
+    expect(collectLimitNotices(presentations)).toEqual([]);
+  });
+  it("omits disabled, uninstalled and signed-out providers", () => {
+    const managed = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        externalUsage: { label: "ChatGPT usage", url: "https://chatgpt.com/#settings/Usage" },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: {
+            providers: [
+              { ...managed, enabled: false },
+              { ...managed, installed: false },
+              { ...managed, auth: { status: "unauthenticated" as const } },
+              provider({}),
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectExternalUsageLinks(presentations)).toEqual([]);
+  });
+});
+
+describe("ChatGPT sharing presentation", () => {
+  it("requires verified sharing metadata rather than the Codex driver or login type", () => {
+    const codex = provider({ auth: { status: "authenticated", type: "chatgpt" } });
+    expect(usesChatGptSharing(codex)).toBe(false);
+    expect(
+      usesChatGptSharing({ ...codex, auth: { ...codex.auth, subscriptionSharing: true } }),
+    ).toBe(true);
+    expect(
+      usesChatGptSharing({
+        ...codex,
+        auth: { status: "unauthenticated", subscriptionSharing: true },
+      }),
+    ).toBe(false);
   });
 });

@@ -31,10 +31,6 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
-    "./pending-requests": {
-      "types": "./src/pendingRequests.ts",
-      "default": "./src/pendingRequests.ts"
-    },
     "./user-message": {
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"

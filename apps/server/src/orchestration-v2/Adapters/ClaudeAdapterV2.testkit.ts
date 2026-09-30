@@ -39,6 +39,7 @@ import {
   makeClaudeUserMessage,
   makeClaudeQueryOptions,
   type ClaudeAgentSdkSessionForkInput,
+  type ClaudeAgentSdkSubagentLookupInput,
   type ClaudeAgentSdkQueryOpenInput,
   type ClaudeAgentSdkQueryOptions,
   type ClaudeAgentSdkQuerySession,
@@ -238,17 +239,30 @@ interface ClaudeSessionForkedFrame {
   readonly sessionId: string;
 }
 
+interface ClaudeSubagentLookupFrame {
+  readonly type: "subagent.lookup";
+  readonly sessionId: string;
+  readonly agentId: string;
+}
+
+interface ClaudeSubagentFoundFrame {
+  readonly type: "subagent.found";
+  readonly toolUseId: string | null;
+}
+
 type ClaudeOutboundFrame =
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
   | ClaudeQueryInterruptFrame
   | ClaudePermissionResponseFrame
-  | ClaudeSessionForkFrame;
+  | ClaudeSessionForkFrame
+  | ClaudeSubagentLookupFrame;
 
 interface ClaudeQueryRunner {
   readonly open: (input: ClaudeAgentSdkQueryOpenInput) => ClaudeAgentSdkQuerySession;
   readonly forkSession: (input: ClaudeAgentSdkSessionForkInput) => ClaudeSessionForkedFrame;
+  readonly subagentLaunchToolUseId: (input: ClaudeAgentSdkSubagentLookupInput) => string | null;
   readonly assertComplete: () => void;
 }
 
@@ -731,14 +745,18 @@ function makeReplayQueryRunner(
     advance();
   };
 
-  const assertNextForkedFrame = (): ClaudeSessionForkedFrame => {
+  // The recorded reply to a one-shot session call (fork, subagent lookup).
+  const assertNextReplyFrame = <Frame extends ClaudeSessionForkedFrame | ClaudeSubagentFoundFrame>(
+    type: Frame["type"],
+    isValid: (frame: object) => boolean,
+  ): Frame => {
     const entry = transcript.entries[cursor];
     if (entry === undefined) {
       return fail(
         new ClaudeReplayExhaustedError({
           scenario: transcript.scenario,
           cursor,
-          actual: { type: "session.forked" },
+          actual: { type },
         }),
       );
     }
@@ -748,27 +766,27 @@ function makeReplayQueryRunner(
           scenario: transcript.scenario,
           cursor,
           expectedType: entry.type,
-          actual: { type: "session.forked" },
+          actual: { type },
         }),
       );
     }
     if (
       typeof entry.frame !== "object" ||
       entry.frame === null ||
-      Reflect.get(entry.frame, "type") !== "session.forked" ||
-      typeof Reflect.get(entry.frame, "sessionId") !== "string"
+      Reflect.get(entry.frame, "type") !== type ||
+      !isValid(entry.frame)
     ) {
       return fail(
         new ClaudeReplayFrameMismatchError({
           scenario: transcript.scenario,
           cursor,
-          expected: { type: "session.forked" },
+          expected: { type },
           actual: entry.frame,
         }),
       );
     }
 
-    const frame = entry.frame as ClaudeSessionForkedFrame;
+    const frame = entry.frame as Frame;
     advance();
     return frame;
   };
@@ -805,7 +823,21 @@ function makeReplayQueryRunner(
     },
     forkSession: (input) => {
       assertNextOutboundFrame(makeClaudeSessionForkFrame(input, transcript.scenario));
-      return assertNextForkedFrame();
+      return assertNextReplyFrame<ClaudeSessionForkedFrame>(
+        "session.forked",
+        (frame) => typeof Reflect.get(frame, "sessionId") === "string",
+      );
+    },
+    subagentLaunchToolUseId: (input) => {
+      assertNextOutboundFrame({
+        type: "subagent.lookup",
+        sessionId: input.sessionId,
+        agentId: input.agentId,
+      });
+      return assertNextReplyFrame<ClaudeSubagentFoundFrame>("subagent.found", (frame) => {
+        const toolUseId = Reflect.get(frame, "toolUseId");
+        return toolUseId === null || typeof toolUseId === "string";
+      }).toolUseId;
     },
     assertComplete: () => {
       if (failure !== null) {
@@ -873,25 +905,27 @@ const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQuery
       }),
     );
 
-    return ClaudeAgentSdkQueryRunner.of({
-      allocateSessionId: Effect.succeed(nativeSessionIdFor(transcript)),
-      open: (input) =>
-        Effect.try({
-          try: () => queryRunner.open(input),
-          catch: (cause) => replayQueryRunnerError(transcript, cause),
-        }),
-      forkSession: (input) =>
-        Effect.try({
-          try: () => queryRunner.forkSession(input),
-          catch: (cause) => replayQueryRunnerError(transcript, cause),
-        }),
-      assertComplete: Effect.try({
-        try: () => queryRunner.assertComplete(),
-        catch: (cause) => replayQueryRunnerError(transcript, cause),
-      }),
-    });
+    return replayQueryRunnerService(transcript, queryRunner);
   },
 );
+
+function replayQueryRunnerService(
+  transcript: ClaudeAgentSdkReplayTranscript,
+  queryRunner: ClaudeQueryRunner,
+): ClaudeAgentSdkQueryRunner["Service"] {
+  const replay = <A>(run: () => A) =>
+    Effect.try({
+      try: run,
+      catch: (cause) => replayQueryRunnerError(transcript, cause),
+    });
+  return ClaudeAgentSdkQueryRunner.of({
+    allocateSessionId: Effect.succeed(nativeSessionIdFor(transcript)),
+    open: (input) => replay(() => queryRunner.open(input)),
+    forkSession: (input) => replay(() => queryRunner.forkSession(input)),
+    subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    assertComplete: replay(() => queryRunner.assertComplete()),
+  });
+}
 
 function makeClaudeAgentSdkReplayQueryRunnerLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
@@ -905,8 +939,18 @@ function makeClaudeAgentSdkReplayQueryRunnerLayer(
 
 function makeClaudeAgentSdkReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
-  options: { readonly replayGate?: ProviderReplayGate } = {},
+  options: {
+    readonly replayGate?: ProviderReplayGate;
+    // Shared across runtimes; its owner asserts completion.
+    readonly queryRunner?: ClaudeQueryRunner;
+  } = {},
 ): Layer.Layer<ClaudeAgentSdkQueryRunner> {
+  if (options.queryRunner !== undefined) {
+    return Layer.succeed(
+      ClaudeAgentSdkQueryRunner,
+      replayQueryRunnerService(transcript, options.queryRunner),
+    );
+  }
   const queryRunner = makeReplayQueryRunner(transcript, options);
   return Layer.effect(
     ClaudeAgentSdkQueryRunner,
@@ -916,31 +960,17 @@ function makeClaudeAgentSdkReplayLayer(
           queryRunner.assertComplete();
         }),
       );
-
-      return ClaudeAgentSdkQueryRunner.of({
-        allocateSessionId: Effect.succeed(nativeSessionIdFor(transcript)),
-        open: (input) =>
-          Effect.try({
-            try: () => queryRunner.open(input),
-            catch: (cause) => replayQueryRunnerError(transcript, cause),
-          }),
-        forkSession: (input) =>
-          Effect.try({
-            try: () => queryRunner.forkSession(input),
-            catch: (cause) => replayQueryRunnerError(transcript, cause),
-          }),
-        assertComplete: Effect.try({
-          try: () => queryRunner.assertComplete(),
-          catch: (cause) => replayQueryRunnerError(transcript, cause),
-        }),
-      });
+      return replayQueryRunnerService(transcript, queryRunner);
     }),
   );
 }
 
 function makeClaudeProviderAdapterRegistryReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
-  options: { readonly replayGate?: ProviderReplayGate } = {},
+  options: {
+    readonly replayGate?: ProviderReplayGate;
+    readonly queryRunner?: ClaudeQueryRunner;
+  } = {},
 ) {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
@@ -2782,3 +2812,19 @@ export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
   makeProviderAdapterRegistryLayer: (transcript, options) =>
     makeClaudeProviderAdapterRegistryReplayLayer(transcript, options),
 };
+
+/**
+ * Replays one transcript across several orchestrator runtimes, the way a
+ * server restart reopens the same native session with a fresh adapter.
+ */
+export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayTranscript) {
+  const queryRunner = makeReplayQueryRunner(transcript);
+  return {
+    harness: {
+      ...ClaudeOrchestratorReplayHarness,
+      makeProviderAdapterRegistryLayer: (replayed) =>
+        makeClaudeProviderAdapterRegistryReplayLayer(replayed, { queryRunner }),
+    } satisfies typeof ClaudeOrchestratorReplayHarness,
+    assertComplete: replayQueryRunnerService(transcript, queryRunner).assertComplete,
+  };
+}

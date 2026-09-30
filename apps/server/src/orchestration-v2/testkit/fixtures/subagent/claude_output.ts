@@ -92,12 +92,7 @@ export function assertClaudeSubagentOutput(
     assert.lengthOf(childProjection.providerThreads, 0);
     assert.lengthOf(childProjection.providerTurns, 0);
     assertExecutionNodeKinds(childProjection, ["root_turn", "tool_call"]);
-    assertTurnItemTypes(childProjection, [
-      "user_message",
-      "reasoning",
-      "dynamic_tool",
-      "assistant_message",
-    ]);
+    assertTurnItemTypes(childProjection, ["user_message", "dynamic_tool", "assistant_message"]);
     assertUserMessagesInclude(childProjection, [subagent.prompt]);
     assert.isTrue(
       childProjection.turnItems.some(
@@ -108,20 +103,13 @@ export function assertClaudeSubagentOutput(
       ),
       `child thread ${subagent.childThreadId} must contain the subagent response`,
     );
-    const progressItems = childProjection.turnItems.filter((item) => item.type === "reasoning");
-    assert.lengthOf(
-      progressItems,
-      1,
-      `child thread ${subagent.childThreadId} must coalesce progress into one item`,
+    // Progress stays on the subagent card; the child shows the work itself.
+    assert.isFalse(
+      childProjection.turnItems.some(
+        (item) => item.type === "reasoning" && item.text === expectedProgress,
+      ),
+      `child thread ${subagent.childThreadId} must not repeat the subagent's progress`,
     );
-    const progressItem = progressItems[0];
-    if (progressItem === undefined) {
-      throw new Error(`Missing progress item for subagent ${subagent.id}`);
-    }
-    assert.equal(progressItem.text, expectedProgress);
-    assert.equal(progressItem.status, "completed");
-    assert.isFalse(progressItem.streaming);
-    assert.isNotNull(progressItem.completedAt);
 
     const parentItem = projection.turnItems.find(
       (item) => item.type === "subagent" && item.subagentId === subagent.id,

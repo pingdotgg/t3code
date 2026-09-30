@@ -1,9 +1,20 @@
+import type * as Duration from "effect/Duration";
+
 export interface ProviderReplayGate {
   readonly beforeEmit: (label: string | undefined, signal?: AbortSignal) => Promise<void>;
   readonly waitForReached: (label: string) => Promise<boolean>;
   readonly hasReached: (label: string) => boolean;
   readonly release: (label: string) => boolean;
   readonly releaseAll: () => void;
+  /**
+   * Receipts from adapters that hold a settled turn open and finalize it after
+   * a debounce: each arming records the debounce it waits. Replay runs on a
+   * test clock, so a scenario advances it by exactly that on the receipt.
+   */
+  readonly recordFinishArmed: (debounce: Duration.Input) => void;
+  readonly finishArmedCount: () => number;
+  /** Resolves with the latest armed debounce once more than `seen` were recorded. */
+  readonly waitForFinishArmed: (seen: number) => Promise<Duration.Input>;
 }
 
 interface GateState {
@@ -39,7 +50,23 @@ export function makeProviderReplayGate(labels: ReadonlyArray<string>): ProviderR
     });
   }
 
+  const finishArmed: Array<Duration.Input> = [];
+  const finishArmedWaiters: Array<() => void> = [];
+
   return {
+    recordFinishArmed: (debounce) => {
+      finishArmed.push(debounce);
+      for (const wake of finishArmedWaiters.splice(0)) wake();
+    },
+    finishArmedCount: () => finishArmed.length,
+    waitForFinishArmed: (seen) =>
+      new Promise((resolve) => {
+        const check = () => {
+          if (finishArmed.length > seen) resolve(finishArmed[finishArmed.length - 1]!);
+          else finishArmedWaiters.push(check);
+        };
+        check();
+      }),
     beforeEmit: (label, signal) => {
       if (label === undefined) {
         return Promise.resolve();

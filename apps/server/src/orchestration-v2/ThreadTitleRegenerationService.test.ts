@@ -17,7 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -60,8 +60,8 @@ function makeHarness(
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
-  const projectedProjects = Layer.mock(ProjectionProjectRepository)({
-    getById: ({ projectId: requestedProjectId }) =>
+  const projectedProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
+    get: (requestedProjectId) =>
       Effect.succeed(
         requestedProjectId === projectId
           ? Option.some({
@@ -71,6 +71,8 @@ function makeHarness(
               defaultModelSelection: modelSelection,
               defaultThreadEnvMode: null,
               autoPull: false,
+              faviconPath: null,
+              projectIcon: null,
               scripts: [],
               createdAt: "2026-06-20T00:00:00.000Z",
               updatedAt: "2026-06-20T00:00:00.000Z",

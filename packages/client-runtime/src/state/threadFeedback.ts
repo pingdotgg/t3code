@@ -1,8 +1,4 @@
-import {
-  MessageId,
-  type OrchestrationMessage,
-  type ProviderUploadFeedbackResult,
-} from "@t3tools/contracts";
+import { MessageId, type ProviderUploadFeedbackResult } from "@t3tools/contracts";
 
 import {
   isAtomCommandInterrupted,
@@ -57,10 +53,21 @@ export function beginCodexFeedbackSubmission(
   return () => submissionsInFlight.delete(threadKey);
 }
 
+/** A chat row that exists only on this client, such as a feedback exchange. */
+export interface LocalChatMessage {
+  readonly id: MessageId;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly turnId: null;
+  readonly streaming: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export function codexFeedbackMessage(
   submission: CodexFeedbackSubmission,
   role: "user" | "assistant" = "user",
-): OrchestrationMessage & { readonly role: "user" | "assistant" } {
+): LocalChatMessage {
   const text =
     role === "user"
       ? submission.command

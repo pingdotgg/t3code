@@ -10,6 +10,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   ModelEsque,
@@ -255,7 +256,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
               indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
               badgeClassName={cn(
-                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-3xs",
+                "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
                 size === "xs" && "shadow-none",
               )}
             />
@@ -313,6 +314,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
+        {props.selectedModels === undefined ? (
+          <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
+        ) : null}
       </PopoverPopup>
     </Popover>
   );

@@ -5,6 +5,7 @@ import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts
 import {
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
+  backgroundNotifications,
   projectionFor,
 } from "../shared.ts";
 import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./input.ts";
@@ -75,6 +76,14 @@ export function assertClaudeBackgroundSubagentAfterRootOutput(
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }
+  // Its own foreground Bash steps end before it does, but only the subagent is named.
+  assert.deepEqual(backgroundNotifications(projection), [
+    {
+      summary: 'Subagent "Background subagent test" finished',
+      outcome: "completed",
+      source: { kind: "subagent", childThreadId: subagent.childThreadId },
+    },
+  ]);
   const childProjection = result.projections.get(subagent.childThreadId);
   assert.isDefined(childProjection);
   assert.deepEqual(

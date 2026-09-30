@@ -52,6 +52,21 @@ describe("applyUsageLimitsUpdate", () => {
     });
   });
 
+  it("retains credential identity on sparse updates and publishes an identity change", () => {
+    const previous = { checkedAt, windows: [{ ...session, credentialFingerprint: "old" }] };
+    expect(applyUsageLimitsUpdate({ previous, checkedAt, update: { windows: [session] } })).toBe(
+      previous,
+    );
+    const next = applyUsageLimitsUpdate({
+      previous,
+      checkedAt,
+      update: {
+        windows: [{ ...session, credentialFingerprint: "new" }],
+      },
+    });
+    expect(next?.windows[0]?.credentialFingerprint).toBe("new");
+  });
+
   it("leaves an unsupported account and an empty update alone", () => {
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
     expect(

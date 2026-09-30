@@ -19,22 +19,6 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
   description: "RPC request handling duration.",
 });
 
-export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
-  description: "Total orchestration commands dispatched.",
-});
-
-export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
-  description: "Orchestration command dispatch duration.",
-});
-
-export const orchestrationCommandAckDuration = Metric.timer(
-  "t3_orchestration_command_ack_duration",
-  {
-    description:
-      "Time from orchestration command dispatch to the first committed domain event emitted for that command.",
-  },
-);
-
 const orchestrationEventsProcessedTotal = Metric.counter(
   "t3_orchestration_events_processed_total",
   {

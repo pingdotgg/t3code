@@ -2,6 +2,8 @@ import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
+  deriveProviderSubagentStatus,
+  deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
@@ -393,15 +395,33 @@ export function useThreadComposerState() {
     selectedThreadVisibleTurnItems,
   ]);
 
+  const runlessWorkStartedAt = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveRunlessWorkStartedAt(selectedThreadProjection.projection)
+        : null,
+    [selectedThreadProjection],
+  );
   const activeWorkStartedAt = useMemo(() => {
     if (!selectedThreadShell) {
       return null;
     }
-    return resolveThreadWorkingStartedAt({
-      latestRun: selectedThreadActivityRun,
-      runtime: selectedThreadRuntime,
-    });
-  }, [selectedThreadActivityRun, selectedThreadRuntime, selectedThreadShell]);
+    return (
+      resolveThreadWorkingStartedAt({
+        latestRun: selectedThreadActivityRun,
+        runtime: selectedThreadRuntime,
+      }) ?? runlessWorkStartedAt
+    );
+  }, [selectedThreadActivityRun, runlessWorkStartedAt, selectedThreadRuntime, selectedThreadShell]);
+  const runlessWorkActive = runlessWorkStartedAt !== null;
+
+  const providerSubagentStatus = useMemo(
+    () =>
+      selectedThreadProjection
+        ? deriveProviderSubagentStatus(selectedThreadProjection.projection)
+        : null,
+    [selectedThreadProjection],
+  );
 
   // The run can start, or be cancelled from another client, while its message
   // is open in the composer. Leave edit mode rather than saving into a run the
@@ -1024,6 +1044,8 @@ export function useThreadComposerState() {
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
+    runlessWorkActive,
+    providerSubagentStatus,
     isCompacting,
     draftMessage,
     draftAttachments,

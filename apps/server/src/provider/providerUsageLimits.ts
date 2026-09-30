@@ -76,6 +76,10 @@ export function applyUsageLimitsUpdate(input: {
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
+      ...(window.credentialFingerprint === undefined &&
+      existing?.credentialFingerprint !== undefined
+        ? { credentialFingerprint: existing.credentialFingerprint }
+        : {}),
       ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
         ? { resetsAt: existing.resetsAt }
         : {}),
@@ -100,6 +104,7 @@ export function applyUsageLimitsUpdate(input: {
 function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageWindow): boolean {
   return (
     a.id === b.id &&
+    a.credentialFingerprint === b.credentialFingerprint &&
     a.kind === b.kind &&
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&

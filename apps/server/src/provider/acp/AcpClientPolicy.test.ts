@@ -9,8 +9,6 @@ import * as NodePath from "node:path";
 
 import {
   acpClientExecuteDisposition,
-  acpClientReadDisposition,
-  acpClientWriteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
   makeAcpClientPolicyGrants,
@@ -89,6 +87,40 @@ describe("acpPermissionDisposition", () => {
   it("keeps non-mutating workspace permissions and denials unchanged", () => {
     assert.equal(acpPermissionDisposition(policy, permissionRequest("read")), "allow");
     assert.equal(acpPermissionDisposition(policy, permissionRequest("execute")), "deny");
+  });
+
+  it("auto-accept-edits approves file changes without locations and asks for the rest", () => {
+    // ACP permission requests need not carry locations.
+    const autoAcceptEdits: AcpRuntimePolicy = { runtimeMode: "auto-accept-edits", cwd };
+    for (const kind of ["edit", "delete", "move"] as const) {
+      assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind)), "allow");
+    }
+    for (const kind of ["execute", "fetch", "other"] as const) {
+      assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest(kind)), "ask");
+    }
+    assert.equal(acpPermissionDisposition(autoAcceptEdits, permissionRequest("read")), "allow");
+    assert.equal(
+      acpPermissionDisposition(
+        { ...autoAcceptEdits, approvalPolicy: "on-request" },
+        permissionRequest("edit"),
+      ),
+      "ask",
+    );
+  });
+
+  it("auto-allows read-kind permission requests under on-request approval", () => {
+    for (const runtimePolicy of [
+      { ...policy, approvalPolicy: "on-request" },
+      { ...policy, approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } },
+      { runtimeMode: "approval-required", cwd },
+    ] satisfies ReadonlyArray<AcpRuntimePolicy>) {
+      for (const kind of ["read", "search", "think"] as const) {
+        assert.equal(acpPermissionDisposition(runtimePolicy, permissionRequest(kind)), "allow");
+      }
+      for (const kind of ["edit", "delete", "move", "execute", "fetch", "other"] as const) {
+        assert.equal(acpPermissionDisposition(runtimePolicy, permissionRequest(kind)), "ask");
+      }
+    }
   });
 
   it.effect("denies mutations through workspace symlinks that escape the writable roots", () =>
@@ -259,186 +291,58 @@ describe("acpMcpToolApprovalElicitationDisposition", () => {
   });
 });
 
-describe("client-mediated dispositions", () => {
+describe("client terminal disposition", () => {
   const cwd = NodePath.resolve(process.cwd(), "acp-client-policy-workspace");
 
-  it("asks in approval-required mode for reads, writes, and terminals", () => {
-    const policy: AcpRuntimePolicy = { runtimeMode: "approval-required", cwd };
-    assert.equal(acpClientReadDisposition(policy, NodePath.join(cwd, "file.ts")), "ask");
-    assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "ask");
-    assert.equal(acpClientExecuteDisposition(policy), "ask");
+  it("asks in approval-required and auto-accept-edits, allows in auto and full access", () => {
+    assert.equal(acpClientExecuteDisposition({ runtimeMode: "approval-required", cwd }), "ask");
+    assert.equal(acpClientExecuteDisposition({ runtimeMode: "auto-accept-edits", cwd }), "ask");
+    assert.equal(acpClientExecuteDisposition({ runtimeMode: "auto", cwd }), "allow");
+    assert.equal(acpClientExecuteDisposition({ runtimeMode: "full-access", cwd }), "allow");
   });
 
-  it("allows in auto and full-access modes without an explicit sandbox", () => {
-    for (const runtimeMode of ["auto", "auto-accept-edits", "full-access"] as const) {
-      const policy: AcpRuntimePolicy = { runtimeMode, cwd };
-      assert.equal(acpClientReadDisposition(policy, NodePath.join(cwd, "file.ts")), "allow");
-      assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "allow");
-      assert.equal(acpClientExecuteDisposition(policy), "allow");
+  it("denies terminals under explicit read-only and workspace-write sandboxes", () => {
+    for (const sandboxPolicy of [
+      { type: "readOnly" },
+      { type: "workspaceWrite", writableRoots: [], networkAccess: false },
+    ]) {
+      assert.equal(
+        acpClientExecuteDisposition({
+          runtimeMode: "full-access",
+          cwd,
+          approvalPolicy: "never",
+          sandboxPolicy,
+        }),
+        "deny",
+      );
     }
-  });
-
-  it("allows reads but denies writes and terminals under an explicit read-only sandbox", () => {
-    const policy: AcpRuntimePolicy = {
-      runtimeMode: "full-access",
-      cwd,
-      approvalPolicy: "never",
-      sandboxPolicy: { type: "readOnly" },
-    };
-    assert.equal(acpClientReadDisposition(policy, NodePath.join(cwd, "file.ts")), "allow");
-    assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "file.ts")), "deny");
-    assert.equal(acpClientExecuteDisposition(policy), "deny");
-  });
-
-  it("allows reads, confines writes, and denies terminals under workspace-write", () => {
-    const policy: AcpRuntimePolicy = {
-      runtimeMode: "full-access",
-      cwd,
-      approvalPolicy: "never",
-      sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
-    };
-    assert.equal(acpClientReadDisposition(policy, "/tmp/outside-workspace/file.ts"), "allow");
-    assert.equal(acpClientWriteDisposition(policy, NodePath.join(cwd, "src/file.ts")), "allow");
-    assert.equal(acpClientWriteDisposition(policy, "/tmp/outside-workspace/file.ts"), "deny");
-    assert.equal(acpClientExecuteDisposition(policy), "deny");
   });
 });
 
 describe("makeAcpClientPolicyGrants", () => {
-  const cwd = NodePath.resolve(process.cwd(), "acp-grant-workspace");
-  const filePath = NodePath.join(cwd, "src", "granted.ts");
-
-  it("grants writes to approved locations for the approving turn only", () => {
+  it("grants terminals only from commands, never from an approved read or edit", () => {
     const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({
-      kind: "file-change",
-      locations: [filePath],
-      cwd,
-      scope: "turn",
-      turnKey: "turn-1",
-    });
-    assert.isTrue(grants.allowsWrite({ path: filePath, cwd, turnKey: "turn-1" }));
-    assert.isFalse(
-      grants.allowsWrite({ path: NodePath.join(cwd, "src", "other.ts"), cwd, turnKey: "turn-1" }),
-    );
-    assert.isFalse(grants.allowsWrite({ path: filePath, cwd, turnKey: "turn-2" }));
-    assert.isFalse(grants.allowsWrite({ path: filePath, cwd, turnKey: null }));
-  });
-
-  it("keeps accept-for-session grants across turns", () => {
-    const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({
-      kind: "file-change",
-      locations: [filePath],
-      cwd,
-      scope: "session",
-      turnKey: "turn-1",
-    });
-    assert.isTrue(grants.allowsWrite({ path: filePath, cwd, turnKey: "turn-9" }));
-    assert.isTrue(grants.allowsWrite({ path: filePath, cwd, turnKey: null }));
-  });
-
-  it("treats a location-free file change as an unscoped write grant", () => {
-    const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({
-      kind: "file-change",
-      locations: [],
-      cwd,
-      scope: "turn",
-      turnKey: "turn-1",
-    });
-    assert.isTrue(
-      grants.allowsWrite({ path: NodePath.join(cwd, "anything.ts"), cwd, turnKey: "turn-1" }),
-    );
-    assert.isFalse(
-      grants.allowsWrite({ path: NodePath.join(cwd, "anything.ts"), cwd, turnKey: "turn-2" }),
-    );
-  });
-
-  it("grants reads only to approved locations and terminals only from commands", () => {
-    const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({
-      kind: "file-read",
-      locations: [filePath],
-      cwd,
-      scope: "turn",
-      turnKey: "turn-1",
-    });
-    assert.isTrue(grants.allowsRead({ path: filePath, cwd, turnKey: "turn-1" }));
-    assert.isFalse(
-      grants.allowsRead({ path: NodePath.join(cwd, "src", "other.ts"), cwd, turnKey: "turn-1" }),
-    );
-    assert.isFalse(grants.allowsRead({ path: filePath, cwd, turnKey: "turn-2" }));
+    grants.recordApproval({ kind: "file-read", scope: "turn", turnKey: "turn-1" });
+    grants.recordApproval({ kind: "file-change", scope: "session", turnKey: "turn-1" });
     assert.isFalse(grants.allowsExecute("turn-1"));
-    assert.isFalse(grants.allowsWrite({ path: filePath, cwd, turnKey: "turn-1" }));
-    grants.recordApproval({
-      kind: "command",
-      locations: [],
-      cwd,
-      scope: "turn",
-      turnKey: "turn-1",
-    });
+    grants.recordApproval({ kind: "command", scope: "turn", turnKey: "turn-1" });
     assert.isTrue(grants.allowsExecute("turn-1"));
     assert.isFalse(grants.allowsExecute("turn-2"));
     assert.isFalse(grants.allowsExecute(null));
   });
 
-  it("starting a later turn's grants drops the previous turn's grants", () => {
+  it("keeps accept-for-session command grants across turns", () => {
     const grants = makeAcpClientPolicyGrants();
-    grants.recordApproval({
-      kind: "command",
-      locations: [],
-      cwd,
-      scope: "turn",
-      turnKey: "turn-1",
-    });
-    grants.recordApproval({
-      kind: "file-change",
-      locations: [filePath],
-      cwd,
-      scope: "turn",
-      turnKey: "turn-2",
-    });
-    assert.isFalse(grants.allowsExecute("turn-1"));
-    assert.isTrue(grants.allowsWrite({ path: filePath, cwd, turnKey: "turn-2" }));
+    grants.recordApproval({ kind: "command", scope: "session", turnKey: "turn-1" });
+    assert.isTrue(grants.allowsExecute("turn-9"));
+    assert.isTrue(grants.allowsExecute(null));
   });
 
-  it.effect("matches grants canonically so symlink escapes stay outside the grant", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-grant-workspace-",
-      });
-      const outside = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-grant-outside-",
-      });
-      yield* fileSystem.makeDirectory(path.join(workspace, "approved"), { recursive: true });
-      yield* fileSystem.symlink(outside, path.join(workspace, "approved", "linked"));
-
-      const grants = makeAcpClientPolicyGrants();
-      grants.recordApproval({
-        kind: "file-change",
-        locations: [path.join(workspace, "approved")],
-        cwd: workspace,
-        scope: "turn",
-        turnKey: "turn-1",
-      });
-      assert.isTrue(
-        grants.allowsWrite({
-          path: path.join(workspace, "approved", "inside.ts"),
-          cwd: workspace,
-          turnKey: "turn-1",
-        }),
-      );
-      assert.isFalse(
-        grants.allowsWrite({
-          path: path.join(workspace, "approved", "linked", "escaped.ts"),
-          cwd: workspace,
-          turnKey: "turn-1",
-        }),
-        "a write through an escaping symlink resolves outside the granted root",
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+  it("drops a turn's command grant when a later turn approves one", () => {
+    const grants = makeAcpClientPolicyGrants();
+    grants.recordApproval({ kind: "command", scope: "turn", turnKey: "turn-1" });
+    grants.recordApproval({ kind: "command", scope: "turn", turnKey: "turn-2" });
+    assert.isFalse(grants.allowsExecute("turn-1"));
+    assert.isTrue(grants.allowsExecute("turn-2"));
+  });
 });

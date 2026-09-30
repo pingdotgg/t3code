@@ -7,7 +7,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
-  type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -83,7 +83,7 @@ it.effect.each(["on time", "after restart"])(
         yield* TestClock.adjust("65 seconds");
       }
       const current = yield* Ref.make(thread);
-      const commands = yield* Ref.make<ReadonlyArray<OrchestrationV2Command>>([]);
+      const commands = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
       const receipts = yield* Queue.unbounded<"task" | "retry">();
       const dependencies = Layer.mergeAll(
         NodeCrypto.layer,

@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../../config.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { makeLayerEffect as makeProviderAdapterRegistryLayerEffect } from "../ProviderAdapterRegistry.ts";
+import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import {
@@ -32,7 +33,10 @@ const REPLAY_SETTINGS = Schema.decodeUnknownSync(AcpRegistrySettings)({
   authMethodId: "replay",
 });
 
-function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscript) {
+function makeAcpRegistryProviderAdapterRegistryReplayLayer(
+  transcript: AcpReplayTranscript,
+  options: { readonly replayGate?: ProviderReplayGate } = {},
+) {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(`acp-registry-${transcript.scenario}`).pipe(Effect.orDie),
@@ -46,6 +50,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplay
       const crypto = yield* Crypto.Crypto;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
+      const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
         .makeTempDirectory({
           prefix: `t3-orchestration-v2-acp-registry-replay-${transcript.scenario}-`,
@@ -74,12 +79,21 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplay
           scriptPath,
           childProcessSpawner,
           fileSystem,
+          ...(replayGate === undefined ? {} : { replayGate }),
         }),
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
       });
       return [adapter];
     }),
-  ).pipe(Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, idAllocatorLayer)));
+  ).pipe(
+    Layer.provide(Layer.mergeAll(serverConfigLayer, NodeServices.layer, idAllocatorLayer)),
+    // Held inbound lines must not outlive the scenario and wedge teardown.
+    Layer.merge(
+      Layer.effectDiscard(
+        Effect.addFinalizer(() => Effect.sync(() => options.replayGate?.releaseAll())),
+      ),
+    ),
+  );
 }
 
 export const AcpRegistryOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
