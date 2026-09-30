@@ -48,6 +48,13 @@ loopback listener may be on another machine. Forward only the callback for the o
 a successful callback HTTP request is not proof that provider authentication finished. The native
 process owns token exchange and storage.
 
+Managed ChatGPT sign-in for a remote environment can finish on a local primary. The
+[primary handoff](../../apps/server/src/provider/CodexChatGptHandoff.ts) uses an ephemeral
+credential store and the destination's environment ID. It exchanges and verifies the code before
+transferring the issued client registration and tokens. Only the destination persists and refreshes
+that session; retaining a primary refresh session would race refresh-token rotation. Without a local
+primary, the client uses the remote callback completion flow.
+
 Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
 metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
 do not establish current access, and an authoritative empty catalog must clear the old list.
