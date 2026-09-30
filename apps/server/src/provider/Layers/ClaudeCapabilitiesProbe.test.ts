@@ -223,3 +223,25 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("asks for usage without the local transcript scan", () =>
+  Effect.gen(function* () {
+    let usageOptions: unknown;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            account: { email: "dev@example.com", subscriptionType: "max", tokenSource: "oauth" },
+            commands: [],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async (options?: unknown) => {
+            usageOptions = options;
+            return { rate_limits_available: true, rate_limits: null };
+          },
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    yield* probeClaudeCapabilities(decodeClaudeSettings({ binaryPath: "claude" }));
+    assert.deepEqual(usageOptions, { skipBehaviors: true });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
