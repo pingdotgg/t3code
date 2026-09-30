@@ -107,6 +107,118 @@ async function syncDirectory(directory: string): Promise<void> {
 }
 
 /**
+ * Copies a database file as a copy-on-write clone where the filesystem has
+ * them (APFS via `cp -c`, btrfs/XFS reflinks via `cp --reflink=auto`), which
+ * takes no extra space and finishes instantly for a database of tens of GB.
+ * Node's own clone flag is not used: on macOS `fs.copyFile` falls back to a
+ * full copy. Anywhere cloning is unavailable, or `cp` fails, this is a
+ * regular copy.
+ */
+function copyDatabaseFile(source: string, destination: string): Promise<void> {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const platform = process.platform;
+  const args =
+    platform === "darwin"
+      ? ["-c", source, destination]
+      : platform === "linux"
+        ? ["--reflink=auto", source, destination]
+        : undefined;
+  if (args === undefined) return NodeFSP.copyFile(source, destination);
+  return new Promise((resolve, reject) => {
+    NodeChildProcess.execFile("cp", args, (error) => {
+      if (error === null) resolve();
+      else NodeFSP.copyFile(source, destination).then(resolve, reject);
+    });
+  });
+}
+
+const GIB = 1024 ** 3;
+/** Clones share blocks, but the live database diverges from them once it writes again. */
+const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
+
+async function databaseSizeBytes(dbPath: string): Promise<number> {
+  let total = 0;
+  for (const suffix of DB_FILE_SUFFIXES) {
+    const stat = await NodeFSP.stat(`${dbPath}${suffix}`).catch(() => undefined);
+    total += stat?.size ?? 0;
+  }
+  return total;
+}
+
+const CLONE_PROBE_BYTES = 32 * 1024 ** 2;
+
+/**
+ * Whether copying into the backup directory clones instead of duplicating,
+ * measured with the real copy function: a clone of a fresh 32 MiB file
+ * consumes almost no free space, a copy consumes all of it. Errs toward "no"
+ * when other disk activity muddies the reading, and when the database and the
+ * backup directory are on different filesystems, where nothing can clone.
+ */
+async function backupCanClone(
+  backupRoot: string,
+  dbPath: string,
+  readFreeBytes: (directory: string) => Promise<number>,
+): Promise<boolean> {
+  const [dbDirectory, backupDirectory] = await Promise.all([
+    NodeFSP.stat(NodePath.dirname(dbPath)),
+    NodeFSP.stat(backupRoot),
+  ]);
+  if (dbDirectory.dev !== backupDirectory.dev) return false;
+  const id = NodeCrypto.randomUUID();
+  const probeSource = NodePath.join(NodePath.dirname(dbPath), `.clone-probe-${id}`);
+  const probeTarget = NodePath.join(backupRoot, `.clone-probe-${id}`);
+  try {
+    await NodeFSP.writeFile(probeSource, NodeCrypto.randomBytes(CLONE_PROBE_BYTES));
+    await syncFile(probeSource);
+    const before = await readFreeBytes(backupRoot);
+    await copyDatabaseFile(probeSource, probeTarget);
+    await syncFile(probeTarget);
+    const after = await readFreeBytes(backupRoot);
+    return before - after < CLONE_PROBE_BYTES / 4;
+  } catch {
+    return false;
+  } finally {
+    await NodeFSP.rm(probeSource, { force: true }).catch(() => undefined);
+    await NodeFSP.rm(probeTarget, { force: true }).catch(() => undefined);
+  }
+}
+
+export type ReadFreeBytes = (directory: string) => Promise<number>;
+
+const readFreeBytesFromFilesystem: ReadFreeBytes = async (directory) => {
+  const stats = await NodeFSP.statfs(directory);
+  return stats.bavail * stats.bsize;
+};
+
+/**
+ * Returns a client-visible reason when the pre-update database backup cannot
+ * fit, or undefined when it can. Runs before the server is stopped so a full
+ * disk refuses the update instead of causing an outage and a cold restart.
+ * The clone probe writes 32 MiB of its own, so it only runs when a full copy
+ * does not fit but a clone's headroom does.
+ */
+export async function databaseBackupBlocker(
+  baseDir: string,
+  dbPath: string,
+  readFreeBytes: ReadFreeBytes = readFreeBytesFromFilesystem,
+): Promise<string | undefined> {
+  const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
+  await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
+  const [size, free] = await Promise.all([databaseSizeBytes(dbPath), readFreeBytes(backupRoot)]);
+  const fullCopyBytes = size * 1.05;
+  if (free >= fullCopyBytes) return undefined;
+  const clonedBytes = Math.max(CLONED_BACKUP_MIN_HEADROOM_BYTES, size * 0.02);
+  const probed = free >= CLONED_BACKUP_MIN_HEADROOM_BYTES;
+  const cloneable = probed && (await backupCanClone(backupRoot, dbPath, readFreeBytes));
+  const needed = cloneable ? clonedBytes : fullCopyBytes;
+  if (free >= needed) return undefined;
+  // Without a probe the filesystem may still clone, so report the least that could pass.
+  const shown = probed ? needed : Math.min(fullCopyBytes, clonedBytes);
+  const gb = (bytes: number) => (bytes / GIB).toFixed(1);
+  return `Not enough free disk space to back up the database before updating: ${probed ? "" : "at least "}${gb(shown)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
+}
+
+/**
  * Snapshots the database once per update before the first trial. A completed
  * backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
@@ -123,7 +235,7 @@ async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate
       const source = `${pending.dbPath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
       const destination = databaseBackupFile(stagingDir, suffix);
-      await NodeFSP.copyFile(source, destination);
+      await copyDatabaseFile(source, destination);
       await syncFile(destination);
     }
     await NodeFSP.rename(stagingDir, backupDir);
@@ -167,7 +279,7 @@ async function restoreDatabaseBackup(
     const target = `${pending.dbPath}${suffix}`;
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
-      await NodeFSP.copyFile(source, target);
+      await copyDatabaseFile(source, target);
       await syncFile(target);
     } else {
       await NodeFSP.rm(target, { force: true });
@@ -288,9 +400,15 @@ export class Launcher {
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
+  readonly #readFreeBytes: ReadFreeBytes | undefined;
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(
+    baseDir: string,
+    state: ServiceState,
+    options: { readonly readFreeBytes?: ReadFreeBytes } = {},
+  ) {
     this.#baseDir = baseDir;
+    this.#readFreeBytes = options.readFreeBytes;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -507,6 +625,20 @@ export class Launcher {
     }
     if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {
       await reject("The requested target runtime is missing or incomplete.");
+      return;
+    }
+    // A check that cannot run refuses the update too: the alternative is
+    // stopping the server without knowing whether the backup fits.
+    const backupBlocker = await databaseBackupBlocker(
+      this.#baseDir,
+      message.dbPath,
+      this.#readFreeBytes,
+    ).catch(
+      (error: unknown) =>
+        `Could not check free disk space before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
+    );
+    if (backupBlocker !== undefined) {
+      await reject(backupBlocker);
       return;
     }
 
