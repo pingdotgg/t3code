@@ -1,8 +1,25 @@
 diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
-index c342e90bffde9ad5044b6167bdde2e19be219270..5d3e4407aa1bb68b873cf164adf5a9f0b487bb0b 100644
+index c342e90bffde9ad5044b6167bdde2e19be219270..1108d1df6aabb3608077c27072f16e9389efaba0 100644
 --- a/lib/module/views/NativeStackView.native.js
 +++ b/lib/module/views/NativeStackView.native.js
-@@ -370,6 +370,17 @@ export function NativeStackView({
+@@ -82,6 +82,7 @@ const SceneView = ({
+     statusBarTranslucent,
+     statusBarBackgroundColor,
+     unstable_sheetFooter,
++    unstable_nativeBackDismissalEnabled,
+     scrollEdgeEffects,
+     freezeOnBlur,
+     contentStyle
+@@ -280,7 +281,7 @@ const SceneView = ({
+       onGestureCancel: onGestureCancel,
+       onSheetDetentChanged: onSheetDetentChanged,
+       gestureResponseDistance: gestureResponseDistance,
+-      nativeBackButtonDismissalEnabled: false // on Android
++      nativeBackButtonDismissalEnabled: unstable_nativeBackDismissalEnabled === true // on Android
+       ,
+       onHeaderBackButtonClicked: onHeaderBackButtonClicked,
+       preventNativeDismiss: isRemovePrevented // on iOS
+@@ -370,6 +371,17 @@ export function NativeStackView({
    return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
      children: /*#__PURE__*/_jsx(ScreenStack, {
        style: styles.container,
@@ -21,7 +38,7 @@ index c342e90bffde9ad5044b6167bdde2e19be219270..5d3e4407aa1bb68b873cf164adf5a9f0
          const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
          const isFocused = state.index === index;
 diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
-index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d6f55b11e 100644
+index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..14df44af9a3ea5f25727418bc64601e8b2ab9c22 100644
 --- a/lib/module/views/useHeaderConfigProps.js
 +++ b/lib/module/views/useHeaderConfigProps.js
 @@ -19,6 +19,12 @@ const processBarButtonItems = (items, colors, fonts) => {
@@ -134,10 +151,26 @@ index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d
      headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),
      experimental_userInterfaceStyle: dark ? 'dark' : 'light'
 diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
-index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb2151a712bf0 100644
+index 2f1351a89f0f2e67e854dc81e392198326b71834..6f1a077812eff57df382437c8f526f33f6abe270 100644
 --- a/lib/typescript/src/types.d.ts
 +++ b/lib/typescript/src/types.d.ts
-@@ -1091,6 +1091,13 @@ export type NativeStackHeaderItemSpacing = {
+@@ -530,6 +530,15 @@ export type NativeStackNavigationOptions = {
+      * @platform ios
+      */
+     gestureResponseDistance?: ScreenProps['gestureResponseDistance'];
++    /**
++     * Lets a back press dismiss this screen natively on Android, without waiting
++     * for JS. The navigator learns about it through `onDismissed`, like an iOS
++     * swipe back. Needs an app-side back callback that performs the dismissal.
++     * Defaults to `false`.
++     *
++     * @platform android
++     */
++    unstable_nativeBackDismissalEnabled?: boolean;
+     /**
+      * The type of animation to use when this screen replaces another screen. Defaults to `pop`.
+      *
+@@ -1091,6 +1100,13 @@ export type NativeStackHeaderItemSpacing = {
   */
  export type NativeStackHeaderItemCustom = {
      type: 'custom';
@@ -152,10 +185,26 @@ index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb215
       * A React Element to display as the item.
       */
 diff --git a/src/types.tsx b/src/types.tsx
-index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9eb16f1a80 100644
+index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..1495ef2e489f28ecb73684b7244d82a529a34fd7 100644
 --- a/src/types.tsx
 +++ b/src/types.tsx
-@@ -1156,6 +1156,13 @@ export type NativeStackHeaderItemSpacing = {
+@@ -582,6 +582,15 @@ export type NativeStackNavigationOptions = {
+    * @platform ios
+    */
+   gestureResponseDistance?: ScreenProps['gestureResponseDistance'];
++  /**
++   * Lets a back press dismiss this screen natively on Android, without waiting
++   * for JS. The navigator learns about it through `onDismissed`, like an iOS
++   * swipe back. Needs an app-side back callback that performs the dismissal.
++   * Defaults to `false`.
++   *
++   * @platform android
++   */
++  unstable_nativeBackDismissalEnabled?: boolean;
+   /**
+    * The type of animation to use when this screen replaces another screen. Defaults to `pop`.
+    *
+@@ -1156,6 +1165,13 @@ export type NativeStackHeaderItemSpacing = {
   */
  export type NativeStackHeaderItemCustom = {
    type: 'custom';
@@ -169,6 +218,29 @@ index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9e
    /**
     * A React Element to display as the item.
     */
+diff --git a/src/views/NativeStackView.native.tsx b/src/views/NativeStackView.native.tsx
+index 416cd90057cea362371a4308dd9985b086c5ccaa..bd4bad83c2ffeffff1e816260007b6538e2440f2 100644
+--- a/src/views/NativeStackView.native.tsx
++++ b/src/views/NativeStackView.native.tsx
+@@ -134,6 +134,7 @@ const SceneView = ({
+     statusBarTranslucent,
+     statusBarBackgroundColor,
+     unstable_sheetFooter,
++    unstable_nativeBackDismissalEnabled,
+     scrollEdgeEffects,
+     freezeOnBlur,
+     contentStyle,
+@@ -406,7 +407,9 @@ const SceneView = ({
+         onGestureCancel={onGestureCancel}
+         onSheetDetentChanged={onSheetDetentChanged}
+         gestureResponseDistance={gestureResponseDistance}
+-        nativeBackButtonDismissalEnabled={false} // on Android
++        nativeBackButtonDismissalEnabled={
++          unstable_nativeBackDismissalEnabled === true
++        } // on Android
+         onHeaderBackButtonClicked={onHeaderBackButtonClicked}
+         preventNativeDismiss={isRemovePrevented} // on iOS
+         scrollEdgeEffects={{
 diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
 index 3f3fff405048b3c2250afbe99dd7f35cecb9a6d5..bb062b898cfa77f8c02f951dc9d81b51672d7d0e 100644
 --- a/src/views/useHeaderConfigProps.tsx

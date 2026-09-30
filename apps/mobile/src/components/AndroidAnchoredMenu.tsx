@@ -6,6 +6,7 @@ import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
+import { JS_BACK_HANDLER_NATIVE_ID } from "../lib/androidNativeBack";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { MaterialMenuPopup } from "./MaterialMenuPopup";
@@ -193,10 +194,13 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
       )}
       {anchor === null ? null : (
         <OverlayPortal>
+          {/* The nativeID keeps native back (withAndroidNativeScreenBack) from
+              popping the screen while the in-window menu takes back. */}
           <View
             ref={overlayRef}
             collapsable={false}
             className="absolute inset-0"
+            nativeID={anchor.keyboardWasVisible ? JS_BACK_HANDLER_NATIVE_ID : undefined}
             onLayout={measureOverlay}
           >
             <Pressable accessible={false} className="absolute inset-0" onPress={close} />
