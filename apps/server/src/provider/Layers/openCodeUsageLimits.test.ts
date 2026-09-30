@@ -24,7 +24,10 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { resolveUsageLimitsAfterProbe } from "../providerUsageLimits.ts";
 import { readOpenCodeUsageLimits } from "./openCodeUsageLimits.ts";
 
-const decodeUsageLimits = Schema.decodeUnknownSync(ServerProviderUsageLimits);
+const usageLimitsJson = Schema.fromJsonString(ServerProviderUsageLimits);
+const encodeUsageLimits = Schema.encodeEffect(usageLimitsJson);
+const decodeUsageLimits = Schema.decodeUnknownEffect(usageLimitsJson);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const probe = (body: unknown, status = 200) =>
   readOpenCodeUsageLimits({
@@ -89,7 +92,7 @@ it.effect.each([
     const result = yield* probe({ data });
     NodeAssert.equal(result.unavailable, undefined);
     NodeAssert.equal(result.windows[0]?.usedPercent, percent);
-    NodeAssert.ok(!JSON.stringify(result).includes("fixture-key"));
+    NodeAssert.ok(!(yield* encodeJson(result)).includes("fixture-key"));
   }),
 );
 
@@ -107,7 +110,7 @@ it.effect.each([
     NodeAssert.equal(result.unavailable?.reason, "probeFailed");
     const published = { checkedAt: "2026-09-25T12:00:00.000Z", windows: [] };
     NodeAssert.equal(resolveUsageLimitsAfterProbe({ published, probed: result }), published);
-    NodeAssert.ok(!JSON.stringify(result).includes("fixture-key"));
+    NodeAssert.ok(!(yield* encodeJson(result)).includes("fixture-key"));
   }),
 );
 
@@ -130,7 +133,7 @@ it.effect(
           enabled: true,
           serverUrl: "",
           environment: {
-            OPENCODE_AUTH_CONTENT: JSON.stringify({
+            OPENCODE_AUTH_CONTENT: yield* encodeJson({
               "opencode-go": { type: "api", key: "go" },
               openrouter: { type: "api", key },
             }),
@@ -308,7 +311,7 @@ it.effect(
           ),
           Effect.provide(NodeServices.layer),
         );
-        const wireLimits = decodeUsageLimits(JSON.parse(JSON.stringify(usageLimits)));
+        const wireLimits = yield* decodeUsageLimits(yield* encodeUsageLimits(usageLimits));
         // A Go-only server predating window identities supplies the top-level fingerprint.
         const limits =
           id === "d"
