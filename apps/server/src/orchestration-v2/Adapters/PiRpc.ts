@@ -30,6 +30,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { signalProcessGroup } from "../../process/processGroup.ts";
+
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
   detail: Schema.optional(Schema.String),
@@ -238,7 +240,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       if (platform === "win32") {
         process.kill(Number(child.pid), signal);
       } else {
-        process.kill(-Number(child.pid), signal);
+        signalProcessGroup(Number(child.pid), signal);
       }
       return true;
     } catch {
@@ -250,7 +252,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const hasExited = (): boolean => {
     if (childExited) return true;
     try {
-      process.kill(platform === "win32" ? Number(child.pid) : -Number(child.pid), 0);
+      if (platform === "win32") process.kill(Number(child.pid), 0);
+      else signalProcessGroup(Number(child.pid), 0);
       return false;
     } catch {
       return true;
