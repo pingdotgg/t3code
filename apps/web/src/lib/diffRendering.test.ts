@@ -1,4 +1,6 @@
+import { hydratePartialDiff } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
+import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
@@ -34,6 +36,135 @@ describe("buildPatchCacheKey", () => {
 });
 
 describe("getRenderablePatch", () => {
+  it("hides indentation changes around inserted JSX without moving review lines", () => {
+    const patch = [
+      "diff --git a/item.tsx b/item.tsx",
+      "--- a/item.tsx",
+      "+++ b/item.tsx",
+      "@@ -40,5 +40,7 @@",
+      ' <ItemContent className="min-w-0">',
+      "-  <ItemTitle>",
+      '-    <h4 className="wrap-break-word">{name}</h4>',
+      "-  </ItemTitle>",
+      "+  {showName && (",
+      "+    <ItemTitle>",
+      '+      <h4 className="wrap-break-word">{name}</h4>',
+      "+    </ItemTitle>",
+      "+  )}",
+      " </ItemContent>",
+      "@@ -80 +82 @@",
+      "-const value = 1;",
+      "+const value = 2;",
+    ].join("\n");
+    const shown = getRenderablePatch(patch, "pr", { compactPartialHunkOffsets: true });
+    const hidden = getRenderablePatch(patch, "pr", {
+      compactPartialHunkOffsets: true,
+      ignoreWhitespace: true,
+    });
+    expect(shown?.kind).toBe("files");
+    expect(hidden?.kind).toBe("files");
+    if (shown?.kind !== "files" || hidden?.kind !== "files") return;
+    expect(getDiffLineStat(shown.files)).toEqual({ additions: 6, deletions: 4 });
+    expect(getDiffLineStat(hidden.files)).toEqual({ additions: 3, deletions: 1 });
+    const file = hidden.files[0]!;
+    expect(file.additionLines).toEqual(shown.files[0]!.additionLines);
+    expect(file.deletionLines).toEqual(shown.files[0]!.deletionLines);
+    expect(file.cacheKey).not.toBe(shown.files[0]!.cacheKey);
+    expect(resolveDiffReviewPosition(hidden.sourceFiles[0]!, 43, "additions")).toEqual({
+      kind: "added",
+      newLine: 43,
+    });
+    expect(resolveDiffReviewPosition(hidden.sourceFiles[0]!, 42, "deletions")).toEqual({
+      kind: "deleted",
+      oldLine: 42,
+    });
+    expect(file.hunks[0]?.hunkContent).toContainEqual({
+      type: "context",
+      lines: 3,
+      additionLineIndex: 2,
+      deletionLineIndex: 1,
+    });
+    expect(resolveDiffReviewPosition(file, 41, "additions")).toEqual({
+      kind: "added",
+      newLine: 41,
+    });
+    expect(resolveDiffReviewPosition(file, 43, "additions")).toEqual({
+      kind: "context",
+      oldLine: 42,
+      newLine: 43,
+      side: "right",
+    });
+    expect(resolveDiffReviewPosition(file, 42, "deletions")).toEqual({
+      kind: "context",
+      oldLine: 42,
+      newLine: 43,
+      side: "left",
+    });
+    expect(file.hunks[1]).toMatchObject({
+      additionStart: 82,
+      deletionStart: 80,
+      splitLineStart: 7,
+      unifiedLineStart: 7,
+    });
+    const prefix = "unchanged\n".repeat(39);
+    const gap = "unchanged\n".repeat(35);
+    const hydrated = hydratePartialDiff("clone", file, {
+      oldFile: {
+        name: file.name,
+        contents: prefix + file.deletionLines.slice(0, 5).join("") + gap + "const value = 1;\n",
+      },
+      newFile: {
+        name: file.name,
+        contents: prefix + file.additionLines.slice(0, 7).join("") + gap + "const value = 2;\n",
+      },
+    });
+    expect(getDiffLineStat([hydrated])).toEqual({ additions: 3, deletions: 1 });
+    expect(resolveDiffReviewPosition(hydrated, 43, "additions")).toEqual(
+      resolveDiffReviewPosition(file, 43, "additions"),
+    );
+  });
+
+  it.each([
+    ["  const x = 1;\t", "\tconst x=1;", 0, 0],
+    ["const x = 1;", "const x = 2;", 1, 1],
+    ["const x = 1;", "const x = 1;\n", 1, 0],
+  ])("filters whitespace in %j to %j", (before, after, additions, deletions) => {
+    const patch = [
+      "diff --git a/example.ts b/example.ts",
+      "--- a/example.ts",
+      "+++ b/example.ts",
+      `@@ -1 +1,${after.split("\n").length} @@`,
+      `-${before}`,
+      ...after.split("\n").map((line) => `+${line}`),
+      "",
+    ].join("\n");
+    const filtered = getRenderablePatch(patch, "pr", { ignoreWhitespace: true });
+    expect(filtered?.kind).toBe("files");
+    if (filtered?.kind !== "files") return;
+    expect(getDiffLineStat(filtered.files)).toEqual({ additions, deletions });
+  });
+
+  it.each(["+", "-"])("keeps %s blank lines without a final newline", (sign) => {
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/blank.txt b/blank.txt",
+        "--- a/blank.txt",
+        "+++ b/blank.txt",
+        sign === "+" ? "@@ -0,0 +1 @@" : "@@ -1 +0,0 @@",
+        `${sign}  `,
+        "\\ No newline at end of file",
+      ].join("\n"),
+      "pr",
+      { ignoreWhitespace: true },
+    );
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+    expect(getDiffLineStat(parsed.files)).toEqual({
+      additions: sign === "+" ? 1 : 0,
+      deletions: sign === "-" ? 1 : 0,
+    });
+  });
+
   it.each([
     ["a/example.ts", "a/example.ts", "change"],
     ["b/example.ts", "b/example.ts", "change"],

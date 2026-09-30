@@ -130,7 +130,7 @@ export function useThreadConversationMenu(thread: EnvironmentThreadShell | null)
       <CustomSnoozeSheet
         onClose={() => setSnoozeTarget(null)}
         onSnooze={(until) => {
-          void actions.snoozeThread(snoozeTarget, until);
+          void actions.snoozeThread(thread, until);
         }}
       />
     ) : null;

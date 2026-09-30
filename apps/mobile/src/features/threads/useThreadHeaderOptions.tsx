@@ -1,6 +1,7 @@
-import type { ScreenHeaderMenu, ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
+import type { ScreenHeaderMenu } from "../../components/ScreenHeader.types";
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import { nativeLifecycleItems } from "./threadConversationNativeMenu";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -9,22 +10,6 @@ import {
   useThreadGitCenterHeaderItems,
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
-
-function nativeLifecycleItems(
-  items: ReadonlyArray<ScreenHeaderMenuItem>,
-): Array<Record<string, unknown>> {
-  return items.map((item) =>
-    "items" in item
-      ? { type: "submenu", title: item.title ?? "", items: nativeLifecycleItems(item.items) }
-      : {
-          type: "action",
-          label: item.title,
-          icon: item.icon ? { type: "sfSymbol", name: item.icon } : undefined,
-          disabled: item.disabled,
-          onPress: item.onPress,
-        },
-  );
-}
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
@@ -38,6 +23,8 @@ export function useThreadHeaderOptions(props: {
   readonly onReturnToThread?: () => void;
 }) {
   const navigation = useNavigation();
+  const lifecycleMenuRef = useRef(props.lifecycleMenu);
+  lifecycleMenuRef.current = props.lifecycleMenu;
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
@@ -133,7 +120,10 @@ export function useThreadHeaderOptions(props: {
               icon: { type: "sfSymbol", name: "ellipsis.circle" },
               menu: {
                 title: props.lifecycleMenu.title,
-                items: nativeLifecycleItems(props.lifecycleMenu.items),
+                items: nativeLifecycleItems(
+                  props.lifecycleMenu.items,
+                  () => lifecycleMenuRef.current?.items ?? [],
+                ),
               },
             },
           ]

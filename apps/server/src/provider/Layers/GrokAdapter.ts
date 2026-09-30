@@ -175,6 +175,7 @@ interface GrokSessionContext {
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
   stopped: boolean;
+  terminated: boolean;
   /** Live monitor/shell identities and their originating turns. */
   readonly backgroundTasks: Map<string, GrokBackgroundTaskRecord>;
 }
@@ -345,6 +346,7 @@ export function grokPromptSettlementBelongsToContext(input: {
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
   return Effect.gen(function* () {
+    const ownerScope = yield* Effect.scope;
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("grok");
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -776,46 +778,45 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       );
     });
 
-    const runTurnLivenessWatchdog = Effect.fn("GrokAdapter.runTurnLivenessWatchdog")(
-      function* (ctx: GrokSessionContext) {
-        while (true) {
-          if (ctx.stopped) {
-            return;
-          }
-          const turnId = ctx.livenessTurnId;
-          if (
-            turnId === undefined ||
-            ctx.interruptedTurnIds.has(turnId) ||
-            !isLiveTurn(ctx, turnId) ||
-            hasLivenessPause(ctx)
-          ) {
-            yield* Queue.take(ctx.livenessSignals);
-            continue;
-          }
-
-          const lastActivityAtNanos = ctx.lastTurnActivityAtNanos;
-          if (lastActivityAtNanos === undefined) {
-            yield* Queue.take(ctx.livenessSignals);
-            continue;
-          }
-          const nowNanos = yield* Clock.monotonicTimeNanos;
-          const remainingNanos = livenessTimeoutFor(ctx).nanos - (nowNanos - lastActivityAtNanos);
-          if (remainingNanos <= 0n) {
-            yield* settleStalledTurn(ctx, turnId);
-            continue;
-          }
-
-          const wakeReason = yield* Effect.raceFirst(
-            Effect.sleep(Duration.nanos(remainingNanos)).pipe(Effect.as("timeout" as const)),
-            Queue.take(ctx.livenessSignals).pipe(Effect.as("activity" as const)),
-          );
-          if (wakeReason === "timeout") {
-            yield* settleStalledTurn(ctx, turnId);
-          }
+    const runTurnLivenessWatchdog = Effect.fn("GrokAdapter.runTurnLivenessWatchdog")(function* (
+      ctx: GrokSessionContext,
+    ) {
+      while (true) {
+        if (ctx.stopped) {
+          return;
         }
-      },
-      Effect.catch(() => Effect.void),
-    );
+        const turnId = ctx.livenessTurnId;
+        if (
+          turnId === undefined ||
+          ctx.interruptedTurnIds.has(turnId) ||
+          !isLiveTurn(ctx, turnId) ||
+          hasLivenessPause(ctx)
+        ) {
+          yield* Queue.take(ctx.livenessSignals);
+          continue;
+        }
+
+        const lastActivityAtNanos = ctx.lastTurnActivityAtNanos;
+        if (lastActivityAtNanos === undefined) {
+          yield* Queue.take(ctx.livenessSignals);
+          continue;
+        }
+        const nowNanos = yield* Clock.monotonicTimeNanos;
+        const remainingNanos = livenessTimeoutFor(ctx).nanos - (nowNanos - lastActivityAtNanos);
+        if (remainingNanos <= 0n) {
+          yield* settleStalledTurn(ctx, turnId);
+          continue;
+        }
+
+        const wakeReason = yield* Effect.raceFirst(
+          Effect.sleep(Duration.nanos(remainingNanos)).pipe(Effect.as("timeout" as const)),
+          Queue.take(ctx.livenessSignals).pipe(Effect.as("activity" as const)),
+        );
+        if (wakeReason === "timeout") {
+          yield* settleStalledTurn(ctx, turnId);
+        }
+      }
+    }, Effect.ignore());
 
     const logNative = (threadId: ThreadId, method: string, payload: unknown) =>
       Effect.gen(function* () {
@@ -923,7 +924,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       threadId: ThreadId,
     ): Effect.Effect<GrokSessionContext, ProviderAdapterSessionNotFoundError> => {
       const ctx = sessions.get(threadId);
-      if (!ctx || ctx.stopped) {
+      if (!ctx || ctx.stopped || ctx.terminated) {
         return Effect.fail(
           new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }),
         );
@@ -947,7 +948,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId: ctx.threadId,
-          payload: { exitKind: "graceful" },
+          payload: { exitKind: ctx.terminated ? "error" : "graceful" },
         });
       });
 
@@ -1317,12 +1318,35 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ? normalizeGrokReasoningEffort(requestedStartReasoningEffort)
                 : currentStartReasoningEffort,
             stopped: false,
+            terminated: false,
             backgroundTasks: new Map(),
           };
 
           const nf = yield* Stream.runDrain(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
+                if (event._tag === "ConnectionTerminated") {
+                  ctx.terminated = true;
+                  yield* withThreadLock(
+                    ctx.threadId,
+                    Effect.gen(function* () {
+                      if (sessions.get(ctx.threadId) !== ctx) return;
+                      if (ctx.activeTurnId) {
+                        yield* settlePromptInFlight(
+                          ctx.threadId,
+                          ctx.activeTurnId,
+                          ctx.acpSessionId,
+                          {
+                            errorMessage: "Grok connection terminated.",
+                            settleAllPrompts: true,
+                          },
+                        );
+                      }
+                      yield* stopSessionInternal(ctx);
+                    }),
+                  ).pipe(Effect.forkIn(ownerScope));
+                  return;
+                }
                 if (event._tag === "EventStreamBarrier") {
                   yield* Deferred.succeed(event.acknowledge, undefined);
                   return;
@@ -2008,7 +2032,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   errorMessage: errorMessage ?? "Grok prompt request failed.",
                 }),
               );
-            }).pipe(Effect.catch(() => Effect.void)),
+            }).pipe(Effect.ignore),
           ),
         );
       });
@@ -2166,12 +2190,16 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       );
 
     const listSessions: GrokAdapterShape["listSessions"] = () =>
-      Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
+      Effect.sync(() =>
+        Array.from(sessions.values())
+          .filter((c) => !c.terminated)
+          .map((c) => ({ ...c.session })),
+      );
 
     const hasSession: GrokAdapterShape["hasSession"] = (threadId) =>
       Effect.sync(() => {
         const c = sessions.get(threadId);
-        return c !== undefined && !c.stopped;
+        return c !== undefined && !c.stopped && !c.terminated;
       });
 
     const stopAll: GrokAdapterShape["stopAll"] = () =>

@@ -60,7 +60,7 @@ export const make = Effect.fn("makeHostResources")(function* () {
     if (platform === "linux") {
       const meminfo = yield* fs
         .readFileString("/proc/meminfo")
-        .pipe(Effect.catch(() => Effect.succeed("")));
+        .pipe(Effect.orElseSucceed(() => ""));
       const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)?.[1];
       if (available) availableMemoryBytes = Number(available) * 1024;
     } else if (platform === "darwin") {
@@ -68,7 +68,7 @@ export const make = Effect.fn("makeHostResources")(function* () {
         .string(ChildProcess.make("/usr/bin/vm_stat", [], { stdin: "ignore", stderr: "ignore" }))
         .pipe(
           Effect.timeout("1 second"),
-          Effect.catch(() => Effect.succeed("")),
+          Effect.orElseSucceed(() => ""),
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }
