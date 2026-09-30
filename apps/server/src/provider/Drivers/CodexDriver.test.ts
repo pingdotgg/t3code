@@ -127,6 +127,21 @@ it.layer(testLayer)("CodexDriver", (it) => {
         const serverConfig = yield* ServerConfig;
         const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
         const launches: Array<Parameters<CodexAppServerClientFactoryShape["open"]>[0]> = [];
+        // Sign-out interrupts an account check that is still resolving the runtime.
+        // Interrupt the two startup checks that way (one is the sign-in listener's);
+        // the disconnect below must still refresh.
+        let interruptedChecks = 0;
+        const startupChecksInterrupted = yield* Deferred.make<void>();
+        const acquire = () =>
+          Effect.suspend(() => {
+            if (interruptedChecks === 2) return Effect.succeed(executable);
+            interruptedChecks += 1;
+            return (
+              interruptedChecks === 2
+                ? Deferred.succeed(startupChecksInterrupted, undefined)
+                : Effect.void
+            ).pipe(Effect.andThen(Effect.interrupt));
+          });
         const instance = yield* CodexDriver.create({
           instanceId,
           displayName: "Restored account",
@@ -149,7 +164,7 @@ it.layer(testLayer)("CodexDriver", (it) => {
               ...installation,
               managedDirectory: "unused-managed-installation",
               resolve: () => Effect.succeed(executable),
-              acquire: () => Effect.succeed(executable),
+              acquire,
             }),
           ),
           Effect.provideService(
@@ -176,6 +191,7 @@ it.layer(testLayer)("CodexDriver", (it) => {
           Stream.runHead,
           Effect.forkScoped,
         );
+        yield* Deferred.await(startupChecksInterrupted);
         const restored = yield* instance.snapshot.refresh;
         expect(restored.auth.email).toBe("account@example.test");
         expect(restored.runtimePaths?.homePath).toBe(sharedHome);
