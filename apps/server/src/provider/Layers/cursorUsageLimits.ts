@@ -1,6 +1,7 @@
 import * as NodeOS from "node:os";
 import type { CursorSettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { CURSOR_USAGE_WINDOWS } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,8 +14,10 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "../providerUsageLimits.ts";
+import { readMacCursorAccessToken } from "../cursorCredentialStore.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
+const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
@@ -39,15 +42,11 @@ export function cursorUsageResponseToLimits(
       : undefined;
   const windows: ServerProviderUsageWindow[] = [];
   if (response.planUsage) {
-    for (const [key, label] of [
-      ["totalPercentUsed", "Monthly"],
-      ["autoPercentUsed", "Monthly · Auto"],
-      ["apiPercentUsed", "Monthly · API"],
-    ] as const) {
-      const usedPercent = response.planUsage[key];
+    for (const { id, label } of CURSOR_USAGE_WINDOWS) {
+      const usedPercent = response.planUsage[id];
       if (usedPercent === undefined || !Number.isFinite(usedPercent)) continue;
       windows.push({
-        id: key,
+        id,
         kind: "monthly",
         label,
         usedPercent: clampPercent(usedPercent),
@@ -63,30 +62,49 @@ export function cursorUsageResponseToLimits(
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   settings: Pick<CursorSettings, "apiEndpoint">,
   environment: NodeJS.ProcessEnv = process.env,
+  allowKeychain = false,
+  keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const platform = yield* HostProcessPlatform;
+    const endpoint = (
+      settings.apiEndpoint.trim() ||
+      environment.CURSOR_API_ENDPOINT?.trim() ||
+      DEFAULT_CURSOR_API_ENDPOINT
+    ).replace(/\/$/, "");
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
     // An explicit API key can name a different account from the stored login.
     if (!token && environment.CURSOR_API_KEY?.trim()) {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
     const credentialStore = environment.AGENT_CLI_CREDENTIAL_STORE;
-    if (
-      !token &&
-      (credentialStore === "memory" || (platform === "darwin" && credentialStore !== "file"))
-    ) {
-      // Cursor's default macOS login lives in the keychain; a leftover file may be another account.
+    if (!token && credentialStore === "memory") {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "unsupported",
-        message: "Cursor usage requires a file-based login or CURSOR_AUTH_TOKEN.",
+        message: "Cursor usage requires a CLI login or CURSOR_AUTH_TOKEN.",
       });
     }
-    if (!token) {
+    if (!token && platform === "darwin" && credentialStore !== "file") {
+      if (!allowKeychain) {
+        return makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: "Enable Cursor account usage in T3 Code to read its Keychain login.",
+        });
+      }
+      if (endpoint !== DEFAULT_CURSOR_API_ENDPOINT) {
+        return makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: "Cursor account usage requires the default Cursor endpoint when using Keychain.",
+        });
+      }
+      token = (yield* Effect.tryPromise(keychainToken))?.trim();
+    } else if (!token) {
       const home =
         (platform === "win32" ? environment.USERPROFILE : environment.HOME) || NodeOS.homedir();
       const directory =
@@ -106,11 +124,6 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     }
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
-    const endpoint = (
-      settings.apiEndpoint.trim() ||
-      environment.CURSOR_API_ENDPOINT?.trim() ||
-      "https://api2.cursor.sh"
-    ).replace(/\/$/, "");
     const response = yield* client.execute(
       HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
         HttpClientRequest.bearerToken(token),
@@ -127,14 +140,12 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     return cursorUsageResponseToLimits(body, checkedAt);
   }).pipe(
     Effect.timeout("10 seconds"),
-    Effect.catch(() =>
-      Effect.succeed(
-        makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "Cursor could not read usage limits.",
-        }),
-      ),
+    Effect.orElseSucceed(() =>
+      makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Cursor could not read usage limits.",
+      }),
     ),
   );
 });
