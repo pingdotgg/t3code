@@ -23,6 +23,7 @@ import type {
   PullRequestThreadReplyInput,
   PullRequestThreadResolutionInput,
   PullRequestMonitorLaunchFallbackInput,
+  PullRequestMonitorLifecycleStatus,
   PullRequestMonitorContextResult,
   PullRequestMonitorStartInput,
   PullRequestMonitorStatusInput,
@@ -46,7 +47,28 @@ import {
 } from "../environments/runtime";
 
 const PULL_REQUEST_STALE_TIME_MS = 30_000;
+const PULL_REQUEST_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 15_000;
 const decodePullRequestDiff = Schema.decodeUnknownPromise(PullRequestDiffResultSchema);
+
+/**
+ * Terminal monitor/acceptance states stop changing server-side, so halting
+ * the poll avoids a perpetual 15s tail per open panel. Mutations invalidate
+ * these queries on start/stop/resume, and remounts refetch, so polling
+ * resumes automatically if work restarts.
+ */
+function pullRequestMonitorPollingInterval(
+  status: PullRequestMonitorLifecycleStatus | null | undefined,
+): number | false {
+  if (status === "terminal" || status === "stopped") return false;
+  return PULL_REQUEST_MONITOR_ACTIVE_REFETCH_INTERVAL_MS;
+}
+
+function collaborativeAcceptancePollingInterval(
+  status: CollaborativeAcceptanceStatus | null | undefined,
+): number | false {
+  if (status?.record?.projection.acceptanceLifecycle === "accepted") return false;
+  return PULL_REQUEST_MONITOR_ACTIVE_REFETCH_INTERVAL_MS;
+}
 
 export const pullRequestQueryKeys = {
   all: ["pull-requests"] as const,
@@ -589,8 +611,10 @@ export function pullRequestMonitorStatusQueryOptions(input: {
   return queryOptions({
     queryKey: pullRequestQueryKeys.monitorStatus(input.environmentId, input.reference),
     staleTime: PULL_REQUEST_STALE_TIME_MS,
-    // Server owns monitor truth; keep the strip fresh while the panel is open.
-    refetchInterval: 15_000,
+    // Server owns monitor truth; keep the strip fresh while the panel is open,
+    // and stop once the monitor reaches a terminal lifecycle.
+    refetchInterval: (query) =>
+      pullRequestMonitorPollingInterval(query.state.data?.monitor?.status),
     enabled: input.enabled ?? true,
     queryFn: async () => {
       const api = await ensureEnvironmentApi(input.environmentId);
@@ -607,7 +631,8 @@ export function pullRequestMonitorContextQueryOptions(input: {
   return queryOptions<PullRequestMonitorContextResult>({
     queryKey: pullRequestQueryKeys.monitorContext(input.environmentId, input.reference),
     staleTime: PULL_REQUEST_STALE_TIME_MS,
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      pullRequestMonitorPollingInterval(query.state.data?.monitor?.status),
     enabled: input.enabled ?? true,
     queryFn: () =>
       ensureEnvironmentApi(input.environmentId).pullRequestMonitors.context({
@@ -631,7 +656,7 @@ export function collaborativeAcceptanceStatusQueryOptions(input: {
       input.caseId,
     ),
     staleTime: PULL_REQUEST_STALE_TIME_MS,
-    refetchInterval: 15_000,
+    refetchInterval: (query) => collaborativeAcceptancePollingInterval(query.state.data ?? null),
     enabled: input.enabled ?? true,
     queryFn: () => {
       if (input.threadId === null || input.caseId === null) {
@@ -658,7 +683,8 @@ export function collaborativeAcceptanceLookupQueryOptions(input: {
       input.reference,
     ),
     staleTime: PULL_REQUEST_STALE_TIME_MS,
-    refetchInterval: 15_000,
+    refetchInterval: (query) =>
+      collaborativeAcceptancePollingInterval(query.state.data?.status ?? null),
     enabled: input.enabled ?? true,
     queryFn: () => {
       if (input.threadId === null) {
