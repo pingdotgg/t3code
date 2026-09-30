@@ -34,11 +34,11 @@ export function resolveThreadRouteRenderState(input: {
   serverThreadDetailDeleted: boolean;
   draftThreadExists: boolean;
 }): ThreadRouteRenderState {
-  if (!input.bootstrapComplete) {
-    return "loading";
-  }
   if (input.serverThreadDetailExists || input.draftThreadExists) {
     return "ready";
+  }
+  if (!input.bootstrapComplete) {
+    return "loading";
   }
   if (input.serverThreadDetailDeleted) {
     return "missing";

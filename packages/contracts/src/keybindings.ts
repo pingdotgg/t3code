@@ -42,6 +42,7 @@ const THREAD_KEYBINDING_COMMANDS = [
   "thread.copyReference",
   "thread.settle",
   "thread.pin",
+  "thread.undo",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
@@ -56,6 +57,8 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "navigation.back",
+  "navigation.forward",
   "terminal.toggle",
   "terminal.split",
   "terminal.splitVertical",
@@ -75,6 +78,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "commandPalette.toggle",
   "filePicker.toggle",
   "projectSearch.toggle",
+  "usage.open",
   "theme.select",
   "appearance.cycle",
   "themeEditor.toggle",
@@ -88,6 +92,13 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+  "usage.cost",
+  "usage.tokens",
+  "usage.limits",
+  "usage.period.day",
+  "usage.period.week",
+  "usage.period.month",
+  "usage.period.quarter",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;

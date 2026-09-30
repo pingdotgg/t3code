@@ -135,6 +135,26 @@ describe("threadRoutes", () => {
     ).toBe("ready");
   });
 
+  it.each([
+    { status: "cached", source: "detail" },
+    { status: "synchronizing", source: "detail" },
+    { status: "cached", source: "draft" },
+    { status: "synchronizing", source: "draft" },
+  ] as const)(
+    "keeps available $source visible while the shell is $status",
+    ({ status, source }) => {
+      expect(
+        resolveThreadRouteRenderState({
+          bootstrapComplete: isThreadRouteSnapshotAuthoritative(status),
+          serverThreadShellExists: false,
+          serverThreadDetailExists: source === "detail",
+          serverThreadDetailDeleted: false,
+          draftThreadExists: source === "draft",
+        }),
+      ).toBe("ready");
+    },
+  );
+
   it("distinguishes bootstrap loading from a missing thread", () => {
     expect(
       resolveThreadRouteRenderState({

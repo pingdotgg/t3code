@@ -1040,11 +1040,7 @@ const preWarmImpl = (
       const handle = yield* spawner.spawn(command);
       yield* handle.exitCode;
     }),
-  ).pipe(
-    Effect.timeoutOption(PRE_WARM_TIMEOUT),
-    Effect.asVoid,
-    Effect.catch(() => Effect.void),
-  );
+  ).pipe(Effect.timeoutOption(PRE_WARM_TIMEOUT), Effect.ignore);
 
 const windowsToWslPathImpl = (
   distro: string | null,
@@ -1272,15 +1268,14 @@ export const layer = Layer.effect(
     // distro. Negative results aren't cached so a transient wsl.exe failure
     // doesn't permanently disable tilde expansion.
     const userHomeCache = new Map<string, string>();
-    const getUserHome = (distro: string | null) =>
-      Effect.gen(function* () {
-        const key = distro ?? "__default__";
-        const cached = userHomeCache.get(key);
-        if (cached !== undefined) return Option.some(cached);
-        const resolved = yield* provideSpawner(getUserHomeImpl(distro));
-        if (Option.isSome(resolved)) userHomeCache.set(key, resolved.value);
-        return resolved;
-      }).pipe(Effect.withSpan("desktop.wsl.getUserHome"));
+    const getUserHome = Effect.fn("desktop.wsl.getUserHome")(function* (distro: string | null) {
+      const key = distro ?? "__default__";
+      const cached = userHomeCache.get(key);
+      if (cached !== undefined) return Option.some(cached);
+      const resolved = yield* provideSpawner(getUserHomeImpl(distro));
+      if (Option.isSome(resolved)) userHomeCache.set(key, resolved.value);
+      return resolved;
+    });
 
     const getDistroIp = (distro: string | null) =>
       provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));

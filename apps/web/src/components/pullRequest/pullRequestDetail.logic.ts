@@ -140,6 +140,22 @@ export function pullRequestCheckoutCommand(
   }
 }
 
+/** Build a checkout command from identity metadata while the detail request is still pending. */
+export function loadingPullRequestCheckoutCommand(
+  reference: PullRequestRef,
+  identity: RepositoryIdentity | null | undefined,
+): string | null {
+  const host = reference.host?.trim().toLowerCase();
+  const provider =
+    identity?.provider ??
+    (host === "github.com" ? "github" : host === "gitlab.com" ? "gitlab" : null);
+  if (provider !== "github" && provider !== "gitlab" && provider !== "azure-devops") return null;
+  if (identity?.provider !== undefined && host && pullRequestHostOf(identity, provider) !== host) {
+    return null;
+  }
+  return pullRequestCheckoutCommand(provider, reference.number, "");
+}
+
 /** Activity changes only when the same host resource reports a newer revision. */
 export function shouldRefreshPullRequestActivity(
   previous: { readonly key: string; readonly updatedAt: string } | null,
