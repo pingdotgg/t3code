@@ -395,17 +395,31 @@ export const layer = Layer.effect(
     // Run-state transitions use targeted UPDATEs (never the full-row upsert) so
     // a completing run cannot resurrect a deleted task or clobber concurrent
     // edits to the task definition.
+    // The cap guard makes the claim atomic with the edit that lowers it: a run
+    // dispatched from a stale snapshot finds no row to claim and never starts.
     const markRunning = (id: ScheduledTaskId, startedAtIso: string) =>
-      sql`
+      sql<{ task_id: string }>`
         UPDATE scheduled_tasks
         SET updated_at = ${startedAtIso},
             last_run_at = ${startedAtIso},
             last_run_status = 'running',
             last_run_error = NULL
         WHERE task_id = ${id}
+          AND NOT (
+            json_extract(schedule_json, '$.maxRuns') IS NOT NULL
+            AND run_count >= json_extract(schedule_json, '$.maxRuns')
+          )
+        RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not mark schedule task as running.", { taskId: id, cause }),
+        ),
+        Effect.flatMap((rows) =>
+          rows.length === 0
+            ? Effect.fail(
+                taskError("Schedule task is deleted or has reached its run limit.", { taskId: id }),
+              )
+            : Effect.void,
         ),
       );
 
