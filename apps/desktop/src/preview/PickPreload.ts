@@ -1,13 +1,12 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
-import { DesktopPreviewAnnotationVoiceStateSchema } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { resolveKeybindingCommand } from "@t3tools/shared/keybindings";
+import { resolveKeybindingCommand } from "@t3tools/shared/keybindingMatching";
 
 import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAnnotationVoiceConfig,
+  DesktopPreviewAnnotationVoiceState,
   DesktopPreviewAnnotationVoiceEvent,
   PickedElementPayload,
   PickedElementStackFrame,
@@ -42,7 +41,6 @@ import {
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
-const decodeAnnotationVoice = Schema.decodeUnknownOption(DesktopPreviewAnnotationVoiceStateSchema);
 
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
@@ -666,10 +664,11 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
   });
   voiceCancel.addEventListener("click", () => sendVoice("cancel"));
   voiceSkip.addEventListener("click", () => sendVoice("skip"));
-  const onVoiceState = (_event: Electron.IpcRendererEvent, value: unknown) => {
-    const decoded = decodeAnnotationVoice(value);
-    if (decoded._tag !== "Some" || decoded.value.sessionId !== voice?.sessionId || finished) return;
-    const state = decoded.value;
+  const onVoiceState = (
+    _event: Electron.IpcRendererEvent,
+    state: DesktopPreviewAnnotationVoiceState,
+  ) => {
+    if (state.sessionId !== voice?.sessionId || finished) return;
     voicePhase = state.phase;
     voiceSettings = state.errorAction === "settings";
     voiceBusy = state.blocksSubmission;
