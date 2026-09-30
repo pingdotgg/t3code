@@ -15,6 +15,26 @@ import {
 
 const AX_POLL_INTERVAL_MS = 2_000;
 
+function areAxElementsEqual(
+  left: ReadonlyArray<DeviceAxElement>,
+  right: ReadonlyArray<DeviceAxElement>,
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((element, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      element.id === other.id &&
+      element.label === other.label &&
+      element.role === other.role &&
+      element.x === other.x &&
+      element.y === other.y &&
+      element.width === other.width &&
+      element.height === other.height
+    );
+  });
+}
+
 export interface DeviceStreamHandle {
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
@@ -199,7 +219,9 @@ export function DeviceStreamView(props: {
       };
 
   // The accessibility tree is polled while the overlay is on; each poll is
-  // one JSON fetch, so there is nothing to repaint between polls.
+  // one JSON fetch, so there is nothing to repaint between polls. Skip the
+  // state update when the tree is unchanged so a static screen does not
+  // re-render the overlay every 2s.
   const [axElements, setAxElements] = useState<ReadonlyArray<DeviceAxElement>>([]);
   useEffect(() => {
     if (!props.axOverlay || !access || !props.visible) return;
@@ -207,11 +229,15 @@ export function DeviceStreamView(props: {
     let controller: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let previous: ReadonlyArray<DeviceAxElement> = [];
     const poll = async () => {
       controller = new AbortController();
       try {
         const tree = await fetchDeviceAxTree(target, controller.signal);
-        if (!stopped) setAxElements(tree.elements);
+        if (!stopped && !areAxElementsEqual(previous, tree.elements)) {
+          previous = tree.elements;
+          setAxElements(tree.elements);
+        }
       } catch {
         // Keep the last good tree; the next poll retries.
       }
